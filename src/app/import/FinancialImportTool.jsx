@@ -87,6 +87,7 @@ export default function FinancialImportTool() {
   const [fileName, setFileName] = useState("");
   const [result, setResult] = useState(null);
   const [fileError, setFileError] = useState("");
+  const [isParsing, setIsParsing] = useState(false);
   const [importOwnerId, setImportOwnerId] = useState(null);
   const [selectedProperties, setSelectedProperties] = useState({});
 
@@ -104,59 +105,72 @@ export default function FinancialImportTool() {
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
 
+    // Cancelling the picker yields no file: leave any prior results untouched.
+    if (!file) {
+      return;
+    }
+
     setFileError("");
     setResult(null);
-    const csv = await file.text();
+    setIsParsing(true);
+    setFileName(file.name);
+    try {
+      const csv = await file.text();
 
-    const response = await fetch(
-      "/api/financial/import",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          source,
-          csv,
-          fileName: file.name,
-        }),
-      },
-    );
-
-    const payload = await response.json();
-
-    const importResponse =
-      payload.success
-        ? payload.data
-        : {
+      const response = await fetch(
+        "/api/financial/import",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            source,
+            csv,
             fileName: file.name,
-            result: null,
-            error:
-              payload.error ||
-              "Unable to import financial CSV.",
-            ownerId,
-            hasFile: true,
-          };
+          }),
+        },
+      );
 
-    const recommendedSelections = {};
+      const payload = await response.json();
 
-    (importResponse.result?.transactionReview || []).forEach(
-      (review, index) => {
-        const recommendedPropertyId =
-          review.recommendations?.[0]?.property?.id ??
-          review.suggestedProperties?.[0]?.id;
+      const importResponse =
+        payload.success
+          ? payload.data
+          : {
+              fileName: file.name,
+              result: null,
+              error:
+                payload.error ||
+                "Unable to import financial CSV.",
+              ownerId,
+              hasFile: true,
+            };
 
-        if (review.needsAssignment && recommendedPropertyId) {
-          recommendedSelections[index] = recommendedPropertyId;
-        }
-      },
-    );
+      const recommendedSelections = {};
 
-    setFileName(importResponse.fileName);
-    setResult(importResponse.result);
-    setSelectedProperties(recommendedSelections);
-    setFileError(importResponse.error || "");
-    setImportOwnerId(importResponse.ownerId ?? null);
+      (importResponse.result?.transactionReview || []).forEach(
+        (review, index) => {
+          const recommendedPropertyId =
+            review.recommendations?.[0]?.property?.id ??
+            review.suggestedProperties?.[0]?.id;
+
+          if (review.needsAssignment && recommendedPropertyId) {
+            recommendedSelections[index] = recommendedPropertyId;
+          }
+        },
+      );
+
+      setFileName(importResponse.fileName);
+      setResult(importResponse.result);
+      setSelectedProperties(recommendedSelections);
+      setFileError(importResponse.error || "");
+      setImportOwnerId(importResponse.ownerId ?? null);
+    } catch (thrown) {
+      setFileError(thrown?.message || "Unable to import financial CSV.");
+    } finally {
+      setIsParsing(false);
+    }
   }
 
  return (   
@@ -217,10 +231,18 @@ export default function FinancialImportTool() {
             type="file"
             accept=".csv,text/csv"
             onChange={handleFileChange}
-            className="mt-3 block w-full rounded-xl border border-slate-300 bg-gray-50 px-4 py-4 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-200 file:px-4 file:py-2 file:text-sm file:font-bold file:text-slate-700 hover:file:bg-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:file:bg-slate-700 dark:file:text-slate-100 dark:hover:file:bg-slate-600 dark:focus:ring-amber-400"
+            disabled={isParsing}
+            aria-busy={isParsing || undefined}
+            className="mt-3 block w-full rounded-xl border border-slate-300 bg-gray-50 px-4 py-4 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:cursor-wait disabled:opacity-60 file:mr-4 file:rounded-lg file:border-0 file:bg-slate-200 file:px-4 file:py-2 file:text-sm file:font-bold file:text-slate-700 hover:file:bg-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:file:bg-slate-700 dark:file:text-slate-100 dark:hover:file:bg-slate-600 dark:focus:ring-amber-400"
           />
         </label>
         </div>
+
+        {isParsing && (
+          <p role="status" className="mt-4 text-sm font-bold text-slate-600 dark:text-slate-300">
+            Parsing {fileName || "file"}…
+          </p>
+        )}
 
         {fileName && (
           <p className="text-sm text-gray-500 mt-4 dark:text-slate-400">

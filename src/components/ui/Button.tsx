@@ -3,6 +3,7 @@ type ButtonProps = {
   onClick?: () => void;
   type?: "button" | "submit" | "reset";
   variant?: "primary" | "secondary" | "danger";
+  disabled?: boolean;
   className?: string;
 };
 
@@ -11,6 +12,7 @@ export default function Button({
   onClick,
   type = "button",
   variant = "primary",
+  disabled = false,
   className = "",
 }: ButtonProps) {
   const styles = {
@@ -26,6 +28,7 @@ export default function Button({
     <button
       type={type}
       onClick={onClick}
+      disabled={disabled}
       className={`px-4 py-2 rounded-xl font-semibold transition ${styles[variant]} ${className}`}
     >
       {children}

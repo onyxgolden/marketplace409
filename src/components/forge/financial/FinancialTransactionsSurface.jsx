@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 // "manual" is accurate but reads as an internal implementation string, not something written for
 // an owner to read -- shown wherever a transaction's source is surfaced, filtered view or not, so
 // there's one consistent label rather than a rough edge that only shows up sometimes.
@@ -6,12 +8,27 @@ function sourceLabel(transaction) {
   return transaction.sourceSystem || "Unknown";
 }
 
+const DEFAULT_PAGE_SIZE = 25;
+
 export default function FinancialTransactionsSurface({
   transactions = [],
   loadState = "ready",
   accountName = null,
   onBack = null,
+  pageSize = DEFAULT_PAGE_SIZE,
 }) {
+  const [visibleCount, setVisibleCount] = useState(pageSize);
+
+  // The list can change (new import, account switch) -- never show fewer than
+  // the page size when the list grows back, and never show more rows than exist.
+  const safeVisibleCount = Math.min(Math.max(visibleCount, pageSize), Math.max(transactions.length, 1));
+  const visibleTransactions = transactions.slice(0, safeVisibleCount);
+  const hasMore = safeVisibleCount < transactions.length;
+
+  function showMore() {
+    setVisibleCount((current) => current + pageSize);
+  }
+
   return (
     <section
       data-financial-transactions-surface
@@ -35,18 +52,22 @@ export default function FinancialTransactionsSurface({
         <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
           <div>
             <h3 data-financial-activity-heading className="text-2xl font-black tracking-tight text-slate-950 dark:text-slate-50">
-              {accountName ? accountName : "Recent transactions"}
+              {accountName ? accountName : "All transactions"}
             </h3>
 
             <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-600 dark:text-slate-400">
               {accountName
                 ? "Every transaction that makes up this account's balance, newest first."
-                : "Review recent income and spending across properties, categories, and connected sources."}
+                : "Every transaction across properties, categories, and connected sources, newest first."}
             </p>
           </div>
 
           <div className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-            {transactions.length.toLocaleString()} shown
+            {transactions.length === 0
+              ? "0 shown"
+              : safeVisibleCount >= transactions.length
+                ? `${transactions.length.toLocaleString()} shown`
+                : `${safeVisibleCount.toLocaleString()} of ${transactions.length.toLocaleString()} shown`}
           </div>
         </div>
       </header>
@@ -86,7 +107,7 @@ export default function FinancialTransactionsSurface({
             </thead>
 
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {transactions.map(
+              {visibleTransactions.map(
                 (transaction) => (
                   <tr
                     key={transaction.id}
@@ -131,6 +152,18 @@ export default function FinancialTransactionsSurface({
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {hasMore && loadState !== "loading" && (
+        <div className="flex justify-center border-t border-slate-200 p-4 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={showMore}
+            className="rounded-xl border border-slate-300 px-5 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Show more ({(transactions.length - safeVisibleCount).toLocaleString()} remaining)
+          </button>
         </div>
       )}
     </section>

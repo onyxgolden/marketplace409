@@ -5,6 +5,7 @@ type InputProps = {
   value?: string | number;
   placeholder?: string;
   required?: boolean;
+  step?: string | number;
   className?: string;
   onChange?: (event: React.ChangeEvent<HTMLInputElement>) => void;
 };
@@ -16,6 +17,7 @@ export default function Input({
   value,
   placeholder,
   required = false,
+  step,
   className = "",
   onChange,
 }: InputProps) {
@@ -33,6 +35,7 @@ export default function Input({
         value={value}
         placeholder={placeholder}
         required={required}
+        step={step}
         onChange={onChange}
         className={`w-full rounded-xl border border-gray-300 px-4 py-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 ${className}`}
       />
