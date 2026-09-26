@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Bell,
   Building2,
@@ -67,6 +67,8 @@ export function WorkspaceLinks({ pathname, expanded, onNavigate }) {
 // its existing sidebar instead of duplicating this markup.
 export function WorkspaceRightRail() {
   const [user, setUser] = useState(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef(null);
   const { resolvedTheme, setThemePreference } = useTheme();
 
   function toggleTheme() {
@@ -89,27 +91,73 @@ export function WorkspaceRightRail() {
   }, []);
 
   async function handleSignOut() {
+    setAccountMenuOpen(false);
     await createClient().auth.signOut();
     window.location.href = "/";
   }
+
+  // Close the account menu on outside click or Escape. The menu itself is the
+  // explicit second step, so sign-out can never fire from a single stray
+  // click on the avatar.
+  useEffect(() => {
+    if (!accountMenuOpen) return undefined;
+    function onPointerDown(event) {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(event.target)) {
+        setAccountMenuOpen(false);
+      }
+    }
+    function onKeyDown(event) {
+      if (event.key === "Escape") setAccountMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [accountMenuOpen]);
 
   return (
     <aside
       data-workspace-right-rail
       className="sticky top-0 hidden h-screen w-16 shrink-0 flex-col items-center gap-2 border-l border-slate-800 bg-slate-950 py-4 text-white lg:flex"
     >
-      <div className="group relative">
+      <div className="group relative" ref={accountMenuRef}>
         <button
           type="button"
-          aria-label={user ? `Signed in as ${user.email}` : "Account"}
-          onClick={user ? handleSignOut : () => (window.location.href = "/auth")}
+          aria-label={user ? `Account menu, signed in as ${user.email}` : "Account"}
+          aria-haspopup={user ? "menu" : undefined}
+          aria-expanded={user ? accountMenuOpen : undefined}
+          onClick={user ? () => setAccountMenuOpen((open) => !open) : () => (window.location.href = "/auth")}
           className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 hover:border-white/25 hover:bg-white/10"
         >
           <UserRound aria-hidden="true" className="h-5 w-5" />
         </button>
-        <div className="pointer-events-none absolute right-full top-1/2 mr-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:opacity-100">
-          {user ? `${user.email} · Sign out` : "Sign in"}
+        <div
+          className={`pointer-events-none absolute right-full top-1/2 mr-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:opacity-100 ${accountMenuOpen ? "hidden" : ""}`}
+        >
+          {user ? user.email : "Sign in"}
         </div>
+        {user && accountMenuOpen ? (
+          <div
+            role="menu"
+            aria-label="Account"
+            className="absolute right-full top-1/2 z-50 mr-2 w-56 -translate-y-1/2 rounded-xl border border-white/10 bg-slate-900 p-2 text-white shadow-2xl"
+          >
+            <p className="truncate px-3 py-2 text-xs font-bold text-slate-300">
+              Signed in as
+              <span className="block truncate text-sm text-white">{user.email}</span>
+            </p>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleSignOut}
+              className="mt-1 flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-bold text-red-300 hover:bg-white/10 hover:text-red-200"
+            >
+              Sign out
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* Notifications: no backend yet (no cross-workspace notification
