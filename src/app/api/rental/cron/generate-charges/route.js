@@ -12,7 +12,14 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   try {
     const db = createRentalWebhookClient();
-    const period = new Date().toISOString().slice(0, 7);
+    const now = new Date();
+    const period = now.toISOString().slice(0, 7);
+    // Pay-ahead: also generate next month's charge so a tenant can pay ahead any time —
+    // even the day after paying the current month. The upsert is idempotent (ignoreDuplicates
+    // on owner_id,source_key), so generating both periods daily is safe.
+    const nextPeriodDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const nextPeriod = nextPeriodDate.toISOString().slice(0, 7);
+    const periods = period === nextPeriod ? [period] : [period, nextPeriod];
     // Owner-level master pause is checked BEFORE the per-schedule query: an owner whose rental
     // billing is paused must contribute zero eligible schedules, even if individual schedules are
     // already FORGE-activated — this cron runs across every owner, so the pause is applied as an
@@ -36,18 +43,20 @@ export async function GET(request) {
     let processed = 0, failed = 0;
     for (const row of schedules || []) {
       try {
-        const charge = generateRentCharge({ schedule: mapRentScheduleRow(row), period });
-        if (!charge) continue;
-        const { error: upsertError } = await db.from("rent_charges")
-          .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
-        if (upsertError) throw upsertError;
-        processed += 1;
+        for (const p of periods) {
+          const charge = generateRentCharge({ schedule: mapRentScheduleRow(row), period: p });
+          if (!charge) continue;
+          const { error: upsertError } = await db.from("rent_charges")
+            .upsert(mapRentChargeToRow(charge, row.owner_id), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
+          if (upsertError) throw upsertError;
+          processed += 1;
+        }
       } catch (scheduleError) {
         failed += 1;
         console.error("Rent charge generation failed for schedule", row.id, scheduleError);
       }
     }
-    return NextResponse.json({ success: true, period, scheduleCount: (schedules || []).length, processed, failed });
+    return NextResponse.json({ success: true, period, nextPeriod, scheduleCount: (schedules || []).length, processed, failed });
   } catch (error) {
     console.error("Rent charge generation cron error", error);
     return NextResponse.json({ error: "Unable to generate rent charges." }, { status: 500 });

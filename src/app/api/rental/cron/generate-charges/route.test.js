@@ -52,10 +52,33 @@ describe("rent charge generation cron", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.scheduleCount).toBe(2);
-    expect(body.processed).toBe(1);
+    // schedule_1 gets current + next month (pay-ahead); schedule_2 ended 2021-01-01 so neither period generates
+    expect(body.processed).toBe(2);
     expect(body.failed).toBe(0);
-    expect(charges.upsert).toHaveBeenCalledTimes(1);
+    expect(charges.upsert).toHaveBeenCalledTimes(2);
     expect(charges.upsert).toHaveBeenCalledWith(expect.objectContaining({ owner_id: "owner_1", schedule_id: "schedule_1" }), { onConflict: "owner_id,source_key", ignoreDuplicates: true });
+  });
+
+  it("generates next month's charge alongside the current month so tenants can pay ahead", async () => {
+    const schedules = chain({
+      data: [
+        { owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 150000,
+          currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: null,
+          created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+          collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01" },
+      ], error: null,
+    });
+    const charges = chain({ error: null });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges }));
+
+    const response = await GET(request({ authorization: "Bearer cron-secret" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.nextPeriod).toBeDefined();
+    expect(charges.upsert).toHaveBeenCalledTimes(2);
+    const sourceKeys = charges.upsert.mock.calls.map(([row]) => row.source_key);
+    expect(new Set(sourceKeys).size).toBe(2);
+    expect(sourceKeys[0]).not.toBe(sourceKeys[1]);
   });
 
   it("counts a bad schedule row as failed without aborting the run", async () => {
