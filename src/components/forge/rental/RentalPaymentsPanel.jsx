@@ -1,6 +1,7 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
+import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import { isChargeForgeCollectible } from "@/application/rental/isChargeForgeCollectible";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -66,6 +67,16 @@ export function chargeCollectionLabel(charge, schedules, today = new Date().toIS
   return isChargeForgeCollectible(charge, schedule, today) ? "FORGE collectible" : "Externally managed — reconciliation required";
 }
 
+// A charge counts as overdue when it still carries a balance past its due
+// date (voided charges never count). Used by the "overdue" filtered view the
+// dashboard's rent-overdue alert box deep-links to.
+export function isChargeOverdue(charge, today = new Date().toISOString().slice(0, 10)) {
+  if (!charge || charge.kind !== "charge" || charge.status === "void") return false;
+  const balance = Number(charge.amount_cents || 0) - Number(charge.paid_amount_cents || 0);
+  if (balance <= 0 || !charge.due_date) return false;
+  return Date.parse(charge.due_date) < Date.parse(today);
+}
+
 function BillingPauseBanner({ billingEnabled, busy, onSetBillingEnabled }) {
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
@@ -108,7 +119,7 @@ function BillingPauseBanner({ billingEnabled, busy, onSetBillingEnabled }) {
 }
 
 const identity = (value) => value;
-export default function RentalPaymentsPanel({ initialData = null, initialAccount, dataScope = identity, initialShowSetup = false, cacheKey = "rental:payments" }) {
+export default function RentalPaymentsPanel({ initialData = null, initialAccount, dataScope = identity, initialShowSetup = false, cacheKey = "rental:payments", initialViewFilter = null }) {
   // Rent collection: stale-while-revalidate under a cache key — the rental data
   // and the Stripe account status. The cached activity renders instantly on
   // return visits and refreshes in the background — the last good data never
@@ -145,7 +156,22 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   const account = initialAccount === undefined ? loadedAccount : initialAccount;
   const [selectedId, setSelectedId] = useState(""), [showOffline, setShowOffline] = useState(false), [showSetup, setShowSetup] = useState(initialShowSetup);
   const [message, setMessage] = useState(""), [saved, setSaved] = useState(""), [busy, setBusy] = useState(false);
-  useEffect(() => { if (accountError && initialAccount === undefined) setMessage(accountError); }, [accountError, initialAccount]);
+  // Dashboard deep-link filter ("overdue"): narrows the charge queue to
+  // overdue charges and shows a banner with a one-click clear. Re-syncs on
+  // navigation so sidebar navigation (which passes null) clears it.
+  const [viewFilter, setViewFilter] = useState(initialViewFilter ?? null);
+  // Re-syncs on navigation so sidebar navigation (which passes null) clears
+  // the banner. Adjusted during render — not in an effect — so the local
+  // "Show all" clear and the navigation prop never fight.
+  const prevInitialViewFilter = useRef(initialViewFilter ?? null);
+  if (prevInitialViewFilter.current !== (initialViewFilter ?? null)) {
+    prevInitialViewFilter.current = initialViewFilter ?? null;
+    setViewFilter(initialViewFilter ?? null);
+  }
+  // The Stripe-account error reads straight from the fetch state at render time
+  // instead of being copied into message state by an effect — same banner, no
+  // cascading render. It clears the moment the account fetch recovers.
+  const shownMessage = message || (initialAccount === undefined ? accountError : "");
 
   if (!loaded && isLoading) return <ForgeLoadingState label="Loading rent collection…" />;
   if (!loaded && loadError) {
@@ -157,8 +183,12 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   }
 
   const records = buildRentActivity(data.openCharges, data.payments, data.settlements);
-  const activeId = records.some((item) => item.id === selectedId) ? selectedId : records[0]?.id || "";
-  const selected = records.find((item) => item.id === activeId);
+  // The filtered view narrows the queue the record browser shows: the
+  // "overdue" deep-link from the dashboard's rent-overdue alert box lists only
+  // overdue charges, so the queue behind the amount is exactly what the box showed.
+  const visibleRecords = viewFilter === "overdue" ? records.filter((record) => isChargeOverdue(record)) : records;
+  const activeId = visibleRecords.some((item) => item.id === selectedId) ? selectedId : visibleRecords[0]?.id || "";
+  const selected = visibleRecords.find((item) => item.id === activeId);
   async function connect() { setBusy(true); setMessage(""); try { const response = await fetch("/api/rental/stripe-account", { method: "POST" }), body = await response.json(); if (!response.ok) throw new Error(body.error); window.location.assign(body.url); } catch (error) { setMessage(error.message); setBusy(false); } }
   async function post(body, success) { setBusy(true); setMessage(""); setSaved(""); try { const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), result = await response.json(); if (!response.ok) throw new Error(result.error); setSaved(success(result)); await refresh(); return true; } catch (error) { setMessage(error.message); return false; } finally { setBusy(false); } }
   async function recordOffline(event) { event.preventDefault(); const element = event.currentTarget, form = new FormData(element); const success = await post({ operation: "record-offline-payment", payment: { chargeId: form.get("chargeId"), paymentMethod: form.get("paymentMethod"), amountCents: Math.round(Number(form.get("amount")) * 100), receivedAt: new Date(`${form.get("receivedDate")}T12:00:00`).toISOString(), receiptReference: form.get("receiptReference"), notes: form.get("notes") } }, () => "Offline payment recorded and rent balance updated."); if (success) { element.reset(); setShowOffline(false); } }
@@ -167,6 +197,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   const enabled = account?.status === "enabled";
   return <section className="space-y-6" data-rental-payments>
     <BillingPauseBanner billingEnabled={data.billingEnabled === true} busy={busy} onSetBillingEnabled={setBillingEnabled} />
+    {viewFilter === "overdue" && <RentalViewFilterBanner filterLabel="Overdue rent charges" onClear={() => setViewFilter(null)} />}
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -179,7 +210,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
           <button type="button" onClick={() => setShowSetup((value) => !value)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">{showSetup ? "Hide billing setup" : "Billing setup"}</button>
         </div>
       </div>
-      {message ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{message}</p> : null}
+      {shownMessage ? <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{shownMessage}</p> : null}
       {saved ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{saved}</p> : null}
       {loaded && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved rent collection.</p> : null}
       {loaded && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
@@ -214,7 +245,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
       </div> : null}
     </div>
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-      <RentalRecordBrowser title="Charges and payments" records={records} selectedId={activeId} onSelect={setSelectedId}
+      <RentalRecordBrowser title="Charges and payments" records={visibleRecords} selectedId={activeId} onSelect={setSelectedId}
         getTitle={(item) => { if (item.kind !== "charge") return `${money.format(Number(item.amount_cents) / 100)} payment`; const identity = resolveChargeIdentity(item, data); return `${identity.tenantLabel} · ${identity.unitLabel} · ${identity.propertyLabel}`; }}
         getSubtitle={(item) => { if (item.kind !== "charge") return `${label(item.payment_method || item.provider)} · ${label(item.status)}`; const identity = resolveChargeIdentity(item, data); return `${label(item.charge_type)} · ${item.period} · ${money.format(Number(item.amount_cents) / 100)} · ${label(item.status)} · due ${item.due_date} · lease ${identity.leaseId || "Unknown"} · ${chargeCollectionLabel(item, data.schedules)}`; }}
         emptyMessage="No rent charges or payments recorded.">

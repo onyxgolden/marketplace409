@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
 import { getRentalSummaryPayload } from "./rentalSummaryClient";
+import { RentalExceptionAlerts, RentalQuickAccess } from "./RentalExceptionAlerts";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -173,7 +174,7 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
             <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
-            <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Five numbers that describe the portfolio right now — every figure comes from your rental records.</p>
+            <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Exceptions first, then the numbers that describe the portfolio — every figure comes from your rental records.</p>
             <div className="mt-4 flex items-center gap-3">
               <PortfolioStrip units={summary.portfolioUnits} />
               <span className="text-sm font-bold text-slate-600 dark:text-slate-400">
@@ -185,6 +186,11 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
             <BillingStatusChip billingEnabled={summary.billingEnabled} onNavigate={onNavigate} />
           </div>
         </div>
+      </div>
+
+      <div className="space-y-6">
+        <RentalExceptionAlerts summary={summary} onNavigate={onNavigate} />
+        <RentalQuickAccess summary={summary} onNavigate={onNavigate} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">

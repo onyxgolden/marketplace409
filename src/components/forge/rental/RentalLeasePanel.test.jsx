@@ -85,7 +85,19 @@ describe("RentalLeasePanel", () => {
       leases: [], schedules: [], leaseMemberships: [] };
     const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={setup} loadOnMount={false} />);
     expect(markup).not.toContain('name="propertyId"');
-    expect(markup).toContain("Select a rental unit");
+    // The single unit is pre-selected (no placeholder flash on hydration), so
+    // the property derives from it instead of asking the user to pick.
+    expect(markup).toContain("test-property");
+    expect(markup).not.toContain("Select a rental unit to set the property.");
+  });
+
+  it("prompts for a unit before deriving the property when several units exist", () => {
+    const setup = { units: [{ id: "unit_a", label: "Unit A", property_id: "prop-a" }, { id: "unit_b", label: "Unit B", property_id: "prop-b" }],
+      tenants: [{ id: "tenant_1", display_name: "Brandy Morgan", email: "brandy@example.com" }],
+      leases: [], schedules: [], leaseMemberships: [] };
+    const markup = renderToStaticMarkup(<RentalLeasePanel initialSetup={setup} loadOnMount={false} />);
+    expect(markup).not.toContain('name="propertyId"');
+    expect(markup).toContain("Select a rental unit to set the property.");
   });
 });
 

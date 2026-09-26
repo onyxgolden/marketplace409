@@ -1,9 +1,10 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
 import PropertyExpenseHistory, { PROPERTY_EXPENSES_OPEN_EVENT } from "./PropertyExpenseHistory";
+import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import { useCardContextMenu, CardContextMenu } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -35,7 +36,14 @@ export function activeBalanceCentsForUnit(unit, leases, openCharges) {
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
-export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate }) {
+// A unit is vacant when it has no active lease on file -- i.e. there is no
+// tenant label for it. Used by the "vacant" filtered view the dashboard's
+// vacancy alert box deep-links to.
+export function isUnitVacant(unit, leases, leaseMemberships, tenants) {
+  return tenantLabelForUnit(unit, leases, leaseMemberships, tenants) === null;
+}
+
+export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate, initialViewFilter = null }) {
   // Rental units: stale-while-revalidate. The cached units render instantly on
   // return visits and refresh in the background — the last good data never
   // blanks out. Mutations post through /api/rental then call refresh() to
@@ -54,6 +62,18 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const [message, setMessage] = useState("");
   const [showCreate, setShowCreate] = useState(initialUnits.length === 0);
   const [selectedId, setSelectedId] = useState(initialUnits[0]?.id || null);
+  // Dashboard deep-link filter ("vacant"): narrows the unit queue and shows a
+  // banner with a one-click clear. Re-syncs whenever navigation passes a new
+  // filter in, so sidebar navigation (which passes null) always clears it.
+  const [viewFilter, setViewFilter] = useState(initialViewFilter ?? null);
+  // Re-syncs on navigation so sidebar navigation (which passes null) clears
+  // the banner. Adjusted during render — not in an effect — so the local
+  // "Show all" clear and the navigation prop never fight.
+  const prevInitialViewFilter = useRef(initialViewFilter ?? null);
+  if (prevInitialViewFilter.current !== (initialViewFilter ?? null)) {
+    prevInitialViewFilter.current = initialViewFilter ?? null;
+    setViewFilter(initialViewFilter ?? null);
+  }
   const [working, setWorking] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [archiveCandidateId, setArchiveCandidateId] = useState(null);
@@ -72,11 +92,17 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     Promise.resolve().then(() => {
       if (cancelled) return;
       const nextUnits = loaded.units || [];
-      setSelectedId((current) => nextUnits.some((item) => item.id === current && item.status !== "inactive") ? current : nextUnits.find((item) => item.status !== "inactive")?.id || null);
+      const nextLeases = loaded.leases || [];
+      const nextMemberships = loaded.leaseMemberships || [];
+      const nextTenants = loaded.tenants || [];
+      const pool = viewFilter === "vacant"
+        ? nextUnits.filter((unit) => unit.status !== "inactive" && isUnitVacant(unit, nextLeases, nextMemberships, nextTenants))
+        : nextUnits.filter((unit) => unit.status !== "inactive");
+      setSelectedId((current) => pool.some((item) => item.id === current) ? current : pool[0]?.id || null);
       setShowCreate(nextUnits.every((item) => item.status === "inactive"));
     });
     return () => { cancelled = true; };
-  }, [loaded]);
+  }, [loaded, viewFilter]);
   const seed = initialUnits.length > 0 ? { units: initialUnits, leases: [], leaseMemberships: [], tenants: [], openCharges: [] } : null;
   const result = loaded || seed;
   const units = result?.units || [];
@@ -85,11 +111,17 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const tenants = result?.tenants || [];
   const openCharges = result?.openCharges || [];
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
+  // The filtered view narrows the queue the record browser shows: the "vacant"
+  // deep-link from the dashboard's vacancy alert box lists only units with no
+  // active lease, so the queue behind the count is exactly what the box showed.
+  const visibleUnits = viewFilter === "vacant"
+    ? units.filter((unit) => unit.status !== "inactive" && isUnitVacant(unit, leases, leaseMemberships, tenants))
+    : units.filter((unit) => unit.status !== "inactive");
   const refreshUnits = refresh;
   // The panel eyebrow follows the currently selected unit instead of naming a
   // hardcoded sample property -- the old "Kent Avenue setup" text shipped from
   // a fixture and was wrong for every other property.
-  const selectedUnit = units.find((item) => item.id === selectedId) || units.find((item) => item.status !== "inactive") || null;
+  const selectedUnit = visibleUnits.find((item) => item.id === selectedId) || visibleUnits[0] || null;
   const setupEyebrow = selectedUnit ? `${selectedUnit.label || selectedUnit.property_id} setup` : "Rental setup";
 
   if (!result && isLoading) return <ForgeLoadingState label="Loading rental units…" />;
@@ -141,9 +173,10 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved units first. Create another unit only as a deliberate action.</p></div>
         {units.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new property / unit</button>}
       </div>
+      {viewFilter === "vacant" && <RentalViewFilterBanner filterLabel="Vacant units only" onClear={() => setViewFilter(null)} />}
       {result && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved units.</p> : null}
       {result && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
-      {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={units.filter((unit) => unit.status !== "inactive")} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
+      {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={visibleUnits} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
         columns={[
           { header: "Property address", render: (unit) => <><strong className="block text-sm text-slate-950 dark:text-white">{unit.label}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{unit.property_id} · {unit.status || "Status not set"}</span></> },
           { header: "Tenant", render: (unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return tenantLabel || <button type="button" onClick={(event) => { event.stopPropagation(); onNavigate?.("tenants", { recordType: "unit", recordId: unit.id, propertyId: unit.property_id, openCreateTenant: true }); }} className="font-black text-sky-700 underline decoration-2 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Add tenant</button>; } },
@@ -152,7 +185,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
             : <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>; } },
         ]}>
         {(() => {
-          const unit = units.find((item) => item.id === selectedId) || units.find((item) => item.status !== "inactive");
+          const unit = visibleUnits.find((item) => item.id === selectedId) || visibleUnits[0];
           const context = { recordType: "unit", recordId: unit?.id, propertyId: unit?.property_id };
           return unit && <div data-rental-unit-detail
             onContextMenu={(event) => onContextMenu(event, [{ label: "Open full expenses ledger", onSelect: () => openFullExpenses(unit) }])}

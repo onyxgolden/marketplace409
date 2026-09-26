@@ -1,6 +1,7 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
+import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import RentRollImportPanel from "./RentRollImportPanel";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -26,7 +27,16 @@ export function propertyIdForSelectedUnit(units, unitId) {
   return (units || []).find((unit) => unit.id === unitId)?.property_id || null;
 }
 
-export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }, loadOnMount = true, initialShowCreate = null, recordContext = null }) {
+// A lease counts as expiring soon on an active lease whose end date falls
+// within the dashboard's 90-day expiring-leases window (inclusive). Used by the
+// "expiring" filtered view the dashboard's expiring-leases alert box links to.
+export function isLeaseExpiringSoon(lease, today = new Date().toISOString().slice(0, 10)) {
+  if (!lease || lease.status !== "active" || !lease.end_date) return false;
+  const remaining = Math.ceil((Date.parse(lease.end_date) - Date.parse(today)) / 86_400_000);
+  return remaining >= 0 && remaining <= 90;
+}
+
+export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }, loadOnMount = true, initialShowCreate = null, recordContext = null, initialViewFilter = null }) {
   // Lease setup: stale-while-revalidate under one global key (skipped entirely
   // when loadOnMount is false). The cached setup renders instantly on return
   // visits and refreshes in the background — the last good data never blanks
@@ -44,32 +54,50 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   );
   const setup = loaded || initialSetup;
   const initialDefaults = deriveLeaseFormDefaults(initialSetup, recordContext);
+  // Dashboard deep-link filter ("expiring"): narrows the lease queue to the
+  // 90-day expiring window and shows a banner with a one-click clear.
+  // Re-syncs on navigation so sidebar navigation (which passes null) clears it.
+  const [viewFilter, setViewFilter] = useState(initialViewFilter ?? null);
+  // Re-syncs on navigation so sidebar navigation (which passes null) clears
+  // the banner. Adjusted during render — not in an effect — so the local
+  // "Show all" clear and the navigation prop never fight.
+  const prevInitialViewFilter = useRef(initialViewFilter ?? null);
+  if (prevInitialViewFilter.current !== (initialViewFilter ?? null)) {
+    prevInitialViewFilter.current = initialViewFilter ?? null;
+    setViewFilter(initialViewFilter ?? null);
+  }
+  const visibleLeases = viewFilter === "expiring" ? (setup.leases || []).filter((lease) => isLeaseExpiringSoon(lease)) : (setup.leases || []);
   const contextTenantId = recordContext?.recordType === "tenant" ? recordContext.recordId : null;
   const [message, setMessage] = useState("");
   const [showCreate, setShowCreate] = useState(initialShowCreate ?? initialDefaults.showCreate);
   const [selectedId, setSelectedId] = useState(initialDefaults.selectedId);
   const [selectedUnitId, setSelectedUnitId] = useState("");
   const [working, setWorking] = useState(false);
-  useEffect(() => {
-    if (!selectedUnitId && setup.units.length === 1) setSelectedUnitId(setup.units[0].id);
-  }, [setup.units, selectedUnitId]);
+  // Default to the only unit when there is exactly one — adjusted during
+  // render, not in an effect, mirroring the viewFilter re-sync above.
+  if (!selectedUnitId && setup.units.length === 1) {
+    setSelectedUnitId(setup.units[0].id);
+  }
   // One-time adoption of the loaded dataset (mirrors the old fetch-on-mount):
   // keep the selection on a real lease and collapse the create form when
   // leases exist. Background refreshes never touch selection or the form.
-  const adoptedInitial = useRef(false);
-  useEffect(() => {
-    if (!loaded || adoptedInitial.current) return;
-    adoptedInitial.current = true;
-    const leases = loaded.leases || [];
+  // Adjusted during render — not in an effect — mirroring the viewFilter
+  // re-sync above; the state once-guard keeps background refreshes from
+  // re-adopting.
+  const [adoptedSelection, setAdoptedSelection] = useState(false);
+  if (loaded && !adoptedSelection) {
+    setAdoptedSelection(true);
+    const adoptionLeases = loaded.leases || [];
     if (contextTenantId) {
       const defaults = deriveLeaseFormDefaults(loaded, recordContext);
       setShowCreate(defaults.showCreate);
       setSelectedId(defaults.selectedId);
-      return;
+    } else {
+      const adoptionPool = viewFilter === "expiring" ? adoptionLeases.filter((lease) => isLeaseExpiringSoon(lease)) : adoptionLeases;
+      setSelectedId((current) => adoptionPool.some((item) => item.id === current) ? current : adoptionPool[0]?.id || null);
+      setShowCreate(adoptionLeases.length === 0);
     }
-    setSelectedId((current) => leases.some((item) => item.id === current) ? current : leases[0]?.id || null);
-    setShowCreate(leases.length === 0);
-  }, [loaded, contextTenantId, recordContext]);
+  }
   const selectedUnitPropertyId = propertyIdForSelectedUnit(setup.units, selectedUnitId);
   async function activateLease(lease) {
     const schedule = (setup.schedules || []).find((item) => item.lease_id === lease.id);
@@ -146,13 +174,14 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-lease-setup>
     <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Lease setup</p>
     <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Leases and rent schedules</h2>
-    <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn't import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
+    <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn&apos;t import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
     {(loaded || initialSetup) && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved setup.</p> : null}
     {(loaded || initialSetup) && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
-    {(setup.leases || []).length > 0 && <RentalRecordBrowser title="Leases" records={setup.leases} selectedId={selectedId} onSelect={setSelectedId}
+    {viewFilter === "expiring" && <RentalViewFilterBanner filterLabel="Leases expiring within 90 days" onClear={() => setViewFilter(null)} />}
+    {visibleLeases.length > 0 && <RentalRecordBrowser title="Leases" records={visibleLeases} selectedId={selectedId} onSelect={setSelectedId}
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
-      {(() => { const lease = setup.leases.find((item) => item.id === selectedId) || setup.leases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
+      {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
         return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onCancel={cancelLease} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
