@@ -31,6 +31,7 @@ vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
 }));
 
 import { POST } from "./route.js";
+import { fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail.js";
 
 function request(body) {
   return new Request("http://localhost/api/rental", { method: "POST", body: JSON.stringify(body) });
@@ -59,7 +60,8 @@ describe("send-tenant-invite", () => {
     expect(mocks.send).toHaveBeenCalledTimes(1);
     const message = mocks.send.mock.calls[0][0];
     const today = new Date().toISOString().slice(0, 10);
-    expect(message.id).toBe(`tenant-invite-tenant_1-${today}`);
+    const fingerprint = fingerprintString(`${message.subject}\n${message.bodyText}`);
+    expect(message.id).toBe(`tenant-invite-tenant_1-${today}-${fingerprint}`);
     expect(message.recipient).toBe("eric@example.com");
     expect(message.subject).toContain("portal");
     expect(message.bodyText).toContain("Eric Carrillo");
@@ -108,5 +110,33 @@ describe("send-tenant-invite", () => {
     const response = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
     expect(response.status).toBe(502);
     expect(updateCalls).toHaveLength(0);
+  });
+
+  it("uses a different idempotency key when the email is corrected the same day", async () => {
+    maybeSingleResults = { rental_tenants: tenant };
+    const first = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
+    expect(first.status).toBe(200);
+    const firstMessage = mocks.send.mock.calls[0][0];
+    expect(firstMessage.recipient).toBe("eric@example.com");
+
+    mocks.send.mockClear();
+    maybeSingleResults = { rental_tenants: { ...tenant, email: "eric.correct@example.com" } };
+    const second = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
+    expect(second.status).toBe(200);
+    const secondMessage = mocks.send.mock.calls[0][0];
+    expect(secondMessage.recipient).toBe("eric.correct@example.com");
+    expect(secondMessage.id).not.toBe(firstMessage.id);
+  });
+
+  it("reuses the idempotency key when retrying the identical invitation", async () => {
+    maybeSingleResults = { rental_tenants: tenant };
+    const first = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
+    expect(first.status).toBe(200);
+    const firstId = mocks.send.mock.calls[0][0].id;
+
+    mocks.send.mockClear();
+    const second = await POST(request({ operation: "send-tenant-invite", tenantId: "tenant_1" }));
+    expect(second.status).toBe(200);
+    expect(mocks.send.mock.calls[0][0].id).toBe(firstId);
   });
 });

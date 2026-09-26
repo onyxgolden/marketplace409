@@ -1,16 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey } from "../tenantInviteEmail.js";
+import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "../tenantInviteEmail.js";
+
+describe("fingerprintString", () => {
+  it("is deterministic and hex-encoded", () => {
+    expect(fingerprintString("hello")).toBe(fingerprintString("hello"));
+    expect(fingerprintString("hello")).toMatch(/^[0-9a-f]{8}$/);
+    expect(fingerprintString("hello")).not.toBe(fingerprintString("world"));
+  });
+});
 
 describe("buildTenantInviteIdempotencyKey", () => {
-  it("builds a stable per-tenant per-day key", () => {
-    const key = buildTenantInviteIdempotencyKey({ tenantId: "tenant_1", asOfDate: "2026-09-25" });
-    expect(key).toBe("tenant-invite-tenant_1-2026-09-25");
-    expect(buildTenantInviteIdempotencyKey({ tenantId: "tenant_1", asOfDate: "2026-09-26" })).not.toBe(key);
+  it("builds a stable per-tenant per-day per-payload key", () => {
+    const key = buildTenantInviteIdempotencyKey({ tenantId: "tenant_1", asOfDate: "2026-09-25", payloadFingerprint: "abcd1234" });
+    expect(key).toBe("tenant-invite-tenant_1-2026-09-25-abcd1234");
+    expect(buildTenantInviteIdempotencyKey({ tenantId: "tenant_1", asOfDate: "2026-09-26", payloadFingerprint: "abcd1234" })).not.toBe(key);
+  });
+
+  it("changes the key when the invitation payload changes", () => {
+    const before = buildTenantInviteIdempotencyKey({ tenantId: "tenant_1", asOfDate: "2026-09-25", payloadFingerprint: fingerprintString("old body") });
+    const after = buildTenantInviteIdempotencyKey({ tenantId: "tenant_1", asOfDate: "2026-09-25", payloadFingerprint: fingerprintString("new body") });
+    expect(after).not.toBe(before);
   });
 
   it("rejects invalid input", () => {
-    expect(() => buildTenantInviteIdempotencyKey({ tenantId: "", asOfDate: "2026-09-25" })).toThrow();
-    expect(() => buildTenantInviteIdempotencyKey({ tenantId: "t1", asOfDate: "not-a-date" })).toThrow();
+    expect(() => buildTenantInviteIdempotencyKey({ tenantId: "", asOfDate: "2026-09-25", payloadFingerprint: "abcd1234" })).toThrow();
+    expect(() => buildTenantInviteIdempotencyKey({ tenantId: "t1", asOfDate: "not-a-date", payloadFingerprint: "abcd1234" })).toThrow();
+    expect(() => buildTenantInviteIdempotencyKey({ tenantId: "t1", asOfDate: "2026-09-25", payloadFingerprint: "nope" })).toThrow();
+    expect(() => buildTenantInviteIdempotencyKey({ tenantId: "t1", asOfDate: "2026-09-25" })).toThrow();
   });
 });
 
@@ -49,9 +65,13 @@ describe("buildTenantInviteEmail", () => {
     expect(portalUrl).not.toContain("?");
   });
 
-  it("refuses collection language", () => {
-    expect(() => buildTenantInviteEmail({
-      tenantName: "Overdue Eric", tenantEmail: "e@example.com", leaseSummary: null, portalUrl,
-    })).toThrow(/late-fee or collection language/);
+  it("does not reject legitimate tenant data that resembles collection language", () => {
+    const { bodyText } = buildTenantInviteEmail({
+      tenantName: "Overdue Eric", tenantEmail: "e@example.com",
+      leaseSummary: { unitLabel: "Collection House", monthlyRentCents: 160000, startDate: "2026-08-29" },
+      portalUrl,
+    });
+    expect(bodyText).toContain("Hello Overdue Eric");
+    expect(bodyText).toContain("Collection House");
   });
 });

@@ -7,7 +7,7 @@ import { createRentalLease } from "@/domains/rental-lease";
 import { createRentSchedule } from "@/domains/rent-schedule";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
-import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey } from "@/domains/rental-tenant/tenantInviteEmail";
+import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
 
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
@@ -301,11 +301,17 @@ export async function POST(request) {
         });
         // The recipient always comes from the owner's own tenant record — never
         // free-form input — so this endpoint cannot be repurposed as a relay.
-        // The per-day idempotency key is forwarded as the provider idempotency
-        // key: a double click or retried request resolves to a single email.
+        // The per-day-per-invitation idempotency key is forwarded as the
+        // provider idempotency key: a double click or retried request resolves
+        // to a single email, while a corrected email or lease summary gets a
+        // fresh key and actually sends.
         try {
           await createResendRentalEmailProvider().send({
-            id: buildTenantInviteIdempotencyKey({ tenantId, asOfDate }),
+            id: buildTenantInviteIdempotencyKey({
+              tenantId,
+              asOfDate,
+              payloadFingerprint: fingerprintString(`${rendered.subject}\n${rendered.bodyText}`),
+            }),
             senderName: "FORGE Rental Manager",
             senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
             recipient: email, subject: rendered.subject, bodyText: rendered.bodyText,
