@@ -7,6 +7,15 @@ import RentalApplicationShell, { resolveRentalSectionParam } from "./RentalAppli
 export default function RentalPageClient({ initialSection = null }) {
   const [activeFunctionId, setActiveFunctionId] = useState(() => resolveRentalSectionParam(initialSection) ?? "overview");
   const [activeRecordContext, setActiveRecordContext] = useState(null);
-  function navigate(functionId, recordContext = null) { setActiveFunctionId(functionId); setActiveRecordContext(recordContext); }
-  return <RentalApplicationShell activeFunctionId={activeFunctionId} activeRecordContext={activeRecordContext} onFunctionChange={navigate} />;
+  const [activeViewFilter, setActiveViewFilter] = useState(null);
+  // viewFilter is a dashboard deep-link affordance ("show me just the vacant
+  // units"): it narrows the destination panel's queue and renders a banner with
+  // a one-click clear. Plain sidebar navigation always passes null, which
+  // clears any active filter.
+  function navigate(functionId, recordContext = null, viewFilter = null) {
+    setActiveFunctionId(functionId);
+    setActiveRecordContext(recordContext);
+    setActiveViewFilter(viewFilter);
+  }
+  return <RentalApplicationShell activeFunctionId={activeFunctionId} activeRecordContext={activeRecordContext} activeViewFilter={activeViewFilter} onFunctionChange={navigate} />;
 }
