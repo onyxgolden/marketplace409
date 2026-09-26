@@ -143,3 +143,26 @@ export function sha256Hex(ascii) {
     .map((x) => (x >>> 0).toString(16).padStart(8, "0"))
     .join("");
 }
+
+/**
+ * Page through the staged import queue: the list endpoint is paginated, so
+ * accumulate every page instead of silently capping at the first page.
+ * Returns { items, total } — the total keeps the UI's "showing X of Y"
+ * indicator honest when the queue outgrows one page. Mirrors fetchAllLabels.
+ */
+export async function fetchAllImports(apiFn, pageSize = 200) {
+  const items = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+  for (;;) {
+    const data = await apiFn(`/api/call-shield/imports?page=${page}&pageSize=${pageSize}`);
+    const batch = Array.isArray(data?.items) ? data.items : [];
+    items.push(...batch);
+    if (typeof data?.total === "number") total = data.total;
+    else if (batch.length < pageSize) total = items.length;
+    if (items.length >= total || batch.length < pageSize) break;
+    page += 1;
+    if (page > 200) break; // safety cap
+  }
+  return { items, total: Number.isFinite(total) ? total : items.length };
+}

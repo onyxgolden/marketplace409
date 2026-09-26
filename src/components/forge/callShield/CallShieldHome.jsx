@@ -7,7 +7,7 @@
 // matched in one idempotent request.
 
 import { useEffect, useMemo, useState } from "react";
-import { findPossibleDuplicateCalls } from "@/domains/callShield/callShieldImport";
+import { fetchAllImports, findPossibleDuplicateCalls } from "@/domains/callShield/callShieldImport";
 import {
   IMPORT_FILTERS,
   LABEL_OFFENDER,
@@ -63,6 +63,105 @@ function formatDuration(seconds) {
   return `${m}m ${s % 60}s`;
 }
 
+// The selected case's event timeline, rendered chronologically. The client
+// already fetches the full timeline (GET /api/call-shield/cases/[id]) —
+// this makes it visible instead of only using it for duplicate detection.
+// Rows arrive in seq order (the timeline's source of truth), which is the
+// chronological order shown here.
+const TIMELINE_LABELS = {
+  CASE_OPENED: "Case opened",
+  CALL_LOGGED: "Call logged",
+  EVIDENCE_ATTACHED: "Evidence attached",
+  OPT_OUT_RECORDED: "Opt-out recorded",
+  DNC_REGISTRATION_RECORDED: "DNC registration recorded",
+  RECORDING_CONSENT_ACKNOWLEDGED: "Recording notice acknowledged",
+  DRAFT_LETTER_GENERATED: "Draft letter generated",
+  EXPORT_CREATED: "Export created",
+};
+
+function timelineSummary(event) {
+  const p = event?.payload || {};
+  switch (event?.type) {
+    case "CASE_OPENED":
+      return [p.reportedBusinessName ? `Reported as ${p.reportedBusinessName}.` : "", p.notes || ""]
+        .filter(Boolean)
+        .join(" ");
+    case "CALL_LOGGED": {
+      const head = [p.numberShown, p.direction, p.occurredAt ? formatStartedAt(p.occurredAt) : ""]
+        .filter(Boolean)
+        .join(" · ");
+      const detail = [
+        p.businessNameStated ? `Claimed to represent ${p.businessNameStated}.` : "",
+        p.agentName ? `Agent: ${p.agentName}.` : "",
+        p.pitchNotes || "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return [head, detail].filter(Boolean).join(" — ");
+    }
+    case "EVIDENCE_ATTACHED":
+      return [p.kind, p.fileName].filter(Boolean).join(" · ");
+    case "OPT_OUT_RECORDED":
+      return [`Channel: ${p.channel}.`, p.notes || ""].filter(Boolean).join(" ");
+    case "DNC_REGISTRATION_RECORDED":
+      return [p.phoneNumber, p.proofNotes].filter(Boolean).join(" · ");
+    case "RECORDING_CONSENT_ACKNOWLEDGED":
+      return p.occurredAt ? `Acknowledged ${formatStartedAt(p.occurredAt)}.` : "";
+    case "DRAFT_LETTER_GENERATED":
+      return p.recipientName ? `To ${p.recipientName}.` : "";
+    case "EXPORT_CREATED":
+      return typeof p.itemCount === "number" ? `${p.itemCount} item${p.itemCount === 1 ? "" : "s"}.` : "";
+    default:
+      return "";
+  }
+}
+
+export function CaseTimeline({ events }) {
+  const items = Array.isArray(events) ? events : [];
+  if (items.length === 0) {
+    return (
+      <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">No timeline events yet.</p>
+    );
+  }
+  return (
+    <ol className="mt-2 space-y-2">
+      {items.map((event) => {
+        const summary = timelineSummary(event);
+        return (
+          <li
+            key={event.id || `${event.type}-${event.recordedAt}`}
+            className="rounded border border-slate-200 px-3 py-2 text-sm dark:border-slate-700"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-semibold">{TIMELINE_LABELS[event.type] || event.type}</span>
+              {event.recordedAt ? (
+                <time className="text-xs text-slate-500 dark:text-slate-400">
+                  {formatStartedAt(event.recordedAt)}
+                </time>
+              ) : null}
+            </div>
+            {summary ? (
+              <p className="mt-1 text-slate-600 dark:text-slate-400">{summary}</p>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// "Showing X of Y" for the staged-call review queue. The queue is paginated
+// server-side and the client pages through it all — this line keeps the
+// total visible so older imports are never silently dropped.
+export function ImportCountLine({ visible, total }) {
+  if (typeof total !== "number") return null;
+  return (
+    <p role="status" className="mt-4 text-xs font-semibold text-slate-500 dark:text-slate-400">
+      Showing {visible} of {total} staged call{total === 1 ? "" : "s"}.
+    </p>
+  );
+}
+
 export default function CallShieldHome() {
   // Cases + staged imports: stale-while-revalidate under one key. The last
   // saved lists stay on screen while a background refresh is in flight.
@@ -75,16 +174,23 @@ export default function CallShieldHome() {
   } = useStaleWhileRevalidate(
     "call-shield:home",
     async () => {
-      const [caseData, importData] = await Promise.all([
+      const [caseData, importPage] = await Promise.all([
         api("/api/call-shield/cases"),
-        api("/api/call-shield/imports"),
+        // Paginated server-side: page through the full queue so older
+        // imports are never silently capped.
+        fetchAllImports(api),
       ]);
-      return { cases: caseData.items || [], imports: importData.items || [] };
+      return {
+        cases: caseData.items || [],
+        imports: importPage.items,
+        importTotal: importPage.total,
+      };
     },
     { ttlMs: 60_000 },
   );
   const cases = homeData?.cases ?? null;
   const imports = homeData?.imports ?? null;
+  const importTotal = homeData?.importTotal ?? null;
   // Contact labels live under their own key: classification needs the full
   // set and the endpoint is paginated server-side, so page through it all.
   const { data: labelsData, refresh: refreshLabels } = useStaleWhileRevalidate(
@@ -120,11 +226,31 @@ export default function CallShieldHome() {
   const caseDetail = caseDetailData ?? null;
   const [businessName, setBusinessName] = useState("");
   const [notes, setNotes] = useState("");
+  // Inline rename (name + notes) and typed-confirmation delete for the
+  // working case — a typo'd business name used to be permanent.
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameNotes, setRenameNotes] = useState("");
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState("");
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [explainPermission, setExplainPermission] = useState(false);
   const native = useMemo(() => isNativeShell(), []);
+
+  // Escape dismisses the delete confirmation without deleting.
+  useEffect(() => {
+    if (!deleteArmed) return;
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        setDeleteArmed(false);
+        setDeleteTyped("");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteArmed]);
 
   // Default the working case to the first case once the list loads, without
   // clobbering a case the user (or a mutation below) already picked.
@@ -160,8 +286,59 @@ export default function CallShieldHome() {
     }
   }
 
-  async function handleImportFromPhone() {
-    // The OS permission dialog appears only after the user taps Continue in
+  function openRename() {
+    setRenameValue(caseDetail?.reportedBusinessName || "");
+    setRenameNotes(caseDetail?.notes || "");
+    setRenaming(true);
+  }
+
+  async function handleRenameCase(event) {
+    event.preventDefault();
+    const name = renameValue.trim();
+    if (!name) {
+      setError("Give the case a name.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setBusy("rename-case");
+    try {
+      const data = await api(`/api/call-shield/cases/${encodeURIComponent(selectedCaseId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ reportedBusinessName: name, notes: renameNotes }),
+      });
+      setRenaming(false);
+      setNotice(`Case renamed to ${data.item.reportedBusinessName}.`);
+      await refreshCaseDetail();
+      await refreshHome();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDeleteCase() {
+    setError("");
+    setNotice("");
+    setBusy("delete-case");
+    try {
+      await api(`/api/call-shield/cases/${encodeURIComponent(selectedCaseId)}`, {
+        method: "DELETE",
+      });
+      setDeleteArmed(false);
+      setDeleteTyped("");
+      setSelectedCaseId("");
+      setNotice("Case deleted, along with its timeline.");
+      await refreshHome();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleImportFromPhone() {    // The OS permission dialog appears only after the user taps Continue in
     // the explanation below — never as a surprise on first tap.
     setExplainPermission(false);
     setError("");
@@ -352,6 +529,155 @@ export default function CallShieldHome() {
             </select>
           </label>
         )}
+
+        {selectedCaseId && (
+          <div className="mt-4 rounded border border-slate-200 p-4 dark:border-slate-700">
+            {caseDetailLoading && !caseDetail ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">Loading case…</p>
+            ) : caseDetail ? (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold">{caseDetail.reportedBusinessName}</h3>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                      Opened {formatStartedAt(caseDetail.createdAt)} · {caseDetail.callCount} logged
+                      call{caseDetail.callCount === 1 ? "" : "s"}
+                    </p>
+                    {caseDetail.notes ? (
+                      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                        {caseDetail.notes}
+                      </p>
+                    ) : null}
+                  </div>
+                  {!renaming && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={openRename}
+                        className="rounded border border-slate-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-50 dark:border-slate-600"
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeleteTyped("");
+                          setDeleteArmed(true);
+                        }}
+                        className="rounded border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-700 disabled:opacity-50 dark:border-red-700 dark:text-red-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {renaming && (
+                  <form onSubmit={handleRenameCase} className="mt-3 flex flex-wrap items-end gap-3">
+                    <label className="flex flex-col text-sm">
+                      <span className="mb-1 font-medium">Business name</span>
+                      <input
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        autoFocus
+                        className="w-64 rounded border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+                      />
+                    </label>
+                    <label className="flex flex-col text-sm">
+                      <span className="mb-1 font-medium">Notes</span>
+                      <input
+                        value={renameNotes}
+                        onChange={(e) => setRenameNotes(e.target.value)}
+                        className="w-64 rounded border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={busy === "rename-case"}
+                      className="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+                    >
+                      {busy === "rename-case" ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRenaming(false)}
+                      className="rounded border border-slate-300 px-4 py-2 text-sm dark:border-slate-600"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                )}
+
+                <h4 className="mt-4 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                  Case timeline
+                </h4>
+                <CaseTimeline events={caseDetail.events} />
+              </>
+            ) : null}
+          </div>
+        )}
+
+        {deleteArmed && caseDetail && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Delete case ${caseDetail.reportedBusinessName}`}
+          >
+            <button
+              type="button"
+              aria-label="Cancel delete"
+              tabIndex={-1}
+              onClick={() => {
+                setDeleteArmed(false);
+                setDeleteTyped("");
+              }}
+              className="absolute inset-0 cursor-default bg-slate-950/60"
+            />
+            <div className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+              <h3 className="text-lg font-bold text-red-700 dark:text-red-400">Delete this case?</h3>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                This permanently deletes{" "}
+                <span className="font-semibold">{caseDetail.reportedBusinessName}</span> and its
+                entire timeline ({caseDetail.callCount} logged call
+                {caseDetail.callCount === 1 ? "" : "s"}). Staged imports matched to it return to
+                the review queue. This cannot be undone.
+              </p>
+              <label className="mt-4 flex flex-col text-sm">
+                <span className="mb-1 font-medium">
+                  Type <span className="font-bold">{caseDetail.reportedBusinessName}</span> to
+                  confirm
+                </span>
+                <input
+                  value={deleteTyped}
+                  onChange={(e) => setDeleteTyped(e.target.value)}
+                  autoFocus
+                  className="rounded border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+                />
+              </label>
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleDeleteCase}
+                  disabled={busy === "delete-case" || deleteTyped !== caseDetail.reportedBusinessName}
+                  className="rounded bg-red-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {busy === "delete-case" ? "Deleting…" : "Delete case"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteArmed(false);
+                    setDeleteTyped("");
+                  }}
+                  className="rounded border border-slate-300 px-4 py-2 text-sm dark:border-slate-600"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="rounded border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
@@ -446,6 +772,8 @@ export default function CallShieldHome() {
             onOpenColumn={() => setColumnFilterNow(Date.now())}
           />
         )}
+
+        <ImportCountLine visible={visibleImports.length} total={importTotal} />
 
         <div className="mt-4 space-y-2">
           {visibleImports.length === 0 && (

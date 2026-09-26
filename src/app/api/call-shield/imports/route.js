@@ -8,30 +8,52 @@ import { buildImportDedupeHash, normalizePhoneNumber } from "@/domains/callShiel
 import { guardCallShieldRequest } from "../_lib/auth.js";
 
 const ROW_COLUMNS = "id, device_id, phone_number, normalized_phone, started_at, duration_seconds, call_type, caller_name, imported_at, matched_case_id, dismissed";
-const PAGE_LIMIT = 200;
-const CALL_TYPES = new Set(["incoming", "outgoing", "missed", "rejected", "blocked", "other"]);
+// Paginated like /api/call-shield/labels: the default page size matches the
+// old single-page cap, and the client pages through the full queue (see
+// fetchAllImports) so older imports are never silently dropped.
+const DEFAULT_PAGE_SIZE = 200;
+const MAX_PAGE_SIZE = 1000;
+
+function pageParams(url) {
+  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const pageSize = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, Number.parseInt(url.searchParams.get("pageSize") || String(DEFAULT_PAGE_SIZE), 10) || DEFAULT_PAGE_SIZE),
+  );
+  return { page, pageSize };
+}
 
 export async function GET(request) {
   const auth = await guardCallShieldRequest(request);
   if (auth.response) return auth.response;
   const { user, supabaseClient } = auth;
 
+  const { page, pageSize } = pageParams(new URL(request.url));
+  const from = (page - 1) * pageSize;
   try {
-    const { data: rows, error } = await supabaseClient
+    const { data: rows, count, error } = await supabaseClient
       .from("android_call_imports")
-      .select(ROW_COLUMNS)
+      .select(ROW_COLUMNS, { count: "exact" })
       .eq("owner_id", user.id)
       .eq("dismissed", false)
       .order("matched_case_id", { ascending: true, nullsFirst: true })
       .order("started_at", { ascending: false })
-      .limit(PAGE_LIMIT);
+      .range(from, from + pageSize - 1);
     if (error) throw error;
-    return NextResponse.json({ success: true, items: rows || [] });
+    const items = rows || [];
+    return NextResponse.json({
+      success: true,
+      items,
+      page,
+      pageSize,
+      total: typeof count === "number" ? count : items.length,
+    });
   } catch (error) {
     console.error("Call Shield imports error", error);
     return NextResponse.json({ error: "Unable to load imports." }, { status: 500 });
   }
 }
+const CALL_TYPES = new Set(["incoming", "outgoing", "missed", "rejected", "blocked", "other"]);
 
 function toStagedRow(ownerId, record) {
   const phoneNumber = typeof record?.phoneNumber === "string" ? record.phoneNumber.slice(0, 64) : "";
