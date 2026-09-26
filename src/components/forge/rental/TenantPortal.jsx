@@ -67,16 +67,26 @@ export function isChargePayableThroughForge(charge, schedules, billingEnabled, t
 }
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 
-async function fetchTenantPortal() {
+async function fetchTenantPortal(onAuthRequired) {
   const response = await fetch("/api/rental/portal");
   const body = await response.json();
+  if (response.status === 401) {
+    // Signed-out visitor (e.g. a tenant opening the invite link in a browser where they
+    // haven't signed in yet). The API's raw 401 message ("Authenticated owner id is
+    // required.") is meaningless to a tenant, so flag it and let the component render a
+    // sign-in prompt instead of the generic error state.
+    onAuthRequired?.(true);
+    throw new Error("Please sign in to view your tenant portal.");
+  }
   if (!response.ok) throw new Error(body.error);
+  onAuthRequired?.(false);
   return body.portal;
 }
 
 export default function TenantPortal({ initialPortal = null } = {}) {
   const [portalOverride, setPortalOverride] = useState(initialPortal);
   const [error, setError] = useState("");
+  const [signInRequired, setSignInRequired] = useState(false);
   const [session, setSession] = useState(null); const [starting, setStarting] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [stripeInitError, setStripeInitError] = useState(false); const [stripeRetryCount, setStripeRetryCount] = useState(0);
@@ -86,7 +96,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
   // the cache and refetches directly on reload.
   const { data, error: loadError, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     initialPortal ? null : "rental:tenant-portal",
-    fetchTenantPortal,
+    () => fetchTenantPortal(setSignInRequired),
     { ttlMs: 60_000 },
   );
   const portal = portalOverride ?? data ?? null;
@@ -121,6 +131,21 @@ export default function TenantPortal({ initialPortal = null } = {}) {
     } catch (reason) { setError(reason.message); } finally { setStarting(null); }
   }
   function retryStripeInit() { setStripeInitError(false); setStripeRetryCount((count) => count + 1); }
+  if (signInRequired && !portal) return (
+    <main className="mx-auto max-w-3xl p-8">
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+        <h1 className="text-xl font-black text-slate-900 dark:text-white">Sign in to view your tenant portal</h1>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+          This link opens your personal tenant portal. Sign in with the email address your
+          invitation was sent to, and you&rsquo;ll land right back here.
+        </p>
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <a href="/auth?next=/forge/rental/portal" className="inline-block rounded-xl bg-blue-900 px-5 py-3 font-bold text-white">Sign in</a>
+          <button type="button" onClick={reloadPortal} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 dark:border-slate-600 dark:text-slate-200">Retry</button>
+        </div>
+      </section>
+    </main>
+  );
   if (loadError && !portal) return <main className="mx-auto max-w-3xl p-8"><ForgeErrorState title="Unable to load your tenant portal." detail={loadError} onRetry={reloadPortal} /></main>;
   if (!portal) return <main className="mx-auto max-w-3xl p-8"><ForgeLoadingState label="Loading your tenant portal…" /></main>;
   const summary = buildTenantPaymentSummary(portal.rentals, portal.billingEnabled);
