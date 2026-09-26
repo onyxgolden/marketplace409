@@ -489,7 +489,7 @@ export default function CallShieldHome() {
 
       {!homeData ? null : (
       <>
-      <section className="rounded border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+      <section id="call-shield-cases" className="rounded border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
         <h2 className="text-lg font-semibold">Cases</h2>
         <form onSubmit={handleCreateCase} className="mt-3 flex flex-wrap items-end gap-3">
           <label className="flex flex-col text-sm">
@@ -730,11 +730,34 @@ export default function CallShieldHome() {
               </button>
             )
           ) : (
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-              Automatic import needs the Call Shield Android app — a web page is not allowed to read
-              your call history. Install the app on your phone, open this page inside it, and the
-              import button will appear here.
-            </p>
+            // Explicit fallback for the desktop-only capability: a web page is never allowed
+            // to read a phone's call history — only the installed Android app can. Say why,
+            // say what still works here (everything except the automatic import), and give a
+            // concrete next step instead of a silent missing button.
+            <div className="rounded border border-slate-300 bg-slate-50 p-4 text-sm dark:border-slate-600 dark:bg-slate-800">
+              <p className="font-semibold text-slate-950 dark:text-white">
+                Automatic import needs the Call Shield Android app
+              </p>
+              <p className="mt-2 text-slate-600 dark:text-slate-400">
+                A web page is not allowed to read your call history, so the import button only
+                appears when you open this page inside the Call Shield app on your phone.
+              </p>
+              <p className="mt-2 text-slate-600 dark:text-slate-400">
+                Everything else on this page already works here: open a case, review staged calls,
+                label numbers, and build the case timeline — no app required.
+              </p>
+              <ol className="mt-2 list-decimal space-y-1 pl-5 text-slate-600 dark:text-slate-400">
+                <li>Install the Call Shield app on your phone.</li>
+                <li>Open this page inside the app.</li>
+                <li>The import button appears here — review the staged calls before anything is logged.</li>
+              </ol>
+              <a
+                href="#call-shield-cases"
+                className="mt-3 inline-block font-semibold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300"
+              >
+                Continue working with your cases
+              </a>
+            </div>
           )}
         </div>
 

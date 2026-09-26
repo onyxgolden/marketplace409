@@ -33,6 +33,7 @@ import {
 } from "@/domains/chartBuilder";
 import TemplatePicker from "./TemplatePicker.jsx";
 import BackgroundPicker from "./BackgroundPicker.jsx";
+import ChartBuilderSmallScreenNotice from "./ChartBuilderSmallScreenNotice.jsx";
 import ChartCanvas from "./ChartCanvas.jsx";
 import ChartImportWizard from "./import/ChartImportWizard.jsx";
 import ChartPersistenceControls from "./ChartPersistenceControls.jsx";
@@ -67,6 +68,9 @@ export default function ChartBuilderPage() {
   const connectArmed = connectSourceId !== undefined;
   const [gridPref, setGridPref] = useState(() => getGridPreference());
   const [notice, setNotice] = useNotice();
+  // Narrow-viewport honesty banner (see below): dismissible per session, so a
+  // phone user who understands the trade-off can keep working without the nag.
+  const [smallScreenNoticeDismissed, setSmallScreenNoticeDismissed] = useState(false);
   const histRef = useRef(hist);
   useEffect(() => {
     histRef.current = hist;
@@ -375,6 +379,16 @@ export default function ChartBuilderPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-100">
+      {/* Narrow viewports: the chart builder is a precision-pointer canvas tool
+         that silently fights a phone screen. Say so up front — the notice hides
+         itself on desktop widths — and offer the honest way forward: finish on a
+         larger screen, or dismiss and keep exploring here. Never a silent dead
+         end. */}
+      {!smallScreenNoticeDismissed && (
+        <ChartBuilderSmallScreenNotice
+          onDismiss={() => setSmallScreenNoticeDismissed(true)}
+        />
+      )}
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-900 px-4 py-2.5">
         <span className="mr-2 text-base font-bold text-white">Chart Builder</span>

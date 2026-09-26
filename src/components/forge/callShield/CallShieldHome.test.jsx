@@ -189,6 +189,48 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+describe("CallShieldHome web import fallback", () => {
+  it("explains why auto-import is unavailable, what still works, and links onward — never a silent dead end", async () => {
+    seed();
+    const { container } = await mountHome();
+    const heading = [...container.querySelectorAll("p")].find((p) =>
+      p.textContent.includes("Automatic import needs the Call Shield Android app"),
+    );
+    expect(heading).not.toBeUndefined();
+    const fallback = heading.closest("div");
+    // Why it's unavailable
+    expect(fallback.textContent).toContain("not allowed to read your call history");
+    // What still works on the web anyway
+    expect(fallback.textContent).toContain("Everything else on this page already works here");
+    // Concrete next steps
+    expect(fallback.textContent).toContain("Install the Call Shield app on your phone");
+    // A clear action to continue in the full web view
+    const continueLink = fallback.querySelector('a[href="#call-shield-cases"]');
+    expect(continueLink).not.toBeNull();
+    expect(continueLink.textContent).toContain("Continue working with your cases");
+    // The cases section is a real anchor target for that link
+    expect(container.querySelector("#call-shield-cases")).not.toBeNull();
+  });
+
+  it("does not show the fallback when running inside the native app shell", async () => {
+    window.Capacitor = { isNativePlatform: () => true };
+    try {
+      seed();
+      const { container } = await mountHome();
+      const heading = [...container.querySelectorAll("p")].find((p) =>
+        p.textContent.includes("Automatic import needs the Call Shield Android app"),
+      );
+      expect(heading).toBeUndefined();
+      const importButton = [...container.querySelectorAll("button")].find((b) =>
+        b.textContent.includes("Import last 30 days from this phone"),
+      );
+      expect(importButton).not.toBeUndefined();
+    } finally {
+      delete window.Capacitor;
+    }
+  });
+});
+
 describe("CallShieldHome dismiss confirmation", () => {
   it("gates dismissing a staged import behind a confirm naming the call — no PATCH fires on click alone", async () => {
     seed();

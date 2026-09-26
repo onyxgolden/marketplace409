@@ -25,6 +25,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import ThemeToggle from "@/components/theme/ThemeToggle";
 import { WORKSPACES, isWorkspaceActive } from "@/lib/workspaces";
 import CommandPaletteHost, { CommandPaletteTrigger } from "@/components/forge/CommandPalette";
 
@@ -343,6 +344,18 @@ export default function WorkspaceShell({ children, forgeCommandPalette = false }
             409 MARKETPLACE
           </Link>
           <div className="flex items-center gap-2">
+            {/* Phone users previously had no way to reach the account menu at all on
+               workspace pages (Rental, Charts, Designer, Scheduling, Dev, …) — sign-out
+               required desktop width. The same shared account menu the desktop right
+               rail uses, now in the mobile header — mirroring ForgeApplicationRail. */}
+            <AccountMenu tone="light" />
+
+            <ThemeToggle
+              compact
+              menuAlign="bottom-right"
+              variant="onLight"
+            />
+
             {/* Touch/mouse path to the FORGE command palette -- phone users
                have no keyboard for Cmd/Ctrl+K. */}
             {forgeCommandPalette ? <CommandPaletteTrigger tone="light" /> : null}
