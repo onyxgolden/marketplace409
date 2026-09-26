@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { forgeTheme } from "@/components/forge/theme";
 import { ForgeEmptyState, ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { forecastCashFlow } from "@/domains/ledger/brain/forecast.js";
 import { money } from "./formatMoney.js";
 
 const DAY_OPTIONS = [30, 60, 90];
@@ -72,6 +73,110 @@ function ForecastSparkline({ checkpoints, danger }) {
   );
 }
 
+// Low-confidence burn block: when the history behind the daily burn is too
+// thin, the burn figure (and the lowest-balance figure that depends on it) are
+// withheld as dashes -- never presented as facts. The user can supply a daily
+// spend assumption, which re-runs the pure forecast client-side under their
+// number and labels it as theirs.
+function AccountBurnBlock({
+  account,
+  withheld,
+  explanation,
+  override,
+  draft,
+  onDraftChange,
+  onApply,
+  onClear,
+}) {
+  const inputClass =
+    "w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100";
+
+  return (
+    <div className="mt-2">
+      <p className={forgeTheme.textSmall}>
+        Lowest:{" "}
+        {withheld ? (
+          <span className="font-black text-slate-900 dark:text-slate-100">—</span>
+        ) : (
+          <>
+            {money(account.minBalance)} on {formatShortDate(account.minBalanceDate)}
+          </>
+        )}
+        {" · "}Burn{" "}
+        {withheld ? (
+          <span className="font-black text-slate-900 dark:text-slate-100">—</span>
+        ) : override != null ? (
+          <span>
+            {money(override)}/day{" "}
+            <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-black uppercase text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
+              your estimate
+            </span>
+          </span>
+        ) : (
+          <span>
+            {money(account.dailyBurn)}/day
+          </span>
+        )}
+      </p>
+
+      {withheld && (
+        <div
+          role="status"
+          className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/30"
+        >
+          <p className="text-xs font-bold text-amber-900 dark:text-amber-200">
+            Burn withheld — {explanation}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+            The daily spend rate can&apos;t be measured from this little history, so it
+            isn&apos;t shown — and this account&apos;s balance projection and shortfall
+            warnings are hidden with it. Enter what
+            you actually spend per day and the projection re-runs from your number.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label className="text-xs font-bold text-amber-900 dark:text-amber-200">
+              Assume $/day
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={draft}
+                onChange={(event) => onDraftChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") onApply();
+                }}
+                aria-label={`Assume daily spend for ${account.name}`}
+                className={`ml-2 ${inputClass}`}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={onApply}
+              className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-bold text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+
+      {override != null && (
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          Projected from your estimate of {money(override)}/day, not from measured
+          history.{" "}
+          <button
+            type="button"
+            onClick={onClear}
+            className="font-bold text-sky-700 underline dark:text-sky-400"
+          >
+            Clear estimate
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
 async function loadForecast(days) {
   const response = await fetch(`/api/financial/forecast?days=${days}`);
   const payload = await response.json();
@@ -108,10 +213,72 @@ export default function CashForecastPanel() {
   }
   const visible = forecast ?? lastForecast;
 
-  const warnings = visible?.warnings ?? [];
-  const accounts = visible?.accounts ?? [];
+  // User-supplied daily-spend assumptions, keyed by account id. They flip a
+  // withheld burn metric back to shown -- labeled as the user's estimate, and
+  // re-running the pure forecast client-side under that number.
+  const [burnOverrides, setBurnOverrides] = useState({});
+  const [burnDrafts, setBurnDrafts] = useState({});
+
+  const burnConfidence = visible?.meta?.burnConfidence ?? null;
+  const burnWithheld = burnConfidence != null && burnConfidence.confident === false;
+
+  const accounts = useMemo(() => visible?.accounts ?? [], [visible]);
+  const patterns = visible?.recurringPatterns ?? null;
+  const meta = visible?.meta ?? null;
+
+  const recomputedByAccount = useMemo(() => {
+    if (!burnWithheld || !patterns || !meta) return {};
+    const out = {};
+    for (const [accountId, override] of Object.entries(burnOverrides)) {
+      const account = accounts.find((entry) => entry.accountId === accountId);
+      const assumed = Number(override);
+      if (!account || !Number.isFinite(assumed) || assumed < 0) continue;
+      const result = forecastCashFlow({
+        accounts: [
+          {
+            accountId: account.accountId,
+            name: account.name,
+            startingBalance: account.startingBalance,
+          },
+        ],
+        recurringPatterns: patterns,
+        dailyBurn: { [accountId]: assumed },
+        startDate: meta.startDate,
+        days: meta.days,
+        safetyBuffer: meta.safetyBuffer,
+      });
+      if (result.accounts[0]) out[accountId] = result.accounts[0];
+    }
+    return out;
+  }, [burnWithheld, patterns, meta, accounts, burnOverrides]);
+
+  // Accounts with an applied assumption show the re-run projection; everything
+  // else shows the server figure (with burn metrics withheld when confidence
+  // is low). When the burn is withheld and the user hasn't supplied an
+  // assumption, the server projection is stripped: its checkpoints and
+  // warnings were computed with the low-confidence burn, so keeping them
+  // would leak the unreliable trajectory through the sparkline, the warning
+  // list, and the danger coloring. Warnings always follow the displayed
+  // accounts.
+  const displayAccounts = accounts.map((account) => {
+    const recomputed = recomputedByAccount[account.accountId];
+    if (recomputed) return recomputed;
+    if (burnWithheld) {
+      return { ...account, checkpoints: [], warnings: [] };
+    }
+    return account;
+  });
+
+  // Accounts whose projection is withheld (no user assumption applied) — the
+  // "no shortfalls" all-clear must not print for them.
+  const withheldProjectionCount = burnWithheld
+    ? accounts.filter((account) => recomputedByAccount[account.accountId] == null).length
+    : 0;
+  const warnings = displayAccounts
+    .flatMap((account) => account.warnings ?? [])
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const dangerByAccount = Object.fromEntries(
-    accounts.map((account) => [
+    displayAccounts.map((account) => [
       account.accountId,
       account.warnings?.some((w) => w.type === "shortfall")
         ? "shortfall"
@@ -218,32 +385,88 @@ export default function CashForecastPanel() {
             )}
 
             {visible && warnings.length === 0 && accounts.length > 0 && (
-              <p className={forgeTheme.textSmall}>
-                No shortfalls or tight spots in the next {days} days.
-              </p>
+              withheldProjectionCount > 0 ? (
+                <p className={forgeTheme.textSmall}>
+                  Shortfall warnings are withheld for{" "}
+                  {withheldProjectionCount === accounts.length ? "all accounts" : "some accounts"} —
+                  not enough spending history to project reliably.
+                </p>
+              ) : (
+                <p className={forgeTheme.textSmall}>
+                  No shortfalls or tight spots in the next {days} days.
+                </p>
+              )
             )}
 
             {visible && accounts.length > 0 && (
               <ul className={`flex flex-col gap-3 ${warnings.length > 0 ? "mt-4" : "mt-2"}`}>
-                {accounts.map((account) => (
-                  <li
-                    key={account.accountId}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{account.name}</p>
-                      <p className={forgeTheme.textSmall}>Now {money(account.startingBalance)}</p>
-                    </div>
-                    <ForecastSparkline
-                      checkpoints={account.checkpoints}
-                      danger={dangerByAccount[account.accountId]}
-                    />
-                    <p className={forgeTheme.textSmall}>
-                      Lowest: {money(account.minBalance)} on {formatShortDate(account.minBalanceDate)}
-                      {" · "}Burn {money(account.dailyBurn)}/day
-                    </p>
-                  </li>
-                ))}
+                {displayAccounts.map((account) => {
+                  const override =
+                    burnWithheld && burnOverrides[account.accountId] != null
+                      ? Number(burnOverrides[account.accountId])
+                      : null;
+                  // No user assumption + withheld burn = no projection at all:
+                  // the sparkline would otherwise draw the unreliable trajectory.
+                  const projectionWithheld = burnWithheld && override == null;
+                  return (
+                    <li
+                      key={account.accountId}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{account.name}</p>
+                        <p className={forgeTheme.textSmall}>Now {money(account.startingBalance)}</p>
+                      </div>
+                      {projectionWithheld ? (
+                        <div
+                          role="status"
+                          className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900"
+                        >
+                          <p className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                            Projection withheld — not enough spending history to project this account&apos;s balance.
+                          </p>
+                        </div>
+                      ) : (
+                        <ForecastSparkline
+                          checkpoints={account.checkpoints}
+                          danger={dangerByAccount[account.accountId]}
+                        />
+                      )}
+                      <AccountBurnBlock
+                        account={account}
+                        withheld={burnWithheld && override == null}
+                        explanation={burnConfidence?.explanation ?? ""}
+                        override={override}
+                        draft={burnDrafts[account.accountId] ?? ""}
+                        onDraftChange={(value) =>
+                          setBurnDrafts((current) => ({
+                            ...current,
+                            [account.accountId]: value,
+                          }))
+                        }
+                        onApply={() => {
+                          const assumed = Number(burnDrafts[account.accountId]);
+                          if (!Number.isFinite(assumed) || assumed < 0) return;
+                          setBurnOverrides((current) => ({
+                            ...current,
+                            [account.accountId]: assumed,
+                          }));
+                          setBurnDrafts((current) => ({
+                            ...current,
+                            [account.accountId]: "",
+                          }));
+                        }}
+                        onClear={() =>
+                          setBurnOverrides((current) => {
+                            const next = { ...current };
+                            delete next[account.accountId];
+                            return next;
+                          })
+                        }
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

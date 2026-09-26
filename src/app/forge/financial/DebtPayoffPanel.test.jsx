@@ -174,6 +174,37 @@ describe("DebtPayoffPanel clear-terms confirmation", () => {
   });
 });
 
+describe("DebtPayoffPanel partial-coverage note", () => {
+  beforeEach(() => { vi.clearAllMocks(); clearSWRCache(); });
+  afterEach(() => document.body.innerHTML = "");
+
+  function mockGetPartialCoverage() {
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).startsWith("/api/financial/debt-payoff?") && (!init || !init.method || init.method === "GET")) {
+        const full = payload(true);
+        full.data.needsTerms = [
+          { id: "b", name: "Store Card", balance: 800, missingApr: true, missingMinimum: true },
+        ];
+        return new Response(JSON.stringify(full), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  it("states that the strategy figures exclude debts still waiting on rates", async () => {
+    mockGetPartialCoverage();
+    const container = await mount();
+    expect(container.textContent).toContain("Covers 1 of 2 debts");
+    expect(container.textContent).toContain("understate the real totals");
+  });
+
+  it("shows no coverage note when every debt has confirmed terms", async () => {
+    mockGet(true);
+    const container = await mount();
+    expect(container.textContent).not.toContain("Covers 1 of");
+  });
+});
+
 describe("DebtPayoffPanel question chips", () => {
   beforeEach(() => { vi.clearAllMocks(); clearSWRCache(); });
   afterEach(() => document.body.innerHTML = "");
