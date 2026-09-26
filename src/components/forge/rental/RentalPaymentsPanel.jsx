@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalViewFilterBanner from "./RentalViewFilterBanner";
+import RentalBatchRentChecklist from "./RentalBatchRentChecklist";
 import { isChargeForgeCollectible } from "@/application/rental/isChargeForgeCollectible";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -154,7 +155,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   );
   const data = loaded || { openCharges: [], payments: [], settlements: [], schedules: [], billingEnabled: false };
   const account = initialAccount === undefined ? loadedAccount : initialAccount;
-  const [selectedId, setSelectedId] = useState(""), [showOffline, setShowOffline] = useState(false), [showSetup, setShowSetup] = useState(initialShowSetup);
+  const [selectedId, setSelectedId] = useState(""), [showOffline, setShowOffline] = useState(false), [showSetup, setShowSetup] = useState(initialShowSetup), [showBatch, setShowBatch] = useState(false);
   const [message, setMessage] = useState(""), [saved, setSaved] = useState(""), [busy, setBusy] = useState(false);
   // Dashboard deep-link filter ("overdue"): narrows the charge queue to
   // overdue charges and shows a banner with a one-click clear. Re-syncs on
@@ -206,6 +207,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
           <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Review charges and payment history, then act on the selected record.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => setShowBatch((value) => !value)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">{showBatch ? "Hide batch checklist" : "Batch checklist"}</button>
           <button type="button" onClick={() => setShowOffline((value) => !value)} className={`rounded-xl px-4 py-2 text-sm font-black transition ${goldControlClassName}`}>{showOffline ? "Cancel offline payment" : "Record offline payment"}</button>
           <button type="button" onClick={() => setShowSetup((value) => !value)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">{showSetup ? "Hide billing setup" : "Billing setup"}</button>
         </div>
@@ -214,6 +216,7 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
       {saved ? <p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">{saved}</p> : null}
       {loaded && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved rent collection.</p> : null}
       {loaded && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
+      {showBatch ? <RentalBatchRentChecklist data={data} onRefresh={refresh} /> : null}
       {showOffline ? <form aria-label="Record offline payment" onSubmit={recordOffline} className="mt-6 grid gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-900/60 dark:bg-amber-950/30 md:grid-cols-2">
         <label className="text-sm font-bold text-slate-900 dark:text-white md:col-span-2">Open rent charge<select name="chargeId" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="">Select a charge</option>{data.openCharges.map((charge) => <option key={charge.id} value={charge.id}>{charge.period} · due {charge.due_date} · {money.format((Number(charge.amount_cents) - Number(charge.paid_amount_cents)) / 100)}</option>)}</select></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Payment method<select name="paymentMethod" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-3 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white"><option value="cash">Cash</option><option value="cashiers_check">Cashier&apos;s check</option></select></label>
