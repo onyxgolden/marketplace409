@@ -79,6 +79,30 @@ describe("TenantLedgerPage", () => {
     expect(rows[1].cells[3].textContent).toContain("$500.00");
   });
 
+  it("shows the deposit state distinctly on payment rows — never conflated with settled money", async () => {
+    const payload = {
+      ...ledgerPayload,
+      ledger: {
+        ...ledgerPayload.ledger,
+        entries: [
+          { ...ledgerPayload.ledger.entries[0] },
+          { ...ledgerPayload.ledger.entries[1], id: "payment:p1", depositState: "received" },
+          { ...ledgerPayload.ledger.entries[1], id: "payment:p2", depositState: "deposited" },
+        ],
+      },
+    };
+    ({ container, root } = renderPage({}, payload));
+    await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
+    const rows = container.querySelectorAll("[data-ledger-table] tbody tr");
+    expect(rows).toHaveLength(3);
+    // Charge rows carry no deposit badge.
+    expect(rows[0].textContent).not.toContain("Awaiting deposit");
+    expect(rows[0].textContent).not.toContain("Deposited");
+    // Payment rows show their own state at a glance.
+    expect(rows[1].textContent).toContain("Awaiting deposit");
+    expect(rows[2].textContent).toContain("Deposited");
+  });
+
   it("shows the rolling balance per row, red while the tenant owes", async () => {
     ({ container, root } = renderPage());
     await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));

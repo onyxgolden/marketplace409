@@ -135,7 +135,9 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
     {
       icon: Wallet, label: "Rent collected", destination: "charges", tone: "success",
       value: money.format(summary.collectedThisMonthCents / 100),
-      detail: `${collectedPeriodLabel} — succeeded payments, net of refunds`,
+      detail: summary.awaitingDepositCents > 0
+        ? `${collectedPeriodLabel} — succeeded payments, net of refunds · ${money.format(summary.awaitingDepositCents / 100)} awaiting deposit`
+        : `${collectedPeriodLabel} — succeeded payments, net of refunds`,
     },
     {
       icon: AlertTriangle, label: "Outstanding balances", destination: "charges",

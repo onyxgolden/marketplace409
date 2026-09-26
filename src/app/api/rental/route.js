@@ -56,7 +56,7 @@ export async function GET() {
         .select("id, tenant_id, lease_id, notification_type, channel, recipient, subject, body_text, status, failure_message, scheduled_for, attempt_count, max_attempts, next_attempt_at, created_at, sent_at")
         .order("created_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_payments")
-        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, received_at, succeeded_at, created_at")
+        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, received_at, succeeded_at, created_at, deposit_state, deposited_at")
         .order("created_at", { ascending: false }),
       authenticated.supabaseClient.from("rental_settlements")
         .select("id, payment_id, provider, provider_balance_transaction_id, provider_payout_id, gross_amount_cents, fee_amount_cents, net_amount_cents, currency_code, status, available_at, paid_out_at, created_at")
@@ -455,12 +455,30 @@ export async function POST(request) {
         // per submission intent so a retried POST replays instead of double-recording.
         const tenantId = typeof input.tenantId === "string" && input.tenantId.trim() ? input.tenantId.trim() : null;
         const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim() ? input.idempotencyKey.trim() : null;
+        // depositState: "received" (collected, not yet in the bank) or "deposited".
+        // Defaults to "received" so un-deposited money is never silently claimed as
+        // settled — the form captures it explicitly at record time.
+        const depositState = input.depositState === "deposited" ? "deposited" : "received";
         const { data, error } = await authenticated.supabaseClient.rpc("record_offline_rental_payment", {
           p_owner_id: effectiveOwnerId, p_charge_id: input.chargeId, p_payment_method: input.paymentMethod,
           p_amount_cents: amountCents, p_received_at: input.receivedAt,
           p_receipt_reference: input.receiptReference || null, p_notes: input.notes || null,
           p_allow_overpayment_credit: input.allowOverpaymentCredit === true,
           p_tenant_id: tenantId, p_idempotency_key: idempotencyKey,
+          p_deposit_state: depositState,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, payment: data });
+      }
+      case "set-payment-deposit-state": {
+        // Reversible transition between "received / awaiting deposit" and
+        // "deposited / settled" for a recorded payment. The RPC validates the
+        // state, the payment's existence, and that the payment moved money.
+        const depositState = body.depositState === "deposited" ? "deposited" : body.depositState === "received" ? "received" : null;
+        if (typeof body.paymentId !== "string" || !body.paymentId.trim() || !depositState)
+          return badRequest("paymentId and a valid depositState (received or deposited) are required.");
+        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_payment_deposit_state", {
+          p_owner_id: effectiveOwnerId, p_payment_id: body.paymentId.trim(), p_deposit_state: depositState,
         });
         if (error) throw error;
         return NextResponse.json({ success: true, payment: data });

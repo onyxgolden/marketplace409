@@ -24,7 +24,7 @@ describe("buildRentalDashboardSummary", () => {
     const summary = buildRentalDashboardSummary({
       units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active" }],
       insurancePolicies: [{ lease_id: "l1", status: "verified" }], workOrders: [{ status: "completed" }],
-      payments: [{ status: "succeeded", settled_at: "2026-08-13T12:00:00Z" }], deposits: [{ lease_id: "l1" }],
+      payments: [{ status: "succeeded", deposit_state: "deposited" }], deposits: [{ lease_id: "l1" }],
       inspections: [{ lease_id: "l1", inspection_type: "move_in", status: "finalized" }],
     }, null, "2026-08-13");
     expect(summary).toMatchObject({ vacancies: 0, openMaintenance: 0, awaitingSettlement: 0, missingInsurance: 0, missingDeposits: 0, missingMoveInInspections: 0 });
@@ -141,5 +141,51 @@ describe("buildRentalDashboardSummary", () => {
       expiringLeases: 0, expiringLeasesWithin30Days: 0, billingEnabled: false,
     });
     expect(summary.needsAttention).toEqual([]);
+  });
+
+  it("splits succeeded payments into awaiting-deposit and deposited subtotals, never conflating them", () => {
+    const summary = buildRentalDashboardSummary({
+      units: [], leases: [],
+      payments: [
+        { id: "p1", status: "succeeded", amount_cents: 160000, refunded_amount_cents: 0, deposit_state: "received" },
+        { id: "p2", status: "succeeded", amount_cents: 160000, refunded_amount_cents: 10000, deposit_state: "received" },
+        { id: "p3", status: "succeeded", amount_cents: 160000, refunded_amount_cents: 0, deposit_state: "deposited" },
+        { id: "p4", status: "failed", amount_cents: 160000, refunded_amount_cents: 0, deposit_state: "received" },
+      ],
+    }, null, "2026-08-13");
+    // Net of refunds; the failed payment moves no money and is excluded.
+    expect(summary.awaitingDepositCents).toBe(310000);
+    expect(summary.awaitingDepositCount).toBe(2);
+    expect(summary.awaitingSettlement).toBe(2);
+    const item = summary.needsAttention.find((entry) => entry.id === "awaiting-settlement");
+    expect(item).toMatchObject({ label: "Payments awaiting deposit", count: 2, amountCents: 310000 });
+    expect(item.detail).toContain("$3,100.00 collected but not yet deposited");
+  });
+
+  it("flags pre-migration succeeded payments as awaiting deposit unless a paid-out settlement proves otherwise", () => {
+    const payments = [
+      { id: "p1", status: "succeeded", amount_cents: 160000, refunded_amount_cents: 0 },
+      { id: "p2", status: "succeeded", amount_cents: 160000, refunded_amount_cents: 0 },
+    ];
+    const withoutSettlements = buildRentalDashboardSummary({ units: [], leases: [], payments }, null, "2026-08-13");
+    expect(withoutSettlements.awaitingDepositCents).toBe(320000);
+    const withSettlements = buildRentalDashboardSummary({
+      units: [], leases: [], payments,
+      settlements: [{ payment_id: "p2", status: "paid_out" }, { payment_id: "p1", status: "pending" }],
+    }, null, "2026-08-13");
+    expect(withSettlements.awaitingDepositCents).toBe(160000);
+    expect(withSettlements.awaitingDepositCount).toBe(1);
+  });
+
+  it("keeps the collected-this-month headline unchanged while exposing the deposit split beside it", () => {
+    const summary = buildRentalDashboardSummary({
+      units: [], leases: [],
+      payments: [
+        { id: "p1", status: "succeeded", succeeded_at: "2026-08-05T00:00:00Z", amount_cents: 160000, refunded_amount_cents: 0, deposit_state: "received" },
+        { id: "p2", status: "succeeded", succeeded_at: "2026-08-05T00:00:00Z", amount_cents: 160000, refunded_amount_cents: 0, deposit_state: "deposited" },
+      ],
+    }, null, "2026-08-13");
+    expect(summary.collectedThisMonthCents).toBe(320000);
+    expect(summary.awaitingDepositCents).toBe(160000);
   });
 });

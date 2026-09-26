@@ -1,6 +1,12 @@
+import { isAwaitingDeposit, paymentNetCents } from "./paymentDepositState";
+
 const OPEN_STATUSES = new Set(["open", "pending", "submitted", "assigned", "in_progress"]);
 const MAINTENANCE_PRIORITY_WEIGHT = { urgent: 3, emergency: 3, high: 2, normal: 1, medium: 1, low: 0 };
 const NEEDS_ATTENTION_LIMIT = 6;
+
+function moneyFormat(cents) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
 
 function daysBetween(date, today) {
   return Math.ceil((Date.parse(date) - Date.parse(today)) / 86_400_000);
@@ -12,10 +18,6 @@ function monthKey(dateLike) {
 
 function paymentDate(payment) {
   return payment.succeeded_at || payment.received_at || payment.created_at || null;
-}
-
-function paymentNetCents(payment) {
-  return Number(payment.amount_cents || 0) - Number(payment.refunded_amount_cents || 0);
 }
 
 function buildMaintenanceQueue(openItems, unitById) {
@@ -52,8 +54,21 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
   const urgentMaintenanceItems = openMaintenanceItems.filter((item) =>
     (MAINTENANCE_PRIORITY_WEIGHT[String(item.priority).toLowerCase()] ?? 1) >= 2,
   );
-  const unsettledPayments = payments.filter((payment) =>
-    payment.status === "succeeded" && !payment.settlement_id && !payment.settled_at,
+  // Awaiting deposit: money that moved (succeeded, incl. refunded rows on their
+  // remaining portion) but has not reached the bank yet. This REPLACES the old
+  // settlement_id/settled_at filter, which never matched any row (those columns
+  // were never selected) and therefore counted every succeeded payment as
+  // "awaiting settlement". deposit_state is the explicit, visible state now.
+  // The paid_out-settlement fallback keeps pre-migration rows honest even
+  // before the backfill runs.
+  const settlementByPaymentId = new Map(
+    (data.settlements || []).map((settlement) => [settlement.payment_id, settlement]),
+  );
+  const awaitingDepositPayments = payments.filter((payment) =>
+    isAwaitingDeposit(payment, settlementByPaymentId.get(payment.id) || null),
+  );
+  const awaitingDepositCents = awaitingDepositPayments.reduce(
+    (sum, payment) => sum + paymentNetCents(payment), 0,
   );
   const verifiedLeaseIds = new Set((data.insurancePolicies || [])
     .filter((policy) => ["verified", "active", "approved"].includes(String(policy.status).toLowerCase()))
@@ -147,12 +162,15 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
       detail: `${routine} routine request${routine === 1 ? "" : "s"} in progress.`, count: routine,
     }));
   }
-  if (unsettledPayments.length > 0) {
+  if (awaitingDepositPayments.length > 0) {
     needsAttention.push(Object.freeze({
+      // Id kept as "awaiting-settlement": the guided workflow's Today Priorities
+      // explanations and steps key off it (todaysPrioritiesWorkflow.js).
       id: "awaiting-settlement", severity: "info", score: 90,
-      label: "Payments awaiting settlement", destination: "reconciliation",
-      detail: `${unsettledPayments.length} succeeded payment${unsettledPayments.length === 1 ? "" : "s"} not yet settled.`,
-      count: unsettledPayments.length,
+      label: "Payments awaiting deposit", destination: "reconciliation",
+      detail: `${moneyFormat(awaitingDepositCents)} collected but not yet deposited across ${awaitingDepositPayments.length} payment${awaitingDepositPayments.length === 1 ? "" : "s"}.`,
+      count: awaitingDepositPayments.length,
+      amountCents: awaitingDepositCents,
     }));
   }
   if (openSupportCases.length > 0) {
@@ -180,7 +198,13 @@ export function buildRentalDashboardSummary(data = {}, report = null, today = ne
     externallyManagedCents,
     externallyManagedChargeCount,
     openMaintenance: openMaintenanceItems.length,
-    awaitingSettlement: unsettledPayments.length,
+    // Deposit-state split (Slice D): collected-but-not-deposited money is never
+    // conflated with settled money. The count feeds the needs-attention queue;
+    // the cents feed the dashboard card's subtotal line.
+    awaitingDepositCount: awaitingDepositPayments.length,
+    awaitingDepositCents,
+    // Back-compat alias: existing tests and Today Priorities reference this name.
+    awaitingSettlement: awaitingDepositPayments.length,
     missingInsurance: missingInsurance.length,
     missingDeposits: missingDeposits.length,
     missingMoveInInspections: missingMoveInInspections.length,

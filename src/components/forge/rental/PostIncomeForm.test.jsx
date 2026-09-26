@@ -207,6 +207,34 @@ describe("PostIncomeForm", () => {
     expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
+  it("defaults the deposit state to received and sends deposited when the checkbox is checked", async () => {
+    const post = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, payment: { amountCents: 127500 } }) }));
+    vi.stubGlobal("fetch", post);
+    ({ container, root } = renderForm());
+    const amountInput = container.querySelector('input[type="number"]');
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    await act(async () => {
+      nativeSetter.call(amountInput, "1275");
+      amountInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // Default: unchecked — money in hand, not yet in the bank.
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(JSON.parse(post.mock.calls[0][1].body).payment.depositState).toBe("received");
+    // Checked: the user confirms the money is already deposited.
+    const depositCheckbox = [...container.querySelectorAll('input[type="checkbox"]')]
+      .find((input) => input.closest("label")?.textContent.includes("Already deposited"));
+    expect(depositCheckbox).toBeTruthy();
+    await act(async () => {
+      depositCheckbox.click();
+    });
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(JSON.parse(post.mock.calls[1][1].body).payment.depositState).toBe("deposited");
+  });
+
   it("surfaces the API's own error when the RPC refuses the payment", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({ error: "Payment exceeds the remaining rent balance." }) })));
     ({ container, root } = renderForm());

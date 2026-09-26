@@ -58,7 +58,7 @@ export async function GET(request) {
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type")
         .eq("owner_id", effectiveOwnerId).order("due_date", { ascending: true }),
       supabaseClient.from("rental_payments")
-        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, notes, received_at, succeeded_at, created_at")
+        .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, notes, received_at, succeeded_at, created_at, deposit_state, deposited_at")
         .eq("owner_id", effectiveOwnerId).eq("tenant_id", tenant.id).order("created_at", { ascending: true }),
       supabaseClient.from("rental_settlements")
         .select("id, payment_id, status, net_amount_cents, provider_payout_id")

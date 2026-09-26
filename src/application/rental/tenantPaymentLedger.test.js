@@ -43,7 +43,7 @@ describe("buildTenantPaymentLedger", () => {
     expect(ledger.entries[1].balanceEffectCents).toBe(-150000);
     expect(ledger.entries[1].balanceAfterCents).toBe(0);
     expect(ledger.balanceCents).toBe(0);
-    expect(ledger.totals).toEqual({ chargedCents: 150000, paidCents: 150000, refundedCents: 0 });
+    expect(ledger.totals).toEqual({ chargedCents: 150000, paidCents: 150000, refundedCents: 0, awaitingDepositCents: 150000, depositedCents: 0 });
   });
 
   it("labels rent, proration, and late fees distinctly", () => {
@@ -238,7 +238,7 @@ describe("buildTenantPaymentLedger", () => {
     expect(refund.refundOfPaymentId).toBe("pay_1");
     expect(ledger.entries[ledger.entries.length - 1].balanceAfterCents).toBe(30000);
     expect(ledger.balanceCents).toBe(30000);
-    expect(ledger.totals).toEqual({ chargedCents: 150000, paidCents: 150000, refundedCents: 30000 });
+    expect(ledger.totals).toEqual({ chargedCents: 150000, paidCents: 150000, refundedCents: 30000, awaitingDepositCents: 150000, depositedCents: 0 });
   });
 
   it("carries payment notes through to the entry memo for transaction detail", () => {
@@ -248,6 +248,43 @@ describe("buildTenantPaymentLedger", () => {
     }));
     const pay = ledger.entries.find((e) => e.kind === "payment");
     expect(pay.notes).toBe("Partial August rent, cash");
+  });
+
+  it("carries the deposit state onto payment entries and splits totals into awaiting-deposit vs deposited", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      charges: [charge()],
+      payments: [
+        payment({ id: "pay_1", deposit_state: "received", provider: "offline", payment_method: "cash" }),
+        payment({ id: "pay_2", provider_payment_id: "pi_2", deposit_state: "deposited" }),
+        payment({ id: "pay_3", provider_payment_id: "pi_3", status: "failed", deposit_state: "received" }),
+      ],
+    }));
+    const byId = Object.fromEntries(ledger.entries.filter((e) => e.kind === "payment").map((e) => [e.sourceId, e]));
+    expect(byId.pay_1.depositState).toBe("received");
+    expect(byId.pay_2.depositState).toBe("deposited");
+    expect(byId.pay_3.depositState).toBe("received");
+    // The failed payment moves no money: visible in the ledger, excluded from both subtotals.
+    expect(ledger.totals.paidCents).toBe(300000);
+    expect(ledger.totals.awaitingDepositCents).toBe(150000);
+    expect(ledger.totals.depositedCents).toBe(150000);
+  });
+
+  it("defaults pre-migration rows to received unless a paid-out settlement proves the money landed", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      charges: [charge()],
+      payments: [
+        payment({ id: "pay_1" }),
+        payment({ id: "pay_2", provider_payment_id: "pi_2" }),
+      ],
+      settlements: [
+        { payment_id: "pay_2", status: "paid_out", net_amount_cents: 150000, provider_payout_id: "po_1" },
+      ],
+    }));
+    const byId = Object.fromEntries(ledger.entries.filter((e) => e.kind === "payment").map((e) => [e.sourceId, e]));
+    expect(byId.pay_1.depositState).toBe("received");
+    expect(byId.pay_2.depositState).toBe("deposited");
+    expect(ledger.totals.awaitingDepositCents).toBe(150000);
+    expect(ledger.totals.depositedCents).toBe(150000);
   });
 });
 
