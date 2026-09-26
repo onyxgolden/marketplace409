@@ -20,6 +20,11 @@ export type RentalUnit = Readonly<{
   createdAt: string;
   updatedAt: string;
   notes: string | null;
+  addressStreet: string | null;
+  addressUnit: string | null;
+  addressCity: string | null;
+  addressState: string | null;
+  addressZip: string | null;
 }>;
 
 function requireString(
@@ -49,6 +54,21 @@ function optionalNonNegativeNumber(
   return value;
 }
 
+function optionalAddressText(
+  value: string | null | undefined,
+): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function optionalAddressState(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = optionalAddressText(value);
+  return trimmed === null ? null : trimmed.toUpperCase();
+}
+
 function timestamp(
   value: string,
   fieldName: string,
@@ -62,8 +82,21 @@ function timestamp(
   return normalized;
 }
 
+/** Input accepted by createRentalUnit — address fields are optional for
+ *  records created before structured addresses existed. */
+export type RentalUnitInput = Omit<
+  RentalUnit,
+  "addressStreet" | "addressUnit" | "addressCity" | "addressState" | "addressZip"
+> & {
+  addressStreet?: string | null;
+  addressUnit?: string | null;
+  addressCity?: string | null;
+  addressState?: string | null;
+  addressZip?: string | null;
+};
+
 export function createRentalUnit(
-  unit: RentalUnit,
+  unit: RentalUnitInput,
 ): RentalUnit {
   if (!RENTAL_UNIT_STATUSES.includes(unit.status)) {
     throw new Error("Rental unit requires a supported status.");
@@ -84,5 +117,10 @@ export function createRentalUnit(
     createdAt: timestamp(unit.createdAt, "createdAt"),
     updatedAt: timestamp(unit.updatedAt, "updatedAt"),
     notes: unit.notes?.trim() || null,
+    addressStreet: optionalAddressText(unit.addressStreet),
+    addressUnit: optionalAddressText(unit.addressUnit),
+    addressCity: optionalAddressText(unit.addressCity),
+    addressState: optionalAddressState(unit.addressState),
+    addressZip: optionalAddressText(unit.addressZip),
   });
 }

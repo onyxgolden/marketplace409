@@ -8,6 +8,7 @@ import { createRentSchedule } from "@/domains/rent-schedule";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
+import { validateAddressFields } from "@/lib/address/validateAddress";
 
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
@@ -167,9 +168,17 @@ export async function POST(request) {
           const duplicate = existing.find((item) => item.status !== "inactive" && item.label.trim().toLowerCase() === String(input.label || "").trim().toLowerCase());
           if (duplicate) return NextResponse.json({ error: `${duplicate.label} already exists. Select it to edit the existing property/unit.` }, { status: 409 });
         }
+        const addressCheck = validateAddressFields({
+          street: input.addressStreet, unit: input.addressUnit, city: input.addressCity,
+          state: input.addressState, zip: input.addressZip,
+        }, { allowEmptyGroup: Boolean(input.id) });
+        if (!addressCheck.ok) return badRequest(Object.values(addressCheck.errors).join(" "));
         const unit = createRentalUnit({ ...input, id: id("rental_unit", input.id), createdAt: input.createdAt || timestamp,
           updatedAt: timestamp, bedrooms: input.bedrooms ?? null, bathrooms: input.bathrooms ?? null,
-          squareFeet: input.squareFeet ?? null, availableAt: input.availableAt ?? null, notes: input.notes ?? null });
+          squareFeet: input.squareFeet ?? null, availableAt: input.availableAt ?? null, notes: input.notes ?? null,
+          addressStreet: addressCheck.values.street || null, addressUnit: addressCheck.values.unit || null,
+          addressCity: addressCheck.values.city || null, addressState: addressCheck.values.state || null,
+          addressZip: addressCheck.values.zip || null });
         return NextResponse.json({ success: true, unit: await application.saveUnit(unit, effectiveOwnerId) });
       }
       case "archive-unit": {

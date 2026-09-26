@@ -83,4 +83,25 @@ describe("RentalSetupPanel eyebrow and create form", () => {
     expect(markup).not.toContain('value="Main residence"');
     expect(markup).not.toContain('value="Remodel in progress."');
   });
+  it("renders structured address fields on the create form", async () => {
+    await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
+    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    expect(markup).toContain("Property address");
+    expect(markup).toContain('name="addressStreet"');
+    expect(markup).toContain('name="addressUnit"');
+    expect(markup).toContain('name="addressCity"');
+    expect(markup).toContain('name="addressState"');
+    expect(markup).toContain('name="addressZip"');
+    expect(markup).toContain('value="TX"');
+    expect(markup).toContain("District of Columbia");
+  });
+  it("displays a structured address on the property card and falls back to the label", () => {
+    const withAddress = { id: "unit_1", label: "308 Paula", property_id: "308-paula", status: "occupied",
+      address_street: "308 Paula St", address_unit: "", address_city: "Groves", address_state: "TX", address_zip: "77605" };
+    const legacy = { id: "unit_2", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" };
+    const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[withAddress, legacy]} />);
+    expect(markup).toContain("308 Paula St, Groves, TX 77605");
+    expect(markup).toContain("930 Highland Drive");
+    expect(markup).toContain(">Address</dt>");
+  });
 });

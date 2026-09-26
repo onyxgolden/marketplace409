@@ -47,3 +47,41 @@ describe("rental unit persistence", () => {
     expect(() => mapRentalUnitToRow(unit(), "")).toThrow("Rental unit owner id is required.");
   });
 });
+
+describe("rental unit structured address persistence", () => {
+  it("round trips address columns through the row mapper", () => {
+    const withAddress = createRentalUnit({
+      id: "unit_1",
+      propertyId: "4800-kent-ave",
+      label: "Main residence",
+      status: "preparing",
+      bedrooms: 3,
+      bathrooms: 2,
+      squareFeet: 1450,
+      availableAt: "2026-09-02T00:00:00.000Z",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+      notes: null,
+      addressStreet: "123 Main St",
+      addressUnit: "Apt 4",
+      addressCity: "Springfield",
+      addressState: "il",
+      addressZip: "62701",
+    });
+    const row = mapRentalUnitToRow(withAddress, "owner_1");
+    expect(row.address_street).toBe("123 Main St");
+    expect(row.address_unit).toBe("Apt 4");
+    expect(row.address_city).toBe("Springfield");
+    expect(row.address_state).toBe("IL");
+    expect(row.address_zip).toBe("62701");
+    expect(mapRentalUnitRowToRentalUnit(row)).toEqual(withAddress);
+  });
+
+  it("maps legacy rows without address columns to null addresses", () => {
+    const legacyRow = { ...mapRentalUnitToRow(unit(), "owner_1"), address_street: null, address_unit: null,
+      address_city: null, address_state: null, address_zip: null };
+    const restored = mapRentalUnitRowToRentalUnit(legacyRow);
+    expect(restored.addressStreet).toBeNull();
+    expect(restored.addressZip).toBeNull();
+  });
+});

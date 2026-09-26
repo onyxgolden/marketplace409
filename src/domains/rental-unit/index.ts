@@ -5,6 +5,7 @@ export {
 
 export type {
   RentalUnit,
+  RentalUnitInput,
   RentalUnitStatus,
 } from "./rental-unit.types";
 
