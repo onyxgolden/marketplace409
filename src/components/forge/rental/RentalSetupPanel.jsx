@@ -187,9 +187,9 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-setup>
       {ledgerUnit ? (
         <PropertyLedgerPage propertyId={ledgerUnit.property_id} propertyLabel={ledgerUnit.label}
-          onClose={() => setLedgerUnit(null)}
-          onPostIncome={() => { /* slice 2: post income form */ }}
-          onPostExpense={() => { /* slice 2: post expense form */ }} />
+          properties={units}
+          tenants={tenants}
+          onClose={() => setLedgerUnit(null)} />
       ) : (
       <>
       <div className="flex flex-wrap items-start justify-between gap-3">

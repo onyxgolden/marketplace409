@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
+import TransactionForm from "./TransactionForm";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -32,7 +33,11 @@ async function fetchPropertyLedger(propertyId) {
 //
 // Data layer: stale-while-revalidate, same as the tenant ledger — reopening a recently
 // viewed property serves the cached payload instantly and refreshes in the background.
-export default function PropertyLedgerPage({ propertyId, propertyLabel, onClose, onPostIncome, onPostExpense }) {
+//
+// Post Income / Post Expense open the Rentec-style transaction modal (TransactionForm).
+// The onPostIncome / onPostExpense props remain as host overrides; when absent the
+// page opens its own modal.
+export default function PropertyLedgerPage({ propertyId, propertyLabel, properties = [], tenants = [], onClose, onPostIncome, onPostExpense }) {
   const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     propertyId ? `property-ledger:${propertyId}` : null,
     () => fetchPropertyLedger(propertyId),
@@ -40,6 +45,7 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, onClose,
   );
   const ledger = data?.ledger || null;
   const [detailEntry, setDetailEntry] = useState(null);
+  const [postKind, setPostKind] = useState(null);
 
   useEffect(() => {
     if (!detailEntry) return undefined;
@@ -65,11 +71,11 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, onClose,
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{title}</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={onPostIncome}
+          <button type="button" onClick={() => (onPostIncome ? onPostIncome() : setPostKind("income"))}
             className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${goldControlClassName}`}>
             Post Income
           </button>
-          <button type="button" onClick={onPostExpense}
+          <button type="button" onClick={() => (onPostExpense ? onPostExpense() : setPostKind("expense"))}
             className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
             Post Expense
           </button>
@@ -157,11 +163,22 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, onClose,
       )}
 
       {detailEntry && <PropertyTransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} />}
+
+      {postKind && (
+        <TransactionForm
+          propertyId={propertyId}
+          properties={(properties || []).map((property) => ({ id: property.id, label: property.label }))}
+          tenants={(tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name || tenant.name }))}
+          defaultKind={postKind}
+          onSaved={() => { setPostKind(null); refresh(); }}
+          onCancel={() => setPostKind(null)}
+        />
+      )}
     </section>
   );
 }
 
-// Read-only transaction detail for slice 1. Edit/delete arrive in slice 3 —
+// Read-only transaction detail for slice 1. Edit/delete arrive in slice 4 —
 // this modal becomes the edit surface then.
 function PropertyTransactionDetailModal({ entry, onClose }) {
   const rows = [
