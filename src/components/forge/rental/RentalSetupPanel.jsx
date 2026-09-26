@@ -4,6 +4,7 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
 import PropertyExpenseHistory, { PROPERTY_EXPENSES_OPEN_EVENT } from "./PropertyExpenseHistory";
+import PropertyLedgerPage from "./PropertyLedgerPage";
 import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import { useCardContextMenu, CardContextMenu } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
@@ -81,6 +82,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const [archiveCandidateId, setArchiveCandidateId] = useState(null);
   const [addressErrors, setAddressErrors] = useState({});
   const { menu: contextMenu, onContextMenu, close: closeContextMenu } = useCardContextMenu();
+  const [ledgerUnit, setLedgerUnit] = useState(null);
   const openFullExpenses = useCallback((unit) => {
     window.dispatchEvent(new CustomEvent(PROPERTY_EXPENSES_OPEN_EVENT, { detail: { propertyId: unit?.property_id } }));
   }, []);
@@ -183,6 +185,13 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   }
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-setup>
+      {ledgerUnit ? (
+        <PropertyLedgerPage propertyId={ledgerUnit.property_id} propertyLabel={ledgerUnit.label}
+          onClose={() => setLedgerUnit(null)}
+          onPostIncome={() => { /* slice 2: post income form */ }}
+          onPostExpense={() => { /* slice 2: post expense form */ }} />
+      ) : (
+      <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-3xl"><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{setupEyebrow}</p>
           <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Rental units</h2>
@@ -204,11 +213,14 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
           const unit = visibleUnits.find((item) => item.id === selectedId) || visibleUnits[0];
           const context = { recordType: "unit", recordId: unit?.id, propertyId: unit?.property_id };
           return unit && <div data-rental-unit-detail
-            onContextMenu={(event) => onContextMenu(event, [{ label: "Open full expenses ledger", onSelect: () => openFullExpenses(unit) }])}
-            title="Right-click to open the full expenses ledger">
+            onContextMenu={(event) => onContextMenu(event, [
+              { label: "View Ledger", onSelect: () => setLedgerUnit(unit) },
+              { label: "Open full expenses ledger", onSelect: () => openFullExpenses(unit) },
+            ])}
+            title="Right-click for ledger options">
             <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div>
-              <RentalRecordActions label="Property actions" actions={[{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);setAddressErrors({});}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",destructive:true,onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
+              <RentalRecordActions label="Property actions" actions={[{label:"View ledger",onSelect:()=>setLedgerUnit(unit)},{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);setAddressErrors({});}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",destructive:true,onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
             </div>
             <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={refreshUnits} /></div>
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
@@ -239,6 +251,8 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         </div>)}</div>
       </div>}
       {!showCreate && message && <p role="status" className="mt-4 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
+      </>
+      )}
     </section>
   );
 }
