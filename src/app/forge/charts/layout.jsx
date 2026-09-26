@@ -9,5 +9,5 @@ import WorkspaceShell from "@/components/workspace-shell";
 // This layout supplies the shared top-level workspace chrome; auth is still
 // gated independently by the page.
 export default function ChartsWorkspaceLayout({ children }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
 }

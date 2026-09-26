@@ -11,5 +11,5 @@ import WorkspaceShell from "@/components/workspace-shell";
 // owner chrome the same way. Flagging it as pre-existing, not introduced
 // here; a tenant-specific layout carve-out would be a separate task.
 export default function RentalWorkspaceLayout({ children }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
 }

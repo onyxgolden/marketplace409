@@ -17,6 +17,7 @@ import {
   WorkspaceRightRail,
 } from "@/components/workspace-shell";
 import ThemeToggle from "@/components/theme/ThemeToggle";
+import CommandPaletteHost, { CommandPaletteTrigger } from "@/components/forge/CommandPalette";
 
 // Rental Manager, Programmer, Scheduling, and Designer were promoted to
 // their own sibling workspaces (see src/lib/workspaces.js) — this list is
@@ -308,6 +309,13 @@ export default function ForgeApplicationRail({
           </button>
         </div>
 
+        {/* Global command palette (Cmd/Ctrl+K): fuzzy-searches actions and
+           navigation across every Forge module. The trigger sits here in the
+           rail for desktop users; phone users get the header button below. */}
+        <div className="mb-5">
+          <CommandPaletteTrigger expanded={expanded} />
+        </div>
+
         {/* Deep inside Forge (e.g. /forge/financial), WorkspaceLinks below still keeps you
            inside Forge -- its own "Forge" tile just points back to /forge. This is the only
            one-click way back to the outer picker itself -- identical markup to WorkspaceShell's
@@ -370,6 +378,9 @@ export default function ForgeApplicationRail({
                required desktop width. The same shared account menu the desktop rail uses, now
                in the mobile header. */}
             <AccountMenu tone="light" />
+
+            {/* Touch/mouse path to the command palette -- no keyboard on a phone. */}
+            <CommandPaletteTrigger tone="light" />
 
             <ThemeToggle
               compact
@@ -477,6 +488,11 @@ export default function ForgeApplicationRail({
           {children}
         </div>
       </div>
+
+      {/* Mounted once at the Forge shell level so Cmd/Ctrl+K works in every
+         non-promoted Forge module. Promoted subtrees (rental, scheduling, …)
+         get their own host via WorkspaceShell's forgeCommandPalette prop. */}
+      <CommandPaletteHost />
 
       <WorkspaceRightRail />
     </div>

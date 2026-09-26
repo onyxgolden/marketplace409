@@ -10,5 +10,5 @@ import WorkspaceShell from "@/components/workspace-shell";
 // domain layer, with summarizeDesignForEstimating() as the clean seam for
 // future schedule/cost links.
 export default function DesignerWorkspaceLayout({ children }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
 }

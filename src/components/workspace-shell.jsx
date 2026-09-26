@@ -26,6 +26,7 @@ import { createClient } from "@/lib/supabase/client";
 import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { WORKSPACES, isWorkspaceActive } from "@/lib/workspaces";
+import CommandPaletteHost, { CommandPaletteTrigger } from "@/components/forge/CommandPalette";
 
 const WORKSPACE_ICONS = { Store, Building2, Hammer, GanttChart, DraftingCompass, Code2, Landmark, Tent };
 
@@ -209,7 +210,7 @@ export function AccountMenu({ tone = "dark" }) {
 // Icon-only account/notifications/settings rail. Exported standalone so
 // Forge's own ForgeApplicationRail can render the identical rail alongside
 // its existing sidebar instead of duplicating this markup.
-export function WorkspaceRightRail() {
+export function WorkspaceRightRail({ showCommandPalette = false }) {
   const { resolvedTheme, setThemePreference } = useTheme();
 
   function toggleTheme() {
@@ -222,6 +223,11 @@ export function WorkspaceRightRail() {
       className="sticky top-0 hidden h-screen w-16 shrink-0 flex-col items-center gap-2 border-l border-slate-800 bg-slate-950 py-4 text-white lg:flex"
     >
       <AccountMenu tone="dark" />
+
+      {/* Touch/mouse path to the FORGE command palette on desktop. Only
+         rendered when the host shell opts in (promoted Forge subtrees) --
+         the Marketplace shell never sets this, so its rail stays clean. */}
+      {showCommandPalette ? <CommandPaletteTrigger /> : null}
 
       {/* Notifications: no backend yet (no cross-workspace notification
          source exists in the app today) — present but inert, not wired to
@@ -263,7 +269,7 @@ export function WorkspaceRightRail() {
   );
 }
 
-export default function WorkspaceShell({ children }) {
+export default function WorkspaceShell({ children, forgeCommandPalette = false }) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -336,16 +342,21 @@ export default function WorkspaceShell({ children }) {
           <Link href="/" className="font-black tracking-[0.16em] text-slate-950">
             409 MARKETPLACE
           </Link>
-          <button
-            type="button"
-            aria-label="Open workspace navigation"
-            aria-expanded={mobileOpen}
-            onClick={() => setMobileOpen((current) => !current)}
-            className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black"
-          >
-            <Menu aria-hidden="true" className="h-4 w-4" />
-            Apps
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Touch/mouse path to the FORGE command palette -- phone users
+               have no keyboard for Cmd/Ctrl+K. */}
+            {forgeCommandPalette ? <CommandPaletteTrigger tone="light" /> : null}
+            <button
+              type="button"
+              aria-label="Open workspace navigation"
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((current) => !current)}
+              className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-black"
+            >
+              <Menu aria-hidden="true" className="h-4 w-4" />
+              Apps
+            </button>
+          </div>
         </header>
 
         {mobileOpen && (
@@ -394,7 +405,14 @@ export default function WorkspaceShell({ children }) {
         </div>
       </div>
 
-      <WorkspaceRightRail />
+      {/* FORGE command palette host. Mounted once at the workspace-shell level
+         (opt-in per layout) so Cmd/Ctrl+K works across every promoted Forge
+         subtree -- rental, scheduling, designer, developer, private-financing,
+         reservations, charts. Forge's own ForgeApplicationRail mounts its own
+         host for the remaining /forge/* modules, so the two never overlap. */}
+      {forgeCommandPalette ? <CommandPaletteHost /> : null}
+
+      <WorkspaceRightRail showCommandPalette={forgeCommandPalette} />
     </div>
   );
 }

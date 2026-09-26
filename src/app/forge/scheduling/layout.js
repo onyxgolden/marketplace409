@@ -7,5 +7,5 @@ import WorkspaceShell from "@/components/workspace-shell";
 // shared top-level workspace chrome (Marketplace/Rentals/Forge/Scheduling/
 // Dev switcher); auth is still gated independently by each page.
 export default function SchedulingWorkspaceLayout({ children }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
+  return <WorkspaceShell forgeCommandPalette>{children}</WorkspaceShell>;
 }
