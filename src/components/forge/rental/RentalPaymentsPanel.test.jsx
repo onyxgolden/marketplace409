@@ -35,6 +35,83 @@ const baseData = {
   ],
 };
 
+describe("RentalPaymentsPanel deposit state (received vs deposited)", () => {
+  const receivedPayment = {
+    id: "pay_1", lease_id: "lease_1", amount_cents: 130000, refunded_amount_cents: 0,
+    status: "succeeded", payment_method: "cash", provider: "offline",
+    received_at: "2026-08-02T12:00:00Z", created_at: "2026-08-02T12:00:00Z",
+    deposit_state: "received", settlement: null,
+  };
+  const withPayment = { ...baseData, payments: [receivedPayment] };
+  let mounted;
+
+  afterEach(() => {
+    if (mounted) { unmountPanel(mounted); mounted = null; }
+    vi.unstubAllGlobals();
+    clearSWRCache();
+  });
+
+  it("shows an Awaiting deposit badge and Mark as deposited action on a received payment", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} />);
+    expect(markup).toContain("Awaiting deposit");
+    expect(markup).toContain("Mark as deposited");
+    expect(markup).toContain("cash · succeeded · Awaiting deposit");
+  });
+
+  it("shows a Deposited badge and the reversible Mark as awaiting deposit action on a deposited payment", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPaymentsPanel initialData={{ ...baseData, payments: [{ ...receivedPayment, deposit_state: "deposited" }] }} initialAccount={null} />,
+    );
+    expect(markup).toContain("Deposited");
+    expect(markup).toContain("Mark as awaiting deposit");
+  });
+
+  it("defaults a pre-migration payment without deposit state to Awaiting deposit", () => {
+    const { deposit_state: _omitted, ...legacyPayment } = receivedPayment;
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={{ ...baseData, payments: [legacyPayment] }} initialAccount={null} />);
+    expect(markup).toContain("Awaiting deposit");
+  });
+
+  it("offers Deposit status capture in the Record offline payment form, defaulting to Received", () => {
+    const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} initialShowOffline />);
+    expect(markup).toContain("Deposit status");
+    expect(markup).toContain("Received — awaiting deposit");
+    expect(markup).toContain("Already deposited");
+  });
+
+  it("posts the reversible set-payment-deposit-state transition only after confirmation", async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (options?.method === "POST") return Promise.resolve({ ok: true, json: async () => ({ success: true, payment: { id: "pay_1", depositState: "deposited", changed: true } }) });
+      return Promise.resolve({ ok: true, json: async () => ({ ...withPayment }) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    mounted = mountPanel(<RentalPaymentsPanel initialData={withPayment} initialAccount={null} />);
+    const { container } = mounted;
+
+    // No POST before the user asks: the action opens a confirmation first.
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    clickButton(findButtonByText(container, "Mark as deposited"));
+    expect(container.querySelector('[role="alertdialog"]')).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(0);
+
+    await clickButtonAndFlush(findButtonByText(container, "Confirm"));
+    const postCalls = fetchMock.mock.calls.filter(([, options]) => options?.method === "POST");
+    expect(postCalls).toHaveLength(1);
+    expect(JSON.parse(postCalls[0][1].body)).toEqual({
+      operation: "set-payment-deposit-state", paymentId: "pay_1", depositState: "deposited",
+    });
+    expect(container.textContent).toContain("Payment marked as deposited.");
+  });
+
+  it("hides the deposit transition for payments that moved no money", () => {
+    const markup = renderToStaticMarkup(
+      <RentalPaymentsPanel initialData={{ ...baseData, payments: [{ ...receivedPayment, status: "failed" }] }} initialAccount={null} />,
+    );
+    expect(markup).not.toContain("Mark as deposited");
+  });
+});
+
 describe("resolveScheduleContext", () => {
   it("resolves tenant through lease memberships, unit through lease.unit_id, and property through the unit", () => {
     expect(resolveScheduleContext(baseData.schedules[1], baseData)).toEqual({

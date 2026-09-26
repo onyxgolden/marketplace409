@@ -24,6 +24,7 @@
 // and refunds increase the balance owed; payments and credits decrease it. The balance is
 // the ledger-period balance, not a lifetime account balance.
 
+import { resolveDepositState } from "./paymentDepositState";
 const CHARGE_LABELS = {
   rent: "Rent charge",
   proration: "Prorated rent",
@@ -162,6 +163,10 @@ export function buildTenantPaymentLedger({
       unitLabel: context.unitLabel,
       reference: payment.receipt_reference || payment.provider_payment_id || payment.id,
       refundedAmountCents: refundedCents,
+      // Deposit state (Slice D): whether the collected money has reached the bank.
+      // Missing on pre-migration rows — resolved with the paid_out-settlement
+      // fallback so un-deposited money is never silently claimed as deposited.
+      depositState: resolveDepositState(payment, settlement),
       // Carried for the transaction-detail view (memo line). Additive only.
       notes: payment.notes || null,
       settlement: settlement ? {
@@ -319,10 +324,19 @@ export function buildTenantPaymentLedger({
 
   const totals = entries.reduce((sum, entry) => {
     if (entry.kind === "charge") sum.chargedCents += entry.amountCents;
-    if (entry.kind === "payment") sum.paidCents += (paymentHasBalanceEffect(entry) || REFUNDED_PAYMENT_STATUSES.has(entry.status) ? entry.amountCents : 0);
+    if (entry.kind === "payment") {
+      const counts = paymentHasBalanceEffect(entry) || REFUNDED_PAYMENT_STATUSES.has(entry.status);
+      if (counts) {
+        sum.paidCents += entry.amountCents;
+        // Deposit-state split: money collected but not yet deposited is visible
+        // separately from settled money — never conflated in one total.
+        if (entry.depositState === "deposited") sum.depositedCents += entry.amountCents;
+        else sum.awaitingDepositCents += entry.amountCents;
+      }
+    }
     if (entry.kind === "refund") sum.refundedCents += entry.amountCents;
     return sum;
-  }, { chargedCents: 0, paidCents: 0, refundedCents: 0 });
+  }, { chargedCents: 0, paidCents: 0, refundedCents: 0, awaitingDepositCents: 0, depositedCents: 0 });
 
   return Object.freeze({
     tenantId,

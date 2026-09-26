@@ -820,14 +820,80 @@ describe("Rental Manager POST — tenant credit operations", () => {
     await asOwner(client);
     await POST(request({
       operation: "record-offline-payment",
-      payment: { chargeId: "c1", tenantId: "   ", paymentMethod: "cash", amountCents: 150000,
-        receivedAt: "2026-09-05T12:00:00.000Z", idempotencyKey: "  " },
+      payment: { chargeId: "c1", tenantId: "   ", paymentMethod: "cash", amountCents: 150000,        receivedAt: "2026-09-05T12:00:00.000Z", idempotencyKey: "  " },
     }));
     expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
       p_tenant_id: null, p_idempotency_key: null,
     }));
   });
 
+  it("record-offline-payment captures the requested deposit state, defaulting to received", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "pay_1" }, error: null } });
+    await asOwner(client);
+    await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", paymentMethod: "cash", amountCents: 150000,
+        receivedAt: "2026-09-05T12:00:00.000Z", depositState: "deposited" },
+    }));
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
+      p_deposit_state: "deposited",
+    }));
+    await asOwner(client);
+    await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", paymentMethod: "cash", amountCents: 150000,
+        receivedAt: "2026-09-05T12:00:00.000Z" },
+    }));
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
+      p_deposit_state: "received",
+    }));
+    // A garbage value never reaches the RPC unchecked.
+    await asOwner(client);
+    await POST(request({
+      operation: "record-offline-payment",
+      payment: { chargeId: "c1", paymentMethod: "cash", amountCents: 150000,
+        receivedAt: "2026-09-05T12:00:00.000Z", depositState: "maybe" },
+    }));
+    expect(client.rpc).toHaveBeenCalledWith("record_offline_rental_payment", expect.objectContaining({
+      p_deposit_state: "received",
+    }));
+  });
+
+  it("set-payment-deposit-state routes the reversible transition to the RPC", async () => {
+    const client = rpcClient({ rpcResult: { data: { id: "pay_1", depositState: "deposited", changed: true }, error: null } });
+    await asOwner(client);
+    const response = await POST(request({
+      operation: "set-payment-deposit-state", paymentId: "pay_1", depositState: "deposited",
+    }));
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("set_rental_payment_deposit_state", {
+      p_owner_id: "owner_1", p_payment_id: "pay_1", p_deposit_state: "deposited",
+    });
+    expect((await response.json()).payment.changed).toBe(true);
+
+    // Reversibility: back to received is a valid transition too.
+    await asOwner(client);
+    const reverse = await POST(request({
+      operation: "set-payment-deposit-state", paymentId: "pay_1", depositState: "received",
+    }));
+    expect(reverse.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("set_rental_payment_deposit_state", {
+      p_owner_id: "owner_1", p_payment_id: "pay_1", p_deposit_state: "received",
+    });
+  });
+
+  it("set-payment-deposit-state rejects missing or invalid state before any RPC call", async () => {
+    const client = rpcClient();
+    await asOwner(client);
+    const invalid = await POST(request({
+      operation: "set-payment-deposit-state", paymentId: "pay_1", depositState: "maybe",
+    }));
+    expect(invalid.status).toBe(400);
+    await asOwner(client);
+    const missing = await POST(request({ operation: "set-payment-deposit-state", depositState: "deposited" }));
+    expect(missing.status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
 
   it("apply-tenant-credit requires owner confirmation and routes to the apply RPC", async () => {
     const client = rpcClient({ rpcResult: { data: { id: "app_1", amountCents: 3200 }, error: null } });

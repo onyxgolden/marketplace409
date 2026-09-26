@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import { DEPOSIT_STATE_DEPOSITED } from "@/application/rental/paymentDepositState";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -13,6 +14,17 @@ const formatDate = (value) => {
 const amountClass = (cents) => cents < 0
   ? "text-emerald-700 dark:text-emerald-400"
   : "text-slate-950 dark:text-white";
+
+// Deposit-state badge — same pill convention as the rest of the rental surfaces:
+// amber for money still in hand, emerald for money in the bank. Payment rows only.
+const depositBadgeClass = (depositState) => depositState === DEPOSIT_STATE_DEPOSITED
+  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+  : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
+const depositBadgeLabel = (depositState) => depositState === DEPOSIT_STATE_DEPOSITED ? "Deposited" : "Awaiting deposit";
+function DepositBadge({ entry }) {
+  if (entry.kind !== "payment") return null;
+  return <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${depositBadgeClass(entry.depositState)}`}>{depositBadgeLabel(entry.depositState)}</span>;
+}
 
 export const TENANT_LEDGER_OPEN_EVENT = "forge:open-tenant-ledger";
 
@@ -84,7 +96,7 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
                 <li key={entry.id} data-last-payment className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40">
                   <p className={`text-lg font-black ${amountClass(entry.balanceEffectCents)}`}>{money.format(entry.amountCents / 100)}</p>
                   <p className="mt-1 text-xs font-bold text-slate-600 dark:text-slate-300">{formatDate(entry.date)} · {label(entry.method)}</p>
-                  <p className="mt-1 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label(entry.status)}</p>
+                  <p className="mt-1 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label(entry.status)}<DepositBadge entry={entry} /></p>
                   {entry.refundedAmountCents > 0 && <p className="mt-1 text-xs font-bold text-amber-700 dark:text-amber-400">Refunded {money.format(entry.refundedAmountCents / 100)}</p>}
                 </li>
               ))}
@@ -121,6 +133,7 @@ export default function TenantPaymentHistory({ tenantId, tenantName, onOpenFullL
                             <span className="font-bold text-slate-950 dark:text-white">{entry.label}</span>
                             {entry.rentecEvidence?.length > 0 && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-700 dark:text-slate-200">Rentec history</span>}
                             {entry.settlement && <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">Settled</span>}
+                            <DepositBadge entry={entry} />
                           </td>
                           <td className="py-2 pr-3 text-slate-600 dark:text-slate-400">{entry.period || "—"}</td>
                           <td className="py-2 pr-3 text-slate-600 dark:text-slate-400">{entry.unitLabel} · {entry.propertyLabel}</td>

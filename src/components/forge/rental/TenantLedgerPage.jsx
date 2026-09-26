@@ -5,6 +5,7 @@ import TenantCreditSection from "./TenantCreditSection";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
+import { DEPOSIT_STATE_DEPOSITED } from "@/application/rental/paymentDepositState";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -166,6 +167,11 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                           </button>
                           {isCreditMemo && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black uppercase text-sky-800 dark:bg-sky-900 dark:text-sky-200">Credit memo</span>}
                           <span className="ml-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label(entry.status)}</span>
+                          {entry.kind === "payment" && (
+                            entry.depositState === DEPOSIT_STATE_DEPOSITED
+                              ? <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">Deposited</span>
+                              : <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Awaiting deposit</span>
+                          )}
                           {entry.rentecEvidence?.length > 0 && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-700 dark:text-slate-200">Rentec history</span>}
                           <span className="block text-xs text-slate-500 dark:text-slate-400">
                             {[entry.period, entry.method ? label(entry.method) : null, entry.reference].filter(Boolean).join(" · ")}

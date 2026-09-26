@@ -45,8 +45,8 @@ describe("RentalOverviewPanel five-card dashboard", () => {
         { id: "l2", unit_id: "u2", status: "active", end_date: daysFromNow(200) },
       ],
       payments: [
-        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 150000, refunded_amount_cents: 0 },
-        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 50000, refunded_amount_cents: 10000 },
+        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 150000, refunded_amount_cents: 0, deposit_state: "deposited" },
+        { status: "succeeded", succeeded_at: new Date().toISOString(), amount_cents: 50000, refunded_amount_cents: 10000, deposit_state: "received" },
       ],
       maintenanceRequests: [{ status: "open" }, { status: "completed" }],
       workOrders: [{ status: "assigned" }],
@@ -69,6 +69,14 @@ describe("RentalOverviewPanel five-card dashboard", () => {
     expect(tile.textContent).toContain("$1,900.00");
     expect(tile.textContent).toContain(periodLabel);
     expect(tile.textContent).toContain("succeeded payments, net of refunds");
+  });
+
+  it("calls out the awaiting-deposit portion on the Rent collected card instead of implying all money is settled", () => {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    const tile = card(mounted.container, "Rent collected");
+    // Headline stays the full net collected; the detail line names the un-deposited share.
+    expect(tile.textContent).toContain("$1,900.00");
+    expect(tile.textContent).toContain("$400.00 awaiting deposit");
   });
 
   it("derives Outstanding balances from the authoritative open-charge balance, calling out the overdue portion", () => {

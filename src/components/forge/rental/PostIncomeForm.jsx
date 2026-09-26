@@ -43,6 +43,7 @@ export default function PostIncomeForm({ tenantId, tenantName, openCharges = [],
   const [chargeId, setChargeId] = useState(defaultChargeId || openCharges[0]?.id || "");
   const [reference, setReference] = useState("");
   const [memo, setMemo] = useState("");
+  const [alreadyDeposited, setAlreadyDeposited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [overpayment, setOverpayment] = useState(null);
@@ -114,6 +115,7 @@ export default function PostIncomeForm({ tenantId, tenantName, openCharges = [],
             notes: memo.trim() || null,
             allowOverpaymentCredit: Boolean(overpayment),
             idempotencyKey,
+            depositState: alreadyDeposited ? "deposited" : "received",
           },
         }),
       });
@@ -188,6 +190,12 @@ export default function PostIncomeForm({ tenantId, tenantName, openCharges = [],
           <label className="text-sm font-bold text-slate-900 dark:text-white sm:col-span-2">Memo
             <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="Optional note on this payment"
               className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+          </label>
+          <label className="flex items-start gap-2 text-sm font-bold text-slate-900 dark:text-white sm:col-span-2">
+            <input type="checkbox" checked={alreadyDeposited} onChange={(event) => { setAlreadyDeposited(event.target.checked); touchIntent(); }}
+              className="mt-1 h-4 w-4 accent-amber-600" />
+            <span>Already deposited — this money is in the bank account, not just in hand.
+              <span className="block font-normal text-slate-500 dark:text-slate-400">Leave unchecked when you still need to deposit the cash or check.</span></span>
           </label>
         </div>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
