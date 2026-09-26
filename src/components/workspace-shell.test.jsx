@@ -217,3 +217,45 @@ describe("WorkspaceShell mobile drawer", () => {
     expect(container.querySelector('aside[aria-label="Workspace navigation"]')).toBeNull();
   });
 });
+
+describe("WorkspaceShell mobile header", () => {
+  function mountShell() {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<WorkspaceShell><main>workspace content</main></WorkspaceShell>);
+    });
+    mounted = { container, root };
+    return container;
+  }
+
+  function mobileHeader(container) {
+    // The mobile header is the only <header> rendered below the lg breakpoint
+    // (the desktop switcher is a hidden <aside>).
+    return container.querySelector("header");
+  }
+
+  it("reaches the account menu on narrow viewports — sign-out no longer needs desktop width", async () => {
+    const container = mountShell();
+    await act(async () => {});
+    const header = mobileHeader(container);
+    expect(header).not.toBeNull();
+    // AccountMenu is inside the mobile header; the mocked getUser resolves a user,
+    // so the avatar button announces the account menu (not a bare "Account").
+    const accountButton = header.querySelector('button[aria-label^="Account"]');
+    expect(accountButton).not.toBeNull();
+    act(() => {
+      accountButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container.querySelector('[role="menu"][aria-label="Account"]')).not.toBeNull();
+  });
+
+  it("includes the theme toggle in the mobile header", async () => {
+    const container = mountShell();
+    await act(async () => {});
+    const header = mobileHeader(container);
+    expect(header).not.toBeNull();
+    expect(header.querySelector('button[aria-label^="Theme:"]')).not.toBeNull();
+  });
+});
