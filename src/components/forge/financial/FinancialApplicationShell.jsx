@@ -8,6 +8,11 @@ import FinancialPositionSnapshot from "@/components/forge/financial/FinancialPos
 import FinancialTransactionsSurface from "@/components/forge/financial/FinancialTransactionsSurface";
 import FinancialWorkspaceHeader from "@/components/forge/financial/FinancialWorkspaceHeader";
 import FinancialWorkspaceSidebar from "@/components/forge/financial/FinancialWorkspaceSidebar";
+import DashboardCardStack from "@/components/forge/financial/DashboardCardStack";
+import {
+  FINANCIAL_SECTION_CARD_IDS,
+  FINANCIAL_SECTION_CARD_TITLES,
+} from "@/components/forge/financial/dashboardCardLayout";
 import RentalPortfolioPerformance from "@/components/forge/property/RentalPortfolioPerformance";
 import SimplifiImportPanel from "@/components/forge/financial/SimplifiImportPanel";
 import FinancialAssetsPanel from "@/components/forge/financial/FinancialAssetsPanel";
@@ -90,6 +95,10 @@ export function buildFinancialActiveSurface({
   onSelectAccount,
   onClearSelectedAccount,
   onFunctionChange,
+  // Base user-scoped localStorage key for the dashboard card system (see
+  // dashboardCardLayout.js). Zones append ":kpis" / ":sections". Omit to
+  // render the static, non-customizable dashboard.
+  layoutStorageKey = null,
 }) {
   switch (activeFunctionId) {
     case "transactions":
@@ -168,6 +177,66 @@ export function buildFinancialActiveSurface({
       // error state, which have their own handling and shouldn't flash the welcome screen.
       const showWelcome = loadState === "ready" && (accounts || []).length === 0;
 
+      // The overview's content cards as a registry: the card system reorders /
+      // hides these without touching the panels' internals.
+      const overviewSectionCards = [
+        {
+          id: "activity",
+          element: (
+            <FinancialForgeOverviewPanel
+              loadState={loadState}
+              transactions={allScopeTransactions}
+              accounts={accounts}
+            />
+          ),
+        },
+        {
+          id: "intelligence",
+          element: (
+            <FinancialExecutiveIntelligence
+              executiveBriefing={executiveBriefing}
+              riskSummary={riskSummary}
+              riskAssessment={riskAssessment}
+              insights={insights}
+            />
+          ),
+        },
+        {
+          id: "position",
+          element: (
+            <FinancialPositionSnapshot
+              lines={balanceSheetLines}
+              onSelectAccount={onSelectAccount}
+            />
+          ),
+        },
+        { id: "compare", element: compareMonthsSection },
+        { id: "ask-books", element: askBooksSection },
+        { id: "brain-actions", element: brainActionsSection },
+        { id: "anomalies", element: anomalyAlertsSection },
+        { id: "cash-forecast", element: cashForecastSection },
+        { id: "left-this-month", element: leftThisMonthSection },
+        { id: "debt-payoff", element: debtPayoffSection },
+      ].map((card) => ({
+        ...card,
+        title: FINANCIAL_SECTION_CARD_TITLES[card.id] ?? card.id,
+      }));
+
+      const overviewSections = layoutStorageKey ? (
+        <DashboardCardStack
+          storageKey={`${layoutStorageKey}:sections`}
+          cardIds={FINANCIAL_SECTION_CARD_IDS}
+          cards={overviewSectionCards}
+          className="space-y-6"
+        />
+      ) : (
+        <>
+          {overviewSectionCards.map((card) => (
+            <div key={card.id}>{card.element}</div>
+          ))}
+        </>
+      );
+
       return (
         <div className="flex flex-col gap-6 lg:block lg:space-y-6">
           <div className="order-2 grid grid-cols-1 items-start gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
@@ -191,36 +260,7 @@ export function buildFinancialActiveSurface({
                   onNavigateToImport={() => onFunctionChange?.("import")}
                 />
               ) : (
-                <>
-                  <FinancialForgeOverviewPanel
-                    loadState={loadState}
-                    transactions={allScopeTransactions}
-                    accounts={accounts}
-                  />
-
-                  <FinancialExecutiveIntelligence
-                    executiveBriefing={
-                      executiveBriefing
-                    }
-                    riskSummary={riskSummary}
-                    riskAssessment={
-                      riskAssessment
-                    }
-                    insights={insights}
-                  />
-
-                  <FinancialPositionSnapshot
-                    lines={balanceSheetLines}
-                  />
-
-                  {compareMonthsSection}
-                  {askBooksSection}
-                  {brainActionsSection}
-                  {anomalyAlertsSection}
-                  {cashForecastSection}
-                  {leftThisMonthSection}
-                  {debtPayoffSection}
-                </>
+                overviewSections
               )}
             </div>
           </div>
@@ -234,6 +274,9 @@ export function buildFinancialActiveSurface({
                 health={health}
                 kpis={kpis}
                 headline={headline}
+                cardLayoutStorageKey={
+                  layoutStorageKey ? `${layoutStorageKey}:kpis` : null
+                }
               />
             </div>
           )}

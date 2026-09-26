@@ -28,6 +28,10 @@ export default function FinancialWorkspaceHeader({
   // The screen's one number: { value, label, caption, ready }. Rendered large
   // in the hero; health stays as supporting context beneath it.
   headline = null,
+  // When set, the KPI tiles become a reorderable/hideable card system
+  // (persisted per user in localStorage). Omitted anywhere the static grid
+  // is wanted.
+  cardLayoutStorageKey = null,
 }) {
   const styles =
     headerVariants[variant] ??
@@ -61,6 +65,7 @@ export default function FinancialWorkspaceHeader({
                 value={headline.ready ? headline.value : "–"}
                 label={headline.label}
                 caption={headline.caption}
+                href={headline.href ?? null}
                 testId="financial-headline-number"
               />
             ) : null}
@@ -84,6 +89,7 @@ export default function FinancialWorkspaceHeader({
 
       <FinancialKpiSurface
         kpis={kpis}
+        cardLayoutStorageKey={cardLayoutStorageKey}
         variant={
           variant === "embedded"
             ? "embedded"

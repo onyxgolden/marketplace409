@@ -5,12 +5,17 @@ import { forgeTheme } from "@/components/forge/theme";
 
 export default function FinancialPositionSnapshot({
   lines = [],
+  // Optional drill-down: when provided, each account row's amount becomes a
+  // link that opens that account's activity (the same account-activity view
+  // the Accounts panel's leaf rows open). Rows stay static text without it.
+  onSelectAccount = null,
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
     <section
       data-financial-position-snapshot
+      id="financial-position-snapshot"
       className={forgeTheme.card}
     >
       <button
@@ -76,7 +81,21 @@ export default function FinancialPositionSnapshot({
                             : "text-slate-950 dark:text-slate-50"
                         }`}
                       >
-                        {line.amount}
+                        {onSelectAccount ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onSelectAccount(line.accountId, line.accountName)
+                            }
+                            aria-label={`${line.accountName}: ${line.amount} — view account activity`}
+                            data-balance-sheet-account-link={line.accountId}
+                            className="rounded tabular-nums underline decoration-dotted underline-offset-4 transition hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600"
+                          >
+                            {line.amount}
+                          </button>
+                        ) : (
+                          <span className="tabular-nums">{line.amount}</span>
+                        )}
                       </td>
                     </tr>
                   ))

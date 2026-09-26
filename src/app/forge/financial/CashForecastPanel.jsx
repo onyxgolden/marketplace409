@@ -289,7 +289,7 @@ export default function CashForecastPanel() {
   );
 
   return (
-    <section data-cash-forecast className={forgeTheme.card}>
+    <section data-cash-forecast id="cash-forecast" className={forgeTheme.card}>
       <button
         type="button"
         onClick={() => setCollapsed((current) => !current)}
