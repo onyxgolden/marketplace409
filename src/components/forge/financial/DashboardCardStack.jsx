@@ -32,6 +32,16 @@ export default function DashboardCardStack({
   customizeLabel = "Customize cards",
   ...rest
 }) {
+  // The storageKey ends with ":sections" or ":kpis"; the matching server
+  // layout key ("financial-sections" / "financial-kpis") enables
+  // cross-device sync for that zone. A key without a known zone suffix
+  // stays localStorage-only.
+  const syncKey = (() => {
+    if (typeof storageKey !== "string") return null;
+    if (storageKey.endsWith(":sections")) return "financial-sections";
+    if (storageKey.endsWith(":kpis")) return "financial-kpis";
+    return null;
+  })();
   const {
     visibleCardIds,
     hiddenCardIds,
@@ -42,7 +52,7 @@ export default function DashboardCardStack({
     showCard,
     showAllCards,
     resetLayout,
-  } = useDashboardLayout(storageKey, cardIds);
+  } = useDashboardLayout(storageKey, cardIds, syncKey);
 
   const [customizing, setCustomizing] = useState(false);
 

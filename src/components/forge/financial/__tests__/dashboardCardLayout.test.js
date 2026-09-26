@@ -116,7 +116,7 @@ describe("dashboardCardLayout", () => {
   });
 
   describe("registries", () => {
-    it("registers the four KPI cards and nine overview sections", () => {
+    it("registers the four KPI cards and ten overview sections", () => {
       expect(FINANCIAL_KPI_CARD_IDS).toEqual(["equity", "cash", "profit", "margin"]);
       expect(FINANCIAL_SECTION_CARD_IDS).toEqual([
         "activity",
@@ -127,6 +127,7 @@ describe("dashboardCardLayout", () => {
         "brain-actions",
         "anomalies",
         "cash-forecast",
+        "left-this-month",
         "debt-payoff",
       ]);
     });
