@@ -60,8 +60,10 @@ export function ExpenseEntriesTable({ entries, roomy = false }) {
   );
 }
 
-// Expanded expense history dialog: near-full-viewport width so every column is
-// readable. Read-focused — the Add Expense form stays on the inline card.
+// Expanded expense history dialog: genuinely full-screen (inset-0, full-bleed header,
+// scrollable table body) so every column is readable at any viewport. Read-focused —
+// the Add Expense form stays on the inline card. The table scrolls horizontally at
+// phone width; the Close control stays pinned in the header and Escape dismisses.
 export function ExpenseHistoryExpanded({ ledger, propertyLabel, onClose }) {
   const closeRef = useRef(null);
   useEffect(() => {
@@ -71,27 +73,29 @@ export function ExpenseHistoryExpanded({ ledger, propertyLabel, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div data-expense-history-expanded className="fixed inset-0 z-50 flex items-center justify-center p-4"
+    <div data-expense-history-expanded data-fullscreen="true" className="fixed inset-0 z-50"
       role="dialog" aria-modal="true" aria-label={`Expanded expense history for ${propertyLabel || "property"}`}>
-      <button type="button" aria-label="Close expanded expense history" tabIndex={-1}
-        onClick={onClose} className="absolute inset-0 cursor-default bg-slate-950/60" />
-      <div className="relative flex max-h-[90vh] w-[96vw] max-w-[1200px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-4 dark:border-slate-700">
+      <div className="flex h-full w-full flex-col bg-white dark:bg-slate-900">
+        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6 dark:border-slate-700">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Expenses history · expanded</p>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Expenses history · full screen</p>
             <h3 className="mt-1 text-xl font-black text-slate-950 dark:text-white">
               {ledger ? <>{money.format(ledger.totalCents / 100)} <span className="text-sm font-bold text-slate-500 dark:text-slate-400">total · {ledger.entries.length} {ledger.entries.length === 1 ? "expense" : "expenses"}</span></> : "Property expenses"}
             </h3>
           </div>
-          <button ref={closeRef} type="button" onClick={onClose}
-            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="Close expanded expense history"
+            className="shrink-0 rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
             Close
           </button>
         </div>
-        <div className="overflow-y-auto px-6 py-4">
+        <div className="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6">
           {!ledger && <p className="text-sm font-bold text-slate-500 dark:text-slate-400">Loading expense history…</p>}
           {ledger && ledger.entries.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No expenses recorded for this property yet.</p>}
-          {ledger && ledger.entries.length > 0 && <ExpenseEntriesTable entries={ledger.entries} roomy />}
+          {ledger && ledger.entries.length > 0 && (
+            <div className="overflow-x-auto">
+              <ExpenseEntriesTable entries={ledger.entries} />
+            </div>
+          )}
           {ledger?.suppressedDuplicateCount > 0 && (
             <p className="mt-3 text-xs font-bold text-slate-500 dark:text-slate-400">
               {ledger.suppressedDuplicateCount} manual {ledger.suppressedDuplicateCount === 1 ? "entry" : "entries"} explicitly linked to a contractor payment {ledger.suppressedDuplicateCount === 1 ? "was" : "were"} folded into that payment — no double count.
@@ -107,8 +111,8 @@ export function ExpenseHistoryExpanded({ ledger, propertyLabel, onClose }) {
 // entries, contractor payments, and Rentec imports — with a running total. The Add Expense
 // affordance reuses ManualFinancialEventForm pre-scoped to this property; the API it posts
 // to is co-owner-safe (canonical owner resolution), so co-owners get the same visible,
-// functional control. Right-clicking the card opens the expanded wide view so all columns
-// are readable (Brandy's power-user shortcut pattern).
+// functional control. The header's Expand button opens the full-screen expense ledger;
+// right-clicking the card still opens the same view (Brandy's power-user shortcut pattern).
 //
 // Data layer: stale-while-revalidate. Switching properties serves the cached ledger
 // instantly and refreshes in the background — the old data never blanks out while the
@@ -156,10 +160,24 @@ export default function PropertyExpenseHistory({ propertyId, propertyLabel }) {
             <p className="mt-1 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>
           )}
         </div>
-        <button type="button" onClick={refresh} disabled={isRefreshing}
-          className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
-          {isRefreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setExpanded(true)}
+            aria-label="Expand expense history to full screen"
+            title="Expand expense history to full screen"
+            className="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 2H2v4" />
+              <path d="M10 2h4v4" />
+              <path d="M14 10v4h-4" />
+              <path d="M6 14H2v-4" />
+            </svg>
+            <span className="hidden sm:inline">Expand</span>
+          </button>
+          <button type="button" onClick={refresh} disabled={isRefreshing}
+            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+            {isRefreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {isLoading && <p className="mt-4 text-sm font-bold text-slate-500 dark:text-slate-400">Loading expense history…</p>}
