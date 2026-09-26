@@ -80,3 +80,61 @@ describe("POST /api/call-shield/imports", () => {
     expect(response.status).toBe(401);
   });
 });
+
+function importRow(id) {
+  return {
+    id,
+    device_id: "device-1",
+    phone_number: "(713) 239-9946",
+    normalized_phone: "17132399946",
+    started_at: "2026-09-23T15:23:00.000Z",
+    duration_seconds: 45,
+    call_type: "incoming",
+    caller_name: "Cruise Line",
+    imported_at: "2026-09-23T16:00:00.000Z",
+    matched_case_id: null,
+    dismissed: false,
+  };
+}
+
+describe("GET /api/call-shield/imports", () => {
+  it("returns the first page with page metadata and the total", async () => {
+    const db = mockSupabase([{ data: [importRow("a"), importRow("b")], count: 350, error: null }]);
+    authedGuard(guardCallShieldRequest, db);
+    const { NextRequest } = await import("next/server");
+    const response = await route.GET(new NextRequest("https://test/api/call-shield/imports"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.items).toHaveLength(2);
+    expect(body.page).toBe(1);
+    expect(body.pageSize).toBe(200);
+    expect(body.total).toBe(350);
+    expect(db._calls).toContainEqual(["range", [0, 199]]);
+  });
+
+  it("honors page and pageSize params", async () => {
+    const db = mockSupabase([{ data: [importRow("c")], count: 350, error: null }]);
+    authedGuard(guardCallShieldRequest, db);
+    const { NextRequest } = await import("next/server");
+    const response = await route.GET(
+      new NextRequest("https://test/api/call-shield/imports?page=2&pageSize=50"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.page).toBe(2);
+    expect(body.pageSize).toBe(50);
+    expect(body.total).toBe(350);
+    expect(db._calls).toContainEqual(["range", [50, 99]]);
+  });
+
+  it("requires authentication", async () => {
+    const { NextRequest, NextResponse } = await import("next/server");
+    guardCallShieldRequest.mockResolvedValue({
+      response: NextResponse.json({ error: "nope" }, { status: 401 }),
+    });
+    const response = await route.GET(new NextRequest("https://test/api/call-shield/imports"));
+    expect(response.status).toBe(401);
+  });
+});
