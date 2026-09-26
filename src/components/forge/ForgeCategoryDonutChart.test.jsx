@@ -109,4 +109,14 @@ describe("ForgeCategoryDonutChart", () => {
     act(() => { arc.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); });
     expect(onSelectSlice).toHaveBeenCalledTimes(2);
   });
+
+  it("decorative center text never intercepts chart clicks (pointer-events none)", () => {
+    const slices = [{ key: "a", label: "A", valueCents: 500 }];
+    const { container } = mount(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} />);
+    const texts = [...container.querySelectorAll("svg text")];
+    expect(texts.length).toBeGreaterThan(0);
+    texts.forEach((text) => {
+      expect(text.style.pointerEvents).toBe("none");
+    });
+  });
 });

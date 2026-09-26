@@ -76,10 +76,10 @@ export default function ForgeCategoryDonutChart({ title, slices = [], formatValu
                 </circle>
               ))}
             </g>
-            <text x="60" y="57" textAnchor="middle" className="fill-slate-900 dark:fill-slate-100" style={{ font: "800 11px system-ui, sans-serif" }}>
+            <text x="60" y="57" textAnchor="middle" className="fill-slate-900 dark:fill-slate-100" style={{ font: "800 11px system-ui, sans-serif", pointerEvents: "none" }}>
               {format(total)}
             </text>
-            <text x="60" y="70" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ font: "700 7px system-ui, sans-serif" }}>
+            <text x="60" y="70" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ font: "700 7px system-ui, sans-serif", pointerEvents: "none" }}>
               TOTAL
             </text>
           </svg>

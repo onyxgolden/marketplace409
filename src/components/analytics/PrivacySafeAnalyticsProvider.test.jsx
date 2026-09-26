@@ -94,4 +94,41 @@ describe("PrivacySafeAnalyticsProvider", () => {
       destination: "private_financing",
     });
   });
+
+  it("never intercepts page clicks: banner container is pointer-events-none with pointer-events-auto only on controls", async () => {
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_ENABLED = "true";
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_KILL_SWITCH = "false";
+    process.env.NEXT_PUBLIC_POSTHOG_KEY = "phc_public_browser_key";
+    process.env.NEXT_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
+
+    await act(async () => {
+      root.render(<PrivacySafeAnalyticsProvider><main>FORGE</main></PrivacySafeAnalyticsProvider>);
+    });
+    const banner = container.querySelector('[aria-label="Anonymous analytics choice"]');
+    expect(banner).not.toBeNull();
+    expect(banner.className).toContain("pointer-events-none");
+    const interactive = [...banner.querySelectorAll("button, a")];
+    expect(interactive.length).toBeGreaterThan(0);
+    interactive.forEach((el) => {
+      const auto = el.classList.contains("pointer-events-auto") || el.closest(".pointer-events-auto");
+      expect(auto).toBeTruthy();
+    });
+  });
+
+  it("dismiss hides the banner for the session without recording a tracking choice", async () => {
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_ENABLED = "true";
+    process.env.NEXT_PUBLIC_FORGE_ANALYTICS_KILL_SWITCH = "false";
+    process.env.NEXT_PUBLIC_POSTHOG_KEY = "phc_public_browser_key";
+    process.env.NEXT_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
+
+    await act(async () => {
+      root.render(<PrivacySafeAnalyticsProvider><main>FORGE</main></PrivacySafeAnalyticsProvider>);
+    });
+    const dismiss = container.querySelector('[aria-label="Dismiss for now"]');
+    expect(dismiss).not.toBeNull();
+    await act(async () => dismiss.click());
+    expect(container.querySelector('[aria-label="Anonymous analytics choice"]')).toBeNull();
+    expect(localStorage.getItem(ANALYTICS_CONSENT_KEY)).toBeNull();
+    expect(mocks.initializeAnalytics).not.toHaveBeenCalled();
+  });
 });
