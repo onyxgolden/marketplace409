@@ -113,7 +113,7 @@ export function windowGlassForWall(wall, openings, { wallHeightIn, wallThickness
 export function furnitureToBox(piece) {
   const catalog = getCatalogEntry(piece.catalogId);
   if (!catalog) return null;
-  const { widthIn, depthIn } = pieceSize(piece);
+  const { widthIn, depthIn, heightIn, mountIn } = pieceSize(piece);
   return {
     kind: "furniture",
     id: piece.id,
@@ -123,7 +123,9 @@ export function furnitureToBox(piece) {
     z: piece.y,
     widthIn,
     depthIn,
-    heightIn: catalog.heightIn,
+    heightIn,
+    // Wall cabinets and shelves hang above the floor; floor pieces are 0.
+    elevationIn: mountIn,
     // screen-space clockwise degrees -> three.js counter-clockwise radians
     rotY: (-piece.rotationDeg * Math.PI) / 180,
     color: catalog.color,

@@ -13,6 +13,7 @@
 
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { pieceSize } from "@/domains/roomDesigner/designerDocument";
+import { cabinetCode } from "@/domains/roomDesigner/cabinetCodes";
 import { polygonArea } from "@/domains/roomDesigner/designerGeometry";
 import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 
@@ -38,6 +39,7 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
   // Placed pieces may carry per-piece size overrides (see RESIZE_FURNITURE);
   // fall back to the catalog nominal size otherwise.
   const { widthIn, depthIn } = pieceSize(instance);
+  const code = instance.catalogId ? cabinetCode(instance) : null;
   const w = widthIn * scale;
   const h = depthIn * scale;
   const stroke = selectionStroke(highlighted, "#374151");
@@ -64,8 +66,10 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
           strokeWidth={highlighted ? 3 : 1.5}
         />
       )}
-      <text y={Math.max(w, h) / 2 + 14} textAnchor="middle" fontSize={11} fill="#d1d5db">
-        {symbol.label}
+      {/* Cabinets read by their code at the current size (B24, W2430),
+          the way cabinet layouts are labeled; other pieces by name. */}
+      <text y={Math.max(w, h) / 2 + 14} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400}>
+        {code || symbol.label}
       </text>
     </g>
   );

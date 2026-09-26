@@ -81,6 +81,20 @@ function kitchenBox(w, d, h, c, { counter = false, door = false } = {}) {
   return parts;
 }
 
+/** Cabinet body with `n` equal drawer fronts (and optional countertop). */
+function drawerStack(w, d, h, c, n, { counter = false } = {}) {
+  const bodyH = counter ? h - 2 : h;
+  const parts = [box(0, bodyH / 2, 0, w - 1, bodyH, d - 1)];
+  if (counter) parts.push(box(0, h - 1, 0, w, 2, d, { color: "#e9e7e1" }));
+  const gap = 1;
+  const frontH = (bodyH - 4 - gap * (n - 1)) / n;
+  for (let i = 0; i < n; i += 1) {
+    const y = 2 + frontH / 2 + i * (frontH + gap);
+    parts.push(box(0, y, (d - 1) / 2 + 0.25, w - 3, frontH, 0.5, { color: shade(c, 1.08) }));
+  }
+  return parts;
+}
+
 const COMPOSERS = {
   // seating
   "sofa-3seat": upholsteredSeat,
@@ -153,6 +167,45 @@ const COMPOSERS = {
   ],
   "cabinet-wall-24": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
   "cabinet-pantry-24": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  // cabinets (sizes are whatever the piece was set to; parts scale with it)
+  "cabinet-base-drawer": (w, d, h, c) => drawerStack(w, d, h, c, 3, { counter: true }),
+  "cabinet-base-trash": (w, d, h, c) => drawerStack(w, d, h, c, 1, { counter: true }),
+  "cabinet-base-db": (w, d, h, c) => drawerStack(w, d, h, c, 4, { counter: true }),
+  "cabinet-sink-farm": (w, d, h, c) => [
+    ...kitchenBox(w, d, h - 9, c, { door: true }),
+    box(0, h - 5, (d - 1) / 2 - 8, w - 2, 9, 16, { color: "#f2f2ef" }),
+  ],
+  "cabinet-base-blind-rh": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-base-easy-reach": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-base-corner": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-base-blind": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-island-base": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-wall-corner": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  "cabinet-wall-bridge": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  "cabinet-wall-microwave": (w, d, h, c) => [
+    box(0, h / 2, -d * 0.1, w - 1, h, d * 0.8),
+    box(0, h * 0.5, (d - 1) / 2 + 0.25, w - 3, h - 4, 0.5, { color: "#1d2127" }),
+  ],
+  "cabinet-open-shelf": (w, d, h, c) => {
+    const parts = [box(0, h / 2, -d / 2 + 0.5, w, h, 1)];
+    for (const y of [0.75, h - 0.75]) parts.push(box(0, y, 0, w, 1.5, d, { color: shade(c, 1.08) }));
+    return parts;
+  },
+  "cabinet-tall-oven": (w, d, h, c) => [
+    ...kitchenBox(w, d, h, c, { door: true }),
+    box(0, h * 0.55, (d - 1) / 2 + 0.6, w - 4, Math.min(28, h * 0.33), 0.5, { color: "#1d2127" }),
+  ],
+  "cabinet-tall-utility": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  "cabinet-vanity-sink": (w, d, h, c) => [
+    ...kitchenBox(w, d, h, c, { counter: true, door: true }),
+    box(0, h - 0.5, 0, Math.max(4, w - 12), 2, Math.max(4, d - 8), { color: "#dfe5ec" }),
+  ],
+  "cabinet-vanity-drawer": (w, d, h, c) => drawerStack(w, d, h, c, 3, { counter: true }),
+  "cabinet-linen-tower": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  "cabinet-bath-wall": (w, d, h, c) => [
+    ...kitchenBox(w, d, h, c, {}),
+    box(0, h / 2, (d - 1) / 2 + 0.3, w - 2, h - 2, 0.3, { color: "#c9dce8" }),
+  ],
   "sink-kitchen-33": (w, d, h, c) => [
     box(0, h / 2, 0, w, h, d),
     box(0, h - 1, 0, w - 6, 2, d - 6, { color: "#8f979f" }),

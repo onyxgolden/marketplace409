@@ -38,6 +38,7 @@ import "./buildingElementsCatalog";
 import "./siteOutdoorCatalog";
 import "./mepFixturesCatalog";
 import "./processEquipmentCatalog";
+import { cleanMountIn } from "./furnitureSizing";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
@@ -470,11 +471,19 @@ export const FURNITURE_MAX_SIZE_IN = 480;
  * RESIZE_FURNITURE) or the catalog nominal size when none are stored.
  * Old documents without overrides resolve straight to catalog. Pure.
  */
+/**
+ * A placed piece's effective size: per-piece overrides, else the catalog
+ * nominal. heightIn is the piece's own height; mountIn is how far its bottom
+ * sits above the floor (0 for floor-standing pieces, the catalog default for
+ * wall cabinets unless overridden).
+ */
 export function pieceSize(piece) {
   const entry = piece ? getCatalogEntry(piece.catalogId) : null;
   return {
     widthIn: piece?.widthIn ?? entry?.widthIn ?? 0,
     depthIn: piece?.depthIn ?? entry?.depthIn ?? 0,
+    heightIn: piece?.heightIn ?? entry?.heightIn ?? 0,
+    mountIn: piece?.mountIn ?? entry?.mountIn ?? 0,
   };
 }
 
@@ -489,9 +498,11 @@ function cleanSizeIn(value, label) {
   return Math.round(n * 2) / 2; // half-inch resolution keeps plans clean
 }
 
-/** Resize a placed furniture piece; stores width/depth overrides in inches.
- * Round catalog pieces stay round: both axes follow the larger dimension. */
-export function resizeFurniture(design, furnitureId, widthIn, depthIn) {
+/** Resize a placed furniture piece; stores width/depth (and, when given,
+ * height) overrides in inches. Round catalog pieces stay round: both plan
+ * axes follow the larger dimension. heightIn is optional so plan-only
+ * resizes (corner-handle drags) leave a custom height alone. */
+export function resizeFurniture(design, furnitureId, widthIn, depthIn, heightIn) {
   assertDesign(design);
   const piece = design.furniture.find((f) => f.id === furnitureId);
   if (!piece) throw new Error(`Unknown furniture: ${furnitureId}`);
@@ -502,20 +513,41 @@ export function resizeFurniture(design, furnitureId, widthIn, depthIn) {
     w = s;
     d = s;
   }
+  const h = heightIn === undefined ? undefined : cleanSizeIn(heightIn, "Height");
   const furniture = design.furniture.map((f) =>
-    f.id === furnitureId ? { ...f, widthIn: w, depthIn: d } : f,
+    f.id === furnitureId ? { ...f, widthIn: w, depthIn: d, ...(h !== undefined ? { heightIn: h } : {}) } : f,
   );
   return { ...design, furniture };
 }
 
-/** Drop a piece's size overrides, restoring the catalog nominal size. */
+/**
+ * Set how high a piece's bottom sits above the floor (wall cabinets,
+ * shelves), in inches; null drops the override back to the catalog default.
+ */
+export function setFurnitureMount(design, furnitureId, mountIn) {
+  assertDesign(design);
+  const piece = design.furniture.find((f) => f.id === furnitureId);
+  if (!piece) throw new Error(`Unknown furniture: ${furnitureId}`);
+  const furniture = design.furniture.map((f) => {
+    if (f.id !== furnitureId) return f;
+    if (mountIn === null || mountIn === undefined) {
+      const { mountIn: _m, ...rest } = f;
+      return rest;
+    }
+    return { ...f, mountIn: cleanMountIn(mountIn) };
+  });
+  return { ...design, furniture };
+}
+
+/** Drop a piece's size overrides (width, depth, height, mounting height),
+ * restoring the catalog nominal size. */
 export function resetFurnitureSize(design, furnitureId) {
   assertDesign(design);
   let changed = false;
   const furniture = design.furniture.map((f) => {
     if (f.id !== furnitureId) return f;
     changed = true;
-    const { widthIn: _w, depthIn: _d, ...rest } = f;
+    const { widthIn: _w, depthIn: _d, heightIn: _h, mountIn: _m, ...rest } = f;
     return rest;
   });
   if (!changed) throw new Error(`Unknown furniture: ${furnitureId}`);
