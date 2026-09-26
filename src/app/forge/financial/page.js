@@ -8,7 +8,14 @@ import {
 import {
   FinancialPeriodApplication,
 } from "@/application/financial/FinancialPeriodApplication";
-import FinancialApplicationShell from "@/components/forge/financial/FinancialApplicationShell";
+import FinancialApplicationShell, {
+  FINANCIAL_FUNCTIONS,
+} from "@/components/forge/financial/FinancialApplicationShell";
+import {
+  FINANCIAL_HEADLINE_DEEP_LINK,
+  FINANCIAL_KPI_DEEP_LINKS,
+  layoutStorageKey,
+} from "@/components/forge/financial/dashboardCardLayout";
 import { isCacheableDashboardLoad, readLastKnownDashboardCache, writeDashboardCache } from "./dashboardCache.js";
 import { money } from "./formatMoney.js";
 import MonthComparisonPanel from "./MonthComparisonPanel.jsx";
@@ -117,6 +124,21 @@ function presentTransaction(transaction) {
   };
 }
 
+// Deep-linkable tabs: /forge/financial?tab=transactions opens the transactions
+// surface directly, so dashboard numbers can link to the report behind them.
+// Client-only read (guarded for SSR) -- no Suspense boundary needed. Used as
+// the state initializer (the React-recommended pattern over setState-in-effect).
+function readInitialFunctionId() {
+  if (typeof window === "undefined") return "overview";
+  try {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    if (FINANCIAL_FUNCTIONS.some((fn) => fn.id === requested)) return requested;
+  } catch {
+    // Malformed URL -- fall through to the overview.
+  }
+  return "overview";
+}
+
 export default function FinancialPage() {
   const [viewModel, setViewModel] = useState(
     ForgeFinancialDashboardApplication.buildLoadingModel(),
@@ -129,7 +151,11 @@ export default function FinancialPage() {
   const [
     activeFunctionId,
     setActiveFunctionId,
-  ] = useState("overview");
+  ] = useState(readInitialFunctionId);
+
+  // Server-resolved acting user -- scopes the dashboard card layout's
+  // localStorage key per user (see dashboardCardLayout.js).
+  const [actingUserId, setActingUserId] = useState(null);
 
   const [
     selectedPeriodKey,
@@ -143,6 +169,20 @@ export default function FinancialPage() {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Keep the tab in the URL (replaceState, not pushState -- no history spam)
+  // so dashboard drill-down links stay shareable and refresh-safe.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      if (activeFunctionId === "overview") url.searchParams.delete("tab");
+      else url.searchParams.set("tab", activeFunctionId);
+      window.history.replaceState(null, "", url.toString());
+    } catch {
+      // Non-http(s) contexts -- leave the URL alone.
+    }
+  }, [activeFunctionId]);
+
   useEffect(() => {
     async function load() {
       // Server-resolved BEFORE any cache read is attempted -- the current session and the
@@ -151,6 +191,7 @@ export default function FinancialPage() {
       // unauthenticated, resolution failed) means no cache read or write at all -- fall straight
       // through to a fresh, uncached load, never an unscoped fallback key.
       const { actingUserId, canonicalWorkspaceId } = await loadWorkspaceIdentity();
+      setActingUserId(actingUserId);
 
       // Stale-while-revalidate: render the last known-good result immediately regardless of its
       // age -- last known data beats a blank loading skeleton every time. `isStale` (past the
@@ -287,6 +328,7 @@ export default function FinancialPage() {
       id: "equity",
       label: "Net Worth / Equity",
       value: money(kpis.equity),
+      href: FINANCIAL_KPI_DEEP_LINKS.equity,
       detail:
         `Assets ${money(kpis.assets)} · ` +
         `Liabilities ${money(kpis.liabilities)}`,
@@ -295,12 +337,14 @@ export default function FinancialPage() {
       id: "cash",
       label: "Cash",
       value: money(kpis.cash),
+      href: FINANCIAL_KPI_DEEP_LINKS.cash,
       detail: `Receivables ${money(kpis.receivables)}`,
     },
     {
       id: "profit",
       label: "Monthly Profit",
       value: money(currentMonthProfitKpi.profitDollars),
+      href: FINANCIAL_KPI_DEEP_LINKS.profit,
       detail:
         `Revenue ${money(currentMonthProfitKpi.revenueDollars)} · ` +
         `Expenses ${money(currentMonthProfitKpi.expensesDollars)}`,
@@ -309,6 +353,7 @@ export default function FinancialPage() {
       id: "margin",
       label: "Profit Margin",
       value: percent(kpis.margin),
+      href: FINANCIAL_KPI_DEEP_LINKS.margin,
       detail: "Revenue retained after expenses",
     },
   ];
@@ -322,6 +367,7 @@ export default function FinancialPage() {
     label: "Cash on hand",
     caption: "Liquid cash across your accounts.",
     ready: loadState === "ready",
+    href: FINANCIAL_HEADLINE_DEEP_LINK,
   };
 
   const executiveBriefingPresentation =
@@ -441,6 +487,7 @@ export default function FinancialPage() {
       onFunctionChange={
         setActiveFunctionId
       }
+      layoutStorageKey={layoutStorageKey(actingUserId)}
       loadState={loadState}
       isRefreshing={isRefreshing}
       error={

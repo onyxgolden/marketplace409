@@ -1,11 +1,13 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, X } from "lucide-react";
 import { buildFinancialForgePerformance } from "@/application/financial/buildFinancialForgePerformance";
 import { groupExpenseCategory, groupOrderIndex } from "@/application/financial/expenseCategoryGroups";
 import ForgeCategoryDonutChart from "@/components/forge/ForgeCategoryDonutChart";
 import ForgeComparisonBarChart from "@/components/forge/ForgeComparisonBarChart";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import { FINANCIAL_ACTIVITY_TRANSACTIONS_LINK } from "@/components/forge/financial/dashboardCardLayout";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -265,7 +267,7 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
   }
 
   return (
-    <section data-financial-forge-overview className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+    <section data-financial-forge-overview id="financial-forge-overview" className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h3 className="text-lg font-black text-slate-950 dark:text-white">Financial activity</h3>
@@ -357,14 +359,24 @@ export default function FinancialForgeOverviewPanel({ loadState, transactions = 
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-2">
-        <div className="rounded-xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
+        <Link
+          href={FINANCIAL_ACTIVITY_TRANSACTIONS_LINK}
+          aria-label={`Income for the selected period: ${money.format(performance.totals.incomeCents / 100)} — view transactions`}
+          data-activity-summary-link="income"
+          className="block rounded-xl bg-emerald-50 p-4 transition hover:ring-2 hover:ring-emerald-300 dark:bg-emerald-950/30 dark:hover:ring-emerald-700"
+        >
           <p className="text-xs font-black uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Income (selected period)</p>
           <p className="mt-1 text-xl font-black tabular-nums text-emerald-900 dark:text-emerald-200">{money.format(performance.totals.incomeCents / 100)}</p>
-        </div>
-        <div className="rounded-xl bg-amber-50 p-4 dark:bg-amber-950/30">
+        </Link>
+        <Link
+          href={FINANCIAL_ACTIVITY_TRANSACTIONS_LINK}
+          aria-label={`Expenses for the selected period: ${money.format(performance.totals.expensesCents / 100)} — view transactions`}
+          data-activity-summary-link="expenses"
+          className="block rounded-xl bg-amber-50 p-4 transition hover:ring-2 hover:ring-amber-300 dark:bg-amber-950/30 dark:hover:ring-amber-700"
+        >
           <p className="text-xs font-black uppercase tracking-wide text-amber-700 dark:text-amber-400">Expenses (selected period)</p>
           <p className="mt-1 text-xl font-black tabular-nums text-amber-900 dark:text-amber-200">{money.format(performance.totals.expensesCents / 100)}</p>
-        </div>
+        </Link>
       </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-2" role="group" aria-label="Select time period">

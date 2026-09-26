@@ -98,6 +98,7 @@ export default function MonthComparisonPanel() {
   return (
     <section
       data-month-comparison
+      id="month-comparison"
       className={forgeTheme.card}
     >
       <button
