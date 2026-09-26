@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -12,6 +12,29 @@ async function fetchBankAccounts() {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Unable to load bank accounts.");
   return body.accounts || [];
+}
+
+async function fetchAttachments(eventId) {
+  const response = await fetch(`/api/rental/transaction-attachments?eventId=${encodeURIComponent(eventId)}`);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to load attachments.");
+  return body.attachments || [];
+}
+
+async function uploadAttachment(eventId, file) {
+  const form = new FormData();
+  form.append("eventId", eventId);
+  form.append("file", file);
+  const response = await fetch("/api/rental/transaction-attachments", { method: "POST", body: form });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to upload the attachment.");
+  return body.attachment;
+}
+
+async function deleteAttachment(attachmentId) {
+  const response = await fetch(`/api/rental/transaction-attachments?attachmentId=${encodeURIComponent(attachmentId)}`, { method: "DELETE" });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to remove the attachment.");
 }
 
 const emptyForm = (propertyId, kind) => ({
@@ -47,8 +70,37 @@ export default function TransactionForm({
   const [form, setForm] = useState(() => ({ ...emptyForm(propertyId, defaultKind), ...(initialEvent || {}) }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const [savedAttachments, setSavedAttachments] = useState([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(Boolean(initialEvent?.id));
   const { data: accountsData } = useStaleWhileRevalidate("transaction-form:bank-accounts", fetchBankAccounts, { ttlMs: 300_000 });
   const accounts = accountsData || [];
+
+  const editingId = initialEvent?.id || null;
+
+  // Load existing attachments in edit mode — once on mount. State updates
+  // happen in the fetch callbacks, never synchronously in the effect body.
+  useEffect(() => {
+    if (!editingId) return undefined;
+    let cancelled = false;
+    fetchAttachments(editingId).then(
+      (rows) => { if (!cancelled) { setSavedAttachments(rows); setAttachmentsLoading(false); } },
+      () => { if (!cancelled) { setSavedAttachments([]); setAttachmentsLoading(false); } },
+    );
+    return () => { cancelled = true; };
+  }, [editingId]);
+
+  async function refreshAttachments() {
+    if (!editingId) return;
+    setAttachmentsLoading(true);
+    try {
+      setSavedAttachments(await fetchAttachments(editingId));
+    } catch {
+      setSavedAttachments([]);
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  }
 
   const update = (field) => (event) => {
     const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
@@ -95,7 +147,20 @@ export default function TransactionForm({
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to save the transaction.");
-      onSaved?.(body.event);
+      const savedEvent = body.event;
+      // Files picked before the event existed upload now that it has an id.
+      // An upload failure must not lose the transaction — it is reported and
+      // the event still saves.
+      if (!isEdit && savedEvent?.id && pendingFiles.length > 0) {
+        for (const file of pendingFiles) {
+          try {
+            await uploadAttachment(savedEvent.id, file);
+          } catch (uploadError) {
+            setError(`Transaction saved, but "${file.name}" failed to upload: ${uploadError.message}`);
+          }
+        }
+      }
+      onSaved?.(savedEvent);
     } catch (caught) {
       setError(caught.message || "Unable to save the transaction.");
     } finally {
@@ -207,6 +272,66 @@ export default function TransactionForm({
           </div>
 
           {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
+
+          <div className={`${labelClass} mt-4`}>
+            Attachments
+            <span className="block font-normal text-slate-500 dark:text-slate-400">Receipts, invoices — PDF, JPG, or PNG, up to 10 MB each.</span>
+            <input type="file" multiple accept="application/pdf,image/jpeg,image/png"
+              onChange={async (event) => {
+                const files = Array.from(event.target.files || []);
+                event.target.value = "";
+                if (files.length === 0) return;
+                if (editingId) {
+                  for (const file of files) {
+                    try {
+                      await uploadAttachment(editingId, file);
+                    } catch (caught) {
+                      setError(`"${file.name}" failed to upload: ${caught.message}`);
+                      return;
+                    }
+                  }
+                  await refreshAttachments();
+                } else {
+                  setPendingFiles((current) => [...current, ...files]);
+                }
+              }}
+              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-normal dark:border-slate-600 dark:bg-slate-900" />
+            {pendingFiles.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {pendingFiles.map((file, index) => (
+                  <li key={`${file.name}-${index}`} className="flex items-center justify-between gap-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold dark:bg-slate-800">
+                    <span className="truncate">{file.name}</span>
+                    <button type="button"
+                      onClick={() => setPendingFiles((current) => current.filter((_, i) => i !== index))}
+                      className="shrink-0 font-black text-slate-500 hover:text-red-700 dark:hover:text-red-400">Remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {editingId && (
+              attachmentsLoading
+                ? <p className="mt-2 text-xs font-bold text-slate-400">Loading attachments…</p>
+                : savedAttachments.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {savedAttachments.map((attachment) => (
+                      <li key={attachment.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold dark:bg-slate-800">
+                        <span className="truncate">{attachment.filename}</span>
+                        <button type="button"
+                          onClick={async () => {
+                            try {
+                              await deleteAttachment(attachment.id);
+                              await refreshAttachments();
+                            } catch (caught) {
+                              setError(caught.message);
+                            }
+                          }}
+                          className="shrink-0 font-black text-slate-500 hover:text-red-700 dark:hover:text-red-400">Remove</button>
+                      </li>
+                    ))}
+                  </ul>
+                )
+            )}
+          </div>
 
           <div className="mt-5 flex items-center justify-between gap-3">
             <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
