@@ -83,6 +83,7 @@ export function buildFinancialActiveSurface({
   brainActionsSection = null,
   anomalyAlertsSection = null,
   cashForecastSection = null,
+  leftThisMonthSection = null,
   debtPayoffSection = null,
   selectedAccountId = null,
   selectedAccountName = null,
@@ -217,6 +218,7 @@ export function buildFinancialActiveSurface({
                   {brainActionsSection}
                   {anomalyAlertsSection}
                   {cashForecastSection}
+                  {leftThisMonthSection}
                   {debtPayoffSection}
                 </>
               )}

@@ -16,6 +16,7 @@ import AskBooksPanel from "./AskBooksPanel.jsx";
 import BrainActionBar from "./BrainActionBar.jsx";
 import AnomalyAlertsPanel from "./AnomalyAlertsPanel.jsx";
 import CashForecastPanel from "./CashForecastPanel.jsx";
+import LeftThisMonthPanel from "./LeftThisMonthPanel.jsx";
 import DebtPayoffPanel from "./DebtPayoffPanel.jsx";
 import { getCurrentMonthProfitKpi } from "./getCurrentMonthProfitKpi.js";
 
@@ -432,6 +433,7 @@ export default function FinancialPage() {
       brainActionsSection={<BrainActionBar />}
       anomalyAlertsSection={<AnomalyAlertsPanel />}
       cashForecastSection={<CashForecastPanel />}
+      leftThisMonthSection={<LeftThisMonthPanel />}
       debtPayoffSection={<DebtPayoffPanel />}
       activeFunctionId={
         activeFunctionId
