@@ -8,14 +8,14 @@ describe("money", () => {
   // centsToDollars() and the aggregation service both hand back dollars), so the top KPI cards
   // (Net Worth, Cash, Monthly Profit, Revenue, Expenses) were silently showing every real number
   // 100x too small.
-  it("formats a dollar amount directly, without dividing by 100", () => {
-    expect(money(4235.67)).toBe("$4,236");
-    expect(money(1194978.83)).toBe("$1,194,979");
+  it("formats a dollar amount directly, without dividing by 100, with cents", () => {
+    expect(money(4235.67)).toBe("$4,235.67");
+    expect(money(1194978.83)).toBe("$1,194,978.83");
   });
 
   it("treats a missing or null value as zero", () => {
-    expect(money(null)).toBe("$0");
-    expect(money(undefined)).toBe("$0");
+    expect(money(null)).toBe("$0.00");
+    expect(money(undefined)).toBe("$0.00");
   });
 });
 
@@ -29,9 +29,9 @@ describe("ledger boundary (cents -> dollars)", () => {
     expect(centsToDollars(null)).toBe(0);
   });
 
-  it("ledgerMoney renders ledger cents as dollars", () => {
-    expect(ledgerMoney(6000)).toBe("$60");
-    expect(ledgerMoney(-154000)).toBe("-$1,540");
-    expect(ledgerMoney(0)).toBe("$0");
+  it("ledgerMoney renders ledger cents as dollars, with cents", () => {
+    expect(ledgerMoney(6000)).toBe("$60.00");
+    expect(ledgerMoney(-154000)).toBe("-$1,540.00");
+    expect(ledgerMoney(0)).toBe("$0.00");
   });
 });

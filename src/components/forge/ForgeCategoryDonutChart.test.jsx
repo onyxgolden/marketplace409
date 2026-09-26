@@ -120,3 +120,19 @@ describe("ForgeCategoryDonutChart", () => {
     });
   });
 });
+
+describe("ForgeCategoryDonutChart drill-down affordance", () => {
+  const slices = [{ key: "a", label: "A", valueCents: 100 }];
+
+  it("shows a 'Select a slice to see transactions' caption and pointer affordance when drill-down is available", () => {
+    const markup = renderToStaticMarkup(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} onSelectSlice={() => {}} />);
+    expect(markup).toContain("Select a slice to see transactions");
+    expect(markup).toContain("cursor-pointer");
+  });
+
+  it("shows no caption and no pointer affordance when drill-down is unavailable", () => {
+    const markup = renderToStaticMarkup(<ForgeCategoryDonutChart title="Expenses by category" slices={slices} formatValue={money} />);
+    expect(markup).not.toContain("Select a slice to see transactions");
+    expect(markup).not.toContain("cursor-pointer");
+  });
+});

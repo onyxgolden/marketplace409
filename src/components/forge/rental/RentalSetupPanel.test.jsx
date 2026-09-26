@@ -66,3 +66,21 @@ describe("RentalSetupPanel new-unit creation", () => {
     expect(markup).not.toContain(">Vacant<");
   });
 });
+
+describe("RentalSetupPanel eyebrow and create form", () => {
+  afterEach(() => { clearSWRCache(); });
+  it("derives the panel eyebrow from the selected unit's property label", async () => {
+    await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied" }], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
+    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    expect(markup).toContain("930 Highland Drive setup");
+    expect(markup).not.toContain("Kent Avenue setup");
+  });
+  it("ships the create form with blank fields instead of another property's sample data", async () => {
+    await fetchWithDedupe("rental:setup", () => Promise.resolve({ units: [], leases: [], leaseMemberships: [], tenants: [], openCharges: [] }));
+    const markup = renderToStaticMarkup(<RentalSetupPanel />);
+    expect(markup).toContain("Create a new property / unit");
+    expect(markup).not.toContain('value="4800-kent-ave"');
+    expect(markup).not.toContain('value="Main residence"');
+    expect(markup).not.toContain('value="Remodel in progress."');
+  });
+});
