@@ -1,10 +1,10 @@
-// Bank account ledger — pure read model for the Rentec-style bank register.
+// Bank account ledger — pure read model for the bank register.
 //
 // Source (authoritative only): financial_events rows linked to the selected bank
 // account via bank_account_id. Active, non-deleted income/expense rows only —
 // never guessed, never fuzzy-matched.
 //
-// Rentec convention carried through: expenses post to the Debit column, income to
+// Register convention: expenses post to the Debit column, income to
 // the Credit column. The running balance is cumulative credits minus debits for
 // the account, starting at 0 before the oldest entry. Rows sort by event_date,
 // then by id for a stable order on same-date entries.
@@ -44,6 +44,15 @@ export function buildBankLedger({ financialEvents = [], accountName = null } = {
       creditCents: kind === "income" ? amountCents : 0,
       category: label(event.normalized_category) || "—",
       propertyId: event.property_id || null,
+      propertyLabel: event.property_label || null,
+      tenantId: event.tenant_id || null,
+      tenantLabel: event.tenant_label || null,
+      transferGroupId: event.transfer_group_id || null,
+      transferDirection: event.metadata?.transfer_direction || null,
+      counterpartAccountId: event.metadata?.counterpart_account_id || null,
+      counterpartAccountName: event.metadata?.counterpart_account_name || null,
+      counterpartEventId: event.metadata?.counterpart_event_id || null,
+      memo: event.metadata?.memo || null,
       cleared: event.cleared === true,
       clearedAt: event.cleared_at || null,
       status: event.status || "active",

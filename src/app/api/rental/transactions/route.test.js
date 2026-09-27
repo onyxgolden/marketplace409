@@ -217,6 +217,116 @@ describe("PATCH /api/rental/transactions", () => {
     const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody }));
     expect(response.status).toBe(403);
   });
+
+  it("400s when the amount of a fund-transfer leg is changed", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", amount: 500, transaction_kind: "expense", bank_account_id: "acct-1", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    // validBody carries amount 450 — changing the leg's 500 breaks the pair.
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("fund transfer");
+  });
+
+  it("400s when the account of a fund-transfer leg is changed", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", amount: 450, transaction_kind: "expense", bank_account_id: "acct-1", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+      accountLookup: { data: [{ id: "acct-2" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody, bankAccountId: "acct-2" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain("fund transfer");
+  });
+
+  it("allows memo edits on a fund-transfer leg without touching the pair", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", amount: 450, transaction_kind: "expense", bank_account_id: null, event_date: "2026-09-26", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody, memo: "Updated note" }));
+    expect(response.status).toBe(200);
+    // A transfer leg goes through the atomic transfer-leg RPC — one call,
+    // no separate pair update. The date did not change, so the RPC's
+    // pair-wide propagation is a no-op.
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0].name).toBe("update_transfer_leg_with_history");
+    expect(db.rpcCalls[0].args.p_event.memo).toBe("Updated note");
+    expect(db.rpcCalls[0].args.p_owner_id).toBe("owner_1");
+    expect(db.rpcCalls[0].args.p_event_id).toBe("evt-1");
+    const updates = db.queries.filter((q) => q.table === "financial_events" && q.query.update.mock.calls.length > 0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("updates a transfer leg's date through the one atomic transfer-leg RPC — no separate pair update", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", amount: 450, transaction_kind: "expense", bank_account_id: "acct-1", event_date: "2026-09-26", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+      accountLookup: { data: [{ id: "acct-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody, bankAccountId: "acct-1", eventDate: "2026-09-27" }));
+    expect(response.status).toBe(200);
+    // Atomicity: exactly one RPC call carries the new date for the pair —
+    // there is no second write that could fail and leave the legs split.
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0].name).toBe("update_transfer_leg_with_history");
+    expect(db.rpcCalls[0].args.p_event.eventDate).toBe("2026-09-27");
+    expect(db.rpcCalls[0].args.p_owner_id).toBe("owner_1");
+    expect(db.rpcCalls[0].args.p_event_id).toBe("evt-1");
+    const updates = db.queries.filter((q) => q.table === "financial_events" && q.query.update.mock.calls.length > 0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("does not touch the counterpart leg when the transfer date is unchanged", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", amount: 450, transaction_kind: "expense", bank_account_id: "acct-1", event_date: "2026-09-26", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+      accountLookup: { data: [{ id: "acct-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody, bankAccountId: "acct-1" }));
+    expect(response.status).toBe(200);
+    // Transfer legs always go through the transfer-leg RPC (the date is
+    // unchanged here, so its pair-wide propagation is a no-op), and never
+    // through the generic RPC — with zero separate pair updates.
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0].name).toBe("update_transfer_leg_with_history");
+    const updates = db.queries.filter((q) => q.table === "financial_events" && q.query.update.mock.calls.length > 0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it("still routes a non-transfer edit through the generic update_transaction_with_history RPC", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", amount: 450, transaction_kind: "expense", bank_account_id: "acct-1", event_date: "2026-09-26", transfer_group_id: null, cleared: false, cleared_at: null }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+      accountLookup: { data: [{ id: "acct-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody, bankAccountId: "acct-1", eventDate: "2026-09-27" }));
+    expect(response.status).toBe(200);
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0].name).toBe("update_transaction_with_history");
+    expect(db.rpcCalls[0].args.p_event.eventDate).toBe("2026-09-27");
+    const updates = db.queries.filter((q) => q.table === "financial_events" && q.query.update.mock.calls.length > 0);
+    expect(updates).toHaveLength(0);
+  });
 });
 
 describe("DELETE /api/rental/transactions", () => {
@@ -257,6 +367,22 @@ describe("DELETE /api/rental/transactions", () => {
     });
     const response = await DELETE(deleteRequest("evt-1"));
     expect(response.status).toBe(403);
+  });
+
+  it("soft-deletes BOTH legs when the event is part of a fund transfer", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await DELETE(deleteRequest("evt-1"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).deletedTransfer).toBe(true);
+    const updateQuery = db.queries.findLast((q) => q.table === "financial_events").updateQuery;
+    expect(updateQuery.eq).toHaveBeenCalledWith("owner_id", "owner_1");
+    expect(updateQuery.eq).toHaveBeenCalledWith("transfer_group_id", "transfer_abc");
+    expect(updateQuery.eq).not.toHaveBeenCalledWith("id", "evt-1");
   });
 });
 

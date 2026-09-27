@@ -215,7 +215,7 @@ export async function GET(request) {
 async function ownManualEvent(supabaseClient, effectiveOwnerId, eventId) {
   const { data, error } = await supabaseClient
     .from("financial_events")
-    .select("id, cleared, cleared_at, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, property_id, display_as, ref_number, payee_mailing_address, assigned_to, is_recurring, recurrence_rule, depreciate, metadata")
+    .select("id, cleared, cleared_at, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, property_id, display_as, ref_number, payee_mailing_address, assigned_to, is_recurring, recurrence_rule, depreciate, transfer_group_id, metadata")
     .eq("owner_id", effectiveOwnerId)
     .eq("id", eventId)
     .eq("source_system", "manual")
@@ -323,6 +323,22 @@ export async function PATCH(request) {
     const existing = await ownManualEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
     if (!existing) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
 
+    // A transfer is a linked pair: amount, direction, and account are shared
+    // by both legs. Editing one leg alone would leave the pair unbalanced,
+    // so structural changes are refused — delete the transfer and re-create
+    // it instead. Memo and check number may still be edited; a date edit is
+    // applied to both legs atomically by the transfer-leg RPC below, so the
+    // pair can never diverge.
+    if (existing.transfer_group_id) {
+      const structuralChange =
+        Number(value.amount) !== Number(existing.amount) ||
+        value.transactionKind !== existing.transaction_kind ||
+        (value.bankAccountId || null) !== (existing.bank_account_id || null);
+      if (structuralChange) {
+        return NextResponse.json({ error: "This transaction is part of a fund transfer. Delete the transfer and re-create it to change the amount or accounts." }, { status: 400 });
+      }
+    }
+
     if (value.bankAccountId) {
       const { data: accounts, error: accountError } = await authenticated.supabaseClient
         .from("financial_accounts")
@@ -341,42 +357,49 @@ export async function PATCH(request) {
     const clearedAt = value.cleared ? (existing.cleared_at || new Date().toISOString()) : null;
     const changes = diffEditableFields(existing, value);
 
-    // The edit and its audit row are written by one RPC in a single database
-    // transaction: if the history insert fails, the edit rolls back with it.
-    // A successful edit therefore always carries its audit record — the
-    // failure surfaces here as a 500 instead of being swallowed.
+    // The edit, its audit row, and (for a transfer leg) the pair-wide date
+    // propagation are written by ONE RPC in a single database transaction.
+    // A fund transfer is one economic event: both legs must always share the
+    // same date (split dates would put the debit and credit in different
+    // accounting periods), so a transfer leg goes through
+    // update_transfer_leg_with_history, which applies the initiating edit,
+    // records the audit row, and re-dates every leg of the pair
+    // atomically. A successful edit therefore always carries its audit
+    // record and the legs can never diverge — any failure surfaces here as
+    // a 500 instead of being swallowed.
+    const rpcArgs = {
+      p_owner_id: authenticated.effectiveOwnerId,
+      p_event_id: eventId,
+      p_event: {
+        propertyId: value.propertyId,
+        eventDate: value.eventDate,
+        description: value.description,
+        amount: value.amount,
+        transactionKind: value.transactionKind,
+        normalizedCategory: value.normalizedCategory,
+        payee: value.payee,
+        checkNumber: value.checkNumber,
+        bankAccountId: value.bankAccountId,
+        cleared: value.cleared,
+        displayAs: value.displayAs,
+        refNumber: value.refNumber,
+        payeeMailingAddress: value.payeeMailingAddress,
+        assignedTo: value.assignedTo,
+        isRecurring: value.isRecurring,
+        recurrenceRule: value.recurrenceRule,
+        depreciate: value.depreciate,
+        memo: value.memo,
+        tenantId: value.tenantId,
+        chargeTenant: value.chargeTenant,
+        paymentMethod: value.paymentMethod,
+      },
+      p_changes: changes,
+      p_edited_by: authenticated.user.id,
+      p_cleared_at: clearedAt,
+    };
     const { data: updated, error: rpcError } = await authenticated.supabaseClient.rpc(
-      "update_transaction_with_history",
-      {
-        p_owner_id: authenticated.effectiveOwnerId,
-        p_event_id: eventId,
-        p_event: {
-          propertyId: value.propertyId,
-          eventDate: value.eventDate,
-          description: value.description,
-          amount: value.amount,
-          transactionKind: value.transactionKind,
-          normalizedCategory: value.normalizedCategory,
-          payee: value.payee,
-          checkNumber: value.checkNumber,
-          bankAccountId: value.bankAccountId,
-          cleared: value.cleared,
-          displayAs: value.displayAs,
-          refNumber: value.refNumber,
-          payeeMailingAddress: value.payeeMailingAddress,
-          assignedTo: value.assignedTo,
-          isRecurring: value.isRecurring,
-          recurrenceRule: value.recurrenceRule,
-          depreciate: value.depreciate,
-          memo: value.memo,
-          tenantId: value.tenantId,
-          chargeTenant: value.chargeTenant,
-          paymentMethod: value.paymentMethod,
-        },
-        p_changes: changes,
-        p_edited_by: authenticated.user.id,
-        p_cleared_at: clearedAt,
-      }
+      existing.transfer_group_id ? "update_transfer_leg_with_history" : "update_transaction_with_history",
+      rpcArgs
     );
     if (rpcError) throw rpcError;
 
@@ -404,7 +427,9 @@ export async function DELETE(request) {
     const existing = await ownManualEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
     if (!existing) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
 
-    const { error } = await authenticated.supabaseClient
+    // Deleting one leg of a fund transfer deletes both legs: the pair is a
+    // single economic event, and a lone leg would be a one-sided transfer.
+    const deleteQuery = authenticated.supabaseClient
       .from("financial_events")
       .update({
         is_deleted: true,
@@ -412,11 +437,16 @@ export async function DELETE(request) {
         status: "deleted",
         updated_by: authenticated.user.id,
       })
-      .eq("owner_id", authenticated.effectiveOwnerId)
-      .eq("id", eventId);
+      .eq("owner_id", authenticated.effectiveOwnerId);
+    if (existing.transfer_group_id) {
+      deleteQuery.eq("transfer_group_id", existing.transfer_group_id);
+    } else {
+      deleteQuery.eq("id", eventId);
+    }
+    const { error } = await deleteQuery;
     if (error) throw error;
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, deletedTransfer: Boolean(existing.transfer_group_id) });
   } catch (error) {
     console.error("Transaction delete error", error);
     return NextResponse.json({ error: "Unable to delete the transaction." }, { status: 500 });

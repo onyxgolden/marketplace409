@@ -95,4 +95,48 @@ describe("buildBankLedger", () => {
     expect(ledger.unclearedCount).toBe(0);
     expect(Object.isFrozen(ledger)).toBe(true);
   });
+
+  it("carries transfer linkage and counterpart metadata through to entries", () => {
+    const ledger = buildBankLedger({
+      financialEvents: [
+        event({
+          id: "out", amount: 500, transaction_kind: "expense",
+          transfer_group_id: "transfer_abc",
+          metadata: {
+            memo: "Owner draw",
+            transfer_direction: "out",
+            counterpart_account_id: "acct-2",
+            counterpart_account_name: "Business Savings",
+            counterpart_event_id: "in",
+          },
+        }),
+      ],
+    });
+    expect(ledger.entries[0]).toMatchObject({
+      transferGroupId: "transfer_abc",
+      transferDirection: "out",
+      counterpartAccountId: "acct-2",
+      counterpartAccountName: "Business Savings",
+      counterpartEventId: "in",
+      memo: "Owner draw",
+    });
+  });
+
+  it("carries property and tenant labels through to entries", () => {
+    const ledger = buildBankLedger({
+      financialEvents: [
+        event({
+          id: "a", amount: 1600, transaction_kind: "income",
+          property_id: "prop-1", property_label: "308 Paula",
+          tenant_id: "tenant-1", tenant_label: "Eric Carrillo",
+        }),
+      ],
+    });
+    expect(ledger.entries[0]).toMatchObject({
+      propertyId: "prop-1",
+      propertyLabel: "308 Paula",
+      tenantId: "tenant-1",
+      tenantLabel: "Eric Carrillo",
+    });
+  });
 });
