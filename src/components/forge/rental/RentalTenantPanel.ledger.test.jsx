@@ -68,8 +68,8 @@ describe("RentalTenantPanel tenant ledger access", () => {
     await act(async () => balanceLink.click());
     expect(container.querySelector("[data-tenant-ledger-page]")).not.toBeNull();
     expect(container.querySelector("[data-tenant-ledger-page]").textContent).toContain("Paula");
-    // Back returns to the tenant cards.
-    const back = [...container.querySelectorAll("button")].find((b) => b.textContent.includes("Back to tenants"));
+    // The Tenants breadcrumb returns to the tenant cards.
+    const back = [...container.querySelectorAll("button")].find((b) => b.textContent === "Tenants");
     await act(async () => back.click());
     expect(container.querySelector("[data-tenant-ledger-page]")).toBeNull();
     expect(container.querySelector("[data-rental-tenant-detail]")).not.toBeNull();

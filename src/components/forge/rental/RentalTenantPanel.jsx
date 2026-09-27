@@ -201,7 +201,8 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       <TenantLedgerPage tenantId={ledgered.id} tenantName={ledgered.display_name}
         unitLabel={propertyLabelForTenant(ledgered, leases, leaseMemberships, units)}
         initialView={ledgerTenant.initialView} onClose={() => setLedgerTenant(null)}
-        onPostCharge={() => onNavigate("charges", { recordType: "tenant", recordId: ledgered.id })} />
+        onOpenPropertyLedger={(propertyKey, propertyLabel) => onNavigate("setup", { recordType: "property", recordId: propertyKey, recordLabel: propertyLabel })}
+        onOpenBankLedger={() => navigate?.("bank-ledger")} />
     </section>;
   }
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-setup>

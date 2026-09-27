@@ -46,7 +46,7 @@ export function isUnitVacant(unit, leases, leaseMemberships, tenants) {
   return tenantLabelForUnit(unit, leases, leaseMemberships, tenants) === null;
 }
 
-export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate, initialViewFilter = null }) {
+export default function RentalSetupPanel({ initialUnits = [], onNavigate: navigate, initialViewFilter = null, recordContext = null }) {
   // Rental units: stale-while-revalidate. The cached units render instantly on
   // return visits and refresh in the background — the last good data never
   // blanks out. Mutations post through /api/rental then call refresh() to
@@ -116,6 +116,29 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const tenants = result?.tenants || [];
   const openCharges = result?.openCharges || [];
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
+  // A property record context (e.g. "Open property ledger" from a tenant
+  // ledger) deep-links straight into that property's ledger once the units
+  // have loaded. The consumed ref keeps it one-shot: closing the ledger does
+  // not reopen it while the same context is active. Deferred to a microtask
+  // like the data-adoption effect above so the setState runs outside the
+  // effect body.
+  const consumedPropertyContext = useRef(null);
+  useEffect(() => {
+    if (recordContext?.recordType !== "property" || !recordContext?.recordId) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      if (consumedPropertyContext.current === recordContext.recordId) return;
+      const pool = loaded?.units || initialUnits || [];
+      const match = pool.find((unit) => unit.property_id === recordContext.recordId)
+        || pool.find((unit) => unit.id === recordContext.recordId);
+      if (match) {
+        consumedPropertyContext.current = recordContext.recordId;
+        setLedgerUnit(match);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [recordContext, loaded, initialUnits]);
   // The filtered view narrows the queue the record browser shows: the "vacant"
   // deep-link from the dashboard's vacancy alert box lists only units with no
   // active lease, so the queue behind the count is exactly what the box showed.
