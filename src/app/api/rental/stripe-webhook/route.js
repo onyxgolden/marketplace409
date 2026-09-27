@@ -4,6 +4,7 @@ import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBill
 import { normalizeStripeConnectEvent } from "@/infrastructure/billing/normalizeStripeConnectEvent";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { isWebhookEventAlreadySettled, webhookLivemodeMatchesServerMode } from "@/application/rental/stripeWebhookLedger";
+import { queueOwnerPaymentNotificationForWebhookEvent } from "@/application/rental/queueOwnerPaymentNotification";
 import { projectStripePayment, projectStripeFeeCredit, projectStripeRefund } from "@/domains/private-financing/stripePaymentProjection";
 
 export const runtime = "nodejs";
@@ -235,6 +236,15 @@ export async function POST(request) {
         p_provider_mode: provider.mode,
       });
       if (projection.error) throw projection.error;
+      // Brandy's owner payment notification: queue AFTER the payment
+      // projection succeeds. The helper never throws — notification queueing
+      // can never break webhook processing — and it no-ops for
+      // private-financing, reservation, settlement, payout, and refund
+      // events on its own; the processedPrivateFinancing gate is defense in
+      // depth.
+      if (!processedPrivateFinancing) {
+        await queueOwnerPaymentNotificationForWebhookEvent(supabase, normalized, provider.mode);
+      }
       if (processedPrivateFinancing) {
         const completed = await supabase.from("payment_webhook_events").update({ status: "processed", processed_at: new Date().toISOString(), failure_message: null }).eq("id", eventRowId);
         if (completed.error) throw completed.error;
