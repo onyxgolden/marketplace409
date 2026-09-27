@@ -319,3 +319,52 @@ describe("identity isolation and lifecycle (PR #417 review)", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("cross-identity in-flight protection (PR #417 re-review finding 2)", () => {
+  it("an in-flight request from the previous identity cannot contaminate the new identity's cache", async () => {
+    installLocalStorageStub();
+    const mod = await signedInModule("user-a");
+
+    // User A starts a fetch for "race-1" (version 1, epoch N)...
+    let resolveA;
+    const promiseA = mod.fetchWithDedupe("race-1", () => new Promise((resolve) => { resolveA = resolve; }));
+
+    // ...then auth switches to user B mid-flight, clearing the version maps...
+    mod.setCacheIdentity("user-b");
+
+    // ...and user B starts their own fetch for the same key (version restarts at 1).
+    let resolveB;
+    const promiseB = mod.fetchWithDedupe("race-1", () => new Promise((resolve) => { resolveB = resolve; }));
+    await tick(); // let B's fetcher start
+    resolveB("b-data");
+    await expect(promiseB).resolves.toBe("b-data");
+    expect(mod.getCacheEntry("race-1")?.data).toBe("b-data");
+
+    // User A's late response arrives: it must be dropped, not written over B's entry.
+    resolveA("a-data");
+    await expect(promiseA).resolves.toBe("a-data"); // A's own caller still gets their result
+    await tick();
+    expect(mod.getCacheEntry("race-1")?.data).toBe("b-data");
+
+    // And a cold boot as user B hydrates B's data, never A's.
+    const cold = await signedInModule("user-b");
+    expect(cold.getCacheEntry("race-1")?.data).toBe("b-data");
+    vi.unstubAllGlobals();
+  });
+
+  it("clearSWRCache orphans in-flight resolutions via the epoch guard", async () => {
+    installLocalStorageStub();
+    const mod = await signedInModule("user-a");
+    await mod.fetchWithDedupe("epoch-1", () => Promise.resolve("v1"));
+
+    let resolveLate;
+    const late = mod.fetchWithDedupe("epoch-1", () => new Promise((resolve) => { resolveLate = resolve; }));
+    await tick(); // let the fetcher start
+    mod.clearSWRCache(); // e.g. sign-out while a refresh is in flight
+    resolveLate("stale");
+    await expect(late).resolves.toBe("stale");
+    await tick();
+    expect(mod.getCacheEntry("epoch-1")).toBeUndefined(); // nothing resurrected after the clear
+    vi.unstubAllGlobals();
+  });
+});

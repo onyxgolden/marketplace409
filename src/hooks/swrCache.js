@@ -29,6 +29,13 @@ const PERSIST_MAX_BYTES = 2_000_000; // per-entry cap; oversized payloads stay m
 // onAuthStateChange); until it is set, the disk is never touched -- fail closed.
 let cacheIdentity = null;
 
+// Bumped on every identity change (and full cache clear). In-flight fetches
+// capture the epoch at start; a resolution that arrives after the epoch moved
+// is dropped -- otherwise a late response from user A's request could be
+// written into user B's cache entry, because the per-key version counters
+// restart at 1 after setCacheIdentity() clears the maps.
+let identityEpoch = 0;
+
 /** The signed-in user id persisted entries are namespaced under, or null when unknown/signed out. */
 export function getCacheIdentity() {
   return cacheIdentity;
@@ -47,6 +54,7 @@ export function setCacheIdentity(identityId) {
   const next = identityId ?? null;
   if (next === cacheIdentity) return;
   cacheIdentity = next;
+  identityEpoch += 1; // orphan every in-flight resolution from the previous identity
   entries.clear();
   inflight.clear();
   versions.clear();
@@ -232,6 +240,7 @@ export function fetchWithDedupe(key, fetcher) {
   if (existing) return existing;
   const version = (versions.get(key) ?? 0) + 1;
   versions.set(key, version);
+  const epoch = identityEpoch;
   const promise = Promise.resolve()
     .then(() => fetcher())
     .then(
@@ -240,13 +249,13 @@ export function fetchWithDedupe(key, fetcher) {
         // a newer request for the same key started) must not delete the newer
         // request's in-flight entry.
         if (inflight.get(key) === promise) inflight.delete(key);
-        if (versions.get(key) !== version) return data; // invalidated since — drop
+        if (versions.get(key) !== version || epoch !== identityEpoch) return data; // invalidated or identity changed since -- drop
         setEntry(key, { data, error: "", updatedAt: Date.now() });
         return data;
       },
       (error) => {
         if (inflight.get(key) === promise) inflight.delete(key);
-        if (versions.get(key) !== version) throw error; // invalidated since — drop
+        if (versions.get(key) !== version || epoch !== identityEpoch) throw error; // invalidated or identity changed since -- drop
         const prev = entries.get(key);
         setEntry(key, {
           data: prev?.data ?? null,
@@ -296,5 +305,6 @@ export function clearSWRCache() {
   versions.clear();
   listeners.clear();
   cacheIdentity = null;
+  identityEpoch += 1; // orphan every in-flight resolution
   clearPersistedEntries();
 }
