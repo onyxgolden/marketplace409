@@ -93,24 +93,27 @@ describe("TransactionForm", () => {
     expect(onSaved).toHaveBeenCalledWith({ id: "evt-1" });
   });
 
-  it("blocks submit when charge-tenant is checked without a tenant", async () => {
-    stubFetch(async (url) => {
+  it("links the selected tenant to the transaction", async () => {
+    let postedBody = null;
+    stubFetch(async (url, options) => {
       if (url === "/api/rental/bank-accounts") return { ok: true, json: async () => ({ accounts: [] }) };
+      if (url === "/api/rental/transactions" && options?.method === "POST") {
+        postedBody = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ success: true, event: { id: "evt-1" } }) };
+      }
       throw new Error(`unexpected fetch ${url}`);
     });
-    const { container } = renderForm({ defaultKind: "expense" });
-    fill(container, "Amount", "100");
-    fill(container, "Description", "Test expense");
-    const chargeBox = Array.from(container.querySelectorAll('input[type="checkbox"]'))
-      .find((el) => el.closest("label")?.textContent.includes("Charge tenant"));
-    act(() => {
-      chargeBox.click();
-    });
+    const { container } = renderForm({ defaultKind: "income" });
+    fill(container, "Amount", "1600");
+    fill(container, "Description", "September rent");
+    const tenantLabel = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Tenant"));
+    const tenantSelect = tenantLabel?.querySelector("select");
+    act(() => { setNativeValue(tenantSelect, "tenant-1"); });
     await act(async () => {
       container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
-    const alert = container.querySelector('[role="alert"]');
-    expect(alert?.textContent).toMatch(/tenant/i);
+    expect(postedBody).toMatchObject({ tenantId: "tenant-1", transactionKind: "income" });
   });
 
   it("switches category default when toggling income/expense", async () => {

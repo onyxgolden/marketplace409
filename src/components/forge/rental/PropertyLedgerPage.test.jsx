@@ -101,7 +101,7 @@ describe("PropertyLedgerPage post buttons", () => {
     act(() => { postIncome.click(); });
     // Modal title uses sentence case; the page button uses title case.
     expect(container.querySelector('[role="dialog"] h3')?.textContent).toBe("Post income");
-    expect(container.textContent).toMatch(/Charge tenant/);
+    expect(container.textContent).toMatch(/Links this transaction to the tenant/);
 
     const closeButton = container.querySelector('[aria-label="Close transaction form"]');
     act(() => { closeButton.click(); });

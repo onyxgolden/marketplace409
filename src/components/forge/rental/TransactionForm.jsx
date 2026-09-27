@@ -72,7 +72,6 @@ const emptyForm = (propertyId, kind) => ({
   normalizedCategory: kind === "income" ? "rental_income" : "property_repairs",
   memo: "",
   cleared: false,
-  chargeTenant: false,
 });
 
 // Rentec-style Post Income / Post Expense form. Writes through POST
@@ -157,7 +156,6 @@ export default function TransactionForm({
     const cents = Math.round(Number(form.amount) * 100);
     if (!Number.isSafeInteger(cents) || cents <= 0) return "Enter a positive amount.";
     if (!form.description.trim()) return "A description is required.";
-    if (form.chargeTenant && !form.tenantId) return "Select a tenant to charge.";
     if (splits.length > 0) {
       const splitCheck = validateSplits(
         splits.map((split) => ({ normalizedCategory: split.normalizedCategory, amount: Number(split.amount), memo: split.memo })),
@@ -193,7 +191,6 @@ export default function TransactionForm({
           normalizedCategory: form.normalizedCategory,
           memo: form.memo.trim() || null,
           cleared: form.cleared,
-          chargeTenant: form.chargeTenant,
         }),
       });
       const body = await response.json();
@@ -315,6 +312,7 @@ export default function TransactionForm({
               </select>
             </label>
             <label className={labelClass}>Tenant
+              <span className="block font-normal text-slate-500 dark:text-slate-400">Links this transaction to the tenant&apos;s record.</span>
               <select value={form.tenantId} onChange={update("tenantId")} className={inputClass}>
                 <option value="">No tenant</option>
                 {tenants.map((tenant) => (
@@ -328,12 +326,6 @@ export default function TransactionForm({
             </label>
             <label className={`${labelClass} sm:col-span-2`}>Memo
               <input value={form.memo} onChange={update("memo")} placeholder="Optional note on this transaction" className={inputClass} />
-            </label>
-            <label className={`${labelClass} flex items-start gap-2 sm:col-span-2`}>
-              <input type="checkbox" checked={form.chargeTenant} onChange={update("chargeTenant")} className="mt-1 h-4 w-4 accent-amber-600" />
-              <span>Charge tenant<span className="block font-normal text-slate-500 dark:text-slate-400">
-                Links this {isIncome ? "income" : "expense"} to the selected tenant&apos;s record above.
-              </span></span>
             </label>
           </div>
 
