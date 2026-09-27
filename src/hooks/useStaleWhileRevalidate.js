@@ -1,8 +1,9 @@
 "use client";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   fetchWithDedupe,
   getCacheEntry,
+  getIdentityEpoch,
   invalidate,
   isFresh,
   isInflight,
@@ -32,10 +33,21 @@ export function useStaleWhileRevalidate(key, fetcher, options = {}) {
     fetcherRef.current = fetcher;
   });
   const [, forceUpdate] = useReducer((value) => value + 1, 0);
+  // Identity epoch: bumped by setCacheIdentity()/clearSWRCache() whenever the
+  // cache is wiped for another identity. It rides in the fetch effect's deps so
+  // an identity change re-triggers the fetch even though key/ttl are unchanged --
+  // otherwise a mounted consumer would sit in loading state forever after an
+  // account switch. The setter bails out when the epoch is unchanged, so normal
+  // data/error notifications never cause a duplicate fetch.
+  const [identityTick, setIdentityTick] = useState(() => getIdentityEpoch());
 
   useEffect(() => {
     if (key == null) return undefined;
-    return subscribe(key, forceUpdate);
+    return subscribe(key, () => {
+      const epoch = getIdentityEpoch();
+      setIdentityTick((prev) => (prev === epoch ? prev : epoch));
+      forceUpdate();
+    });
   }, [key]);
 
   useEffect(() => {
@@ -45,7 +57,7 @@ export function useStaleWhileRevalidate(key, fetcher, options = {}) {
       fetchWithDedupe(key, () => fetcherRef.current()).catch(() => {});
     }
     return undefined;
-  }, [key, ttlMs]);
+  }, [key, ttlMs, identityTick]);
 
   const entry = key == null ? undefined : getCacheEntry(key);
 

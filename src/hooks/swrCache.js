@@ -41,6 +41,12 @@ export function getCacheIdentity() {
   return cacheIdentity;
 }
 
+/** Monotonic counter bumped by setCacheIdentity()/clearSWRCache(). Lets consumers
+ *  detect that the cache was wiped for another identity even when their key is unchanged. */
+export function getIdentityEpoch() {
+  return identityEpoch;
+}
+
 /**
  * Set the identity persisted entries are namespaced under. Call with the
  * signed-in user's id on auth state change; call with null on sign-out or
