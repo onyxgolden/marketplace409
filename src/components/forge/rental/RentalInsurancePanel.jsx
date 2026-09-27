@@ -8,13 +8,13 @@ export function insuranceState(policy,today=new Date().toISOString().slice(0,10)
 export default function RentalInsurancePanel({initialPolicies=null}){
   // Insurance policies: stale-while-revalidate. The cached policies render
   // instantly on return visits and refresh in the background — the last good
-  // list never blanks out. Reviews PATCH through /api/rental/insurance then
+  // list never blanks out. Reads and reviews go through the scoped /api/rental/insurance endpoint (one small table query, not the full /api/rental aggregate), then
   // call refresh() to revalidate. Parent-supplied initialPolicies are seeded
   // into the cache so the key stays live: first paint is instant, no mount
   // refetch fires (the entry is fresh), and refresh() after mutations
   // actually revalidates.
   if(initialPolicies)seedCacheEntry("rental:insurance",initialPolicies);
-  const fetchPolicies=useCallback(async()=>{const response=await fetch("/api/rental"),body=await response.json();if(!response.ok)throw new Error(body.error);return body.insurancePolicies||[]},[]);
+  const fetchPolicies=useCallback(async()=>{const response=await fetch("/api/rental/insurance"),body=await response.json();if(!response.ok)throw new Error(body.error);return body.policies||[]},[]);
   const{data:loaded,error:loadError,isLoading,isRefreshing,refresh}=useStaleWhileRevalidate("rental:insurance",fetchPolicies,{ttlMs:60_000});
   const policies=loaded;
   const[selectedId,setSelectedId]=useState(""),[error,setError]=useState(""),[message,setMessage]=useState("");
