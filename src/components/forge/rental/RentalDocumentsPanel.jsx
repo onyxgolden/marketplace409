@@ -51,8 +51,12 @@ export function leaseOptionsFor(schedules, data) {
 // That is why Preview silently did nothing. We open a blank tab first, then
 // navigate it to the signed URL once the fetch resolves; on failure the tab
 // is closed and the error is thrown for the caller to display.
+// NOTE: do NOT pass "noopener"/"noreferrer" here — they make window.open()
+// return null even when the tab opened, leaving us no handle to navigate.
+// The tab is navigated only to a signed URL issued by our own API, so the
+// opener-reference risk those flags mitigate does not apply.
 export async function openSignedDocumentUrl({ documentId, action, openTab, fetchImpl }) {
-  const open = openTab || ((url) => window.open(url, "_blank", "noreferrer"));
+  const open = openTab || ((url) => window.open(url, "_blank"));
   const tab = open("");
   if (!tab) throw new Error("Your browser blocked the preview tab — allow pop-ups for this site and try again.");
   try {
