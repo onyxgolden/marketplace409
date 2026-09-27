@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 import { validateTransaction } from "@/application/rental/validateTransaction";
+import { createExpenseWithTenantCharge, validateTenantChargeInput } from "@/application/rental/tenantCharges";
 
 async function requireWriter(authenticated) {
   if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
@@ -42,8 +43,15 @@ function toRow({ ownerId, userId, value }) {
 // POST /api/rental/transactions — create a Rentec-style ledger transaction.
 // Body: { eventDate, description, amount, transactionKind, normalizedCategory,
 //   payee?, checkNumber?, bankAccountId?, propertyId?, tenantId?, memo?,
-//   cleared?, chargeTenant? }.
-// Owner-scoped to the effective workspace owner; read-only members get a 403.
+//   cleared?, chargeTenant?, tenantCharge? }.
+//
+// When chargeTenant is true (expense only), the expense AND the tenant's
+// schedule-less rent charge are created atomically by the
+// create_expense_with_tenant_charge RPC — never one without the other.
+// tenantCharge: { leaseId, chargeType, amountCents?, description?, dueDate? }.
+// amountCents defaults to the expense total; dueDate defaults to the event date
+// + 15 days. Owner-scoped to the effective workspace owner; read-only members
+// get a 403.
 export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
@@ -54,6 +62,11 @@ export async function POST(request) {
     const body = await request.json();
     const { valid, errors, value } = validateTransaction(body);
     if (!valid) return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
+
+    // Charge-tenant is expense-only: an income event can never create a charge.
+    if (value.chargeTenant === true && value.transactionKind !== "expense") {
+      return NextResponse.json({ error: "Only an expense can charge a tenant." }, { status: 400 });
+    }
 
     // The bank account must belong to this workspace — a foreign id 400s rather
     // than silently writing a dangling reference.
@@ -67,6 +80,50 @@ export async function POST(request) {
       if (accountError) throw accountError;
       if (!accounts || accounts.length === 0) {
         return NextResponse.json({ error: "The selected bank account was not found." }, { status: 400 });
+      }
+    }
+
+    // Atomic expense + tenant charge: one RPC, one transaction.
+    if (value.chargeTenant === true) {
+      const tenantCharge = body.tenantCharge && typeof body.tenantCharge === "object" ? body.tenantCharge : {};
+      const expenseCents = Math.round(Number(value.amount) * 100);
+      const chargeCheck = validateTenantChargeInput({
+        leaseId: tenantCharge.leaseId,
+        chargeType: tenantCharge.chargeType,
+        amountCents: tenantCharge.amountCents ?? expenseCents,
+        description: tenantCharge.description || value.description,
+        dueDate: tenantCharge.dueDate,
+        chargeDate: value.eventDate,
+      });
+      if (!chargeCheck.valid) return NextResponse.json({ error: chargeCheck.errors.join(" ") }, { status: 400 });
+      try {
+        const result = await createExpenseWithTenantCharge(authenticated.supabaseClient, {
+          ownerId: authenticated.effectiveOwnerId,
+          event: {
+            eventDate: value.eventDate,
+            description: value.description,
+            amount: Number(value.amount),
+            normalizedCategory: value.normalizedCategory,
+            payee: value.payee,
+            checkNumber: value.checkNumber,
+            bankAccountId: value.bankAccountId,
+            propertyId: value.propertyId,
+            tenantId: value.tenantId,
+            memo: value.memo,
+            cleared: value.cleared,
+          },
+          charge: chargeCheck.value,
+        });
+        return NextResponse.json({
+          success: true,
+          event: { id: result.eventId, event_date: value.eventDate, description: value.description,
+            amount: Number(value.amount), transaction_kind: "expense", property_id: value.propertyId },
+          chargeId: result.chargeId,
+        });
+      } catch (chargeError) {
+        console.error("Transaction with tenant charge error", chargeError);
+        const message = chargeError?.message || "Unable to save the transaction and tenant charge.";
+        return NextResponse.json({ error: message }, { status: /required|must be|was not found|positive/i.test(message) ? 400 : 500 });
       }
     }
 
@@ -161,6 +218,13 @@ export async function PATCH(request) {
 
     const { valid, errors, value } = validateTransaction(body);
     if (!valid) return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
+
+    // A tenant charge is created once, atomically, at posting time. Editing the
+    // transaction must not silently rewrite or orphan it — void the charge
+    // through Rent & payments instead.
+    if (value.chargeTenant === true) {
+      return NextResponse.json({ error: "A tenant charge cannot be changed by editing the transaction. Void the charge in Rent & payments instead." }, { status: 400 });
+    }
 
     const existing = await ownManualEvent(authenticated.supabaseClient, authenticated.effectiveOwnerId, eventId);
     if (!existing) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
