@@ -28,6 +28,47 @@ describe("validateTransaction", () => {
     expect(result.value.payee).toBe("Gulf Coast Plumbing");
   });
 
+  it("accepts the full ledger option set (display name, ref, address, vendor, method, recurring, depreciate)", () => {
+    const result = validateTransaction({
+      ...base(),
+      displayAs: "Water heater — 308 Paula",
+      refNumber: "INV-1042",
+      payeeMailingAddress: "PO Box 42, Beaumont, TX",
+      assignedTo: "Gulf Coast Plumbing",
+      paymentMethod: "check",
+      isRecurring: true,
+      recurrenceRule: "monthly",
+      depreciate: true,
+    });
+    expect(result.valid).toBe(true);
+    expect(result.value.displayAs).toBe("Water heater — 308 Paula");
+    expect(result.value.refNumber).toBe("INV-1042");
+    expect(result.value.assignedTo).toBe("Gulf Coast Plumbing");
+    expect(result.value.paymentMethod).toBe("check");
+    expect(result.value.isRecurring).toBe(true);
+    expect(result.value.recurrenceRule).toBe("monthly");
+    expect(result.value.depreciate).toBe(true);
+  });
+
+  it("rejects an unknown payment method", () => {
+    const result = validateTransaction({ ...base(), paymentMethod: "barter" });
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toMatch(/Payment method/);
+  });
+
+  it("requires a repeat schedule when recurring is set", () => {
+    const missing = validateTransaction({ ...base(), isRecurring: true, recurrenceRule: "" });
+    expect(missing.valid).toBe(false);
+    const bad = validateTransaction({ ...base(), isRecurring: true, recurrenceRule: "fortnightly" });
+    expect(bad.valid).toBe(false);
+  });
+
+  it("clears the repeat schedule when recurring is off", () => {
+    const result = validateTransaction({ ...base(), isRecurring: false, recurrenceRule: "monthly" });
+    expect(result.valid).toBe(true);
+    expect(result.value.recurrenceRule).toBeNull();
+  });
+
   it("defaults optional flags to false and optionals to null", () => {
     const result = validateTransaction(base());
     expect(result.valid).toBe(true);

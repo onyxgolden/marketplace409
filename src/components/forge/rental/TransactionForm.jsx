@@ -9,6 +9,34 @@ import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 const today = () => new Date().toISOString().slice(0, 10);
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
+const PAYMENT_METHOD_OPTIONS = [
+  { value: "", label: "Select a method…" },
+  { value: "check", label: "Check" },
+  { value: "ach", label: "ACH" },
+  { value: "cash", label: "Cash" },
+  { value: "cashiers_check", label: "Cashier's check" },
+  { value: "card", label: "Card" },
+  { value: "bank_transfer", label: "Bank transfer" },
+  { value: "other", label: "Other" },
+];
+
+const RECURRENCE_OPTIONS = [
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Every two weeks" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "yearly", label: "Yearly" },
+];
+
+function SectionTitle({ step, children }) {
+  return (
+    <h4 className="flex items-center gap-2 text-sm font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-xs text-white dark:bg-slate-100 dark:text-slate-900">{step}</span>
+      {children}
+    </h4>
+  );
+}
+
 async function fetchBankAccounts() {
   const response = await fetch("/api/rental/bank-accounts");
   const body = await response.json();
@@ -73,12 +101,22 @@ const emptyForm = (propertyId, kind) => ({
   normalizedCategory: kind === "income" ? "rental_income" : "property_repairs",
   memo: "",
   cleared: false,
+  displayAs: "",
+  refNumber: "",
+  payeeMailingAddress: "",
+  assignedTo: "",
+  paymentMethod: "",
+  isRecurring: false,
+  recurrenceRule: "monthly",
+  depreciate: false,
 });
 
-// Rentec-style Post Income / Post Expense form. Writes through POST
-// /api/rental/transactions, which stores the new slice-2 columns (payee,
-// check number, bank account, cleared flag). Used as a modal from the property
-// ledger; edit mode arrives in the edit slice via the initialEvent prop.
+// Post Income / Post Expense / Edit Transaction form for the property ledger.
+// Writes through /api/rental/transactions, which stores the full ledger field
+// set (payee, check number, bank account, cleared flag, display name, reference
+// number, vendor assignment, payment method, recurring schedule, depreciation
+// flag, plus memo). Used as a modal from the property ledger; edit mode
+// arrives via the initialEvent prop.
 // Live split-total indicator: green when the lines match the transaction amount
 // to the cent, amber otherwise.
 function SplitTotalIndicator({ splits, amount }) {
@@ -310,6 +348,9 @@ export default function TransactionForm({
     const cents = Math.round(Number(form.amount) * 100);
     if (!Number.isSafeInteger(cents) || cents <= 0) return "Enter a positive amount.";
     if (!form.description.trim()) return "A description is required.";
+    if (form.isRecurring && !RECURRENCE_OPTIONS.some((option) => option.value === form.recurrenceRule)) {
+      return "Choose how often the recurring transaction repeats.";
+    }
     if (splits.length > 0) {
       const splitCheck = validateSplits(
         splits.map((split) => ({ normalizedCategory: split.normalizedCategory, amount: Number(split.amount), memo: split.memo })),
@@ -349,6 +390,14 @@ export default function TransactionForm({
           normalizedCategory: form.normalizedCategory,
           memo: form.memo.trim() || null,
           cleared: form.cleared,
+          displayAs: form.displayAs.trim() || null,
+          refNumber: form.refNumber.trim() || null,
+          payeeMailingAddress: form.payeeMailingAddress.trim() || null,
+          assignedTo: form.assignedTo.trim() || null,
+          paymentMethod: form.paymentMethod || null,
+          isRecurring: form.isRecurring,
+          recurrenceRule: form.isRecurring ? form.recurrenceRule : null,
+          depreciate: form.depreciate,
           // Expense-linked tenant charge: the server creates the expense and
           // the rent_charges row atomically. A missing charge description falls
           // back to the expense description server-side.
@@ -415,7 +464,8 @@ export default function TransactionForm({
         </div>
 
         <form onSubmit={submit} className="mt-4">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <SectionTitle step={1}>Transaction details</SectionTitle>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <div className={labelClass}>Type
               <div className="mt-1 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Transaction type">
                 {(["expense", "income"]).map((kind) => (
@@ -442,12 +492,19 @@ export default function TransactionForm({
               <input type="number" step="0.01" min="0.01" required value={form.amount} onChange={update("amount")}
                 placeholder="0.00" inputMode="decimal" className={inputClass} />
             </label>
-            <label className={labelClass}>Category
-              <select value={form.normalizedCategory} onChange={update("normalizedCategory")} className={inputClass}>
-                {MANUAL_FINANCIAL_EVENT_CATEGORIES.map((category) => (
-                  <option key={category.value} value={category.value}>{category.label}</option>
+            <label className={labelClass}>Payment method
+              <select value={form.paymentMethod} onChange={update("paymentMethod")} className={inputClass}>
+                {PAYMENT_METHOD_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
+            </label>
+            <label className={labelClass}>Check #
+              <input value={form.checkNumber} onChange={update("checkNumber")} placeholder="Optional" className={inputClass} />
+            </label>
+            <label className={labelClass}>Display as
+              <span className="block font-normal text-slate-500 dark:text-slate-400">Shown on the ledger instead of the description.</span>
+              <input value={form.displayAs} onChange={update("displayAs")} placeholder="Optional custom name" className={inputClass} />
             </label>
             <label className={`${labelClass} sm:col-span-2`}>Description
               <input value={form.description} onChange={update("description")} required
@@ -457,8 +514,31 @@ export default function TransactionForm({
             <label className={labelClass}>Payee
               <input value={form.payee} onChange={update("payee")} placeholder="Vendor or payer name (optional)" className={inputClass} />
             </label>
-            <label className={labelClass}>Check #
-              <input value={form.checkNumber} onChange={update("checkNumber")} placeholder="Optional" className={inputClass} />
+            <label className={labelClass}>Status
+              <select value={form.cleared ? "cleared" : "uncleared"}
+                onChange={(event) => setForm((current) => ({ ...current, cleared: event.target.value === "cleared" }))}
+                className={inputClass}>
+                <option value="uncleared">Uncleared</option>
+                <option value="cleared">Cleared</option>
+              </select>
+            </label>
+            <label className={labelClass}>Ref #
+              <input value={form.refNumber} onChange={update("refNumber")} placeholder="Optional reference number" className={inputClass} />
+            </label>
+            <label className={`${labelClass} sm:col-span-2`}>Memo
+              <input value={form.memo} onChange={update("memo")} placeholder="Optional note on this transaction" className={inputClass} />
+            </label>
+            <label className={`${labelClass} sm:col-span-2`}>Payee mailing address
+              <textarea value={form.payeeMailingAddress} onChange={update("payeeMailingAddress")} rows={2}
+                placeholder="Optional mailing address for the payee" className={inputClass} />
+            </label>
+          </div>
+
+          <div className="mt-6"><SectionTitle step={2}>Accounts</SectionTitle></div>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <label className={labelClass}>Assigned to (vendor)
+              <span className="block font-normal text-slate-500 dark:text-slate-400">The vendor this transaction is assigned to.</span>
+              <input value={form.assignedTo} onChange={update("assignedTo")} placeholder="Optional" className={inputClass} />
             </label>
             <label className={labelClass}>Bank account
               <select value={form.bankAccountId} onChange={update("bankAccountId")} className={inputClass}>
@@ -485,20 +565,49 @@ export default function TransactionForm({
                 ))}
               </select>
             </label>
-            <label className={`${labelClass} flex items-start gap-2 pt-6`}>
-              <input type="checkbox" checked={form.cleared} onChange={update("cleared")} className="mt-1 h-4 w-4 accent-emerald-600" />
-              <span>Cleared<span className="block font-normal text-slate-500 dark:text-slate-400">Already cleared the bank.</span></span>
-            </label>
-            <label className={`${labelClass} sm:col-span-2`}>Memo
-              <input value={form.memo} onChange={update("memo")} placeholder="Optional note on this transaction" className={inputClass} />
+            <label className={labelClass}>Category
+              <select value={form.normalizedCategory} onChange={update("normalizedCategory")} className={inputClass}>
+                {MANUAL_FINANCIAL_EVENT_CATEGORIES.map((category) => (
+                  <option key={category.value} value={category.value}>{category.label}</option>
+                ))}
+              </select>
             </label>
           </div>
 
+          {!isIncome && (
+            <>
+              <div className="mt-6"><SectionTitle step={3}>Options</SectionTitle></div>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <label className={`${labelClass} flex items-start gap-2`}>
+                  <input type="checkbox" checked={form.isRecurring} onChange={update("isRecurring")} className="mt-1 h-4 w-4 accent-emerald-600" />
+                  <span>Recurring
+                    <span className="block font-normal text-slate-500 dark:text-slate-400">This transaction repeats on a schedule.</span>
+                  </span>
+                </label>
+                {form.isRecurring && (
+                  <label className={labelClass}>Repeats
+                    <select value={form.recurrenceRule} onChange={update("recurrenceRule")} className={inputClass}>
+                      {RECURRENCE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className={`${labelClass} flex items-start gap-2`}>
+                  <input type="checkbox" checked={form.depreciate} onChange={update("depreciate")} className="mt-1 h-4 w-4 accent-emerald-600" />
+                  <span>Depreciate
+                    <span className="block font-normal text-slate-500 dark:text-slate-400">Flag this transaction for depreciation.</span>
+                  </span>
+                </label>
+              </div>
+            </>
+          )}
+
           {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
 
-          <div className={`${labelClass} mt-4`}>
-            Split lines
-            <span className="block font-normal text-slate-500 dark:text-slate-400">Break this transaction across categories. The lines must total the amount exactly.</span>
+          <div className={`${labelClass} mt-6`}>
+            <SectionTitle step={isIncome ? 3 : 4}>Split lines</SectionTitle>
+            <span className="mt-1 block font-normal text-slate-500 dark:text-slate-400">Break this transaction across categories. The lines must total the amount exactly.</span>
             {splitsLoading
               ? <p className="mt-2 text-xs font-bold text-slate-400">Loading split lines…</p>
               : (
@@ -544,9 +653,9 @@ export default function TransactionForm({
               )}
           </div>
 
-          <div className={`${labelClass} mt-4`}>
-            Attachments
-            <span className="block font-normal text-slate-500 dark:text-slate-400">Receipts, invoices — PDF, JPG, or PNG, up to 10 MB each.</span>
+          <div className={`${labelClass} mt-6`}>
+            <SectionTitle step={isIncome ? 4 : 5}>Attachments</SectionTitle>
+            <span className="mt-1 block font-normal text-slate-500 dark:text-slate-400">Receipts, invoices — PDF, JPG, or PNG, up to 10 MB each.</span>
             <input type="file" multiple accept="application/pdf,image/jpeg,image/png"
               onChange={async (event) => {
                 const files = Array.from(event.target.files || []);
@@ -605,9 +714,14 @@ export default function TransactionForm({
           </div>
 
           {chargeSectionVisible && (
-            <ChargeTenantSection key={form.tenantId} tenantId={form.tenantId}
-              expenseAmount={form.amount} eventDate={form.eventDate}
-              chargeRef={chargeRef} inputClass={inputClass} labelClass={labelClass} />
+            <>
+              <div className={`${labelClass} mt-6`}>
+                <SectionTitle step={6}>Charge tenant</SectionTitle>
+              </div>
+              <ChargeTenantSection key={form.tenantId} tenantId={form.tenantId}
+                expenseAmount={form.amount} eventDate={form.eventDate}
+                chargeRef={chargeRef} inputClass={inputClass} labelClass={labelClass} />
+            </>
           )}
 
           <div className="mt-5 flex items-center justify-between gap-3">

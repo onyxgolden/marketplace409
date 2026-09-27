@@ -83,8 +83,72 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("PropertyLedgerPage post buttons", () => {
-  it("opens the transaction form modal on Post Income and closes it on cancel", async () => {
+describe("PropertyLedgerPage ledger table", () => {
+  it("shows check number, cleared, and attachment indicators on each row", async () => {
+    const entry = {
+      ...manualEntry,
+      checkNumber: "1024",
+      cleared: true,
+      hasAttachment: true,
+      payee: "Gulf Coast Plumbing",
+      memo: "Emergency call",
+    };
+    stubFetch(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ({ success: true, ledger: { ...ledgerPayload.ledger, entries: [entry], entryCount: 1 } }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    await act(async () => {});
+    const row = container.querySelector('[data-ledger-entry="manual"]');
+    expect(row).not.toBeNull();
+    // Column headers for the new columns.
+    const headers = Array.from(container.querySelectorAll("th")).map((th) => th.textContent);
+    expect(headers).toContain("Check #");
+    expect(headers).toContain("C");
+    // Check number cell, cleared check, attachment pin.
+    expect(row.textContent).toContain("1024");
+    expect(row.querySelector('[title="Cleared"]')).not.toBeNull();
+    expect(row.querySelector('[aria-label="Has attachments"]')).not.toBeNull();
+    // Description sub-line carries payee/category/memo.
+    expect(row.textContent).toContain("Gulf Coast Plumbing");
+    expect(row.textContent).toContain("Emergency call");
+  });
+
+  it("filters entries by kind and date range", async () => {
+    const incomeEntry = {
+      ...manualEntry,
+      id: "event:evt-2",
+      sourceId: "evt-2",
+      description: "October rent",
+      debitCents: 0,
+      creditCents: 160000,
+      date: "2026-10-01",
+    };
+    stubFetch(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ({ success: true, ledger: { ...ledgerPayload.ledger, entries: [incomeEntry, manualEntry], entryCount: 2 } }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    await act(async () => {});
+    expect(container.querySelectorAll('[data-ledger-entry="manual"]')).toHaveLength(2);
+
+    const filter = container.querySelector('select[aria-label="Filter transactions"]');
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(filter), "value").set;
+    act(() => {
+      nativeValueSetter.call(filter, "income");
+      filter.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {});
+    expect(container.querySelectorAll('[data-ledger-entry="manual"]')).toHaveLength(1);
+    expect(container.textContent).toContain("October rent");
+  });
+});
+
+describe("PropertyLedgerPage post buttons", () => {  it("opens the transaction form modal on Post Income and closes it on cancel", async () => {
     stubFetch(async (url) => {
       if (url === "/api/rental/property-ledger?propertyId=prop-1") {
         return { ok: true, json: async () => ledgerPayload };

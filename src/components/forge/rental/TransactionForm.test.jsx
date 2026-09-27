@@ -128,6 +128,72 @@ describe("TransactionForm", () => {
       .find((el) => el.textContent.trim().startsWith("Category"))?.querySelector("select");
     expect(categorySelect.value).toBe("rental_income");
   });
+
+  it("renders the sectioned layout and posts the new option fields", async () => {
+    let postedBody = null;
+    stubFetch(async (url, options) => {
+      if (url === "/api/rental/bank-accounts") return { ok: true, json: async () => ({ accounts: [] }) };
+      if (url === "/api/rental/transactions" && options?.method === "POST") {
+        postedBody = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ success: true, event: { id: "evt-1" } }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderForm({ defaultKind: "expense" });
+
+    // Section headings in reference order.
+    const headings = Array.from(container.querySelectorAll("h4")).map((h) => h.textContent);
+    expect(headings.join(" ")).toMatch(/Transaction details/);
+    expect(headings.join(" ")).toMatch(/Accounts/);
+    expect(headings.join(" ")).toMatch(/Options/);
+
+    fill(container, "Amount", "450");
+    fill(container, "Description", "Water heater replacement");
+    fill(container, "Display as", "Water heater — 308 Paula");
+    fill(container, "Ref #", "INV-1042");
+    fill(container, "Assigned to (vendor)", "Gulf Coast Plumbing");
+    fill(container, "Payment method", "check");
+
+    // Status select and the expense-only Options checkboxes.
+    const statusLabel = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Status"));
+    act(() => { setNativeValue(statusLabel.querySelector("select"), "cleared"); });
+    const recurringLabel = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Recurring"));
+    act(() => { recurringLabel.querySelector('input[type="checkbox"]').click(); });
+    const repeatsLabel = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Repeats"));
+    act(() => { setNativeValue(repeatsLabel.querySelector("select"), "quarterly"); });
+    const depreciateLabel = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Depreciate"));
+    act(() => { depreciateLabel.querySelector('input[type="checkbox"]').click(); });
+
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(postedBody).toMatchObject({
+      displayAs: "Water heater — 308 Paula",
+      refNumber: "INV-1042",
+      assignedTo: "Gulf Coast Plumbing",
+      paymentMethod: "check",
+      cleared: true,
+      isRecurring: true,
+      recurrenceRule: "quarterly",
+      depreciate: true,
+    });
+  });
+
+  it("hides the Options section for income", async () => {
+    stubFetch(async (url) => {
+      if (url === "/api/rental/bank-accounts") return { ok: true, json: async () => ({ accounts: [] }) };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderForm({ defaultKind: "income" });
+    const headings = Array.from(container.querySelectorAll("h4")).map((h) => h.textContent);
+    expect(headings.join(" ")).not.toMatch(/Options/);
+    expect(container.textContent).not.toMatch(/Depreciate/);
+  });
 });
 
 describe("TransactionForm charge tenant", () => {

@@ -73,6 +73,7 @@ export function buildPropertyLedger({
   rentalPayments = [],
   leases = [],
   tenantsById = {},
+  attachmentEventIds = null,
 } = {}) {
   const unitIdSet = new Set(unitIds);
   const contractorById = new Map(contractors.map((c) => [c.id, c]));
@@ -153,6 +154,11 @@ export function buildPropertyLedger({
       reference: event.source_record_id || null,
       method: event.metadata?.payment_method || null,
       status: event.status || "active",
+      checkNumber: event.check_number || null,
+      cleared: event.cleared === true,
+      hasAttachment: attachmentEventIds instanceof Set ? attachmentEventIds.has(event.id) : false,
+      payee: event.payee || null,
+      memo: event.metadata?.memo || null,
       notes: linked && !amountsMatch ? "Possible linked mismatch — review source records" : null,
       possibleDuplicate: Boolean(linked) && !amountsMatch,
     });

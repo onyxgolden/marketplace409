@@ -85,8 +85,63 @@ describe("PATCH /api/rental/transactions", () => {
     expect(updateQuery.eq).toHaveBeenCalledWith("id", "evt-1");
   });
 
-  it("404s for an event owned by another workspace", async () => {
-    const db = database();
+  it("writes the new ledger fields and records an edit-history row", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", cleared: false, cleared_at: null, description: "Old description" }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({
+      eventId: "evt-1",
+      ...validBody,
+      displayAs: "Water heater — 308 Paula",
+      refNumber: "INV-123",
+      payeeMailingAddress: "PO Box 1",
+      assignedTo: "Acme Plumbing",
+      paymentMethod: "check",
+      isRecurring: true,
+      recurrenceRule: "monthly",
+      depreciate: true,
+    }));
+    expect(response.status).toBe(200);
+    const found = db.queries.findLast((q) => q.table === "financial_events");
+    const updatePayload = found.query.update.mock.calls[0][0];
+    expect(updatePayload.display_as).toBe("Water heater — 308 Paula");
+    expect(updatePayload.ref_number).toBe("INV-123");
+    expect(updatePayload.payee_mailing_address).toBe("PO Box 1");
+    expect(updatePayload.assigned_to).toBe("Acme Plumbing");
+    expect(updatePayload.is_recurring).toBe(true);
+    expect(updatePayload.recurrence_rule).toBe("monthly");
+    expect(updatePayload.depreciate).toBe(true);
+    expect(updatePayload.metadata.payment_method).toBe("check");
+    const historyCall = db.queries.find((q) => q.table === "financial_event_edits");
+    expect(historyCall).toBeTruthy();
+    const historyPayload = historyCall.query.insert.mock.calls[0][0];
+    expect(historyPayload.owner_id).toBe("owner_1");
+    expect(historyPayload.event_id).toBe("evt-1");
+    expect(historyPayload.edited_by).toBe("user-1");
+    expect(historyPayload.changes.displayAs).toEqual({ from: null, to: "Water heater — 308 Paula" });
+    expect(historyPayload.changes.description).toEqual({ from: "Old description", to: "Water heater replacement" });
+  });
+
+  it("does not record a change when the database returns the amount as a string", async () => {
+    const db = database({
+      eventLookup: { data: [{ id: "evt-1", cleared: false, cleared_at: null, description: "Water heater replacement", amount: "450.00", event_date: "2026-09-26", transaction_kind: "expense", normalized_category: "property_repairs" }], error: null },
+      updateResult: { data: [{ id: "evt-1" }], error: null },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody }));
+    expect(response.status).toBe(200);
+    const historyCall = db.queries.find((q) => q.table === "financial_event_edits");
+    // Nothing changed, so no history row is written at all.
+    expect(historyCall).toBeUndefined();
+  });
+
+  it("404s for an event owned by another workspace", async () => {    const db = database();
     createAuthenticatedRentalManagerApplication.mockResolvedValue({
       user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
     });
