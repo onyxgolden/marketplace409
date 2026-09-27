@@ -56,7 +56,7 @@ function authDb(user) {
 const USER = { id: "user-1", email: "ethan@example.com" };
 const PROVIDER = {
   mode: "test",
-  createAutopaySetupIntent: vi.fn(async () => ({ setupIntentId: "seti_1", clientSecret: "seti_secret" })),
+  createPrivateFinancingAutopaySetupIntent: vi.fn(async () => ({ setupIntentId: "seti_1", clientSecret: "seti_secret" })),
   retrieveSetupIntent: vi.fn(async () => ({ setupIntentId: "seti_1", status: "succeeded", paymentMethodId: "pm_bank_1", mandateId: "mandate_1" })),
   createPrivateFinancingCustomer: vi.fn(async () => ({ customerId: "cus_1" })),
 };
@@ -173,7 +173,7 @@ describe("POST create-autopay-setup", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body).toEqual(expect.objectContaining({ enrollmentId: "pf_autopay_1", setupIntentId: "seti_1", clientSecret: "seti_secret", connectedAccountId: "acct_kent" }));
-    expect(PROVIDER.createAutopaySetupIntent).toHaveBeenCalled();
+    expect(PROVIDER.createPrivateFinancingAutopaySetupIntent).toHaveBeenCalled();
     const stored = db.from.mock.results
       .map((r) => r.value?.update?.mock?.calls?.[0]?.[0])
       .find((payload) => payload && payload.setup_intent_id === "seti_1");

@@ -470,7 +470,7 @@ export async function POST(request) {
         return NextResponse.json({ error: "The seller payment account is not ready." }, { status: 409 });
       const customer = await ensureAutopayBillingCustomer(svc, provider, borrower, account.data.provider_account_id);
       const forwarded = request.headers.get("x-forwarded-for");
-      const setup = await provider.createAutopaySetupIntent(
+      const setup = await provider.createPrivateFinancingAutopaySetupIntent(
         { ownerId: borrower.owner_id, connectedAccountId: account.data.provider_account_id },
         { customerId: customer.customer_id, enrollmentId: enrollment.id,
           ipAddress: forwarded ? forwarded.split(",")[0].trim() : null, userAgent: request.headers.get("user-agent"),

@@ -185,7 +185,7 @@ export class StripeBillingProvider {
   // without the borrower present. mandate_data carries the online acceptance
   // evidence (IP + user agent) when the caller captured it; when omitted, Stripe
   // still creates the mandate at confirmation time from the Payment Element flow.
-  async createAutopaySetupIntent(context, input) {
+  async createPrivateFinancingAutopaySetupIntent(context, input) {
     const online = {};
     if (typeof input.ipAddress === "string" && input.ipAddress.trim() !== "") online.ip_address = input.ipAddress.trim();
     if (typeof input.userAgent === "string" && input.userAgent.trim() !== "") online.user_agent = input.userAgent.trim();
