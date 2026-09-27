@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { executeAutopayAttempt } from "@/application/rental/executeAutopayAttempt";
+import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { reconcileMissingStripeSettlements } from "../settlement-reconciliation/route.js";
 
@@ -23,7 +24,12 @@ export async function GET(request) {
     // carrying over.
     const [{ data: enrollments, error: enrollmentError }, { data: charges, error: chargeError }] = await Promise.all([
       db.from("rental_autopay_enrollments").select("id, owner_id, lease_id").eq("status", "active").eq("provider_mode", provider.mode),
-      db.from("rent_charges").select("id, owner_id, lease_id").in("status", ["due", "partially_paid", "overdue"]).lte("due_date", today),
+      // Automatic collection is fenced to rent/proration/late_fee: ad-hoc charge
+      // types (damage, fee, utility, other) are payable voluntarily through
+      // the tenant portal but never swept by autopay.
+      db.from("rent_charges").select("id, owner_id, lease_id, charge_type")
+        .in("status", ["due", "partially_paid", "overdue"]).in("charge_type", AUTOPAY_COLLECTIBLE_CHARGE_TYPES)
+        .lte("due_date", today),
     ]);
     if (enrollmentError) throw enrollmentError;
     if (chargeError) throw chargeError;

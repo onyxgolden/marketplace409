@@ -65,6 +65,10 @@ export function isChargeVoidable(charge) {
 // whether it is FORGE-collectible or still Rentec-authoritative — this must be visible on every
 // charge row, never inferred from the charge's own status, which looks identical either way.
 export function chargeCollectionLabel(charge, schedules, today = new Date().toISOString().slice(0, 10)) {
+  // Ad-hoc charges (no schedule) are payable voluntarily through the tenant
+  // portal — they are never "externally managed", the schedule lookup just
+  // has nothing to find.
+  if (!charge?.schedule_id) return "Ad-hoc charge — payable through the tenant portal";
   const schedule = (schedules || []).find((item) => item.id === charge.schedule_id);
   return isChargeForgeCollectible(charge, schedule, today) ? "FORGE collectible" : "Externally managed — reconciliation required";
 }

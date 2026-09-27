@@ -1,4 +1,5 @@
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
+import { isAutopayCollectibleChargeType } from "./tenantCharges.js";
 
 // Extracted so both the manual /api/rental/autopay/execute endpoint and the
 // autopay-sweep cron can attempt a single (enrollment, charge) pair identically.
@@ -11,6 +12,13 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   ]);
   if (enrollmentError || chargeError || !enrollment || !charge || enrollment.owner_id !== charge.owner_id || enrollment.lease_id !== charge.lease_id)
     return { httpStatus: 409, body: { error: "Active matching autopay and charge are required." } };
+
+  // Defense in depth for the manual execute endpoint: only rent/proration/
+  // late_fee are eligible for AUTOMATIC collection. Tenants may still pay any
+  // valid charge type voluntarily through the portal — this gate never runs
+  // on that path.
+  if (!isAutopayCollectibleChargeType(charge.charge_type))
+    return { httpStatus: 409, body: { error: "This charge type is not eligible for autopay." } };
 
   const existing = await db.from("rental_autopay_attempts").select("*")
     .eq("owner_id", enrollment.owner_id).eq("enrollment_id", enrollment.id).eq("charge_id", charge.id).maybeSingle();

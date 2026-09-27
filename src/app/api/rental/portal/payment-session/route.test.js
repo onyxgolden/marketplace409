@@ -11,7 +11,9 @@ const provider = { mode: "test", createCustomer, createPaymentSession };
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({ createStripeBillingProvider: () => provider }));
 
 function single(result) {
-  const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node), maybeSingle: vi.fn(async () => result), single: vi.fn(async () => result), insert: vi.fn(() => node), update: vi.fn(() => node), upsert: vi.fn(() => node) };
+  const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+    order: vi.fn(() => node), limit: vi.fn(() => node),
+    maybeSingle: vi.fn(async () => result), single: vi.fn(async () => result), insert: vi.fn(() => node), update: vi.fn(() => node), upsert: vi.fn(() => node) };
   return node;
 }
 
@@ -139,6 +141,56 @@ describe("tenant payment-session route (provider-mode isolation)", () => {
       const response = await POST(request({ chargeId: "charge_1" }));
       expect(response.status).toBe(200);
       expect(createPaymentSession).toHaveBeenCalled();
+    });
+  });
+
+  // Ad-hoc charges have schedule_id NULL: the schedule collectibility gate must
+  // fall back to the lease's active schedule instead of matching no schedule
+  // row (which would wrongly reject them as "not collectible"). Voluntary
+  // portal payment stays open to every valid charge type — no charge-type gate here.
+  describe("ad-hoc charges (null schedule_id)", () => {
+    const readyAccount = { provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true };
+    function adHocTables(accountRow, customerRow, scheduleRow) {
+      return {
+        ...baseTables(accountRow, customerRow, scheduleRow),
+        rent_charges: single({ data: { ...charge, schedule_id: null, charge_type: "damage" }, error: null }),
+      };
+    }
+
+    it("allows an ad-hoc damage charge when the lease has an active FORGE-collected schedule, via the lease fallback lookup", async () => {
+      tables = adHocTables(readyAccount, { customer_id: "cus_test_1" }, forgeCollectibleSchedule);
+      const response = await POST(request({ chargeId: "charge_1" }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.success).toBe(true);
+      expect(createPaymentSession).toHaveBeenCalled();
+      // Fallback lookup pattern: lease-scoped active schedule, not a null id match.
+      expect(tables.rent_schedules.eq).toHaveBeenCalledWith("lease_id", "lease_1");
+      expect(tables.rent_schedules.eq).toHaveBeenCalledWith("status", "active");
+      expect(tables.rent_schedules.eq).not.toHaveBeenCalledWith("id", null);
+    });
+
+    it("rejects an ad-hoc charge when the lease has no active schedule at all", async () => {
+      tables = adHocTables(readyAccount, { customer_id: "cus_test_1" }, null);
+      const response = await POST(request({ chargeId: "charge_1" }));
+      const body = await response.json();
+      expect(response.status).toBe(404);
+      expect(body.error).toBe("This rent charge is not currently collectible through FORGE.");
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("rejects an ad-hoc charge when the lease's active schedule is not FORGE-collected", async () => {
+      tables = adHocTables(readyAccount, { customer_id: "cus_test_1" }, { collection_mode: "external", forge_cutover_date: null });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(404);
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("still uses the direct schedule lookup when the charge has a schedule_id (no fallback query)", async () => {
+      tables = baseTables(readyAccount, { customer_id: "cus_test_1" }, forgeCollectibleSchedule);
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(200);
+      expect(tables.rent_schedules.eq).toHaveBeenCalledWith("id", "schedule_1");
     });
   });
 

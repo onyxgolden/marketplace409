@@ -18,7 +18,7 @@ function chain(result = { data: null, error: null }) {
 
 const ENROLLMENT = { id: "enrollment_1", owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1",
   provider_customer_id: "cus_1", provider_payment_method_id: "pm_1", provider_mode: "test", consecutive_failures: 0, retry_limit: 1 };
-const CHARGE = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", amount_cents: 150000, paid_amount_cents: 0, currency_code: "USD" };
+const CHARGE = { id: "charge_1", owner_id: "owner_1", lease_id: "lease_1", amount_cents: 150000, paid_amount_cents: 0, currency_code: "USD", charge_type: "rent" };
 const FORGE_SCHEDULE = { data: { collection_mode: "forge", forge_cutover_date: "2020-01-01" }, error: null };
 const BILLING_ENABLED = { data: { billing_enabled: true }, error: null };
 
@@ -37,6 +37,29 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(chain({ data: { ...CHARGE, lease_id: "lease_2" }, error: null }));
     const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
     expect(result.httpStatus).toBe(409);
+  });
+
+  it("rejects an ad-hoc charge type as not eligible for autopay — automatic collection is fenced to rent/proration/late_fee", async () => {
+    const db = { from: vi.fn() };
+    db.from
+      .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+      .mockReturnValueOnce(chain({ data: { ...CHARGE, charge_type: "damage" }, error: null }));
+    const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+    expect(result.httpStatus).toBe(409);
+    expect(result.body).toEqual({ error: "This charge type is not eligible for autopay." });
+    // No attempt or payment rows must be created for an ineligible type.
+    expect(db.from).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a late_fee charge through the autopay gate (still subject to the collection gates below)", async () => {
+    const db = { from: vi.fn() };
+    db.from
+      .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+      .mockReturnValueOnce(chain({ data: { ...CHARGE, charge_type: "late_fee" }, error: null }))
+      .mockReturnValueOnce(chain({ data: { id: "attempt_existing" }, error: null }));
+    const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+    expect(result.httpStatus).toBe(200);
+    expect(result.body).toEqual({ success: true, duplicate: true, attempt: { id: "attempt_existing" } });
   });
 
   it("returns the existing attempt instead of double-charging", async () => {

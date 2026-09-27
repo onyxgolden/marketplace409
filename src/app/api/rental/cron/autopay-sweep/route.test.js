@@ -13,6 +13,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { executeAutopayAttempt } from "@/application/rental/executeAutopayAttempt";
 import { reconcileMissingStripeSettlements } from "../settlement-reconciliation/route.js";
 import { GET } from "./route.js";
+import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
 
 function request(headers = {}) { return new Request("https://test/api", { headers }); }
 
@@ -65,6 +66,15 @@ describe("autopay sweep cron", () => {
     createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rental_autopay_enrollments" ? enrollments : charges)) });
     await GET(request({ authorization: "Bearer cron-secret" }));
     expect(enrollments.eq).toHaveBeenCalledWith("provider_mode", "test");
+  });
+
+  it("fences the sweep query to autopay-collectible charge types — ad-hoc types (damage/fee/utility/other) are never sweep candidates", async () => {
+    const enrollments = chain({ data: [], error: null });
+    const charges = chain({ data: [], error: null });
+    createRentalWebhookClient.mockReturnValue({ from: vi.fn((table) => (table === "rental_autopay_enrollments" ? enrollments : charges)) });
+    await GET(request({ authorization: "Bearer cron-secret" }));
+    expect(charges.select).toHaveBeenCalledWith(expect.stringContaining("charge_type"));
+    expect(charges.in).toHaveBeenCalledWith("charge_type", AUTOPAY_COLLECTIBLE_CHARGE_TYPES);
   });
 
   it("counts a failed attempt without aborting the sweep", async () => {

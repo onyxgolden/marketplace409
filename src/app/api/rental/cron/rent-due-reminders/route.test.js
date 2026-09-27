@@ -19,14 +19,18 @@ let MAYBE_SINGLE;
 let UPSERT_RESULT;
 let EXISTING_DELIVERY;
 let PENDING_RESULT = null;
+// Query-log for assertions on the generated filters: entries are
+// { table, method, args } for select/eq/gte/lte/lt/in calls.
+let QUERY_LOG = [];
 function chainable(table) {
+  const record = (method) => (arg1, arg2) => { QUERY_LOG.push({ table, method, args: [arg1, arg2] }); return obj; };
   const obj = {
-    select: () => obj,
-    eq: () => obj,
-    gte: () => obj,
-    lte: () => obj,
-    lt: () => obj,
-    in: () => obj,
+    select: record("select"),
+    eq: record("eq"),
+    gte: record("gte"),
+    lte: record("lte"),
+    lt: record("lt"),
+    in: record("in"),
     maybeSingle: async () => ({ data: MAYBE_SINGLE?.[table] ?? EXISTING_DELIVERY ?? (ROWS[table]?.[0] ?? null), error: null }),
     upsert: (row, options) => {
       mocks.upsert(table, row, options);
@@ -86,6 +90,7 @@ beforeEach(() => {
   mocks.upsert.mockReset();
   mocks.update.mockReset();
   ROWS = {};
+  QUERY_LOG = [];
 });
 afterEach(() => {
   process.env = { ...REAL_ENV };
@@ -226,6 +231,18 @@ describe("GET /api/rental/cron/rent-due-reminders", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.wouldSend).toBe(0);
+  });
+
+  it("fences the loader query to autopay-collectible charge types — ad-hoc types never reach the reminder plan", async () => {
+    const { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } = await import("@/application/rental/tenantCharges");
+    seedDueTodayFixture();
+    await GET(request("https://x.test/api/rental/cron/rent-due-reminders?dryRun=true", AUTH));
+    const chargeTypeFilters = QUERY_LOG.filter((entry) =>
+      entry.table === "rent_charges" && entry.method === "in" && entry.args[0] === "charge_type");
+    expect(chargeTypeFilters).toHaveLength(1);
+    expect(chargeTypeFilters[0].args[1]).toEqual(AUTOPAY_COLLECTIBLE_CHARGE_TYPES);
+    const selects = QUERY_LOG.filter((entry) => entry.table === "rent_charges" && entry.method === "select");
+    expect(selects.some((entry) => String(entry.args[0]).includes("charge_type"))).toBe(true);
   });
 
   it("reminds on a scheduled charge (seven days before a charge the owner created early)", async () => {
