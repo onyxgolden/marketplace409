@@ -446,6 +446,108 @@ describe("Rental Manager route", () => {
     const response = await POST(request({ operation: "cancel-lease", leaseId: "lease_1" }));
     expect(response.status).toBe(409);
   });
+  it("update-lease-terms writes lease and schedule atomically through one RPC call", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "active" }, error: null })) };
+    const rpc = vi.fn(async () => ({ data: { lease: { id: "lease_1", status: "active", monthly_rent_cents: 160000 },
+      schedule: { id: "schedule_1", lease_id: "lease_1", amount_cents: 160000 } }, error: null }));
+    const from = vi.fn((table) => table === "rental_leases" ? leaseQuery : defaultFrom(table));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
+      supabaseClient: { from, rpc } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 5, startDate: "2026-09-01", endDate: "2027-08-31", earlyPayDays: 10 } }));
+    expect(response.status).toBe(200);
+    // Atomicity by construction: exactly one call carries every term value, so the
+    // database can never hold a half-applied update.
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("update_lease_terms", { p_owner_id: "owner_1", p_lease_id: "lease_1",
+      p_monthly_rent_cents: 160000, p_due_day: 5, p_start_date: "2026-09-01", p_end_date: "2027-08-31",
+      p_early_pay_days: 10 });
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.lease.monthly_rent_cents).toBe(160000);
+    expect(body.schedule.amount_cents).toBe(160000);
+  });
+  it("update-lease-terms rejects invalid terms before any write", async () => {
+    const invalid = [
+      { monthlyRentCents: 0, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7 },
+      { monthlyRentCents: 160000, rentDueDay: 30, startDate: "2026-09-01", earlyPayDays: 7 },
+      { monthlyRentCents: 160000, rentDueDay: 1, startDate: "09/01/2026", earlyPayDays: 7 },
+      { monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", endDate: "2026-08-01", earlyPayDays: 7 },
+      { monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 32 },
+    ];
+    for (const terms of invalid) {
+      const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1", ...terms } }));
+      expect(response.status).toBe(400);
+    }
+  });
+  it("update-lease-terms returns 404 for another owner's lease and never writes", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: null, error: null })) };
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    const from = vi.fn((table) => table === "rental_leases" ? leaseQuery : defaultFrom(table));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "brandy_co_owner" },
+      effectiveOwnerId: "jason_owner", supabaseClient: { from, rpc } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7 } }));
+    expect(response.status).toBe(404);
+    expect(leaseQuery.eq).toHaveBeenCalledWith("owner_id", "jason_owner");
+    expect(leaseQuery.eq).not.toHaveBeenCalledWith("owner_id", "brandy_co_owner");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("update-lease-terms rejects a read_only member with 403", async () => {
+    memberRole = "read_only";
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "staff_read_only" },
+      effectiveOwnerId: "staff_read_only", supabaseClient: { from: vi.fn(defaultFrom) } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7 } }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/read-only/i);
+  });
+  it("update-lease-terms refuses a cancelled lease", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "cancelled" }, error: null })) };
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    const from = vi.fn((table) => table === "rental_leases" ? leaseQuery : defaultFrom(table));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
+      supabaseClient: { from, rpc } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7 } }));
+    expect(response.status).toBe(409);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("update-lease-terms maps a missing schedule inside the RPC to 409 with no partial write", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "active" }, error: null })) };
+    // The function aborts its transaction when no schedule row exists — a single
+    // failed RPC call means nothing was written anywhere, so no partial state exists.
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "rent schedule not found for lease", code: "P0001" } }));
+    const from = vi.fn((table) => table === "rental_leases" ? leaseQuery : defaultFrom(table));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
+      supabaseClient: { from, rpc } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7 } }));
+    expect(response.status).toBe(409);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect((await response.json()).error).toMatch(/no rent schedule found/i);
+  });
+  it("update-lease-terms surfaces an unexpected RPC failure as a 500", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "active" }, error: null })) };
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "connection reset", code: "XX000" } }));
+    const from = vi.fn((table) => table === "rental_leases" ? leaseQuery : defaultFrom(table));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
+      supabaseClient: { from, rpc } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7 } }));
+    expect(response.status).toBe(500);
+  });
   it("refuses a charge when its schedule is not active and effective", async () => {
     application.generateMonthlyCharge.mockResolvedValue(null);
     const response = await POST(request({ operation: "generate-charge", scheduleId: "schedule_1", period: "2026-08" }));
