@@ -8,12 +8,27 @@ const VALID_RECURRENCE_RULES = new Set(["weekly", "biweekly", "monthly", "quarte
 
 const text = (value) => String(value ?? "").trim();
 
-// Shared validation for the Rentec-style transaction form (create + edit).
+// Shared validation for the double-entry transaction form (create + edit).
 // Mirrors validateManualFinancialEvent but covers the full ledger field set:
 // payee, check number, bank account, tenant, cleared flag, charge-tenant,
 // display name, reference number, payee mailing address, vendor assignment,
 // payment method, recurring schedule, and depreciation flag.
-export function validateTransaction(input) {
+//
+// extraCategories lets routes accept owner chart-of-accounts codes beyond the
+// built-in list (custom accounts the owner added). Defaults to none so every
+// existing caller behaves exactly as before.
+//
+// allowedCategories is the authoritative override: when the owner's
+// chart-of-accounts loads, ONLY its active codes may receive new postings.
+// A deactivated built-in account stays valid for history but rejects new
+// postings. Null means legacy mode (the chart table does not exist yet), so
+// the built-in list applies. Callers must fail closed on chart read errors
+// rather than passing null, so a transient failure can never post to a
+// deliberately deactivated account.
+export function validateTransaction(input, { extraCategories = [], allowedCategories = null } = {}) {
+  const validCategories = allowedCategories == null
+    ? new Set([...VALID_CATEGORIES, ...extraCategories])
+    : new Set(allowedCategories);
   const errors = [];
   const eventDate = text(input?.eventDate);
   const description = text(input?.description);
@@ -42,7 +57,7 @@ export function validateTransaction(input) {
   if (description.length > MAX_TEXT) errors.push("Description must be 500 characters or fewer.");
   if (!Number.isFinite(amount) || amount <= 0) errors.push("Amount must be a positive number.");
   if (!["income", "expense"].includes(transactionKind)) errors.push("Type must be income or expense.");
-  if (!VALID_CATEGORIES.has(normalizedCategory)) errors.push("A valid category is required.");
+  if (!validCategories.has(normalizedCategory)) errors.push("A valid category is required.");
   if (payee.length > MAX_TEXT) errors.push("Payee must be 500 characters or fewer.");
   if (checkNumber.length > 100) errors.push("Check number must be 100 characters or fewer.");
   if (memo.length > 2000) errors.push("Memo must be 2000 characters or fewer.");

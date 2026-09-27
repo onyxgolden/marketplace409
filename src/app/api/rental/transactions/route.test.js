@@ -5,8 +5,13 @@ vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
 vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({
   getActiveWorkspaceRole: vi.fn(),
 }));
+vi.mock("@/application/rental/chartOfAccounts", () => ({
+  resolvePostingCategories: vi.fn(),
+  ChartUnavailableError: class ChartUnavailableError extends Error {},
+}));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { DELETE, PATCH, POST } from "./route";
 
 const validBody = {
@@ -70,6 +75,9 @@ function deleteRequest(eventId) {
 beforeEach(() => {
   vi.clearAllMocks();
   getActiveWorkspaceRole.mockResolvedValue("owner");
+  // Legacy mode (chart table not yet created): the validator falls back to
+  // the built-in list, so existing tests exercise the legacy path.
+  resolvePostingCategories.mockResolvedValue(null);
 });
 
 describe("PATCH /api/rental/transactions", () => {
@@ -218,6 +226,18 @@ describe("PATCH /api/rental/transactions", () => {
     expect(response.status).toBe(403);
   });
 
+  it("503s and writes nothing when the chart read fails", async () => {
+    resolvePostingCategories.mockRejectedValue(new ChartUnavailableError(new Error("connection reset")));
+    const db = database();
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await PATCH(patchRequest({ eventId: "evt-1", ...validBody }));
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error).toMatch(/chart of accounts/i);
+    expect(db.client.from).not.toHaveBeenCalledWith("financial_events");
+  });
   it("400s when the amount of a fund-transfer leg is changed", async () => {
     const db = database({
       eventLookup: { data: [{ id: "evt-1", amount: 500, transaction_kind: "expense", bank_account_id: "acct-1", transfer_group_id: "transfer_abc", cleared: false, cleared_at: null }], error: null },
@@ -398,5 +418,22 @@ describe("POST /api/rental/transactions (regression)", () => {
       body: JSON.stringify(validBody),
     }));
     expect(response.status).toBe(200);
+  });
+
+  it("503s and writes nothing when the chart read fails", async () => {
+    resolvePostingCategories.mockRejectedValue(new ChartUnavailableError(new Error("connection reset")));
+    const db = database();
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await POST(new Request("https://test/api/rental/transactions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    }));
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error).toMatch(/chart of accounts/i);
+    expect(db.client.from).not.toHaveBeenCalledWith("financial_events");
   });
 });
