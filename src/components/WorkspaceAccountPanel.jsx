@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
+import { setCacheIdentity } from "@/hooks/swrCache.js";
 
 const panelClassName =
   "mb-8 w-full max-w-4xl rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900";
@@ -42,6 +43,10 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       setUser(session?.user ?? null);
+      // Namespace the SWR data cache's disk entries to whoever is signed in. A null session
+      // (sign-out, expired session, account switch) drops the previous user's in-memory entries
+      // and makes their persisted entries unreachable -- the disk is fail-closed without an identity.
+      setCacheIdentity(session?.user?.id ?? null);
       // The server-computed workspace list (stats, Health/Dev authorization, saved favorite) was
       // resolved for whoever was signed in when this page last rendered -- any auth change here
       // makes that stale. router.refresh() re-runs the server component in place, so the visitor

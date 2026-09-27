@@ -23,16 +23,67 @@ const PERSIST_PREFIX = "forge.swr.v1:";
 const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000; // disk entries older than this are ignored
 const PERSIST_MAX_BYTES = 2_000_000; // per-entry cap; oversized payloads stay memory-only
 
+// Identity isolation: persisted entries are namespaced per signed-in user, so one
+// person's cached data can never hydrate another person's session on a shared
+// device. The app sets this from the auth state (WorkspaceAccountPanel's
+// onAuthStateChange); until it is set, the disk is never touched -- fail closed.
+let cacheIdentity = null;
+
+/** The signed-in user id persisted entries are namespaced under, or null when unknown/signed out. */
+export function getCacheIdentity() {
+  return cacheIdentity;
+}
+
+/**
+ * Set the identity persisted entries are namespaced under. Call with the
+ * signed-in user's id on auth state change; call with null on sign-out or
+ * session expiration. When the identity changes, in-memory entries are dropped
+ * (they belonged to the previous identity) and subscribers are notified so the
+ * UI re-renders into a loading state instead of showing the wrong person's data.
+ * Disk entries from the previous identity stay on disk but become unreachable;
+ * sign-out wipes them entirely via clearSWRCache().
+ */
+export function setCacheIdentity(identityId) {
+  const next = identityId ?? null;
+  if (next === cacheIdentity) return;
+  cacheIdentity = next;
+  entries.clear();
+  inflight.clear();
+  versions.clear();
+  for (const key of listeners.keys()) notify(key);
+}
+
 function storageAvailable() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+/** Disk namespace for the current identity, or null when there is no identity (fail closed). */
+function identityPrefix() {
+  return cacheIdentity == null ? null : `${PERSIST_PREFIX}${cacheIdentity}:`;
+}
+
+function diskKey(key) {
+  const prefix = identityPrefix();
+  return prefix == null ? null : prefix + key;
+}
+
 function persistEntry(key, entry) {
   if (!storageAvailable() || key == null || entry == null) return;
+  const name = diskKey(key);
+  if (name == null) return; // no identity: memory-only
+  // Never persist error states -- the disk keeps the last good copy, so a cold
+  // boot after a failed refresh hydrates good data (then revalidates) instead
+  // of a stale error.
+  if (entry.error) return;
   try {
-    const payload = JSON.stringify({ data: entry.data ?? null, error: entry.error ?? "", updatedAt: entry.updatedAt ?? Date.now() });
-    if (payload.length > PERSIST_MAX_BYTES) return;
-    window.localStorage.setItem(PERSIST_PREFIX + key, payload);
+    const payload = JSON.stringify({ data: entry.data ?? null, error: "", updatedAt: entry.updatedAt ?? Date.now() });
+    if (payload.length > PERSIST_MAX_BYTES) {
+      // Oversized payloads stay memory-only AND drop any stale disk copy, so a
+      // cold boot doesn't serve outdated data for this key.
+      window.localStorage.removeItem(name);
+      return;
+    }
+    window.localStorage.setItem(name, payload);
   } catch {
     // Quota or private-mode failure: the in-memory cache keeps working.
   }
@@ -40,13 +91,15 @@ function persistEntry(key, entry) {
 
 function readPersistedEntry(key) {
   if (!storageAvailable() || key == null) return undefined;
+  const name = diskKey(key);
+  if (name == null) return undefined; // no identity: never hydrate from disk
   try {
-    const raw = window.localStorage.getItem(PERSIST_PREFIX + key);
+    const raw = window.localStorage.getItem(name);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.updatedAt !== "number") return undefined;
     if (Date.now() - parsed.updatedAt > PERSIST_MAX_AGE_MS) {
-      window.localStorage.removeItem(PERSIST_PREFIX + key);
+      window.localStorage.removeItem(name);
       return undefined;
     }
     return { data: parsed.data ?? null, error: parsed.error ?? "", updatedAt: parsed.updatedAt };
@@ -57,8 +110,33 @@ function readPersistedEntry(key) {
 
 function dropPersistedEntry(key) {
   if (!storageAvailable() || key == null) return;
+  const name = diskKey(key);
+  if (name == null) return;
   try {
-    window.localStorage.removeItem(PERSIST_PREFIX + key);
+    window.localStorage.removeItem(name);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Remove persisted entries under a data-key prefix -- including entries that
+ * live only on disk (never loaded into memory this session), entries namespaced
+ * under any identity, and legacy un-namespaced entries (pre-identity format).
+ */
+function dropPersistedPrefix(prefix) {
+  if (!storageAvailable() || prefix == null) return;
+  try {
+    const doomed = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const name = window.localStorage.key(i);
+      if (typeof name !== "string" || !name.startsWith(PERSIST_PREFIX)) continue;
+      const rest = name.slice(PERSIST_PREFIX.length);
+      const sep = rest.indexOf(":");
+      const dataKey = sep === -1 ? rest : rest.slice(sep + 1);
+      if (dataKey.startsWith(prefix)) doomed.push(name);
+    }
+    for (const name of doomed) window.localStorage.removeItem(name);
   } catch {
     // ignore
   }
@@ -197,6 +275,9 @@ export function invalidatePrefix(prefix) {
   for (const key of [...entries.keys(), ...inflight.keys(), ...versions.keys()]) {
     if (key.startsWith(prefix)) invalidate(key);
   }
+  // Persisted-only keys: entries that live on disk but were never loaded into
+  // memory this session would otherwise survive and hydrate stale data.
+  dropPersistedPrefix(prefix);
 }
 
 /**
@@ -214,5 +295,6 @@ export function clearSWRCache() {
   inflight.clear();
   versions.clear();
   listeners.clear();
+  cacheIdentity = null;
   clearPersistedEntries();
 }

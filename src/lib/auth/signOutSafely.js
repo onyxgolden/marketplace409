@@ -19,6 +19,7 @@
 // own enabled state and show it, using whichever display mechanism is appropriate for that caller.
 
 import { clearDashboardCache } from "@/app/forge/financial/dashboardCache.js";
+import { clearSWRCache } from "@/hooks/swrCache.js";
 
 // Translates a raw sign-out failure into a short, user-facing message safe to render inline.
 // Sign-out failures are rare (network drops, expired local sessions) and the raw error text is
@@ -61,6 +62,9 @@ export async function signOutSafely({ supabase, redirectTo = "/" }) {
   // sign out -- so a shared device never keeps showing anyone's cached financial data after any
   // sign-out. No identity needed to call this; see dashboardCache.js.
   await clearDashboardCache();
+  // Same guarantee for the SWR data cache: drops every persisted entry for every identity, so a
+  // shared device never hydrates the previous user's Properties/Tenants/expenses after sign-out.
+  clearSWRCache();
   window.location.href = redirectTo;
   return { success: true, error: null };
 }
