@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PostIncomeForm from "./PostIncomeForm";
 import AddTenantChargeForm from "./AddTenantChargeForm";
 import TenantCreditSection from "./TenantCreditSection";
+import TenantInvoiceEditor from "./TenantInvoiceEditor";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
@@ -15,8 +16,8 @@ const formatDate = (value) => {
   const date = new Date(value.length === 10 ? `${value}T12:00:00` : value);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString();
 };
-// Rentec convention carried through the app: a positive balance is money the tenant
-// still owes (red); zero or a credit balance is green.
+// Tenant convention: a positive balance is money the tenant still owes (red);
+// zero or a credit balance is green.
 const balanceClass = (cents) => cents > 0
   ? "text-red-700 dark:text-red-400"
   : "text-emerald-700 dark:text-emerald-400";
@@ -28,16 +29,17 @@ async function fetchTenantLedger(tenantId) {
   return body;
 }
 
-// Full-page tenant ledger — the Rentec-style running transaction table:
-// Date | Description | Charge (Debit) | Payment (Credit) | Balance, with a rolling
-// balance after every row. Charges and refunds land in the Charge column, payments in
-// the Payment column. Security deposits are never in this table; they keep their own
-// section below. Clicking a row's description opens the read-only transaction detail.
+// Full-page tenant ledger — the reference accounting layout: breadcrumb,
+// Ledger heading, Post Income / Post Charge / On Deposit action row, filter +
+// date-range selectors, and a Date / Description / Check # / Debit / Credit /
+// Balance table with a cleared column and per-row edit. Charge rows open the
+// invoice editor; payment rows open the read-only transaction detail.
+// Security deposits are never in this table — the On Deposit pill up top and
+// the deposits section below are their home.
 //
-// Data layer: stale-while-revalidate. Reopening a recently viewed tenant's ledger
-// serves the cached payload instantly and refreshes in the background — the last
-// good ledger never blanks out while the new tenant's data loads.
-export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onClose, onPostCharge, initialView = null }) {
+// Data layer: stale-while-revalidate. Reopening a recently viewed tenant's
+// ledger serves the cached payload instantly and refreshes in the background.
+export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onClose, initialView = null, onOpenPropertyLedger, onOpenBankLedger }) {
   const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     tenantId ? `tenant-ledger:${tenantId}` : null,
     () => fetchTenantLedger(tenantId),
@@ -52,10 +54,20 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const availableCreditCents = credits
     .filter((credit) => credit.status === "open")
     .reduce((sum, credit) => sum + Number(credit.remaining_cents || 0), 0);
+  const heldCents = Number(deposits?.heldCents || 0);
   const [detailEntry, setDetailEntry] = useState(null);
+  const [invoiceCharge, setInvoiceCharge] = useState(null);
   const [showPostIncome, setShowPostIncome] = useState(initialView === "post-income");
   const [showAddCharge, setShowAddCharge] = useState(false);
   const [postedMessage, setPostedMessage] = useState("");
+  const [kindFilter, setKindFilter] = useState("all");
+  const [dateRange, setDateRange] = useState("all");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [compactRows, setCompactRows] = useState(false);
+  const [showSubLine, setShowSubLine] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const depositsRef = useRef(null);
   const printFired = useRef(false);
 
   // "Print Statement" from the card menu lands here and fires the print dialog once
@@ -74,41 +86,129 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
     return () => window.removeEventListener("keydown", onKey);
   }, [detailEntry]);
 
+  const filteredEntries = useMemo(() => {
+    if (!ledger) return [];
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    return ledger.entries.filter((entry) => {
+      if (kindFilter === "charges" && entry.kind !== "charge") return false;
+      if (kindFilter === "payments" && entry.kind !== "payment") return false;
+      if (kindFilter === "credits" && entry.kind !== "credit" && entry.kind !== "credit_application") return false;
+      if (dateRange !== "all" && entry.date) {
+        const day = new Date(entry.date.length === 10 ? `${entry.date}T12:00:00` : entry.date);
+        if (Number.isNaN(day.getTime())) return true;
+        if (dateRange === "month" && day < startOfMonth) return false;
+        if (dateRange === "lastMonth" && (day < startOfLastMonth || day >= startOfMonth)) return false;
+        if (dateRange === "year" && day < startOfYear) return false;
+        if (dateRange === "custom") {
+          if (customStart && day < new Date(`${customStart}T12:00:00`)) return false;
+          if (customEnd && day > new Date(`${customEnd}T23:59:59`)) return false;
+        }
+      }
+      return true;
+    });
+  }, [ledger, kindFilter, dateRange, customStart, customEnd]);
+  const filtersActive = kindFilter !== "all" || dateRange !== "all";
+
   const headerContext = ledger?.entries?.[0];
-  const propertyLine = headerContext ? `${headerContext.unitLabel} · ${headerContext.propertyLabel}` : (unitLabel || "");
+  const propertyKey = headerContext?.propertyLabel && !String(headerContext.propertyLabel).startsWith("Unknown")
+    ? String(headerContext.propertyLabel) : null;
+  const propertyLine = headerContext ? `${headerContext.unitLabel || ""}` : (unitLabel || "");
+
+  const openInvoice = (entry) => {
+    if (entry.kind !== "charge" || entry.status === "void") return;
+    setInvoiceCharge({ chargeId: entry.sourceId || String(entry.id).replace(/^charge:/, ""), label: entry.label });
+  };
+
+  // The invoice editor is its own screen — the reference's Edit Invoice page.
+  if (invoiceCharge) {
+    return (
+      <section data-tenant-ledger-page aria-label={`Edit invoice for ${tenantName || "tenant"}`}
+        className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <button type="button" onClick={() => setInvoiceCharge(null)}
+          className="text-sm font-black text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300 print:hidden">
+          ← Back to ledger
+        </button>
+        <div className="mt-4">
+          <TenantInvoiceEditor chargeId={invoiceCharge.chargeId} tenantId={tenantId} tenantName={tenantName}
+            onClose={() => setInvoiceCharge(null)}
+            onSaved={() => { setPostedMessage("Invoice saved."); refresh(); }} />
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section data-tenant-ledger-page aria-label={`Full ledger for ${tenantName || "tenant"}`}
       className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
         <div>
-          <button type="button" onClick={onClose}
-            className="text-sm font-black text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">
-            ← Back to tenants
-          </button>
-          <p className="mt-2 text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Tenant ledger</p>
-          <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{tenantName || "Tenant"}</h2>
-          {propertyLine && <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-400">{propertyLine}</p>}
+          <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
+            <button type="button" onClick={onClose} className="font-black text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Tenants</button>
+            <span className="mx-1.5">/</span>
+            <span className="font-black text-slate-700 dark:text-slate-200">{tenantName || "Tenant"}</span>
+          </p>
+          <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Ledger</h2>
+          {propertyLine && (
+            <p className="mt-1 text-sm font-bold text-slate-600 dark:text-slate-400">
+              {propertyLine}
+              {propertyKey && onOpenPropertyLedger && (
+                <> · <button type="button" onClick={() => onOpenPropertyLedger(propertyKey, propertyLine || propertyKey)}
+                  className="font-black text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">
+                  Open property ledger
+                </button></>
+              )}
+            </p>
+          )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => { setPostedMessage(""); setShowPostIncome((value) => !value); }}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => { setPostedMessage(""); setShowPostIncome((value) => !value); setShowAddCharge(false); }}
             className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${goldControlClassName}`}>
             Post Income
           </button>
-          <button type="button" onClick={() => { setPostedMessage(""); setShowAddCharge((value) => !value); }}
-            className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${goldControlClassName}`}>
-            Add charge
+          <button type="button" onClick={() => { setPostedMessage(""); setShowAddCharge((value) => !value); setShowPostIncome(false); }}
+            className="rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-black text-red-700 transition hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60">
+            Post Charge
           </button>
-          {onPostCharge && (
-            <button type="button" onClick={onPostCharge}
-              className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
-              Post Charge
+          <button type="button" onClick={() => depositsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            title="Security deposits held for this tenant"
+            className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+            On Deposit: {money.format(heldCents / 100)}
+          </button>
+          <div className="relative">
+            <button type="button" onClick={() => setSettingsOpen((open) => !open)} aria-label="Ledger display settings"
+              aria-expanded={settingsOpen}
+              className="rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+              ⚙
             </button>
-          )}
-          <button type="button" onClick={() => { if (typeof window.print === "function") window.print(); }}
-            className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
-            Print Statement
-          </button>
+            {settingsOpen && (
+              <div className="absolute right-0 z-20 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl dark:border-slate-700 dark:bg-slate-800">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Row density</p>
+                <div className="mt-2 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Row density">
+                  {[false, true].map((compact) => (
+                    <button key={String(compact)} type="button" role="radio" aria-checked={compactRows === compact}
+                      onClick={() => setCompactRows(compact)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-black ${compactRows === compact
+                        ? "border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900"
+                        : "border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300"}`}>
+                      {compact ? "Compact" : "Comfortable"}
+                    </button>
+                  ))}
+                </div>
+                <label className="mt-3 flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
+                  <input type="checkbox" checked={showSubLine} onChange={(event) => setShowSubLine(event.target.checked)}
+                    className="h-4 w-4 accent-emerald-600" />
+                  Show detail line
+                </label>
+                <button type="button" onClick={() => { setSettingsOpen(false); if (typeof window.print === "function") window.print(); }}
+                  className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">
+                  Print ledger
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -146,66 +246,136 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
             </div>
           )}
 
-          <div className="mt-6 flex flex-wrap items-baseline justify-between gap-2">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-xl font-black text-slate-950 dark:text-white">Transactions</h3>
-            <p className="text-sm font-bold text-slate-600 dark:text-slate-400">
-              Balance: <strong className={`text-lg font-black ${balanceClass(ledger.balanceCents)}`}>{money.format(ledger.balanceCents / 100)}</strong>
-              <span className="ml-2 font-normal">{ledger.balanceCents > 0 ? "owed" : ledger.balanceCents < 0 ? "credit" : "paid in full"}</span>
-              {availableCreditCents > 0 && (
-                <span className="ml-3 font-normal text-sky-700 dark:text-sky-400">Available credit: <strong>{money.format(availableCreditCents / 100)}</strong></span>
+            <div className="flex flex-wrap items-center gap-2 print:hidden">
+              <label className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <span className="sr-only">Filter transactions</span>
+                <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} aria-label="Filter transactions"
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  <option value="all">All transactions</option>
+                  <option value="charges">Charges</option>
+                  <option value="payments">Payments</option>
+                  <option value="credits">Credits</option>
+                </select>
+              </label>
+              <label className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <span className="sr-only">Date range</span>
+                <select value={dateRange} onChange={(event) => setDateRange(event.target.value)} aria-label="Date range"
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  <option value="all">All dates</option>
+                  <option value="month">This month</option>
+                  <option value="lastMonth">Last month</option>
+                  <option value="year">This year</option>
+                  <option value="custom">Custom…</option>
+                </select>
+              </label>
+              {dateRange === "custom" && (
+                <span className="flex items-center gap-1 text-xs font-bold text-slate-600 dark:text-slate-300">
+                  <input type="date" value={customStart} onChange={(event) => setCustomStart(event.target.value)} aria-label="Start date"
+                    className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800" />
+                  <span>–</span>
+                  <input type="date" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} aria-label="End date"
+                    className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800" />
+                </span>
               )}
-            </p>
+            </div>
           </div>
+          <p className="mt-2 text-sm font-bold text-slate-600 dark:text-slate-400">
+            Balance: <strong className={`text-lg font-black ${balanceClass(ledger.balanceCents)}`}>{money.format(ledger.balanceCents / 100)}</strong>
+            <span className="ml-2 font-normal">{ledger.balanceCents > 0 ? "owed" : ledger.balanceCents < 0 ? "credit" : "paid in full"}</span>
+            {availableCreditCents > 0 && (
+              <span className="ml-3 font-normal text-sky-700 dark:text-sky-400">Available credit: <strong>{money.format(availableCreditCents / 100)}</strong></span>
+            )}
+          </p>
+          {filtersActive && (
+            <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
+              Showing {filteredEntries.length} of {ledger.entries.length} entries.
+            </p>
+          )}
 
-          {ledger.entries.length === 0
+          {filteredEntries.length === 0
             ? <p className="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No charges or payments on record for this tenant yet.</p>
             : <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[760px] text-left text-sm" data-ledger-table>
+              <table className="w-full min-w-[820px] text-left text-sm" data-ledger-table>
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
                     <th className="py-2 pr-3 font-black">Date</th>
                     <th className="py-2 pr-3 font-black">Description</th>
-                    <th className="py-2 pr-3 text-right font-black">Charge (Debit)</th>
-                    <th className="py-2 pr-3 text-right font-black">Payment (Credit)</th>
-                    <th className="py-2 text-right font-black">Balance</th>
+                    <th className="py-2 pr-3 font-black">Check #</th>
+                    <th className="py-2 pr-3 text-right font-black">Debit</th>
+                    <th className="py-2 pr-3 text-right font-black">Credit</th>
+                    <th className="py-2 pr-3 text-right font-black">Balance</th>
+                    <th className="py-2 pr-3 text-center font-black" title="Cleared / deposited">C</th>
+                    <th className="py-2 text-center font-black"><span className="sr-only">Edit</span></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ledger.entries.map((entry) => {
-                    const isChargeSide = entry.kind !== "payment";
+                  {filteredEntries.map((entry) => {
+                    const isCharge = entry.kind === "charge";
+                    const isPayment = entry.kind === "payment";
                     const isCreditMemo = entry.kind === "credit" || entry.kind === "credit_application";
+                    const deposited = isPayment && entry.depositState === DEPOSIT_STATE_DEPOSITED;
+                    const editable = isCharge && entry.status !== "void";
+                    const rowPad = compactRows ? "py-1" : "py-2.5";
                     return (
                       <tr key={entry.id} data-ledger-entry={entry.kind} className="border-b border-slate-100 dark:border-slate-800">
-                        <td className="py-2.5 pr-3 font-bold text-slate-700 dark:text-slate-300">{formatDate(entry.date)}</td>
-                        <td className="py-2.5 pr-3">
-                          <button type="button" onClick={() => setDetailEntry(entry)}
-                            title="View transaction detail"
-                            className="text-left font-bold text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">
-                            {entry.label}
-                          </button>
+                        <td className={`${rowPad} pr-3 font-bold text-slate-700 dark:text-slate-300`}>{formatDate(entry.date)}</td>
+                        <td className={`${rowPad} pr-3`}>
+                          {isCharge ? (
+                            <button type="button" onClick={() => openInvoice(entry)} disabled={!editable}
+                              title={editable ? "Edit invoice" : "Voided charges cannot be edited"}
+                              className={`text-left font-bold ${editable
+                                ? "text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300"
+                                : "text-slate-500 dark:text-slate-400"}`}>
+                              <span aria-hidden="true" className="mr-1.5">🧾</span>{entry.label}
+                            </button>
+                          ) : (
+                            <button type="button" onClick={() => setDetailEntry(entry)}
+                              title="View transaction detail"
+                              className="text-left font-bold text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">
+                              {entry.label}
+                            </button>
+                          )}
                           {isCreditMemo && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-black uppercase text-sky-800 dark:bg-sky-900 dark:text-sky-200">Credit memo</span>}
-                          <span className="ml-2 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label(entry.status)}</span>
-                          {entry.kind === "payment" && (
-                            entry.depositState === DEPOSIT_STATE_DEPOSITED
+                          {entry.status === "void" && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase text-slate-600 dark:bg-slate-700 dark:text-slate-300">Void</span>}
+                          {isPayment && (
+                            deposited
                               ? <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">Deposited</span>
                               : <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Awaiting deposit</span>
                           )}
                           {entry.rentecEvidence?.length > 0 && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black uppercase text-slate-700 dark:bg-slate-700 dark:text-slate-200">Rentec history</span>}
-                          <span className="block text-xs text-slate-500 dark:text-slate-400">
-                            {[entry.period, entry.method ? label(entry.method) : null, entry.reference].filter(Boolean).join(" · ")}
-                            {isCreditMemo && entry.remainingCents != null && ` · ${money.format(entry.remainingCents / 100)} remaining`}
-                          </span>
+                          {showSubLine && (
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">
+                              {[entry.period, entry.method ? label(entry.method) : null, isCharge ? label(entry.status) : null].filter(Boolean).join(" · ")}
+                              {isCreditMemo && entry.remainingCents != null && ` · ${money.format(entry.remainingCents / 100)} remaining`}
+                              {deposited && onOpenBankLedger && (
+                                <> · <button type="button" onClick={() => onOpenBankLedger()}
+                                  className="font-bold text-sky-700 underline hover:text-sky-900 dark:text-sky-400">View in bank ledger</button></>
+                              )}
+                            </span>
+                          )}
                         </td>
-                        <td className="py-2.5 pr-3 text-right font-black text-slate-950 dark:text-white">
-                          {isCreditMemo
-                            ? <span className="font-bold text-slate-500 dark:text-slate-400">{money.format(entry.amountCents / 100)} <span className="text-[10px] font-black uppercase">memo</span></span>
-                            : isChargeSide ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
+                        <td className={`${rowPad} pr-3 font-bold text-slate-600 dark:text-slate-400`}>{entry.reference && isPayment ? entry.reference : "—"}</td>
+                        <td className={`${rowPad} pr-3 text-right font-black text-slate-950 dark:text-white`}>
+                          {isCharge && !isCreditMemo ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
                         </td>
-                        <td className="py-2.5 pr-3 text-right font-black text-emerald-700 dark:text-emerald-400">
-                          {!isChargeSide ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
+                        <td className={`${rowPad} pr-3 text-right font-black text-emerald-700 dark:text-emerald-400`}>
+                          {isPayment ? money.format(entry.amountCents / 100) : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
                         </td>
-                        <td className={`py-2.5 text-right font-black ${balanceClass(entry.balanceAfterCents)}`}>
+                        <td className={`${rowPad} pr-3 text-right font-black ${balanceClass(entry.balanceAfterCents)}`}>
                           {money.format(entry.balanceAfterCents / 100)}
+                        </td>
+                        <td className={`${rowPad} pr-3 text-center font-black text-emerald-700 dark:text-emerald-400`}>
+                          {deposited ? "✓" : <span className="font-normal text-slate-300 dark:text-slate-700">—</span>}
+                        </td>
+                        <td className={`${rowPad} text-center`}>
+                          {editable ? (
+                            <button type="button" onClick={() => openInvoice(entry)} title="Edit invoice" aria-label={`Edit invoice: ${entry.label}`}
+                              className="rounded-lg px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100">
+                              ✎
+                            </button>
+                          ) : <span className="text-slate-300 dark:text-slate-700">—</span>}
                         </td>
                       </tr>
                     );
@@ -261,9 +431,9 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
 
           <TenantCreditSection credits={credits} creditApplications={creditApplications} openCharges={openCharges} onChanged={refresh} />
 
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40" data-ledger-deposits>
+          <div ref={depositsRef} className="mt-6 scroll-mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40" data-ledger-deposits>
             <h4 className="text-lg font-black text-slate-950 dark:text-white">Deposits — held separately, never rent</h4>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Currently held: {money.format((deposits?.heldCents || 0) / 100)}.</p>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Currently held: {money.format(heldCents / 100)}.</p>
             {(deposits?.entries?.length || 0) === 0
               ? <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">No deposit activity recorded.</p>
               : <ul className="mt-3 space-y-2 text-sm">
