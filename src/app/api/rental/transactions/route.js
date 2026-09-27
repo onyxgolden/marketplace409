@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 import { validateTransaction } from "@/application/rental/validateTransaction";
+import { toRow } from "@/application/rental/transactionRow";
+import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { createExpenseWithTenantCharge, validateTenantChargeInput } from "@/application/rental/tenantCharges";
 
 async function requireWriter(authenticated) {
@@ -11,44 +13,24 @@ async function requireWriter(authenticated) {
   return null;
 }
 
-function toRow({ ownerId, userId, value }) {
-  return {
-    owner_id: ownerId,
-    property_id: value.propertyId,
-    event_date: value.eventDate,
-    description: value.description,
-    amount: value.amount,
-    transaction_kind: value.transactionKind,
-    normalized_category: value.normalizedCategory,
-    payee: value.payee,
-    check_number: value.checkNumber,
-    bank_account_id: value.bankAccountId,
-    cleared: value.cleared,
-    cleared_at: value.cleared ? new Date().toISOString() : null,
-    display_as: value.displayAs,
-    ref_number: value.refNumber,
-    payee_mailing_address: value.payeeMailingAddress,
-    assigned_to: value.assignedTo,
-    is_recurring: value.isRecurring,
-    recurrence_rule: value.recurrenceRule,
-    depreciate: value.depreciate,
-    tax_deductible: value.transactionKind === "expense",
-    affects_noi: true,
-    capitalized: false,
-    source_system: "manual",
-    metadata: {
-      ...(value.memo ? { memo: value.memo } : {}),
-      ...(value.tenantId ? { tenant_id: value.tenantId, charged_to_tenant: value.chargeTenant } : {}),
-      ...(value.paymentMethod ? { payment_method: value.paymentMethod } : {}),
-    },
-    status: "active",
-    is_deleted: false,
-    created_by: userId,
-    updated_by: userId,
-  };
+// Resolves the category codes a new posting may accept. Fails closed: a
+// chart read error rejects the request (503) so a transient failure can never
+// post to a deliberately deactivated account. Returns null only in legacy
+// mode, when the chart table does not exist yet (migration not applied).
+async function resolveAllowedCategoriesOrFail(supabaseClient, ownerId) {
+  try {
+    return { categories: await resolvePostingCategories(supabaseClient, ownerId) };
+  } catch (error) {
+    if (error instanceof ChartUnavailableError) {
+      return { chartUnavailable: true };
+    }
+    throw error;
+  }
 }
 
-// POST /api/rental/transactions — create a Rentec-style ledger transaction.
+export { toRow } from "@/application/rental/transactionRow";
+
+// POST /api/rental/transactions — create a double-entry ledger transaction.
 // Body: { eventDate, description, amount, transactionKind, normalizedCategory,
 //   payee?, checkNumber?, bankAccountId?, propertyId?, tenantId?, memo?,
 //   cleared?, chargeTenant?, tenantCharge? }.
@@ -68,7 +50,16 @@ export async function POST(request) {
     if (forbidden) return forbidden;
 
     const body = await request.json();
-    const { valid, errors, value } = validateTransaction(body);
+    const chart = await resolveAllowedCategoriesOrFail(authenticated.supabaseClient, authenticated.effectiveOwnerId);
+    if (chart.chartUnavailable) {
+      return NextResponse.json(
+        { error: "The chart of accounts is temporarily unavailable. Please try again — no transaction was recorded." },
+        { status: 503 }
+      );
+    }
+    const { valid, errors, value } = validateTransaction(body, {
+      allowedCategories: chart.categories,
+    });
     if (!valid) return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
 
     // Charge-tenant is expense-only: an income event can never create a charge.
@@ -310,7 +301,16 @@ export async function PATCH(request) {
     const eventId = String(body.eventId || "").trim();
     if (!eventId) return NextResponse.json({ error: "eventId is required." }, { status: 400 });
 
-    const { valid, errors, value } = validateTransaction(body);
+    const chart = await resolveAllowedCategoriesOrFail(authenticated.supabaseClient, authenticated.effectiveOwnerId);
+    if (chart.chartUnavailable) {
+      return NextResponse.json(
+        { error: "The chart of accounts is temporarily unavailable. Please try again — no transaction was recorded." },
+        { status: 503 }
+      );
+    }
+    const { valid, errors, value } = validateTransaction(body, {
+      allowedCategories: chart.categories,
+    });
     if (!valid) return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
 
     // A tenant charge is created once, atomically, at posting time. Editing the

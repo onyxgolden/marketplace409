@@ -104,4 +104,28 @@ describe("validateTransaction", () => {
   it("rejects a malformed date", () => {
     expect(validateTransaction({ ...base(), eventDate: "09/20/2026" }).valid).toBe(false);
   });
+
+  it("accepts extraCategories on top of the built-in list", () => {
+    expect(
+      validateTransaction({ ...base(), normalizedCategory: "landscaping" }, { extraCategories: ["landscaping"] }).valid
+    ).toBe(true);
+  });
+
+  it("treats allowedCategories as authoritative: custom active codes pass, deactivated built-ins fail", () => {
+    const allowed = ["rental_income", "utilities", "landscaping"];
+    expect(
+      validateTransaction({ ...base(), normalizedCategory: "landscaping" }, { allowedCategories: allowed }).valid
+    ).toBe(true);
+    // property_repairs is a built-in code, but it is not in the owner's active
+    // chart (deactivated), so new postings to it are rejected.
+    const deactivated = validateTransaction({ ...base(), normalizedCategory: "property_repairs" }, { allowedCategories: allowed });
+    expect(deactivated.valid).toBe(false);
+    expect(deactivated.errors.join(" ")).toMatch(/valid category/i);
+  });
+
+  it("falls back to the built-in list when allowedCategories is null", () => {
+    expect(
+      validateTransaction({ ...base(), normalizedCategory: "property_repairs" }, { allowedCategories: null }).valid
+    ).toBe(true);
+  });
 });
