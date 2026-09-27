@@ -130,6 +130,171 @@ describe("TransactionForm", () => {
   });
 });
 
+describe("TransactionForm charge tenant", () => {
+  const leasesPayload = (rows) => ({ success: true, leases: rows });
+
+  function renderChargeForm({
+    leases = [{ id: "lease-1", status: "active", label: "308 Paula · Unit A", startDate: "2026-08-01", endDate: "2027-07-31" }],
+    defaultKind = "expense",
+    ...rest
+  } = {}) {
+    let postedBody = null;
+    stubFetch(async (url, options) => {
+      if (url === "/api/rental/bank-accounts") return { ok: true, json: async () => ({ accounts: [] }) };
+      if (typeof url === "string" && url.startsWith("/api/rental/tenant-leases")) {
+        return { ok: true, json: async () => leasesPayload(leases) };
+      }
+      if (url === "/api/rental/transactions" && options?.method === "POST") {
+        postedBody = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ success: true, event: { id: "evt-1" }, chargeId: "charge-1" }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const rendered = renderForm({ defaultKind, ...rest });
+    return { ...rendered, getPostedBody: () => postedBody };
+  }
+
+  async function selectTenant(container) {
+    const tenantLabel = Array.from(container.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith("Tenant"));
+    const tenantSelect = tenantLabel?.querySelector("select");
+    act(() => { setNativeValue(tenantSelect, "tenant-1"); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  }
+
+  function sectionCheckbox(container, labelStartsWith) {
+    const section = container.querySelector("[data-charge-tenant-section]");
+    const label = Array.from(section.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith(labelStartsWith));
+    return label?.querySelector('input[type="checkbox"]');
+  }
+
+  function sectionInput(container, labelStartsWith) {
+    const section = container.querySelector("[data-charge-tenant-section]");
+    const label = Array.from(section.querySelectorAll("label"))
+      .find((el) => el.textContent.trim().startsWith(labelStartsWith));
+    return label?.querySelector("input, select");
+  }
+
+  async function submitForm(container) {
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  it("hides the charge section for income transactions even with a tenant", async () => {
+    const { container } = renderChargeForm({ defaultKind: "income" });
+    await selectTenant(container);
+    expect(container.querySelector("[data-charge-tenant-section]")).toBeNull();
+  });
+
+  it("hides the charge section in edit mode", () => {
+    const { container } = renderChargeForm({
+      initialEvent: {
+        id: "evt-9",
+        tenantId: "tenant-1",
+        eventDate: "2026-09-26",
+        transactionKind: "expense",
+        amount: "450",
+        description: "Repair",
+      },
+    });
+    expect(container.querySelector("[data-charge-tenant-section]")).toBeNull();
+  });
+
+  it("hides the charge section when no tenant is selected", () => {
+    const { container } = renderChargeForm();
+    expect(container.querySelector("[data-charge-tenant-section]")).toBeNull();
+  });
+
+  it("shows the section for expense + tenant and preselects a single active lease", async () => {
+    const { container } = renderChargeForm();
+    await selectTenant(container);
+    const section = container.querySelector("[data-charge-tenant-section]");
+    expect(section).not.toBeNull();
+    act(() => { sectionCheckbox(container, "Charge tenant").click(); });
+    expect(sectionInput(container, "Lease").value).toBe("lease-1");
+  });
+
+  it("blocks submit when several leases exist and none is chosen", async () => {
+    const { container, getPostedBody } = renderChargeForm({
+      leases: [
+        { id: "lease-1", status: "active", label: "Unit A" },
+        { id: "lease-2", status: "active", label: "Unit B" },
+      ],
+    });
+    fill(container, "Amount", "450");
+    fill(container, "Description", "Plumbing repair");
+    await selectTenant(container);
+    act(() => { sectionCheckbox(container, "Charge tenant").click(); });
+    expect(sectionInput(container, "Lease").value).toBe("");
+    await submitForm(container);
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/Select the lease/);
+    expect(getPostedBody()).toBeNull();
+  });
+
+  it("blocks with a clear message when the tenant has no lease", async () => {
+    const { container, getPostedBody } = renderChargeForm({ leases: [] });
+    fill(container, "Amount", "450");
+    fill(container, "Description", "Repair");
+    await selectTenant(container);
+    act(() => { sectionCheckbox(container, "Charge tenant").click(); });
+    const section = container.querySelector("[data-charge-tenant-section]");
+    expect(section.textContent).toMatch(/This tenant has no lease to attach the charge to/);
+    await submitForm(container);
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/no lease to attach the charge/);
+    expect(getPostedBody()).toBeNull();
+  });
+
+  it("blocks submit without the confirm checkbox", async () => {
+    const { container, getPostedBody } = renderChargeForm();
+    fill(container, "Amount", "450");
+    fill(container, "Description", "Repair");
+    await selectTenant(container);
+    act(() => { sectionCheckbox(container, "Charge tenant").click(); });
+    await submitForm(container);
+    expect(container.querySelector('[role="alert"]')?.textContent).toMatch(/Check the confirmation/);
+    expect(getPostedBody()).toBeNull();
+  });
+
+  it("posts chargeTenant + tenantCharge with correct cents", async () => {
+    const { container, getPostedBody, onSaved } = renderChargeForm();
+    fill(container, "Amount", "225.50");
+    fill(container, "Description", "Broken window repair");
+    await selectTenant(container);
+    act(() => { sectionCheckbox(container, "Charge tenant").click(); });
+    fill(container, "Charge type", "damage");
+    fill(container, "Charge description", "Bedroom window glass");
+    fill(container, "Due date", "2026-10-20");
+    act(() => { sectionCheckbox(container, "I confirm").click(); });
+    await submitForm(container);
+    const body = getPostedBody();
+    expect(body).not.toBeNull();
+    expect(body.chargeTenant).toBe(true);
+    expect(body.tenantCharge).toMatchObject({
+      leaseId: "lease-1",
+      chargeType: "damage",
+      amountCents: 22550,
+      description: "Bedroom window glass",
+      dueDate: "2026-10-20",
+    });
+    expect(onSaved).toHaveBeenCalledWith({ id: "evt-1" });
+  });
+
+  it("defaults the charge amount from the expense amount until the user types their own", async () => {
+    const { container } = renderChargeForm();
+    fill(container, "Amount", "450");
+    await selectTenant(container);
+    act(() => { sectionCheckbox(container, "Charge tenant").click(); });
+    const chargeAmountInput = sectionInput(container, "Charge amount");
+    expect(chargeAmountInput.value).toBe("450");
+    fill(container, "Amount", "500");
+    expect(chargeAmountInput.value).toBe("500");
+    fill(container, "Charge amount", "123");
+    fill(container, "Amount", "600");
+    expect(chargeAmountInput.value).toBe("123");
+  });
+});
 describe("TransactionForm split lines", () => {
   function renderSplitForm() {
     stubFetch(async (url) => {

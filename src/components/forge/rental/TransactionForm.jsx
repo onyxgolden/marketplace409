@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { validateSplits } from "@/application/rental/validateSplits";
+import { TENANT_CHARGE_TYPES, TENANT_CHARGE_LABELS, defaultTenantChargeDueDate } from "@/application/rental/tenantCharges";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -93,6 +94,148 @@ function SplitTotalIndicator({ splits, amount }) {
   );
 }
 
+async function fetchTenantLeases(tenantId) {
+  const response = await fetch(`/api/rental/tenant-leases?tenantId=${encodeURIComponent(tenantId)}`);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to load the tenant's leases.");
+  return body.leases || [];
+}
+
+// "Charge tenant" section for the Post Expense form. Mounted with
+// key={tenantId} so every tenant selection starts from a clean slate. The
+// charge amount tracks the expense amount until the user types their own
+// value (derived during render — no effect, no cascading render); the due
+// date defaults to event date + 15 days; the lease list is fetched on mount
+// with exactly one active lease preselected. Reports up through chargeRef as
+// { enabled, validate(), getPayload() }, which the parent reads at submit
+// time.
+function ChargeTenantSection({ tenantId, expenseAmount, eventDate, chargeRef, inputClass, labelClass }) {
+  const [chargeEnabled, setChargeEnabled] = useState(false);
+  const [leases, setLeases] = useState({ loading: true, error: "", rows: [] });
+  const [leaseId, setLeaseId] = useState("");
+  const [chargeType, setChargeType] = useState("other");
+  const [customAmount, setCustomAmount] = useState(null);
+  const [dueDate, setDueDate] = useState(() => defaultTenantChargeDueDate(eventDate) || "");
+  const [chargeDescription, setChargeDescription] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  const effectiveAmount = customAmount ?? (expenseAmount ? String(expenseAmount) : "");
+  const chargeCents = Math.round(Number(effectiveAmount) * 100);
+  const confirmLabel = Number.isSafeInteger(chargeCents) && chargeCents > 0 ? money.format(chargeCents / 100) : "the entered amount";
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchTenantLeases(tenantId).then(
+      (rows) => {
+        if (cancelled) return;
+        setLeases({ loading: false, error: "", rows });
+        const active = rows.filter((lease) => lease.status === "active");
+        if (active.length === 1) setLeaseId(active[0].id);
+      },
+      (caught) => {
+        if (!cancelled) setLeases({ loading: false, error: caught.message || "Unable to load the tenant's leases.", rows: [] });
+      },
+    );
+    return () => { cancelled = true; chargeRef.current = null; };
+  }, [tenantId, chargeRef]);
+
+  const chargeApi = {
+    enabled: chargeEnabled,
+    validate() {
+      if (!chargeEnabled) return "";
+      if (leases.loading) return "The tenant's leases are still loading.";
+      if (leases.error) return leases.error;
+      if (leases.rows.length === 0) return "This tenant has no lease to attach the charge to.";
+      if (!leaseId) return "Select the lease to attach the charge to.";
+      if (!Number.isSafeInteger(chargeCents) || chargeCents <= 0) return "Enter a positive charge amount.";
+      if (!dueDate) return "A charge due date is required.";
+      if (!confirmed) return "Check the confirmation to post the tenant charge.";
+      return "";
+    },
+    getPayload() {
+      return {
+        leaseId,
+        chargeType,
+        amountCents: chargeCents,
+        description: chargeDescription.trim() || undefined,
+        dueDate,
+      };
+    },
+  };
+
+  // Publish the latest charge state for the parent's submit handler. An effect
+  // (not render) so the ref write follows the rules of hooks; it re-runs after
+  // every render so the closures never go stale.
+  useEffect(() => {
+    chargeRef.current = chargeApi;
+  });
+
+  return (
+    <div data-charge-tenant-section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
+      <label className="flex items-start gap-2 text-sm font-black text-slate-900 dark:text-white">
+        <input type="checkbox" checked={chargeEnabled}
+          onChange={(event) => { setChargeEnabled(event.target.checked); setConfirmed(false); }}
+          className="mt-1 h-4 w-4 accent-emerald-600" />
+        <span>Charge tenant
+          <span className="block font-normal text-slate-500 dark:text-slate-400">Post this expense as a charge on the tenant&apos;s ledger — the tenant will owe this amount.</span>
+        </span>
+      </label>
+
+      {chargeEnabled && (
+        leases.loading ? (
+          <p className="mt-3 text-sm font-bold text-slate-500 dark:text-slate-400">Loading the tenant&apos;s leases…</p>
+        ) : leases.error ? (
+          <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{leases.error}</p>
+        ) : leases.rows.length === 0 ? (
+          <p role="alert" className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            This tenant has no lease to attach the charge to.
+          </p>
+        ) : (
+          <>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <label className={labelClass}>Lease
+                <select value={leaseId} onChange={(event) => { setLeaseId(event.target.value); setConfirmed(false); }} className={inputClass}>
+                  <option value="">Select a lease…</option>
+                  {leases.rows.map((lease) => (
+                    <option key={lease.id} value={lease.id}>
+                      {lease.label || lease.id} · {lease.status}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={labelClass}>Charge type
+                <select value={chargeType} onChange={(event) => setChargeType(event.target.value)} className={inputClass}>
+                  {TENANT_CHARGE_TYPES.map((type) => (
+                    <option key={type} value={type}>{TENANT_CHARGE_LABELS[type]}</option>
+                  ))}
+                </select>
+              </label>
+              <label className={labelClass}>Charge amount
+                <input type="number" step="0.01" min="0.01" value={effectiveAmount} inputMode="decimal" placeholder="0.00"
+                  onChange={(event) => setCustomAmount(event.target.value)}
+                  className={inputClass} />
+              </label>
+              <label className={labelClass}>Due date
+                <input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} className={inputClass} />
+              </label>
+              <label className={`${labelClass} sm:col-span-2`}>Charge description
+                <input value={chargeDescription} onChange={(event) => setChargeDescription(event.target.value)}
+                  placeholder="Defaults to the expense description" className={inputClass} />
+              </label>
+            </div>
+            <label className="mt-4 flex items-start gap-2 text-sm font-bold text-slate-900 dark:text-white">
+              <input type="checkbox" checked={confirmed}
+                onChange={(event) => setConfirmed(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-emerald-600" />
+              <span>I confirm this posts a {confirmLabel} charge to the tenant&apos;s ledger.</span>
+            </label>
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
 export default function TransactionForm({
   propertyId,
   properties = [],
@@ -115,6 +258,17 @@ export default function TransactionForm({
   const accounts = accountsData || [];
 
   const editingId = initialEvent?.id || null;
+
+  // Charge-tenant section (create mode, expense kind, tenant selected only —
+  // never in edit mode: PATCH with chargeTenant=true is rejected server-side).
+  // The section owns its state inside ChargeTenantSection, remounted per tenant
+  // via key so every tenant selection starts clean. It reports up through
+  // chargeRef ({ enabled, validate(), getPayload() }) — the parent reads it at
+  // submit time, so no setState-in-effect syncing is needed. Posting the charge
+  // makes the tenant owe money, so it stays off by default and requires the
+  // human-gate confirm checkbox.
+  const chargeSectionVisible = !editingId && form.transactionKind === "expense" && Boolean(form.tenantId);
+  const chargeRef = useRef(null);
 
   // Load existing attachments and split lines in edit mode — once on mount.
   // State updates happen in the fetch callbacks, never synchronously in the
@@ -163,6 +317,10 @@ export default function TransactionForm({
       );
       if (!splitCheck.valid) return splitCheck.errors[0];
     }
+    if (chargeSectionVisible) {
+      const chargeProblem = chargeRef.current?.validate() || "";
+      if (chargeProblem) return chargeProblem;
+    }
     return "";
   }
 
@@ -191,6 +349,13 @@ export default function TransactionForm({
           normalizedCategory: form.normalizedCategory,
           memo: form.memo.trim() || null,
           cleared: form.cleared,
+          // Expense-linked tenant charge: the server creates the expense and
+          // the rent_charges row atomically. A missing charge description falls
+          // back to the expense description server-side.
+          ...(chargeSectionVisible && chargeRef.current?.enabled ? {
+            chargeTenant: true,
+            tenantCharge: chargeRef.current.getPayload(),
+          } : {}),
         }),
       });
       const body = await response.json();
@@ -438,6 +603,12 @@ export default function TransactionForm({
                 )
             )}
           </div>
+
+          {chargeSectionVisible && (
+            <ChargeTenantSection key={form.tenantId} tenantId={form.tenantId}
+              expenseAmount={form.amount} eventDate={form.eventDate}
+              chargeRef={chargeRef} inputClass={inputClass} labelClass={labelClass} />
+          )}
 
           <div className="mt-5 flex items-center justify-between gap-3">
             <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
