@@ -184,13 +184,16 @@ export function buildPropertyLedger({
     });
   }
 
-  // Ambiguous overlap: same amount + same date across different sources, no explicit
-  // link. Flagged, never collapsed.
+  // Ambiguous overlap: same amount + same direction + same date across different
+  // sources, no explicit link. Flagged, never collapsed. Direction is part of the
+  // key — a debit and a credit of the same amount on the same date are financially
+  // distinct transactions, not duplicates of each other.
   const byAmountDate = new Map();
   for (const entry of entries) {
     if (!entry.date) continue;
     const magnitude = entry.debitCents + entry.creditCents;
-    const key = `${magnitude}|${entry.date}`;
+    const direction = entry.debitCents > 0 ? "debit" : entry.creditCents > 0 ? "credit" : "neither";
+    const key = `${magnitude}|${direction}|${entry.date}`;
     const group = byAmountDate.get(key) || [];
     group.push(entry);
     byAmountDate.set(key, group);

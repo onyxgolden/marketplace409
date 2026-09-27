@@ -161,4 +161,28 @@ describe("buildPropertyLedger", () => {
     expect(income.debitCents).toBe(0);
     expect(ledger.balanceCents).toBe(0);
   });
+
+  it("does not flag a debit and a credit of the same amount on the same date as duplicates", () => {
+    const ledger = buildPropertyLedger(baseInput({
+      contractorPayments: [
+        { id: "cp1", property_id: PROP, paid_at: "2026-09-01", amount_cents: 50000, contractor_id: "c1" },
+      ],
+      financialEvents: [
+        { id: "e1", property_id: PROP, event_date: "2026-09-01", description: "Rebate", amount: "500.00", transaction_kind: "income", normalized_category: "other", source_system: "manual", status: "active", is_deleted: false, metadata: {} },
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(2);
+    expect(ledger.possibleDuplicateCount).toBe(0);
+  });
+
+  it("still flags two same-direction debits of the same amount on the same date", () => {
+    const ledger = buildPropertyLedger(baseInput({
+      financialEvents: [
+        { id: "e1", property_id: PROP, event_date: "2026-09-01", description: "Supplies A", amount: "500.00", transaction_kind: "expense", normalized_category: "supplies", source_system: "manual", status: "active", is_deleted: false, metadata: {} },
+        { id: "e2", property_id: PROP, event_date: "2026-09-01", description: "Supplies B", amount: "500.00", transaction_kind: "expense", normalized_category: "supplies", source_system: "rentec", status: "active", is_deleted: false, metadata: {} },
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(2);
+    expect(ledger.possibleDuplicateCount).toBe(2);
+  });
 });
