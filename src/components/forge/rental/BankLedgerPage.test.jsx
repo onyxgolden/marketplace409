@@ -118,18 +118,25 @@ describe("BankLedgerPage", () => {
     expect(JSON.parse(patch.options.body)).toEqual({ id: "b", cleared: true });
   });
 
-  it("shows the reconcile summary with cleared vs register balance", async () => {
-    await mount();
+  it("opens the statement reconciliation panel from the Reconcile button", async () => {
+    stubFetch(async (url) => {
+      if (String(url).includes("/api/rental/bank-accounts")) return { ok: true, json: async () => ({ accounts: accountsPayload }) };
+      if (String(url).includes("/api/rental/bank-ledger")) return { ok: true, json: async () => ledgerPayload };
+      if (String(url).includes("/api/rental/bank-reconciliations")) return { ok: true, json: async () => ({ available: true, reconciliations: [] }) };
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    ({ container, root } = renderPage());
+    await act(async () => { root.render(<BankLedgerPage />); });
+    await flushUntilSettled(container);
     const reconcileButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent === "Reconcile");
     expect(reconcileButton).not.toBeUndefined();
     await act(async () => { reconcileButton.click(); });
     await flush();
-    const summary = container.querySelector("[data-reconcile-summary]");
-    expect(summary).not.toBeNull();
-    expect(summary.textContent).toContain("$1,600.00"); // cleared balance
-    expect(summary.textContent).toContain("$1,350.00"); // register balance
-    expect(summary.textContent).toContain("Uncleared transactions: 1");
+    const panel = container.querySelector("[data-bank-reconciliation]");
+    expect(panel).not.toBeNull();
+    expect(panel.querySelector('input[aria-label="Statement ending balance"]')).not.toBeNull();
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/api/rental/bank-reconciliations?bankAccountId="))).toBe(true);
   });
 
   it("shows an empty state when there are no accounts", async () => {

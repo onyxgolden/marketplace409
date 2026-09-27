@@ -3,6 +3,7 @@ import { useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
+import BankReconciliationPanel from "./BankReconciliationPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => String(value ?? "—").replaceAll("_", " ");
@@ -45,8 +46,8 @@ async function setCleared(eventId, cleared) {
 // Full-page bank account ledger — the Rentec-style register: Date | Description |
 // Check # | Debit | Credit | Balance | Cleared, with a running balance after every
 // row. Expenses post to Debit, income to Credit. Each row carries a cleared
-// toggle; the Reconcile summary shows cleared balance vs uncleared count — the
-// full reconcile flow lands in a later slice.
+// toggle; Reconcile opens the full statement reconciliation
+// (BankReconciliationPanel).
 //
 // Data layer: stale-while-revalidate per account. Switching back to a recently
 // viewed account serves the cached register instantly and refreshes in the
@@ -153,18 +154,12 @@ export default function BankLedgerPage() {
               </div>
 
               {showReconcile && (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40" data-reconcile-summary>
-                  <h4 className="text-lg font-black text-slate-950 dark:text-white">Reconcile — summary</h4>
-                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                    Cleared balance: <strong className={`font-black ${balanceClass(ledger.clearedBalanceCents)}`}>{money.format(ledger.clearedBalanceCents / 100)}</strong>
-                    {" · "}Register balance: <strong className={`font-black ${balanceClass(ledger.balanceCents)}`}>{money.format(ledger.balanceCents / 100)}</strong>
-                    {" · "}Uncleared transactions: <strong className="font-black">{ledger.unclearedCount}</strong>
-                  </p>
-                  <p className="mt-2 text-xs font-bold text-slate-500 dark:text-slate-400">
-                    The full reconcile flow (statement balance entry, difference drill-down) lands in a later slice —
-                    this summary confirms cleared vs uncleared before that work.
-                  </p>
-                </div>
+                <BankReconciliationPanel
+                  key={effectiveAccountId}
+                  bankAccountId={effectiveAccountId}
+                  entries={ledger.entries}
+                  onChanged={refresh}
+                />
               )}
 
               {ledger.entries.length === 0
