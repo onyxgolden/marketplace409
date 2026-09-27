@@ -143,4 +143,22 @@ describe("buildPropertyLedger", () => {
     }));
     expect(ledger.entries).toHaveLength(1);
   });
+
+  it("does not suppress an income event linked to a contractor payment — suppression is expense-only", () => {
+    const ledger = buildPropertyLedger(baseInput({
+      contractorPayments: [
+        { id: "cp1", property_id: PROP, paid_at: "2026-08-10", amount_cents: 45000, contractor_id: "c1" },
+      ],
+      financialEvents: [
+        { id: "e1", property_id: PROP, event_date: "2026-08-10", description: "Reimbursement", amount: "450.00", transaction_kind: "income", normalized_category: "other", source_system: "manual", source_record_id: "rental_contractor_payment_cp1", status: "active", is_deleted: false, metadata: {} },
+      ],
+    }));
+    // The income event stays visible as a credit; the contractor debit stays too.
+    expect(ledger.entries).toHaveLength(2);
+    expect(ledger.suppressedDuplicateCount).toBe(0);
+    const income = ledger.entries.find((e) => e.id === "event:e1");
+    expect(income.creditCents).toBe(45000);
+    expect(income.debitCents).toBe(0);
+    expect(ledger.balanceCents).toBe(0);
+  });
 });
