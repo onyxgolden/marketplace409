@@ -55,9 +55,8 @@ describe("sampleProjects: Maplewood Two-Story seed", () => {
   });
 
   it("exposes the sample in the gallery list", () => {
-    expect(SAMPLE_PROJECTS).toHaveLength(1);
-    const [sample] = SAMPLE_PROJECTS;
-    expect(sample.seedId).toBe(SAMPLE_SEED_ID);
+    const sample = SAMPLE_PROJECTS.find((s) => s.seedId === SAMPLE_SEED_ID);
+    expect(sample).toBeTruthy();
     expect(sample.name).toBe(SAMPLE_NAME);
     expect(typeof sample.build).toBe("function");
     expect(sample.build()).toBeTruthy();

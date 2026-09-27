@@ -31,6 +31,11 @@ import {
   resetHomeProjectIds,
   updateLevelDesign,
 } from "./homeProject";
+import {
+  buildFccuPlotPlan,
+  FCCU_SAMPLE_NAME,
+  FCCU_SAMPLE_SEED_ID,
+} from "./fccuPlotPlanSample";
 
 export const SAMPLE_SEED_ID = "maplewood-two-story";
 export const SAMPLE_NAME = "Maplewood Two-Story";
@@ -384,5 +389,13 @@ export const SAMPLE_PROJECTS = Object.freeze([
       "An original modern two-story family home. The main floor has a living room, kitchen, dining room, foyer, powder room, and mudroom; upstairs holds a primary suite with ensuite and walk-in closet, two more bedrooms, and a full bath. Fork it to orbit the 3D view, check the elevations, and run the estimate.",
     levels: Object.freeze(["First Floor", "Second Floor"]),
     build: buildMaplewoodTwoStory,
+  }),
+  Object.freeze({
+    seedId: FCCU_SAMPLE_SEED_ID,
+    name: FCCU_SAMPLE_NAME,
+    description:
+      "A fictional fluid catalytic cracking unit (FCCU) plot plan — an original generic layout exercise, not a real facility. Reactor and regenerator paired at the heart of the unit, main fractionator and absorber to the east, feed/effluent exchanger train, main air blower and wet gas compressor in the machinery area, pump rows under the central pipe rack, control building at the plot edge, and a relief header routed to a remote flare. Fork it to explore the equipment schedule and clearances.",
+    levels: Object.freeze(["Plot Plan"]),
+    build: buildFccuPlotPlan,
   }),
 ]);
