@@ -57,4 +57,22 @@ describe("ledger transaction fields migration — structural contract", () => {
     expect(sql).toContain("recurrence rule must be weekly, biweekly, monthly, quarterly, or yearly.");
     expect(sql).toContain("grant execute on function create_expense_with_tenant_charge(text, jsonb, jsonb) to authenticated");
   });
+
+  it("adds update_transaction_with_history: the edit and its audit row live in one function (one transaction)", () => {
+    const start = sql.indexOf("create or replace function update_transaction_with_history");
+    expect(start).toBeGreaterThan(-1);
+    // The function body runs between its declaration and the revoke line:
+    // the event update and the history insert must both be inside it, so a
+    // failed history insert aborts the function and rolls the edit back.
+    const body = sql.slice(start, sql.indexOf("revoke all on function update_transaction_with_history"));
+    expect(body).toContain("security invoker");
+    expect(body).toContain("update financial_events set");
+    expect(body).toContain("insert into financial_event_edits (owner_id, event_id, edited_by, changes)");
+    expect(body).toContain("if v_changes <> '{}'::jsonb then");
+    expect(body).toContain("owner does not match authenticated owner.");
+    expect(body).toContain("transaction was not found.");
+    expect(body).toContain("the selected bank account was not found.");
+    expect(sql).toContain("revoke all on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) from public");
+    expect(sql).toContain("grant execute on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) to authenticated");
+  });
 });

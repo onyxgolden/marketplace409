@@ -227,6 +227,9 @@ async function ownManualEvent(supabaseClient, effectiveOwnerId, eventId) {
 
 // Column-backed editable fields, for the edit-history diff: [db column, validated value key].
 // metadata-backed fields are listed separately below.
+// Note on recurrence_rule: the column is text (not JSONB) and validation
+// always normalizes it to a trimmed string or null, so the String()
+// normalization below is lossless for it — no structured comparison needed.
 const DIFFABLE_COLUMNS = [
   ["event_date", "eventDate"],
   ["description", "description"],
@@ -337,60 +340,47 @@ export async function PATCH(request) {
     // is kept; un-clearing drops it.
     const clearedAt = value.cleared ? (existing.cleared_at || new Date().toISOString()) : null;
     const changes = diffEditableFields(existing, value);
-    const { data, error } = await authenticated.supabaseClient
-      .from("financial_events")
-      .update({
-        property_id: value.propertyId,
-        event_date: value.eventDate,
-        description: value.description,
-        amount: value.amount,
-        transaction_kind: value.transactionKind,
-        normalized_category: value.normalizedCategory,
-        payee: value.payee,
-        check_number: value.checkNumber,
-        bank_account_id: value.bankAccountId,
-        cleared: value.cleared,
-        cleared_at: clearedAt,
-        display_as: value.displayAs,
-        ref_number: value.refNumber,
-        payee_mailing_address: value.payeeMailingAddress,
-        assigned_to: value.assignedTo,
-        is_recurring: value.isRecurring,
-        recurrence_rule: value.recurrenceRule,
-        depreciate: value.depreciate,
-        metadata: {
-          ...(value.memo ? { memo: value.memo } : {}),
-          ...(value.tenantId ? { tenant_id: value.tenantId, charged_to_tenant: value.chargeTenant } : {}),
-          ...(value.paymentMethod ? { payment_method: value.paymentMethod } : {}),
+
+    // The edit and its audit row are written by one RPC in a single database
+    // transaction: if the history insert fails, the edit rolls back with it.
+    // A successful edit therefore always carries its audit record — the
+    // failure surfaces here as a 500 instead of being swallowed.
+    const { data: updated, error: rpcError } = await authenticated.supabaseClient.rpc(
+      "update_transaction_with_history",
+      {
+        p_owner_id: authenticated.effectiveOwnerId,
+        p_event_id: eventId,
+        p_event: {
+          propertyId: value.propertyId,
+          eventDate: value.eventDate,
+          description: value.description,
+          amount: value.amount,
+          transactionKind: value.transactionKind,
+          normalizedCategory: value.normalizedCategory,
+          payee: value.payee,
+          checkNumber: value.checkNumber,
+          bankAccountId: value.bankAccountId,
+          cleared: value.cleared,
+          displayAs: value.displayAs,
+          refNumber: value.refNumber,
+          payeeMailingAddress: value.payeeMailingAddress,
+          assignedTo: value.assignedTo,
+          isRecurring: value.isRecurring,
+          recurrenceRule: value.recurrenceRule,
+          depreciate: value.depreciate,
+          memo: value.memo,
+          tenantId: value.tenantId,
+          chargeTenant: value.chargeTenant,
+          paymentMethod: value.paymentMethod,
         },
-        updated_by: authenticated.user.id,
-      })
-      .eq("owner_id", authenticated.effectiveOwnerId)
-      .eq("id", eventId)
-      .select("id, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, cleared, cleared_at, property_id")
-      .limit(1);
-    if (error) throw error;
-
-    // Edit history is best-effort: the transaction update already succeeded, so
-    // a history write must never turn it into a failure (e.g. if the edits
-    // table migration has not been applied yet).
-    if (Object.keys(changes).length > 0) {
-      try {
-        const { error: historyError } = await authenticated.supabaseClient
-          .from("financial_event_edits")
-          .insert({
-            owner_id: authenticated.effectiveOwnerId,
-            event_id: eventId,
-            edited_by: authenticated.user.id,
-            changes,
-          });
-        if (historyError) throw historyError;
-      } catch (historyError) {
-        console.error("Transaction edit history error", historyError);
+        p_changes: changes,
+        p_edited_by: authenticated.user.id,
+        p_cleared_at: clearedAt,
       }
-    }
+    );
+    if (rpcError) throw rpcError;
 
-    return NextResponse.json({ success: true, event: (data || [])[0] || null });
+    return NextResponse.json({ success: true, event: updated });
   } catch (error) {
     console.error("Transaction update error", error);
     return NextResponse.json({ error: "Unable to save the transaction." }, { status: 500 });

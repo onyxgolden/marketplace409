@@ -12,6 +12,11 @@
 -- 3. create_expense_with_tenant_charge is replaced so the atomic expense+charge
 --    path stores the new event keys too (it builds the financial_events row
 --    from explicit columns).
+-- 4. update_transaction_with_history: the transaction PATCH applies its edit
+--    AND writes the financial_event_edits audit row inside one function call,
+--    so both commit or both roll back. A successful edit always carries its
+--    audit record — a failed history insert fails the whole edit loudly
+--    instead of being swallowed.
 
 -- ---------------------------------------------------------------------------
 -- 1. New columns on financial_events
@@ -211,3 +216,122 @@ $$;
 
 revoke all on function create_expense_with_tenant_charge(text, jsonb, jsonb) from public;
 grant execute on function create_expense_with_tenant_charge(text, jsonb, jsonb) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 4. update_transaction_with_history: atomic transaction edit + audit row
+-- ---------------------------------------------------------------------------
+-- The PATCH route calls this once. Everything below runs inside the function's
+-- single implicit transaction: if the history insert fails (transient DB error,
+-- constraint violation, anything), the whole function aborts and the event
+-- edit rolls back with it. The caller therefore never sees a "successful"
+-- edit without its audit record, and the route surfaces the failure as a 500
+-- instead of swallowing it.
+create or replace function update_transaction_with_history(
+  p_owner_id text,
+  p_event_id text,
+  p_event jsonb,
+  p_changes jsonb,
+  p_edited_by text,
+  p_cleared_at timestamptz
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  authenticated_owner_id text := auth.uid()::text;
+  required_owner text := nullif(btrim(p_owner_id), '');
+  v_event_id text := nullif(btrim(p_event_id), '');
+  v_bank_account_id text := nullif(btrim(p_event ->> 'bankAccountId'), '');
+  v_tenant_id text := nullif(btrim(p_event ->> 'tenantId'), '');
+  v_changes jsonb := coalesce(p_changes, '{}'::jsonb);
+  v_edited_by text;
+  v_row financial_events%rowtype;
+begin
+  if authenticated_owner_id is null then
+    raise exception 'Authenticated owner id is required.' using errcode = '42501';
+  end if;
+  if required_owner is null or required_owner <> authenticated_owner_id then
+    raise exception 'Owner does not match authenticated owner.' using errcode = '42501';
+  end if;
+  if v_event_id is null then
+    raise exception 'Transaction id is required.' using errcode = '22023';
+  end if;
+  v_edited_by := coalesce(nullif(btrim(p_edited_by), ''), authenticated_owner_id);
+
+  -- The bank account must belong to this owner — a foreign id fails honestly
+  -- instead of writing a dangling reference.
+  if v_bank_account_id is not null then
+    perform 1 from financial_accounts where owner_id = required_owner and id = v_bank_account_id;
+    if not found then
+      raise exception 'The selected bank account was not found.' using errcode = 'P0002';
+    end if;
+  end if;
+
+  -- 1. Apply the edit. The row must be an owned, non-deleted manual event —
+  -- imported events and other workspaces' rows fail here, not silently.
+  update financial_events set
+    property_id = nullif(btrim(p_event ->> 'propertyId'), ''),
+    event_date = (p_event ->> 'eventDate')::date,
+    description = btrim(p_event ->> 'description'),
+    amount = (p_event ->> 'amount')::numeric,
+    transaction_kind = p_event ->> 'transactionKind',
+    normalized_category = nullif(btrim(p_event ->> 'normalizedCategory'), ''),
+    payee = nullif(btrim(p_event ->> 'payee'), ''),
+    check_number = nullif(btrim(p_event ->> 'checkNumber'), ''),
+    bank_account_id = v_bank_account_id,
+    cleared = coalesce((p_event ->> 'cleared')::boolean, false),
+    cleared_at = p_cleared_at,
+    display_as = nullif(btrim(p_event ->> 'displayAs'), ''),
+    ref_number = nullif(btrim(p_event ->> 'refNumber'), ''),
+    payee_mailing_address = nullif(btrim(p_event ->> 'payeeMailingAddress'), ''),
+    assigned_to = nullif(btrim(p_event ->> 'assignedTo'), ''),
+    is_recurring = coalesce((p_event ->> 'isRecurring')::boolean, false),
+    recurrence_rule = nullif(btrim(p_event ->> 'recurrenceRule'), ''),
+    depreciate = coalesce((p_event ->> 'depreciate')::boolean, false),
+    metadata = jsonb_strip_nulls(jsonb_build_object(
+      'memo', nullif(btrim(p_event ->> 'memo'), ''),
+      'tenant_id', v_tenant_id,
+      'charged_to_tenant', case when v_tenant_id is not null
+        then coalesce((p_event ->> 'chargeTenant')::boolean, false) end,
+      'payment_method', nullif(btrim(p_event ->> 'paymentMethod'), '')
+    )),
+    updated_by = v_edited_by,
+    updated_at = now()
+  where owner_id = required_owner
+    and id = v_event_id
+    and source_system = 'manual'
+    and is_deleted = false
+  returning * into v_row;
+  if not found then
+    raise exception 'Transaction was not found.' using errcode = 'P0002';
+  end if;
+
+  -- 2. Record the edit history in the SAME transaction. Any failure here
+  -- aborts the function and rolls back the edit above — a successful edit
+  -- therefore always has its audit row.
+  if v_changes <> '{}'::jsonb then
+    insert into financial_event_edits (owner_id, event_id, edited_by, changes)
+    values (required_owner, v_event_id, v_edited_by, v_changes);
+  end if;
+
+  return jsonb_build_object(
+    'id', v_row.id,
+    'event_date', v_row.event_date,
+    'description', v_row.description,
+    'amount', v_row.amount,
+    'transaction_kind', v_row.transaction_kind,
+    'normalized_category', v_row.normalized_category,
+    'payee', v_row.payee,
+    'check_number', v_row.check_number,
+    'bank_account_id', v_row.bank_account_id,
+    'cleared', v_row.cleared,
+    'cleared_at', v_row.cleared_at,
+    'property_id', v_row.property_id
+  );
+end;
+$$;
+
+revoke all on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) from public;
+grant execute on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) to authenticated;
