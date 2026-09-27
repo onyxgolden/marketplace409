@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalDocumentsPanel, { leaseOptionsFor } from "./RentalDocumentsPanel.jsx";
+import RentalDocumentsPanel, { leaseOptionsFor, openSignedDocumentUrl } from "./RentalDocumentsPanel.jsx";
 
 const baseData = { documents: [], schedules: [] };
 
@@ -93,5 +93,49 @@ describe("leaseOptionsFor", () => {
   it("dedupes schedules that share a lease", () => {
     const options = leaseOptionsFor([{ id: "s_1", lease_id: "lease_1" }, { id: "s_2", lease_id: "lease_1" }], data);
     expect(options).toHaveLength(1);
+  });
+});
+
+describe("openSignedDocumentUrl", () => {
+  function fakeTab() {
+    return { location: {}, close: () => { fakeTab.closed += 1; } };
+  }
+  fakeTab.closed = 0;
+
+  it("opens the tab synchronously, before the signed-URL fetch resolves", async () => {
+    const opened = [];
+    let resolveFetch;
+    const fetchImpl = () => new Promise((resolve) => { resolveFetch = resolve; });
+    const tab = fakeTab();
+    const pending = openSignedDocumentUrl({
+      documentId: "doc_1", action: "preview",
+      openTab: (url) => { opened.push(url); return tab; },
+      fetchImpl,
+    });
+    // The tab must already be open while the fetch is still in flight: that is
+    // the whole fix (window.open after an await loses the click gesture and
+    // gets blocked silently).
+    expect(opened).toEqual([""]);
+    resolveFetch({ ok: true, json: async () => ({ url: "https://signed.example/preview" }) });
+    await pending;
+    expect(tab.location.href).toBe("https://signed.example/preview");
+  });
+
+  it("closes the tab and surfaces the error when the signed-URL fetch fails", async () => {
+    const tab = fakeTab();
+    let closed = 0;
+    tab.close = () => { closed += 1; };
+    const fetchImpl = async () => ({ ok: false, json: async () => ({ error: "Document not found." }) });
+    await expect(openSignedDocumentUrl({
+      documentId: "doc_9", action: "preview", openTab: () => tab, fetchImpl,
+    })).rejects.toThrow("Document not found.");
+    expect(closed).toBe(1);
+  });
+
+  it("throws a clear message when the browser blocks the tab outright", async () => {
+    const fetchImpl = async () => { throw new Error("fetch should never run"); };
+    await expect(openSignedDocumentUrl({
+      documentId: "doc_1", action: "download", openTab: () => null, fetchImpl,
+    })).rejects.toThrow("allow pop-ups");
   });
 });

@@ -45,6 +45,32 @@ export function leaseOptionsFor(schedules, data) {
   return options;
 }
 
+// Preview/download must open the new tab synchronously inside the click
+// gesture: browsers block window.open() calls that happen after an await
+// (the signed-URL fetch), because the user-gesture context is lost by then.
+// That is why Preview silently did nothing. We open a blank tab first, then
+// navigate it to the signed URL once the fetch resolves; on failure the tab
+// is closed and the error is thrown for the caller to display.
+// NOTE: do NOT pass "noopener"/"noreferrer" here — they make window.open()
+// return null even when the tab opened, leaving us no handle to navigate.
+// The tab is navigated only to a signed URL issued by our own API, so the
+// opener-reference risk those flags mitigate does not apply.
+export async function openSignedDocumentUrl({ documentId, action, openTab, fetchImpl }) {
+  const open = openTab || ((url) => window.open(url, "_blank"));
+  const tab = open("");
+  if (!tab) throw new Error("Your browser blocked the preview tab — allow pop-ups for this site and try again.");
+  try {
+    const get = fetchImpl || fetch;
+    const response = await get(`/api/rental/documents?documentId=${encodeURIComponent(documentId)}&action=${action}`);
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    tab.location.href = body.url;
+  } catch (error) {
+    tab.close();
+    throw error;
+  }
+}
+
 export default function RentalDocumentsPanel({ initialData = null, dataScope = identity, recordContext = null }) {
   const propertyId = recordContext?.propertyId || null;
   // Document library: stale-while-revalidate, keyed per property scope. The cached
@@ -136,10 +162,7 @@ export default function RentalDocumentsPanel({ initialData = null, dataScope = i
   async function openDocument(documentId, action) {
     setError("");
     try {
-      const response = await fetch(`/api/rental/documents?documentId=${encodeURIComponent(documentId)}&action=${action}`);
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error);
-      window.open(body.url, "_blank", "noreferrer");
+      await openSignedDocumentUrl({ documentId, action });
     } catch (reason) { setError(reason.message); }
   }
 
