@@ -447,7 +447,7 @@ describe("StripeBillingProvider", () => {
 
   it("creates an autopay SetupIntent for a US bank account with off_session usage and online mandate acceptance", async () => {
     const { provider, stripeClient } = setup();
-    const result = await provider.createAutopaySetupIntent(
+    const result = await provider.createPrivateFinancingAutopaySetupIntent(
       { ownerId: "owner_1", connectedAccountId: "acct_kent" },
       { customerId: "cus_borrower", enrollmentId: "pf_autopay_1", ipAddress: "203.0.113.7", userAgent: "TestAgent/1.0", idempotencyKey: "pf-autopay-setup:test:pf_autopay_1" });
     const [params, opts] = stripeClient.setupIntents.create.mock.calls[0];
@@ -462,9 +462,17 @@ describe("StripeBillingProvider", () => {
     expect(result).toEqual({ setupIntentId: "seti_1", clientSecret: "seti_1_secret_test" });
   });
 
+  it("keeps the private-financing and rental autopay SetupIntents as separate methods (no lease id needed for a borrower)", async () => {
+    const { provider } = setup();
+    expect(provider.createPrivateFinancingAutopaySetupIntent).not.toBe(provider.createAutopaySetupIntent);
+    await expect(provider.createPrivateFinancingAutopaySetupIntent(
+      { ownerId: "owner_1", connectedAccountId: "acct_kent" },
+      { customerId: "cus_borrower", enrollmentId: "pf_autopay_1", idempotencyKey: "key-3" })).resolves.toHaveProperty("clientSecret");
+  });
+
   it("omits mandate_data when no acceptance evidence is provided, and still returns the client secret", async () => {
     const { provider, stripeClient } = setup();
-    await provider.createAutopaySetupIntent(
+    await provider.createPrivateFinancingAutopaySetupIntent(
       { ownerId: "owner_1", connectedAccountId: "acct_kent" },
       { customerId: "cus_borrower", idempotencyKey: "key-2" });
     const [params] = stripeClient.setupIntents.create.mock.calls[0];
