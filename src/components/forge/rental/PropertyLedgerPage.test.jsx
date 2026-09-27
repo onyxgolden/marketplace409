@@ -223,3 +223,52 @@ describe("PropertyLedgerPage edit and delete", () => {
     expect(buttons).not.toContain("Delete");
   });
 });
+
+describe("PropertyLedgerPage split display", () => {
+  it("shows split lines in the transaction detail for a manual entry", async () => {
+    const entry = {
+      id: "event:evt-1", sourceId: "evt-1", source: "manual", sourceLabel: "Manual entry",
+      date: "2026-09-26", description: "Split expense", debitCents: 45000, creditCents: 0,
+      category: "Repairs", status: "active", balanceAfterCents: 45000,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ({ success: true, ledger: { propertyName: "308 Paula", entries: [entry], incomeCents: 0, expenseCents: 45000, balanceCents: -45000, entryCount: 1 } }) };
+      }
+      if (url === "/api/rental/transaction-splits?eventId=evt-1") {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            splits: [
+              { id: "split-1", normalized_category: "property_repairs", amount: 300, memo: null },
+              { id: "split-2", normalized_category: "supplies", amount: 150, memo: "Filters" },
+            ],
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => {
+      root.render(<PropertyLedgerPage propertyId="prop-1" propertyLabel="308 Paula" onClose={() => {}} />);
+    });
+    for (let i = 0; i < 20; i += 1) {
+      if (container.querySelector('[data-ledger-entry="manual"]')) break;
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    const descriptionButton = container.querySelector('[data-ledger-entry="manual"] button[title="View transaction detail"]');
+    act(() => { descriptionButton.click(); });
+    for (let i = 0; i < 20; i += 1) {
+      if (container.textContent.includes("Split lines")) break;
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    expect(container.textContent).toMatch(/Split lines/);
+    expect(container.textContent).toMatch(/\$300\.00/);
+    expect(container.textContent).toMatch(/Filters/);
+  });
+});

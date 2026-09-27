@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { validateSplits } from "@/application/rental/validateSplits";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -12,6 +13,27 @@ async function fetchBankAccounts() {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Unable to load bank accounts.");
   return body.accounts || [];
+}
+
+async function fetchSplits(eventId) {
+  const response = await fetch(`/api/rental/transaction-splits?eventId=${encodeURIComponent(eventId)}`);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to load split lines.");
+  return (body.splits || []).map((split) => ({
+    normalizedCategory: split.normalized_category,
+    amount: String(split.amount),
+    memo: split.memo || "",
+  }));
+}
+
+async function saveSplits(eventId, splits) {
+  const response = await fetch("/api/rental/transaction-splits", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eventId, splits }),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to save split lines.");
 }
 
 async function fetchAttachments(eventId) {
@@ -57,6 +79,21 @@ const emptyForm = (propertyId, kind) => ({
 // /api/rental/transactions, which stores the new slice-2 columns (payee,
 // check number, bank account, cleared flag). Used as a modal from the property
 // ledger; edit mode arrives in the edit slice via the initialEvent prop.
+// Live split-total indicator: green when the lines match the transaction amount
+// to the cent, amber otherwise.
+function SplitTotalIndicator({ splits, amount }) {
+  const splitCents = splits.reduce((sum, split) => sum + Math.round(Number(split.amount || 0) * 100), 0);
+  const totalCents = Math.round(Number(amount || 0) * 100);
+  const balanced = totalCents > 0 && splitCents === totalCents;
+  return (
+    <span className={`rounded-lg px-2.5 py-1.5 text-xs font-black ${balanced
+      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+      : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"}`}>
+      Lines total ${(splitCents / 100).toFixed(2)}{balanced ? " — balanced" : ` of $${(totalCents / 100).toFixed(2)}`}
+    </span>
+  );
+}
+
 export default function TransactionForm({
   propertyId,
   properties = [],
@@ -73,19 +110,26 @@ export default function TransactionForm({
   const [pendingFiles, setPendingFiles] = useState([]);
   const [savedAttachments, setSavedAttachments] = useState([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(Boolean(initialEvent?.id));
+  const [splits, setSplits] = useState([]);
+  const [splitsLoading, setSplitsLoading] = useState(Boolean(initialEvent?.id));
   const { data: accountsData } = useStaleWhileRevalidate("transaction-form:bank-accounts", fetchBankAccounts, { ttlMs: 300_000 });
   const accounts = accountsData || [];
 
   const editingId = initialEvent?.id || null;
 
-  // Load existing attachments in edit mode — once on mount. State updates
-  // happen in the fetch callbacks, never synchronously in the effect body.
+  // Load existing attachments and split lines in edit mode — once on mount.
+  // State updates happen in the fetch callbacks, never synchronously in the
+  // effect body.
   useEffect(() => {
     if (!editingId) return undefined;
     let cancelled = false;
     fetchAttachments(editingId).then(
       (rows) => { if (!cancelled) { setSavedAttachments(rows); setAttachmentsLoading(false); } },
       () => { if (!cancelled) { setSavedAttachments([]); setAttachmentsLoading(false); } },
+    );
+    fetchSplits(editingId).then(
+      (rows) => { if (!cancelled) { setSplits(rows); setSplitsLoading(false); } },
+      () => { if (!cancelled) { setSplits([]); setSplitsLoading(false); } },
     );
     return () => { cancelled = true; };
   }, [editingId]);
@@ -114,6 +158,13 @@ export default function TransactionForm({
     if (!Number.isSafeInteger(cents) || cents <= 0) return "Enter a positive amount.";
     if (!form.description.trim()) return "A description is required.";
     if (form.chargeTenant && !form.tenantId) return "Select a tenant to charge.";
+    if (splits.length > 0) {
+      const splitCheck = validateSplits(
+        splits.map((split) => ({ normalizedCategory: split.normalizedCategory, amount: Number(split.amount), memo: split.memo })),
+        Number(form.amount),
+      );
+      if (!splitCheck.valid) return splitCheck.errors[0];
+    }
     return "";
   }
 
@@ -129,7 +180,7 @@ export default function TransactionForm({
         method: isEdit ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          ...(isEdit ? { id: initialEvent.id } : {}),
+          ...(isEdit ? { eventId: initialEvent.id } : {}),
           eventDate: form.eventDate,
           transactionKind: form.transactionKind,
           amount: Number(form.amount),
@@ -148,6 +199,21 @@ export default function TransactionForm({
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Unable to save the transaction.");
       const savedEvent = body.event;
+      const savedId = isEdit ? initialEvent.id : savedEvent?.id;
+      // Split lines save after the event — the server re-validates the total.
+      // A split failure must not lose the transaction — it is reported and the
+      // event still saves.
+      if (savedId && splits.length > 0) {
+        try {
+          await saveSplits(savedId, splits.map((split) => ({
+            normalizedCategory: split.normalizedCategory,
+            amount: Number(split.amount),
+            memo: split.memo.trim() || null,
+          })));
+        } catch (splitError) {
+          setError(`Transaction saved, but the split lines failed: ${splitError.message}`);
+        }
+      }
       // Files picked before the event existed upload now that it has an id.
       // An upload failure must not lose the transaction — it is reported and
       // the event still saves.
@@ -272,6 +338,54 @@ export default function TransactionForm({
           </div>
 
           {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
+
+          <div className={`${labelClass} mt-4`}>
+            Split lines
+            <span className="block font-normal text-slate-500 dark:text-slate-400">Break this transaction across categories. The lines must total the amount exactly.</span>
+            {splitsLoading
+              ? <p className="mt-2 text-xs font-bold text-slate-400">Loading split lines…</p>
+              : (
+                <>
+                  {splits.length > 0 && (
+                    <ul className="mt-2 space-y-2">
+                      {splits.map((split, index) => (
+                        <li key={index} className="grid grid-cols-12 gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800/60">
+                          <select value={split.normalizedCategory}
+                            onChange={(event) => setSplits((current) => current.map((row, i) => i === index ? { ...row, normalizedCategory: event.target.value } : row))}
+                            aria-label={`Split line ${index + 1} category`}
+                            className="col-span-5 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-600 dark:bg-slate-900">
+                            {MANUAL_FINANCIAL_EVENT_CATEGORIES.map((category) => (
+                              <option key={category.value} value={category.value}>{category.label}</option>
+                            ))}
+                          </select>
+                          <input type="number" min="0.01" step="0.01" value={split.amount}
+                            onChange={(event) => setSplits((current) => current.map((row, i) => i === index ? { ...row, amount: event.target.value } : row))}
+                            aria-label={`Split line ${index + 1} amount`} placeholder="0.00"
+                            className="col-span-3 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-600 dark:bg-slate-900" />
+                          <input type="text" value={split.memo}
+                            onChange={(event) => setSplits((current) => current.map((row, i) => i === index ? { ...row, memo: event.target.value } : row))}
+                            aria-label={`Split line ${index + 1} memo`} placeholder="Memo"
+                            className="col-span-3 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-bold dark:border-slate-600 dark:bg-slate-900" />
+                          <button type="button" aria-label={`Remove split line ${index + 1}`}
+                            onClick={() => setSplits((current) => current.filter((_, i) => i !== index))}
+                            className="col-span-1 rounded-lg text-sm font-black text-slate-400 hover:text-red-700 dark:hover:text-red-400">✕</button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button type="button"
+                      onClick={() => setSplits((current) => [...current, { normalizedCategory: "other", amount: "", memo: "" }])}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-black text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+                      + Add split line
+                    </button>
+                    {splits.length > 0 && (
+                      <SplitTotalIndicator splits={splits} amount={form.amount} />
+                    )}
+                  </div>
+                </>
+              )}
+          </div>
 
           <div className={`${labelClass} mt-4`}>
             Attachments

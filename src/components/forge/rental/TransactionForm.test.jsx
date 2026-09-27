@@ -126,3 +126,73 @@ describe("TransactionForm", () => {
     expect(categorySelect.value).toBe("rental_income");
   });
 });
+
+describe("TransactionForm split lines", () => {
+  function renderSplitForm() {
+    stubFetch(async (url) => {
+      if (url === "/api/rental/bank-accounts") return { ok: true, json: async () => ({ accounts: [] }) };
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return renderForm({ defaultKind: "expense" });
+  }
+
+  function setSplitAmount(container, index, value) {
+    const amountInput = container.querySelector(`[aria-label="Split line ${index + 1} amount"]`);
+    act(() => { setNativeValue(amountInput, value); });
+  }
+
+  it("shows a balanced indicator when split lines match the amount", async () => {
+    const { container } = renderSplitForm();
+    fill(container, "Amount", "450");
+    const addButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "+ Add split line");
+    act(() => { addButton.click(); });
+    act(() => { addButton.click(); });
+    setSplitAmount(container, 0, "300");
+    setSplitAmount(container, 1, "150");
+    expect(container.textContent).toMatch(/Lines total \$450\.00 — balanced/);
+  });
+
+  it("blocks submit when split lines do not total the amount", async () => {
+    const { container } = renderSplitForm();
+    fill(container, "Amount", "450");
+    fill(container, "Description", "Split test");
+    const addButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "+ Add split line");
+    act(() => { addButton.click(); });
+    setSplitAmount(container, 0, "400");
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toMatch(/off by \$-50\.00/);
+  });
+
+  it("posts split lines after creating the event", async () => {
+    let postedSplits = null;
+    stubFetch(async (url, options) => {
+      if (url === "/api/rental/bank-accounts") return { ok: true, json: async () => ({ accounts: [] }) };
+      if (url === "/api/rental/transactions" && options?.method === "POST") {
+        return { ok: true, json: async () => ({ success: true, event: { id: "evt-1" } }) };
+      }
+      if (url === "/api/rental/transaction-splits" && options?.method === "POST") {
+        postedSplits = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ success: true, splits: [] }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container, onSaved } = renderForm({ defaultKind: "expense" });
+    fill(container, "Amount", "450");
+    fill(container, "Description", "Split test");
+    const addButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "+ Add split line");
+    act(() => { addButton.click(); });
+    act(() => { addButton.click(); });
+    setSplitAmount(container, 0, "300");
+    setSplitAmount(container, 1, "150");
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(postedSplits).toMatchObject({ eventId: "evt-1" });
+    expect(postedSplits.splits).toHaveLength(2);
+    expect(postedSplits.splits[0]).toMatchObject({ amount: 300 });
+    expect(onSaved).toHaveBeenCalled();
+  });
+});

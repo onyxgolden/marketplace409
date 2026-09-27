@@ -240,6 +240,22 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
 // soft-deletes on the server.
 function PropertyTransactionDetailModal({ entry, onClose, canEdit, editError, onEdit, onDelete }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [splits, setSplits] = useState([]);
+  const [splitsLoading, setSplitsLoading] = useState(canEdit);
+
+  // Split lines for manual entries — fetched once when the detail opens.
+  useEffect(() => {
+    if (!canEdit) return undefined;
+    let cancelled = false;
+    fetch(`/api/rental/transaction-splits?eventId=${encodeURIComponent(entry.sourceId)}`)
+      .then(async (response) => {
+        const body = await response.json();
+        if (!cancelled) setSplits(response.ok ? (body.splits || []) : []);
+      })
+      .catch(() => { if (!cancelled) setSplits([]); })
+      .finally(() => { if (!cancelled) setSplitsLoading(false); });
+    return () => { cancelled = true; };
+  }, [canEdit, entry.sourceId]);
   const rows = [
     ["Date", formatDate(entry.date)],
     ["Description", entry.description],
@@ -276,6 +292,22 @@ function PropertyTransactionDetailModal({ entry, onClose, canEdit, editError, on
           <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
             Flagged as a possible duplicate — another source recorded the same amount on the same date.
           </p>
+        )}
+        {canEdit && !splitsLoading && splits.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">Split lines</p>
+            <ul className="mt-2 space-y-1.5">
+              {splits.map((split) => (
+                <li key={split.id} className="flex items-baseline justify-between gap-4 rounded-lg bg-slate-50 px-3 py-1.5 text-sm dark:bg-slate-800/60">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    {label(split.normalized_category)}
+                    {split.memo && <span className="ml-2 font-normal text-slate-500 dark:text-slate-400">{split.memo}</span>}
+                  </span>
+                  <span className="font-black text-slate-950 dark:text-white">{money.format(Number(split.amount))}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {editError && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{editError}</p>}
         {canEdit && (
