@@ -33,5 +33,24 @@ export function resolveOwnerNotificationConfig(env = process.env) {
     upcomingLeadDays: UPCOMING_AUTOPAY_LEAD_DAYS,
     maxAttempts: MAX_NOTIFICATION_ATTEMPTS,
     staleClaimMinutes: STALE_CLAIM_MINUTES,
+    allowedOwnerIds: parseOwnerAllowlist(env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS),
   };
+}
+
+// Owner allow-list: notifications are only ever queued or sent for owners
+// explicitly listed in OWNER_PAYMENT_NOTIFICATION_OWNER_IDS (comma-separated).
+// When the list is empty or unset, NOTHING is queued or sent for anyone —
+// the system fails closed. This is the cross-landlord privacy guard:
+// without it, a second landlord's tenants' names and payment amounts would
+// be emailed to the single configured recipient address.
+export function parseOwnerAllowlist(raw) {
+  return String(raw ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function isOwnerNotificationAllowed(config, ownerId) {
+  const list = config?.allowedOwnerIds ?? [];
+  return list.length > 0 && ownerId != null && list.includes(String(ownerId));
 }

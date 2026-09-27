@@ -20,7 +20,7 @@ describe("rental owner payment notifications migration", () => {
   });
 
   it("tracks the queue lifecycle including the disabled-sending terminal state", () => {
-    expect(sql).toMatch(/check\s*\(\s*status in\s*\('queued',\s*'sending',\s*'sent',\s*'failed',\s*'skipped_disabled',\s*'superseded'\)/);
+    expect(sql).toMatch(/check\s*\(\s*status in\s*\('queued',\s*'sending',\s*'sent',\s*'failed',\s*'skipped_disabled',\s*'skipped_not_allowlisted',\s*'superseded'\)/);
     expect(sql).toContain("provider_message_id");
     expect(sql).toContain("attempt_count");
   });

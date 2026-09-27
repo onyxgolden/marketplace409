@@ -4,7 +4,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
-import { resolveOwnerNotificationConfig } from "@/domains/owner-notifications/ownerNotificationConfig";
+import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 import {
   buildTerminalNotificationFacts,
   buildTerminalPaymentNotificationRow,
@@ -158,8 +158,14 @@ async function loadUpcomingAutopayPairs(db, providerMode, asOfDate, leadDays) {
 }
 
 async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
-  let queued = 0, alreadyQueued = 0, skippedAtDetection = 0;
+  let queued = 0, alreadyQueued = 0, skippedAtDetection = 0, skippedNotAllowlisted = 0;
   for (const pair of pairs) {
+    // Owner allow-list: fail closed — nothing is written for an owner who
+    // is not explicitly allow-listed.
+    if (!isOwnerNotificationAllowed(config, pair.enrollment.owner_id)) {
+      skippedNotAllowlisted += 1;
+      continue;
+    }
     const notificationId = buildNotificationId({
       ownerId: pair.enrollment.owner_id,
       eventType: OWNER_NOTIFICATION_EVENT_TYPE.UPCOMING_AUTOPAY,
@@ -202,7 +208,7 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
       });
     }
   }
-  return { queued, alreadyQueued, skippedAtDetection };
+  return { queued, alreadyQueued, skippedAtDetection, skippedNotAllowlisted };
 }
 
 // Durable reconciler: heals notifications lost when a webhook queue write
@@ -221,10 +227,20 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       .order("created_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0 };
+  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0 };
+
+  // Owner allow-list: fail closed — payments for non-allow-listed owners are
+  // never turned into notifications.
+  const allowlisted = payments.filter((payment) =>
+    isOwnerNotificationAllowed(config, payment.owner_id),
+  );
+  const skippedNotAllowlisted = payments.length - allowlisted.length;
+  if (allowlisted.length === 0) {
+    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted };
+  }
 
   const attemptPaymentIds = new Set();
-  for (const chunk of chunkArray(payments.map((payment) => payment.id), ID_CHUNK_SIZE)) {
+  for (const chunk of chunkArray(allowlisted.map((payment) => payment.id), ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_autopay_attempts")
       .select("payment_id").in("payment_id", chunk);
     if (error) throw error;
@@ -232,7 +248,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
   }
 
   const tenantNameById = new Map();
-  const tenantIds = [...new Set(payments.map((payment) => payment.tenant_id).filter(Boolean))];
+  const tenantIds = [...new Set(allowlisted.map((payment) => payment.tenant_id).filter(Boolean))];
   for (const chunk of chunkArray(tenantIds, ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_tenants")
       .select("id, display_name").in("id", chunk);
@@ -242,7 +258,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     }
   }
 
-  const rows = payments.map((payment) => {
+  const rows = allowlisted.map((payment) => {
     const hasAutopayAttempt = attemptPaymentIds.has(payment.id);
     const eventType = resolvePaymentNotificationEvent({
       stripeOutcome: payment.status === "failed" ? "failed" : "succeeded",
@@ -416,12 +432,13 @@ export async function GET(request) {
 
     // 1. Detect upcoming autopay runs.
     const pairs = await loadUpcomingAutopayPairs(db, provider.mode, asOfDate, config.upcomingLeadDays);
-    let queued = 0, alreadyQueued = 0, skippedDisabled = 0, wouldSend = 0;
+    let queued = 0, alreadyQueued = 0, skippedDisabled = 0, wouldSend = 0, skippedNotAllowlisted = 0;
     if (!dryRun) {
       const detection = await queueUpcomingNotifications(db, pairs, asOfDate, config);
       queued = detection.queued;
       alreadyQueued = detection.alreadyQueued;
       skippedDisabled += detection.skippedAtDetection;
+      skippedNotAllowlisted += detection.skippedNotAllowlisted;
       wouldSend += detection.skippedAtDetection;
     }
 
@@ -432,16 +449,26 @@ export async function GET(request) {
       reconciled = healing.reconciled;
       alreadyReconciled = healing.alreadyQueued;
       skippedDisabled += healing.skippedAtDetection;
+      skippedNotAllowlisted += healing.skippedNotAllowlisted;
       wouldSend += healing.skippedAtDetection;
     }
 
     // 3. Deliver.
-    let sent = 0, failed = 0, superseded = 0;
+    let sent = 0, failed = 0, superseded = 0, skippedNotAllowlistedDelivery = 0;
     if (!dryRun) {
       const candidates = await loadDeliveryCandidates(db, config);
       for (const row of candidates) {
         const claimToken = await claimRow(db, row);
         if (!claimToken) continue;
+        if (!isOwnerNotificationAllowed(config, row.owner_id)) {
+          // Belt-and-braces: a row queued before the allow-list existed (or
+          // for an owner since removed from it) can never be delivered.
+          // Terminally marked so it is not retried.
+          if (await recordOutcome(db, row, { status: "skipped_not_allowlisted" }, claimToken)) {
+            skippedNotAllowlistedDelivery += 1;
+          }
+          continue;
+        }
         if (row.event_type === OWNER_NOTIFICATION_EVENT_TYPE.UPCOMING_AUTOPAY) {
           const live = await upcomingChargeStillOwed(db, row);
           if (!live.owed) {
@@ -488,6 +515,7 @@ export async function GET(request) {
       upcomingDetected: pairs.length, queued, alreadyQueued,
       reconciled, alreadyReconciled,
       sent, wouldSend, failed, skippedDisabled, superseded,
+      skippedNotAllowlisted: skippedNotAllowlisted + skippedNotAllowlistedDelivery,
     });
   } catch (error) {
     console.error("Owner payment notification cron error", error);

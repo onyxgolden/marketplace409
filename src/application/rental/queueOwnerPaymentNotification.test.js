@@ -40,7 +40,7 @@ const failed = { eventType: "payment_intent.payment_failed", paymentId: PAYMENT.
 describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
   it("queues payment_completed for a succeeded autopay payment", async () => {
     const { db, notifications } = mockDb({ attempt: { id: "attempt_1" } });
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true, allowedOwnerIds: ["owner_fixture"] });
     expect(result.queued).toBe(true);
     expect(result.eventType).toBe("payment_completed");
     expect(notifications.upsert).toHaveBeenCalledWith(
@@ -51,14 +51,14 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
 
   it("queues manual_payment_received for a succeeded voluntary payment", async () => {
     const { db } = mockDb({ attempt: null });
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true, allowedOwnerIds: ["owner_fixture"] });
     expect(result.queued).toBe(true);
     expect(result.eventType).toBe("manual_payment_received");
   });
 
   it("queues payment_failed for a failed payment", async () => {
     const { db } = mockDb();
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, failed, "live", { sendingEnabled: true });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, failed, "live", { sendingEnabled: true, allowedOwnerIds: ["owner_fixture"] });
     expect(result.queued).toBe(true);
     expect(result.eventType).toBe("payment_failed");
   });
@@ -87,14 +87,14 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
 
   it("never throws: a db failure is swallowed so webhook processing survives", async () => {
     const db = { from: vi.fn(() => { throw new Error("db down"); }) };
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true, allowedOwnerIds: ["owner_fixture"] });
     expect(result.queued).toBe(false);
   });
 
   it("writes skipped_disabled and logs the would-send email when sending is off at detection", async () => {
     const { db, notifications } = mockDb({ attempt: { id: "attempt_1" } });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: false });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: false, allowedOwnerIds: ["owner_fixture"] });
     expect(result).toMatchObject({ queued: false, reason: "sending_disabled", eventType: "payment_completed", status: "skipped_disabled" });
     expect(notifications.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ event_type: "payment_completed", status: "skipped_disabled" }),
@@ -122,7 +122,7 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
       }),
     };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: false });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: false, allowedOwnerIds: ["owner_fixture"] });
     expect(result).toMatchObject({ queued: false, reason: "sending_disabled" });
     expect(logSpy).not.toHaveBeenCalled();
     logSpy.mockRestore();
@@ -130,12 +130,44 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
 
   it("defaults the sending flag from the environment when no option is passed", async () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = "owner_fixture";
     try {
       const { db } = mockDb();
       const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live");
       expect(result.queued).toBe(true);
     } finally {
       delete process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED;
+      delete process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS;
+    }
+  });
+
+  it("blocks queueing for an owner not on the allow-list and writes nothing", async () => {
+    const otherPayment = { ...PAYMENT, owner_id: "owner_other_landlord" };
+    const { db } = mockDb({ payment: otherPayment });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", {
+      sendingEnabled: true,
+      allowedOwnerIds: ["owner_fixture"],
+    });
+    expect(result).toEqual({ queued: false, reason: "owner_not_allowlisted" });
+    expect(db.from).not.toHaveBeenCalledWith("rental_owner_notifications");
+  });
+
+  it("fails closed when the allow-list is unset: nothing is queued for anyone", async () => {
+    const { db } = mockDb({ attempt: { id: "attempt_1" } });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
+    expect(result).toEqual({ queued: false, reason: "owner_not_allowlisted" });
+    expect(db.from).not.toHaveBeenCalledWith("rental_owner_notifications");
+  });
+
+  it("defaults the allow-list from the environment when no option is passed", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = "owner_fixture";
+    try {
+      const { db } = mockDb({ attempt: { id: "attempt_1" } });
+      const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
+      expect(result.queued).toBe(true);
+      expect(result.eventType).toBe("payment_completed");
+    } finally {
+      delete process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS;
     }
   });
 });

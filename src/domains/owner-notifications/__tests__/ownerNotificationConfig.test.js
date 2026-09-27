@@ -3,12 +3,15 @@ import {
   DEFAULT_OWNER_NOTIFICATION_EMAIL,
   UPCOMING_AUTOPAY_LEAD_DAYS,
   resolveOwnerNotificationConfig,
+  parseOwnerAllowlist,
+  isOwnerNotificationAllowed,
 } from "../ownerNotificationConfig";
 
 beforeEach(() => {
   delete process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED;
   delete process.env.OWNER_PAYMENT_NOTIFICATION_EMAIL;
   delete process.env.RENTAL_EMAIL_SENDER;
+  delete process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS;
 });
 
 describe("owner notification config", () => {
@@ -39,5 +42,33 @@ describe("owner notification config", () => {
   it("reads the env by default", () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
     expect(resolveOwnerNotificationConfig().enabled).toBe(true);
+  });
+
+  it("parses the owner allow-list from a comma-separated env var", () => {
+    expect(parseOwnerAllowlist(undefined)).toEqual([]);
+    expect(parseOwnerAllowlist("")).toEqual([]);
+    expect(parseOwnerAllowlist("owner_a")).toEqual(["owner_a"]);
+    expect(parseOwnerAllowlist("owner_a, owner_b ,,owner_c ")).toEqual(["owner_a", "owner_b", "owner_c"]);
+  });
+
+  it("exposes the allow-list on the resolved config", () => {
+    expect(resolveOwnerNotificationConfig({}).allowedOwnerIds).toEqual([]);
+    expect(
+      resolveOwnerNotificationConfig({ OWNER_PAYMENT_NOTIFICATION_OWNER_IDS: "owner_a,owner_b" }).allowedOwnerIds,
+    ).toEqual(["owner_a", "owner_b"]);
+  });
+
+  it("fails closed: nobody is allowed when the allow-list is empty or unset", () => {
+    expect(isOwnerNotificationAllowed(resolveOwnerNotificationConfig({}), "owner_a")).toBe(false);
+    expect(isOwnerNotificationAllowed({ allowedOwnerIds: [] }, "owner_a")).toBe(false);
+    expect(isOwnerNotificationAllowed({ allowedOwnerIds: ["owner_a"] }, null)).toBe(false);
+    expect(isOwnerNotificationAllowed({ allowedOwnerIds: ["owner_a"] }, undefined)).toBe(false);
+  });
+
+  it("allows only explicitly listed owners", () => {
+    const config = resolveOwnerNotificationConfig({ OWNER_PAYMENT_NOTIFICATION_OWNER_IDS: "owner_a,owner_b" });
+    expect(isOwnerNotificationAllowed(config, "owner_a")).toBe(true);
+    expect(isOwnerNotificationAllowed(config, "owner_b")).toBe(true);
+    expect(isOwnerNotificationAllowed(config, "owner_c")).toBe(false);
   });
 });

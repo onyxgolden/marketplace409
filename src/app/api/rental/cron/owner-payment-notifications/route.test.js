@@ -120,6 +120,8 @@ beforeEach(() => {
   process.env.CRON_SECRET = "test-secret";
   delete process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED;
   delete process.env.OWNER_PAYMENT_NOTIFICATION_EMAIL;
+  // The owner allow-list fails closed: tests opt in explicitly.
+  process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
   vi.clearAllMocks();
 });
 
@@ -557,5 +559,98 @@ describe("owner payment notifications cron", () => {
       expect.objectContaining({ subject: expect.stringContaining("Tenant payment received") }),
     );
     logSpy.mockRestore();
+  });
+
+  it("skips upcoming notices for owners not on the allow-list and writes nothing", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = "someone_else";
+    const notificationsNode = qb({ data: [], error: null }); // delivery candidates
+    const db = sequenceDb({
+      ...upcomingScanSequences(),
+      rental_payments: [qb({ data: [], error: null })], // reconciler: nothing to heal
+      rental_owner_notifications: [notificationsNode],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.upcomingDetected).toBe(1);
+    expect(body.skippedNotAllowlisted).toBe(1);
+    expect(body.queued).toBe(0);
+    expect(body.sent).toBe(0);
+    expect(notificationsNode.upsert).not.toHaveBeenCalled();
+    expect(createResendRentalEmailProvider).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the allow-list is unset: nothing is queued for anyone", async () => {
+    delete process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS;
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const notificationsNode = qb({ data: [], error: null }); // delivery candidates
+    const db = sequenceDb({
+      ...upcomingScanSequences(),
+      rental_payments: [qb({ data: [], error: null })],
+      rental_owner_notifications: [notificationsNode],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.upcomingDetected).toBe(1);
+    expect(body.skippedNotAllowlisted).toBe(1);
+    expect(body.queued).toBe(0);
+    expect(body.sent).toBe(0);
+    expect(notificationsNode.upsert).not.toHaveBeenCalled();
+  });
+
+  it("reconciler ignores terminal payments for owners not on the allow-list", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = "someone_else";
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const notificationsNode = qb({ data: [], error: null }); // delivery candidates
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [terminalPaymentRow()], error: null })],
+      rental_owner_notifications: [notificationsNode],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.reconciled).toBe(0);
+    expect(body.skippedNotAllowlisted).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(notificationsNode.upsert).not.toHaveBeenCalled();
+    expect(createResendRentalEmailProvider).not.toHaveBeenCalled();
+  });
+
+  it("delivery terminally marks rows for owners removed from the allow-list", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = "someone_else";
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const claimNode = qb({ data: [{ id: "opn_x" }], error: null }); // claim: won
+    const outcomeNode = qb({ data: [{ id: "opn_x" }], error: null }); // outcome: recorded
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [reconciledCandidateRow()], error: null }), // candidates
+        claimNode,
+        outcomeNode,
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.skippedNotAllowlisted).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(outcomeNode.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped_not_allowlisted", claim_token: null }),
+    );
   });
 });

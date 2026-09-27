@@ -16,7 +16,7 @@ import {
   classifyStripePaymentEvent,
   resolvePaymentNotificationEvent,
 } from "@/domains/owner-notifications/ownerPaymentNotifications";
-import { resolveOwnerNotificationConfig } from "@/domains/owner-notifications/ownerNotificationConfig";
+import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 
 // Pure row builder for terminal payment notifications (succeeded/failed),
 // shared with the cron route's durable reconciler. The reconciler exists so
@@ -74,6 +74,10 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
 ) {
   const config = resolveOwnerNotificationConfig();
   const sendingEnabled = options.sendingEnabled ?? config.enabled;
+  const effectiveConfig = {
+    ...config,
+    allowedOwnerIds: options.allowedOwnerIds ?? config.allowedOwnerIds,
+  };
   try {
     const stripeOutcome = classifyStripePaymentEvent({
       stripeEventType: normalized?.eventType,
@@ -90,6 +94,13 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
     const { data: payment, error: paymentError } = await paymentQuery.maybeSingle();
     if (paymentError) throw paymentError;
     if (!payment) return { queued: false, reason: "payment_not_found" };
+
+    // Owner allow-list: fail closed. A payment belonging to an owner who is
+    // not explicitly allow-listed is never queued — this keeps one landlord's
+    // tenant/payment details from being emailed to the shared recipient.
+    if (!isOwnerNotificationAllowed(effectiveConfig, payment.owner_id)) {
+      return { queued: false, reason: "owner_not_allowlisted" };
+    }
 
     const { data: attempt, error: attemptError } = await db
       .from("rental_autopay_attempts")

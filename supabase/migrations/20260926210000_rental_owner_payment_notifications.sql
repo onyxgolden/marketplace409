@@ -42,7 +42,7 @@ create table if not exists rental_owner_notifications (
     tenant_id text,
     payload jsonb not null default '{}'::jsonb,
     status text not null default 'queued'
-        check (status in ('queued', 'sending', 'sent', 'failed', 'skipped_disabled', 'superseded')),
+        check (status in ('queued', 'sending', 'sent', 'failed', 'skipped_disabled', 'skipped_not_allowlisted', 'superseded')),
     attempt_count integer not null default 0 check (attempt_count >= 0),
     provider_message_id text,
     failure_reason text,
