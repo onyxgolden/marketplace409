@@ -17,8 +17,9 @@
 // same date across different sources is flagged possibleDuplicate — never collapsed, so
 // a real coincidence can never be silently erased. The owner resolves it by deleting one
 // source. Explicit contractor-payment links collapse the same way propertyExpenseLedger
-// does: the financial_events row is suppressed when it references the contractor payment
-// id AND the amounts agree.
+// does: an expense financial_events row is suppressed when it references the contractor
+// payment id AND the amounts agree. Income rows are never suppressed by a contractor
+// link — an income event is money coming in, not the same money as the contractor debit.
 
 const SAFE_SOURCES = new Set(["manual", "rentec", "rentec_api"]);
 const EXCLUDED_STATUSES = new Set(["inactive", "deleted"]);
@@ -123,11 +124,14 @@ export function buildPropertyLedger({
     const kind = event.transaction_kind;
     if (kind !== "income" && kind !== "expense") continue;
 
-    // Explicit contractor link with agreeing amounts collapses into the contractor entry.
+    // Explicit contractor link with agreeing amounts collapses into the contractor
+    // entry — expenses only. An income event referencing a contractor payment id is
+    // money coming in, never the same money as the contractor debit, so it must
+    // never be suppressed.
     const linkedContractorId = contractorPaymentIdOf(event);
     const linked = linkedContractorId ? contractorEntryById.get(linkedContractorId) : null;
     const amountsMatch = linked ? Math.abs(toEventCents(event.amount)) === linked.debitCents : false;
-    if (linked && amountsMatch) {
+    if (linked && amountsMatch && kind === "expense") {
       suppressedEventIds.add(event.id);
       const labelText = SOURCE_LABELS[event.source_system] || event.source_system;
       if (!linked.alsoRecordedAs) linked.alsoRecordedAs = [];
