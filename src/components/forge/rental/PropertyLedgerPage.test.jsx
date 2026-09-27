@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PropertyLedgerPage from "./PropertyLedgerPage";
+import { clearSWRCache } from "../../../hooks/swrCache";
 
 const ledgerPayload = {
   success: true,
@@ -15,6 +16,42 @@ const ledgerPayload = {
     balanceCents: 0,
     entryCount: 0,
   },
+};
+
+const manualEntry = {
+  id: "event:evt-1",
+  sourceId: "evt-1",
+  source: "manual",
+  sourceLabel: "Manual entry",
+  date: "2026-09-26",
+  description: "Water heater replacement",
+  debitCents: 45000,
+  creditCents: 0,
+  category: "Repairs",
+  status: "active",
+  balanceAfterCents: 45000,
+};
+
+const ledgerWithEntry = {
+  success: true,
+  ledger: { ...ledgerPayload.ledger, entries: [manualEntry], entryCount: 1 },
+};
+
+const fullEvent = {
+  id: "evt-1",
+  transactionKind: "expense",
+  eventDate: "2026-09-26",
+  amount: 450,
+  description: "Water heater replacement",
+  payee: "Gulf Coast Plumbing",
+  checkNumber: "",
+  bankAccountId: "",
+  propertyId: "prop-1",
+  tenantId: "",
+  normalizedCategory: "property_repairs",
+  memo: "",
+  cleared: false,
+  chargeTenant: false,
 };
 
 function stubFetch(handler) {
@@ -42,6 +79,7 @@ function renderPage(props = {}) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  clearSWRCache();
   document.body.innerHTML = "";
 });
 
@@ -70,8 +108,7 @@ describe("PropertyLedgerPage post buttons", () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("defers to host overrides when onPostIncome is provided", async () => {
-    stubFetch(async (url) => {
+  it("defers to host overrides when onPostIncome is provided", async () => {    stubFetch(async (url) => {
       if (url === "/api/rental/property-ledger?propertyId=prop-1") {
         return { ok: true, json: async () => ledgerPayload };
       }
@@ -84,5 +121,105 @@ describe("PropertyLedgerPage post buttons", () => {
     act(() => { postIncome.click(); });
     expect(onPostIncome).toHaveBeenCalled();
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+describe("PropertyLedgerPage edit and delete", () => {
+  function stubLedger(handler) {
+    stubFetch(async (url, options) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ledgerWithEntry };
+      }
+      if (url === "/api/rental/bank-accounts") {
+        return { ok: true, json: async () => ({ accounts: [] }) };
+      }
+      return handler(url, options);
+    });
+  }
+
+  function openDetail(container) {
+    const descriptionButton = container.querySelector('[data-ledger-entry="manual"] button[title="View transaction detail"]');
+    act(() => { descriptionButton.click(); });
+  }
+
+  async function waitForEntry(container) {
+    for (let i = 0; i < 20; i += 1) {
+      if (container.querySelector('[data-ledger-entry="manual"]')) return;
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    throw new Error("ledger entry never rendered");
+  }
+
+  it("loads the full event and opens the edit form for a manual entry", async () => {
+    stubLedger(async (url) => {
+      if (url === "/api/rental/transactions?eventId=evt-1") {
+        return { ok: true, json: async () => ({ success: true, event: fullEvent }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    await waitForEntry(container);
+    openDetail(container);
+    expect(container.textContent).toMatch(/Transaction detail/);
+
+    const editButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "Edit");
+    await act(async () => { editButton.click(); });
+
+    const dialogTitle = container.querySelector('[role="dialog"] h3');
+    expect(dialogTitle?.textContent).toBe("Edit transaction");
+    const payeeLabel = Array.from(container.querySelectorAll('[role="dialog"] label'))
+      .find((el) => el.textContent.trim().startsWith("Payee"));
+    expect(payeeLabel?.querySelector("input")?.value).toBe("Gulf Coast Plumbing");
+  });
+
+  it("soft-deletes through the two-step confirm and refreshes the ledger", async () => {
+    let deletedEventId = null;
+    let ledgerCalls = 0;
+    stubFetch(async (url, options) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        ledgerCalls += 1;
+        return { ok: true, json: async () => ledgerWithEntry };
+      }
+      if (url === "/api/rental/transactions?eventId=evt-1" && options?.method === "DELETE") {
+        deletedEventId = "evt-1";
+        return { ok: true, json: async () => ({ success: true }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    await waitForEntry(container);
+    openDetail(container);
+
+    const deleteButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "Delete");
+    act(() => { deleteButton.click(); });
+    // First click only arms the confirm — nothing is deleted yet.
+    expect(deletedEventId).toBeNull();
+    expect(container.textContent).toMatch(/Delete this transaction\?/);
+
+    const confirmButton = Array.from(container.querySelectorAll("button")).find((el) => el.textContent === "Confirm delete");
+    await act(async () => { confirmButton.click(); });
+    expect(deletedEventId).toBe("evt-1");
+    expect(ledgerCalls).toBeGreaterThan(1);
+  });
+
+  it("shows no edit or delete controls for imported entries", async () => {
+    const importedEntry = { ...manualEntry, source: "rentec_import", sourceLabel: "Rentec import" };
+    stubFetch(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ({ success: true, ledger: { ...ledgerPayload.ledger, entries: [importedEntry], entryCount: 1 } }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const { container } = renderPage();
+    for (let i = 0; i < 20; i += 1) {
+      if (container.querySelector('[data-ledger-entry="rentec_import"]')) break;
+      await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
+    }
+    const descriptionButton = container.querySelector('[data-ledger-entry="rentec_import"] button[title="View transaction detail"]');
+    act(() => { descriptionButton.click(); });
+    expect(container.textContent).toMatch(/Transaction detail/);
+    const buttons = Array.from(container.querySelectorAll("button")).map((el) => el.textContent);
+    expect(buttons).not.toContain("Edit");
+    expect(buttons).not.toContain("Delete");
   });
 });

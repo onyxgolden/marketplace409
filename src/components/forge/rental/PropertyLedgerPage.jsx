@@ -25,6 +25,19 @@ async function fetchPropertyLedger(propertyId) {
   return body;
 }
 
+async function fetchTransaction(eventId) {
+  const response = await fetch(`/api/rental/transactions?eventId=${encodeURIComponent(eventId)}`);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to load the transaction.");
+  return body.event;
+}
+
+async function deleteTransaction(eventId) {
+  const response = await fetch(`/api/rental/transactions?eventId=${encodeURIComponent(eventId)}`, { method: "DELETE" });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Unable to delete the transaction.");
+}
+
 // Full-page property ledger — the Rentec-style running transaction table:
 // Date | Description | Debit | Credit | Balance, with a rolling balance after every row.
 // Income posts to Credit, expenses to Debit. Succeeded rent payments on the property's
@@ -46,6 +59,30 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
   const ledger = data?.ledger || null;
   const [detailEntry, setDetailEntry] = useState(null);
   const [postKind, setPostKind] = useState(null);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [editError, setEditError] = useState("");
+
+  async function startEdit(entry) {
+    setEditError("");
+    try {
+      const event = await fetchTransaction(entry.sourceId);
+      setDetailEntry(null);
+      setEditingEvent(event);
+    } catch (caught) {
+      setEditError(caught.message);
+    }
+  }
+
+  async function confirmDelete(entry) {
+    setEditError("");
+    try {
+      await deleteTransaction(entry.sourceId);
+      setDetailEntry(null);
+      refresh();
+    } catch (caught) {
+      setEditError(caught.message);
+    }
+  }
 
   useEffect(() => {
     if (!detailEntry) return undefined;
@@ -162,7 +199,27 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
         </>
       )}
 
-      {detailEntry && <PropertyTransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} />}
+      {detailEntry && (
+        <PropertyTransactionDetailModal
+          entry={detailEntry}
+          onClose={() => { setDetailEntry(null); setEditError(""); }}
+          canEdit={detailEntry.source === "manual"}
+          editError={editError}
+          onEdit={() => startEdit(detailEntry)}
+          onDelete={() => confirmDelete(detailEntry)}
+        />
+      )}
+
+      {editingEvent && (
+        <TransactionForm
+          propertyId={propertyId}
+          properties={(properties || []).map((property) => ({ id: property.id, label: property.label }))}
+          tenants={(tenants || []).map((tenant) => ({ id: tenant.id, name: tenant.display_name || tenant.name }))}
+          initialEvent={editingEvent}
+          onSaved={() => { setEditingEvent(null); refresh(); }}
+          onCancel={() => setEditingEvent(null)}
+        />
+      )}
 
       {postKind && (
         <TransactionForm
@@ -178,9 +235,11 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
   );
 }
 
-// Read-only transaction detail for slice 1. Edit/delete arrive in slice 4 —
-// this modal becomes the edit surface then.
-function PropertyTransactionDetailModal({ entry, onClose }) {
+// Transaction detail with edit/delete for owned manual entries. Imported and
+// system entries stay read-only. Delete is a two-step inline confirm and only
+// soft-deletes on the server.
+function PropertyTransactionDetailModal({ entry, onClose, canEdit, editError, onEdit, onDelete }) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const rows = [
     ["Date", formatDate(entry.date)],
     ["Description", entry.description],
@@ -217,6 +276,35 @@ function PropertyTransactionDetailModal({ entry, onClose }) {
           <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm font-bold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
             Flagged as a possible duplicate — another source recorded the same amount on the same date.
           </p>
+        )}
+        {editError && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{editError}</p>}
+        {canEdit && (
+          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+            {confirmingDelete ? (
+              <>
+                <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Delete this transaction?</span>
+                <button type="button" onClick={onDelete}
+                  className="rounded-xl bg-red-700 px-4 py-2 text-sm font-black text-white transition hover:bg-red-800">
+                  Confirm delete
+                </button>
+                <button type="button" onClick={() => setConfirmingDelete(false)}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+                  Keep it
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={onEdit}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+                  Edit
+                </button>
+                <button type="button" onClick={() => setConfirmingDelete(true)}
+                  className="rounded-xl border border-red-300 px-4 py-2 text-sm font-black text-red-700 transition hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40">
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

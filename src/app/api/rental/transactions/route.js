@@ -84,6 +84,53 @@ export async function POST(request) {
   }
 }
 
+// GET /api/rental/transactions?eventId= — full editable field set for one owned
+// manual event, for edit prefill. Imported events are not editable here.
+export async function GET(request) {
+  try {
+    const authenticated = await createAuthenticatedRentalManagerApplication();
+    if (authenticated.response) return authenticated.response;
+
+    const eventId = new URL(request.url).searchParams.get("eventId");
+    if (!eventId) return NextResponse.json({ error: "eventId is required." }, { status: 400 });
+
+    const { data, error } = await authenticated.supabaseClient
+      .from("financial_events")
+      .select("id, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, property_id, cleared, cleared_at, metadata")
+      .eq("owner_id", authenticated.effectiveOwnerId)
+      .eq("id", eventId)
+      .eq("source_system", "manual")
+      .eq("is_deleted", false)
+      .limit(1);
+    if (error) throw error;
+    const event = (data || [])[0];
+    if (!event) return NextResponse.json({ error: "Transaction was not found." }, { status: 404 });
+
+    return NextResponse.json({
+      success: true,
+      event: {
+        id: event.id,
+        transactionKind: event.transaction_kind,
+        eventDate: event.event_date,
+        amount: Number(event.amount),
+        description: event.description,
+        payee: event.payee,
+        checkNumber: event.check_number,
+        bankAccountId: event.bank_account_id,
+        propertyId: event.property_id,
+        tenantId: event.metadata?.tenant_id || "",
+        normalizedCategory: event.normalized_category,
+        memo: event.metadata?.memo || "",
+        cleared: event.cleared === true,
+        chargeTenant: event.metadata?.charged_to_tenant === true,
+      },
+    });
+  } catch (error) {
+    console.error("Transaction fetch error", error);
+    return NextResponse.json({ error: "Unable to load the transaction." }, { status: 500 });
+  }
+}
+
 async function ownManualEvent(supabaseClient, effectiveOwnerId, eventId) {
   const { data, error } = await supabaseClient
     .from("financial_events")
