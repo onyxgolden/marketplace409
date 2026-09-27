@@ -175,8 +175,7 @@ describe("buildPropertyLedger", () => {
     expect(ledger.possibleDuplicateCount).toBe(0);
   });
 
-  it("still flags two same-direction debits of the same amount on the same date", () => {
-    const ledger = buildPropertyLedger(baseInput({
+  it("still flags two same-direction debits of the same amount on the same date", () => {    const ledger = buildPropertyLedger(baseInput({
       financialEvents: [
         { id: "e1", property_id: PROP, event_date: "2026-09-01", description: "Supplies A", amount: "500.00", transaction_kind: "expense", normalized_category: "supplies", source_system: "manual", status: "active", is_deleted: false, metadata: {} },
         { id: "e2", property_id: PROP, event_date: "2026-09-01", description: "Supplies B", amount: "500.00", transaction_kind: "expense", normalized_category: "supplies", source_system: "rentec", status: "active", is_deleted: false, metadata: {} },
@@ -184,5 +183,29 @@ describe("buildPropertyLedger", () => {
     }));
     expect(ledger.entries).toHaveLength(2);
     expect(ledger.possibleDuplicateCount).toBe(2);
+  });
+
+  it("annotates a payment that includes a refund instead of silently netting it", () => {
+    const ledger = buildPropertyLedger(baseInput({
+      leases: [{ id: "lease_1", property_id: PROP, unit_id: UNIT }],
+      rentalPayments: [
+        { id: "pay_1", lease_id: "lease_1", tenant_id: "t1", amount_cents: 100000, refunded_amount_cents: 20000, status: "succeeded", provider: "stripe", received_at: "2026-09-01T10:00:00Z" },
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(1);
+    const entry = ledger.entries[0];
+    expect(entry.creditCents).toBe(80000);
+    expect(entry.notes).toContain("Includes $200.00 refund");
+    expect(entry.notes).toContain("refund date not recorded");
+  });
+
+  it("keeps notes null for a plain succeeded payment with no refund", () => {
+    const ledger = buildPropertyLedger(baseInput({
+      leases: [{ id: "lease_1", property_id: PROP, unit_id: UNIT }],
+      rentalPayments: [
+        { id: "pay_1", lease_id: "lease_1", tenant_id: "t1", amount_cents: 160000, refunded_amount_cents: 0, status: "succeeded", provider: "stripe", received_at: "2026-09-01T10:00:00Z" },
+      ],
+    }));
+    expect(ledger.entries[0].notes).toBeNull();
   });
 });

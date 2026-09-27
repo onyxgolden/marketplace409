@@ -163,7 +163,18 @@ export function buildPropertyLedger({
     if (!leasePropertyMatches.get(payment.lease_id)) continue;
     const tenantName = tenantsById[payment.tenant_id]?.display_name || null;
     const hasBalanceEffect = BALANCE_EFFECT_STATUSES.has(payment.status);
-    const amountCents = signedCents(payment.amount_cents) - signedCents(payment.refunded_amount_cents || 0);
+    const refundedCents = signedCents(payment.refunded_amount_cents || 0);
+    const amountCents = signedCents(payment.amount_cents) - refundedCents;
+    // rental_payments has no refund timestamp column (verified across migrations and
+    // app code), so a refund cannot become a separate dated entry without inventing a
+    // date — which we never do. The credit stays netted into the original payment,
+    // and the entry is annotated so the historical running balance is not mistaken
+    // for exact chronology around the refund.
+    const refundNote = refundedCents > 0
+      ? `Includes $${(refundedCents / 100).toFixed(2)} refund — refund date not recorded, timing approximate`
+      : null;
+    const statusNote = hasBalanceEffect ? null : `No balance effect — status: ${label(payment.status)}`;
+    const notes = [refundNote, statusNote].filter(Boolean).join("; ") || null;
     entries.push({
       id: `payment:${payment.id}`,
       sourceId: payment.id,
@@ -179,7 +190,7 @@ export function buildPropertyLedger({
       reference: payment.receipt_reference || payment.provider_payment_id || null,
       method: payment.payment_method || payment.provider || null,
       status: payment.status,
-      notes: hasBalanceEffect ? null : `No balance effect — status: ${label(payment.status)}`,
+      notes,
       possibleDuplicate: false,
     });
   }
