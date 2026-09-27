@@ -84,6 +84,41 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
     const options = Array.from(mounted.container.querySelectorAll("select option")).map((option) => option.value);
     expect(new Set(options)).toEqual(new Set(RENTAL_FUNCTIONS.map(({ id }) => id)));
   });
+
+  it("carries the selected property across sidebar navigation to financial-setup instead of landing on a dead end", () => {
+    // Regression: Financial Setup showed "Select a property before opening financial
+    // setup" with no way to select one, even right after selecting a property --
+    // sidebar navigation dropped the record context.
+    const visited = [];
+    const recordContext = { recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" };
+    mounted = mount(
+      <RentalApplicationShell activeFunctionId="overview" activeRecordContext={recordContext} onFunctionChange={(id, context, filter) => visited.push([id, context, filter])} />
+    );
+    // Nav collapse state persists in localStorage across tests -- expand only when needed.
+    const settingsToggle = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded]'))
+      .find((button) => button.textContent.includes("Settings"));
+    if (settingsToggle.getAttribute("aria-expanded") === "false") act(() => { settingsToggle.click(); });
+    const financialSetupButton = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
+      .find((button) => button.textContent === "Financial Setup");
+    expect(financialSetupButton).not.toBeUndefined();
+    act(() => { financialSetupButton.click(); });
+    expect(visited).toEqual([["financial-setup", { ...recordContext, recordLabel: "930 Highland Drive" }, null]]);
+  });
+
+  it("does not carry record context to surfaces that work fine without it", () => {
+    const visited = [];
+    const recordContext = { recordType: "unit", recordId: "unit_1", propertyId: "930 Highland Drive" };
+    mounted = mount(
+      <RentalApplicationShell activeFunctionId="overview" activeRecordContext={recordContext} onFunctionChange={(id, context, filter) => visited.push([id, context, filter])} />
+    );
+    const reportsToggle = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded]'))
+      .find((button) => button.textContent.includes("Reports"));
+    if (reportsToggle.getAttribute("aria-expanded") === "false") act(() => { reportsToggle.click(); });
+    const reportsButton = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
+      .find((button) => button.textContent === "Reports");
+    act(() => { reportsButton.click(); });
+    expect(visited).toEqual([["reports", null, null]]);
+  });
 });
 
 describe("RentalApplicationShell eight-section registry", () => {

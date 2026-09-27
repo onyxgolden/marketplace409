@@ -69,6 +69,20 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const [settingsOpen, setSettingsOpen] = useState(false);
   const depositsRef = useRef(null);
   const printFired = useRef(false);
+  // The On Deposit pill scrolls to the inline deposits section and briefly
+  // highlights it, so the click always has visible feedback even when the
+  // section is already on screen.
+  const [depositsFlash, setDepositsFlash] = useState(false);
+  const depositsFlashTimer = useRef(null);
+  useEffect(() => () => { if (depositsFlashTimer.current) clearTimeout(depositsFlashTimer.current); }, []);
+  function revealDeposits() {
+    // scrollIntoView is a no-op where the DOM doesn't implement it (tests) --
+    // the highlight is the feedback that always applies.
+    depositsRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    setDepositsFlash(true);
+    if (depositsFlashTimer.current) clearTimeout(depositsFlashTimer.current);
+    depositsFlashTimer.current = setTimeout(() => setDepositsFlash(false), 1600);
+  }
 
   // "Print Statement" from the card menu lands here and fires the print dialog once
   // the ledger has loaded — one click from card to paper.
@@ -172,8 +186,8 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
             className="rounded-xl border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-black text-red-700 transition hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60">
             Post Charge
           </button>
-          <button type="button" onClick={() => depositsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
-            title="Security deposits held for this tenant"
+          <button type="button" onClick={revealDeposits}
+            title="Security deposits held for this tenant — jump to the deposits section below"
             className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
             On Deposit: {money.format(heldCents / 100)}
           </button>
@@ -431,7 +445,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
 
           <TenantCreditSection credits={credits} creditApplications={creditApplications} openCharges={openCharges} onChanged={refresh} />
 
-          <div ref={depositsRef} className="mt-6 scroll-mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40" data-ledger-deposits>
+          <div ref={depositsRef} className={`mt-6 scroll-mt-6 rounded-2xl border bg-slate-50 p-5 transition-shadow dark:bg-slate-950/40 ${depositsFlash ? "border-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.35)] dark:border-sky-500" : "border-slate-200 dark:border-slate-700"}`} data-ledger-deposits>
             <h4 className="text-lg font-black text-slate-950 dark:text-white">Deposits — held separately, never rent</h4>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Currently held: {money.format(heldCents / 100)}.</p>
             {(deposits?.entries?.length || 0) === 0

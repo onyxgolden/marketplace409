@@ -118,12 +118,21 @@ describe("RentalOverviewPanel five-card dashboard", () => {
 
   it("navigates each card to its supporting function, never a dead decorative card", () => {
     const visited = [];
-    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={(id) => visited.push(id)} />);
-    for (const [label, destination] of [["Rent collected", "charges"], ["Outstanding balances", "charges"], ["Occupancy", "setup"], ["Open maintenance", "maintenance"], ["Expiring leases", "lease-lifecycle"]]) {
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={(id, _context, filter) => visited.push([id, filter])} />);
+    for (const [label, destination, filter] of [["Rent collected", "charges", null], ["Outstanding balances", "charges", null], ["Occupancy", "setup", null], ["Open maintenance", "maintenance", null], ["Expiring leases", "leases", "expiring"]]) {
       act(() => { card(mounted.container, label).click(); });
-      expect(visited.at(-1)).toBe(destination);
+      expect(visited.at(-1)).toEqual([destination, filter]);
     }
-    expect(visited).toEqual(["charges", "charges", "setup", "maintenance", "lease-lifecycle"]);
+    expect(visited).toEqual([["charges", null], ["charges", null], ["setup", null], ["maintenance", null], ["leases", "expiring"]]);
+  });
+
+  it("sends the Expiring leases card to the same expiring-leases queue as the Leases expiring soon alert", () => {
+    // Regression: the card used to open Lease Changes while the alert opened the
+    // filtered lease queue -- two doors labeled the same thing leading nowhere alike.
+    const visited = [];
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={(id, _context, filter) => visited.push([id, filter])} />);
+    act(() => { card(mounted.container, "Expiring leases").click(); });
+    expect(visited).toEqual([["leases", "expiring"]]);
   });
 
   it("shows honest zero cards, not an error, when the portfolio has data but nothing outstanding", () => {

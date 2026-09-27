@@ -8,6 +8,12 @@ describe("PropertyFinancialSetupPanel", () => {
     expect(markup).toContain("Select a property before opening financial setup.");
   });
 
+  it("links the no-property state to Properties instead of leaving a dead end", () => {
+    // Regression: the empty state was a bare alert with no way forward.
+    const markup = renderToStaticMarkup(<PropertyFinancialSetupPanel recordContext={null} onNavigate={() => {}} />);
+    expect(markup).toContain("Go to Properties");
+  });
+
   it("shows a loading state for a given property, using its exact property id (no new property is created)", () => {
     const markup = renderToStaticMarkup(<PropertyFinancialSetupPanel recordContext={{ propertyId: "930 Highland Drive" }} />);
     expect(markup).toContain("Loading financial setup");
