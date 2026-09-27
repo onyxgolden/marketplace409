@@ -13,6 +13,25 @@ import { buildPropertyLedger } from "@/application/rental/propertyLedger";
 // Authorization: effective-owner/workspace scoping. The unit is looked up with
 // owner_id = effectiveOwnerId, so a cross-workspace property id 404s. Co-owners resolve
 // to the canonical owner id and see the shared books.
+const PAGE_SIZE = 1000;
+
+// PostgREST silently caps a plain .select() at 1000 rows. Page through the full set
+// for every source so a property with long history never gets a silently truncated
+// ledger (and a wrong balance). Each query orders deterministically so paging is
+// stable; buildPropertyLedger re-sorts chronologically anyway, so the order chosen
+// here changes nothing downstream.
+export async function fetchAllPages(buildQuery) {
+  const rows = [];
+  for (let start = 0; ; start += PAGE_SIZE) {
+    const { data, error } = await buildQuery().range(start, start + PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data || [];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return rows;
+}
+
 export async function GET(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
@@ -38,6 +57,9 @@ export async function GET(request) {
     const propertySlug = unit.property_id;
     const unitIds = (units || []).map((u) => u.id);
 
+    const paged = (promise) =>
+      promise.then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught }));
+
     const [
       eventsResult,
       contractorPaymentsResult,
@@ -47,26 +69,31 @@ export async function GET(request) {
       tenantsResult,
     ] = await Promise.all([
       // Paginated: PostgREST silently caps a plain .select() at 1000 rows.
-      fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
+      paged(fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
         columns: "id, event_date, description, amount, transaction_kind, normalized_category, property_id, source_system, source_record_id, metadata, status, is_deleted",
-      }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
-      supabaseClient.from("rental_contractor_payments")
+      })),
+      paged(fetchAllPages(() => supabaseClient.from("rental_contractor_payments")
         .select("id, contractor_id, work_order_id, property_id, paid_at, amount_cents, payment_method, reference, invoice_reference, notes")
         .eq("owner_id", effectiveOwnerId)
-        .or([`property_id.eq.${propertySlug}`, ...unitIds.map((id) => `property_id.eq.${id}`)].join(",")),
-      supabaseClient.from("rental_contractors")
+        .or([`property_id.eq.${propertySlug}`, ...unitIds.map((id) => `property_id.eq.${id}`)].join(","))
+        .order("id", { ascending: true }))),
+      paged(fetchAllPages(() => supabaseClient.from("rental_contractors")
         .select("id, business_name, trade")
-        .eq("owner_id", effectiveOwnerId),
-      supabaseClient.from("rental_payments")
+        .eq("owner_id", effectiveOwnerId)
+        .order("id", { ascending: true }))),
+      paged(fetchAllPages(() => supabaseClient.from("rental_payments")
         .select("id, charge_id, lease_id, tenant_id, provider, provider_payment_id, amount_cents, refunded_amount_cents, status, payment_method, receipt_reference, notes, received_at, succeeded_at, created_at")
         .eq("owner_id", effectiveOwnerId)
-        .order("created_at", { ascending: true }),
-      supabaseClient.from("rental_leases")
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }))),
+      paged(fetchAllPages(() => supabaseClient.from("rental_leases")
         .select("id, unit_id, property_id, status, start_date, end_date")
-        .eq("owner_id", effectiveOwnerId),
-      supabaseClient.from("rental_tenants")
+        .eq("owner_id", effectiveOwnerId)
+        .order("id", { ascending: true }))),
+      paged(fetchAllPages(() => supabaseClient.from("rental_tenants")
         .select("id, display_name")
-        .eq("owner_id", effectiveOwnerId),
+        .eq("owner_id", effectiveOwnerId)
+        .order("id", { ascending: true }))),
     ]);
     const failed = [eventsResult, contractorPaymentsResult, contractorsResult, paymentsResult, leasesResult, tenantsResult]
       .find((r) => r.error)?.error;
