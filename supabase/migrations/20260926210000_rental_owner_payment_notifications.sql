@@ -17,9 +17,10 @@
 --   sending          - a run claimed this row and is working it
 --   sent             - the email left via the provider
 --   failed           - the provider call failed (retried up to 5 attempts)
---   skipped_disabled - sending was disabled when the run processed this row:
---                      terminal, never retried. The row stays as the audit log
---                      of what WOULD have been sent. A notification is only
+--   skipped_disabled - sending was disabled when the event was DETECTED
+--                      (queue time): terminal, never delivered — not even if
+--                      the flag is enabled later. The row stays as the audit
+--                      log of what WOULD have been sent. A notification is only
 --                      ever sent for an event detected while sending is on.
 --   superseded       - the live recheck found the underlying charge already
 --                      paid, so no email was sent. Terminal, never retried.
@@ -45,6 +46,10 @@ create table if not exists rental_owner_notifications (
     attempt_count integer not null default 0 check (attempt_count >= 0),
     provider_message_id text,
     failure_reason text,
+    -- Distributed-claim fencing: the run that claims a row writes a unique
+    -- token here. Outcome updates must match the token, so a slow worker can
+    -- never overwrite a newer worker's outcome. Cleared with every outcome.
+    claim_token text,
     first_attempted_at timestamptz,
     last_attempted_at timestamptz,
     sent_at timestamptz,

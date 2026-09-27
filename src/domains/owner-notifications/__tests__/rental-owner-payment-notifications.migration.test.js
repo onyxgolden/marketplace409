@@ -25,6 +25,10 @@ describe("rental owner payment notifications migration", () => {
     expect(sql).toContain("attempt_count");
   });
 
+  it("carries a claim token so outcome writes are fenced to the claiming run", () => {
+    expect(sql).toContain("claim_token");
+  });
+
   it("is service-role-only: forced RLS with zero policies", () => {
     expect(sql).toContain("enable row level security");
     expect(sql).toContain("force row level security");

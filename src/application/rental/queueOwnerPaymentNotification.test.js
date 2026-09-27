@@ -11,8 +11,10 @@ function chain(result) {
   const node = {};
   node.select = vi.fn(() => node);
   node.eq = vi.fn(() => node);
-  node.upsert = vi.fn(() => Promise.resolve(result));
+  node.upsert = vi.fn(() => node);
   node.maybeSingle = vi.fn(() => Promise.resolve(result));
+  // Awaiting a chainable query node resolves the terminal result.
+  node.then = (resolve) => resolve(result);
   return node;
 }
 
@@ -38,7 +40,7 @@ const failed = { eventType: "payment_intent.payment_failed", paymentId: PAYMENT.
 describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
   it("queues payment_completed for a succeeded autopay payment", async () => {
     const { db, notifications } = mockDb({ attempt: { id: "attempt_1" } });
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live");
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
     expect(result.queued).toBe(true);
     expect(result.eventType).toBe("payment_completed");
     expect(notifications.upsert).toHaveBeenCalledWith(
@@ -49,14 +51,14 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
 
   it("queues manual_payment_received for a succeeded voluntary payment", async () => {
     const { db } = mockDb({ attempt: null });
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live");
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
     expect(result.queued).toBe(true);
     expect(result.eventType).toBe("manual_payment_received");
   });
 
   it("queues payment_failed for a failed payment", async () => {
     const { db } = mockDb();
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, failed, "live");
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, failed, "live", { sendingEnabled: true });
     expect(result.queued).toBe(true);
     expect(result.eventType).toBe("payment_failed");
   });
@@ -85,7 +87,55 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
 
   it("never throws: a db failure is swallowed so webhook processing survives", async () => {
     const db = { from: vi.fn(() => { throw new Error("db down"); }) };
-    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live");
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: true });
     expect(result.queued).toBe(false);
+  });
+
+  it("writes skipped_disabled and logs the would-send email when sending is off at detection", async () => {
+    const { db, notifications } = mockDb({ attempt: { id: "attempt_1" } });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: false });
+    expect(result).toMatchObject({ queued: false, reason: "sending_disabled", eventType: "payment_completed", status: "skipped_disabled" });
+    expect(notifications.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: "payment_completed", status: "skipped_disabled" }),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+    // Detection-time disposition is audited: what WOULD have been sent.
+    expect(logSpy).toHaveBeenCalledWith(
+      "Owner payment notification (sending disabled) would send",
+      expect.objectContaining({
+        to: "Brandykaymorgan@gmail.com",
+        subject: expect.stringContaining("Autopay completed"),
+      }),
+    );
+    logSpy.mockRestore();
+  });
+
+  it("does not log when a disabled detection hits the dedup conflict", async () => {
+    const db = {
+      from: vi.fn((table) => {
+        if (table === "rental_payments") return chain({ data: PAYMENT, error: null });
+        if (table === "rental_autopay_attempts") return chain({ data: null, error: null });
+        if (table === "rental_tenants") return chain({ data: { display_name: "Test Tenant" }, error: null });
+        if (table === "rental_owner_notifications") return chain({ data: [], error: null });
+        throw new Error(`unexpected table ${table}`);
+      }),
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live", { sendingEnabled: false });
+    expect(result).toMatchObject({ queued: false, reason: "sending_disabled" });
+    expect(logSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it("defaults the sending flag from the environment when no option is passed", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    try {
+      const { db } = mockDb();
+      const result = await queueOwnerPaymentNotificationForWebhookEvent(db, succeeded, "live");
+      expect(result.queued).toBe(true);
+    } finally {
+      delete process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED;
+    }
   });
 });
