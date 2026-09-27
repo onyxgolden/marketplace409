@@ -28,6 +28,7 @@ function qb(result) {
     in: vi.fn(() => node),
     order: vi.fn(() => node),
     gte: vi.fn(() => node),
+    or: vi.fn(() => node),
     is: vi.fn(() => node),
     range: vi.fn(() => node),
     update: vi.fn(() => node),
@@ -496,6 +497,66 @@ describe("owner payment notifications cron", () => {
           event_type: "manual_payment_received",
           status: "queued",
           payment_id: "rental_payment_fixture",
+        }),
+      ]),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+    // The reconciled row is delivered by the same run.
+    expect(body.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a payment created days ago that settled today (delayed ACH)", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const send = vi.fn().mockResolvedValue({ messageId: "re_recon_delayed" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const delayedPayment = {
+      ...terminalPaymentRow(),
+      id: "rental_payment_delayed",
+      // Created 10 days ago: outside a creation-time lookback; settled today:
+      // inside the terminal-transition window. The webhook queue write for
+      // this payment was lost, so the reconciler must heal it.
+      created_at: new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString(),
+      succeeded_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const scanQb = qb({ data: [delayedPayment], error: null });
+    const reconcileUpsert = qb({ data: [{ id: `opn_${OWNER}_manual_payment_received_rental_payment_delayed` }], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [scanQb], // reconciler scan: the delayed settler
+      rental_autopay_attempts: [qb({ data: [], error: null })], // no autopay attempt: manual payment
+      rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // reconciler: no existing notification row
+        reconcileUpsert,
+        qb({ data: [{ ...reconciledCandidateRow(), id: `opn_${OWNER}_manual_payment_received_rental_payment_delayed` }], error: null }), // delivery candidates
+        qb({ data: [{ id: "opn_x" }], error: null }), // claim
+        qb({ data: [{ id: "opn_x" }], error: null }), // outcome
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    // The scan filters on terminal-transition time, not created_at: successes
+    // by succeeded_at, failures by updated_at.
+    expect(scanQb.or).toHaveBeenCalledWith(
+      expect.stringContaining("and(status.eq.succeeded,succeeded_at.gte."),
+    );
+    expect(scanQb.or).toHaveBeenCalledWith(
+      expect.stringContaining("and(status.eq.failed,updated_at.gte."),
+    );
+    expect(scanQb.gte).not.toHaveBeenCalled();
+
+    expect(body.reconciled).toBe(1);
+    expect(reconcileUpsert.upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event_type: "manual_payment_received",
+          status: "queued",
+          payment_id: "rental_payment_delayed",
         }),
       ]),
       { onConflict: "owner_id,id", ignoreDuplicates: true },

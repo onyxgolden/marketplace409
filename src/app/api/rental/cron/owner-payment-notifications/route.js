@@ -212,9 +212,11 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
 }
 
 // Durable reconciler: heals notifications lost when a webhook queue write
-// failed (caught and swallowed to protect webhook processing). Scans recent
-// terminal Stripe payments and queues a notification for any payment the
-// webhook path never recorded. Does not depend on the webhook path at all.
+// failed (caught and swallowed to protect webhook processing). Scans Stripe
+// payments that reached a terminal state inside the lookback window — by
+// success/failure transition time, not creation time — and queues a
+// notification for any payment the webhook path never recorded. Does not
+// depend on the webhook path at all.
 async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
   const since = new Date(Date.now() - TERMINAL_PAYMENT_LOOKBACK_DAYS * 24 * 3600 * 1000).toISOString();
   const payments = await fetchAllPages((page) =>
@@ -222,9 +224,13 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       .select("id, owner_id, charge_id, lease_id, tenant_id, amount_cents, failure_code, status, succeeded_at, updated_at")
       .eq("provider", "stripe")
       .eq("provider_mode", providerMode)
-      .in("status", ["succeeded", "failed"])
-      .gte("created_at", since)
-      .order("created_at", { ascending: true })
+      // Terminal-transition filter, NOT creation time: a Stripe payment created
+      // days ago (e.g. delayed ACH) can succeed or fail inside the window, and
+      // the reconciler exists to heal exactly those missed terminal
+      // notifications. succeeded_at is always set for succeeded rows (DB check
+      // constraint); failures stamp updated_at at transition time.
+      .or(`and(status.eq.succeeded,succeeded_at.gte.${since}),and(status.eq.failed,updated_at.gte.${since})`)
+      .order("updated_at", { ascending: true })
       .range(...pageRange(page)),
   );
   if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0 };
