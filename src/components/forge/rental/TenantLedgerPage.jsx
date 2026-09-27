@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import PostIncomeForm from "./PostIncomeForm";
+import AddTenantChargeForm from "./AddTenantChargeForm";
 import TenantCreditSection from "./TenantCreditSection";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
@@ -53,6 +54,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
     .reduce((sum, credit) => sum + Number(credit.remaining_cents || 0), 0);
   const [detailEntry, setDetailEntry] = useState(null);
   const [showPostIncome, setShowPostIncome] = useState(initialView === "post-income");
+  const [showAddCharge, setShowAddCharge] = useState(false);
   const [postedMessage, setPostedMessage] = useState("");
   const printFired = useRef(false);
 
@@ -93,6 +95,10 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
             className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${goldControlClassName}`}>
             Post Income
           </button>
+          <button type="button" onClick={() => { setPostedMessage(""); setShowAddCharge((value) => !value); }}
+            className={`rounded-xl px-4 py-2.5 text-sm font-black transition ${goldControlClassName}`}>
+            Add charge
+          </button>
           {onPostCharge && (
             <button type="button" onClick={onPostCharge}
               className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
@@ -123,6 +129,18 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                 onSaved={(payment) => {
                   setShowPostIncome(false);
                   setPostedMessage(`Income posted: ${money.format(Number(payment?.amountCents || 0) / 100)} on ${formatDate(payment?.receivedAt)}.`);
+                  refresh();
+                }} />
+            </div>
+          )}
+
+          {showAddCharge && (
+            <div className="mt-6 print:hidden">
+              <AddTenantChargeForm tenantId={tenantId} tenantName={tenantName}
+                onCancel={() => setShowAddCharge(false)}
+                onSaved={(charge) => {
+                  setShowAddCharge(false);
+                  setPostedMessage(`Charge posted: ${money.format(Number(charge?.amount_cents || 0) / 100)} — ${charge?.notes || "tenant charge"}.`);
                   refresh();
                 }} />
             </div>
