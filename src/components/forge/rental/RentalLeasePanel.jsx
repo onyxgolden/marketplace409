@@ -129,6 +129,22 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+  async function updateLeaseTerms(event, lease, schedule) {
+    event.preventDefault(); setWorking(true); setMessage("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "update-lease-terms", terms: { leaseId: lease.id,
+          monthlyRentCents: Math.round(Number(form.get("monthlyRent")) * 100), rentDueDay: Number(form.get("dueDay")),
+          startDate: form.get("startDate"), endDate: form.get("endDate") || null,
+          earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to update the lease terms.");
+      setMessage("Lease terms updated. Future charges will use the new terms.");
+      await refresh();
+      return true;
+    } catch (error) { setMessage(error.message); return false; } finally { setWorking(false); }
+  }
   async function createSchedule(event, lease) {    event.preventDefault(); setWorking(true); setMessage("");
     const form = new FormData(event.currentTarget);
     try {
@@ -192,6 +208,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
     <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Lease setup</p>
     <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Leases and rent schedules</h2>
     <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn&apos;t import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
+    {message && <p role="status" className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
     {(loaded || initialSetup) && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved setup.</p> : null}
     {(loaded || initialSetup) && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
     {viewFilter === "expiring" && <RentalViewFilterBanner filterLabel="Leases expiring within 90 days" onClear={() => setViewFilter(null)} />}
@@ -199,7 +216,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       getTitle={(lease) => setup.units.find((item) => item.id === lease.unit_id)?.label || lease.unit_id}
       getSubtitle={(lease) => <><span className={`font-bold capitalize ${STATUS_TEXT_COLORS[lease.status] || ""}`}>{lease.status}</span> · {money.format(Number(lease.monthly_rent_cents) / 100)} monthly</>}>
       {(() => { const lease = visibleLeases.find((item) => item.id === selectedId) || visibleLeases[0]; const unit = setup.units.find((item) => item.id === lease?.unit_id);
-        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} />; })()}
+        return lease && <LeaseDetail lease={lease} unit={unit} schedule={(setup.schedules || []).find((item) => item.lease_id === lease.id)} working={working} onActivate={activateLease} onSaveSchedule={createSchedule} onSaveEarlyPay={saveEarlyPay} onCancel={cancelLease} onUpdateTerms={updateLeaseTerms} />; })()}
     </RentalRecordBrowser>}
     {(setup.units.length === 0 || setup.tenants.length === 0) && <p role="status" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
       Save at least one rental unit and tenant before creating a lease.</p>}
@@ -217,15 +234,18 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white xl:col-span-2">Notes<input name="notes" placeholder="e.g. Month-to-month after original 1-year term expired" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
-      <div className="md:col-span-2 xl:col-span-3 flex items-center gap-4"><button disabled={working || setup.units.length === 0 || setup.tenants.length === 0 || !selectedUnitId} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save draft lease and schedule"}</button>
-        {message && <p role="status" className="text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}</div>
+      <div className="md:col-span-2 xl:col-span-3 flex items-center gap-4"><button disabled={working || setup.units.length === 0 || setup.tenants.length === 0 || !selectedUnitId} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save draft lease and schedule"}</button></div>
     </form>}
   </section>;
 }
 
 function Detail({ label, value }) { return <div><dt className="text-xs font-black uppercase tracking-wide text-slate-400 dark:text-slate-500">{label}</dt><dd className="mt-1 break-words font-bold text-slate-800 dark:text-slate-200">{value}</dd></div>; }
 
-function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay }) {
+export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedule, onCancel, onSaveEarlyPay, onUpdateTerms }) {
+  const [showEditTerms, setShowEditTerms] = useState(false);
+  async function handleUpdateTerms(event) {
+    if (await onUpdateTerms(event, lease, schedule)) setShowEditTerms(false);
+  }
   return <div data-rental-lease-detail>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected lease</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit?.label || lease.unit_id}</h3></div>
@@ -239,6 +259,22 @@ function LeaseDetail({ lease, unit, schedule, working, onActivate, onSaveSchedul
       <Detail label="Property" value={lease.property_id} />
       <Detail label="Lease ID" value={lease.id} />
     </dl>
+    {schedule && lease.status !== "cancelled" && (
+      <div className="mt-4">
+        <button type="button" disabled={working} onClick={() => setShowEditTerms((value) => !value)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">{showEditTerms ? "Close" : "Edit terms"}</button>
+        {showEditTerms && (
+          <form onSubmit={handleUpdateTerms} className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40 sm:grid-cols-2">
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required defaultValue={(Number(lease.monthly_rent_cents) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" required defaultValue={lease.rent_due_day || 1} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Start date<input name="startDate" type="date" required defaultValue={lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" defaultValue={lease.end_date || ""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" required defaultValue={schedule.early_pay_days ?? 7} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300 sm:col-span-2">{working ? "Saving…" : "Save terms"}</button>
+            <p className="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">New terms apply to future charges only — charges already generated keep their original terms.</p>
+          </form>
+        )}
+      </div>
+    )}
     {schedule && (
       <form onSubmit={(event) => onSaveEarlyPay(event, schedule)} className="mt-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40">
         <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" required defaultValue={schedule.early_pay_days ?? 7} className="mt-1 w-24 rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>

@@ -398,6 +398,52 @@ export async function POST(request) {
         if (!data) return NextResponse.json({ error: "Only a draft lease can be cancelled." }, { status: 409 });
         return NextResponse.json({ success: true, lease: data });
       }
+      case "update-lease-terms": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
+        const input = body.terms;
+        if (!input || typeof input !== "object") return badRequest("terms is required.");
+        if (typeof input.leaseId !== "string" || input.leaseId.trim() === "") return badRequest("leaseId is required.");
+        const leaseId = input.leaseId.trim();
+        const monthlyRentCents = Number(input.monthlyRentCents);
+        if (!Number.isSafeInteger(monthlyRentCents) || monthlyRentCents <= 0) return badRequest("Monthly rent must be a positive whole-cent amount.");
+        const rentDueDay = Number(input.rentDueDay);
+        if (!Number.isInteger(rentDueDay) || rentDueDay < 1 || rentDueDay > 28) return badRequest("Due day must be between 1 and 28.");
+        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+        if (typeof input.startDate !== "string" || !datePattern.test(input.startDate)) return badRequest("A valid start date (YYYY-MM-DD) is required.");
+        const endDate = input.endDate === null || input.endDate === undefined || input.endDate === "" ? null : input.endDate;
+        if (endDate !== null && (typeof endDate !== "string" || !datePattern.test(endDate))) return badRequest("A valid end date (YYYY-MM-DD) is required.");
+        if (endDate !== null && endDate < input.startDate) return badRequest("The end date cannot be before the start date.");
+        const earlyPayDays = Number(input.earlyPayDays);
+        if (!Number.isInteger(earlyPayDays) || earlyPayDays < 0 || earlyPayDays > 31) return badRequest("Early pay window must be between 0 and 31 days.");
+        // Owner-scoped lookup: a lease from another workspace resolves to 404, never a 403
+        // that would leak its existence.
+        const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
+          .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
+        if (leaseError) throw leaseError;
+        if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+        if (lease.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be edited." }, { status: 409 });
+        // The schedule row is written first: when it is missing the request fails before the
+        // lease row is touched, so the two can never drift apart. Reports read
+        // lease.monthly_rent_cents while the charge cron (generate_monthly_rent_charge) reads
+        // the schedule row when each charge is generated -- so the new terms apply to future
+        // charges only. Already-generated charges keep their original terms and are never
+        // rewritten by this operation.
+        const { data: schedule, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
+          .update({ amount_cents: monthlyRentCents, due_day: rentDueDay, effective_start_date: input.startDate,
+            effective_end_date: endDate, early_pay_days: earlyPayDays, updated_at: timestamp })
+          .eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId)
+          .select("id, lease_id, amount_cents, due_day, effective_start_date, effective_end_date, early_pay_days").maybeSingle();
+        if (scheduleError) throw scheduleError;
+        if (!schedule) return NextResponse.json({ error: "No rent schedule found for this lease — save one before editing terms." }, { status: 409 });
+        const { data: updatedLease, error: updateError } = await authenticated.supabaseClient.from("rental_leases")
+          .update({ monthly_rent_cents: monthlyRentCents, rent_due_day: rentDueDay, start_date: input.startDate,
+            end_date: endDate, updated_at: timestamp })
+          .eq("owner_id", effectiveOwnerId).eq("id", leaseId)
+          .select("id, status, monthly_rent_cents, rent_due_day, start_date, end_date").maybeSingle();
+        if (updateError) throw updateError;
+        if (!updatedLease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+        return NextResponse.json({ success: true, lease: updatedLease, schedule });
+      }
       case "generate-charge": {
         if (!body.scheduleId || !body.period) return badRequest("scheduleId and period are required.");
         const charge = await application.generateMonthlyCharge(body.scheduleId, body.period, effectiveOwnerId);
