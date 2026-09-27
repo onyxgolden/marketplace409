@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { friendlySignOutError, signOutSafely } from "./signOutSafely.js";
 
 const { clearDashboardCache } = vi.hoisted(() => ({ clearDashboardCache: vi.fn() }));
+const { clearSWRCache } = vi.hoisted(() => ({ clearSWRCache: vi.fn() }));
 
 // dashboardCache.js's own read/write/clear behavior (TTL, per-(actingUserId, canonicalWorkspaceId)
 // isolation, schema versioning, IndexedDB fallback, whole-store clear) is verified once, directly,
@@ -11,6 +12,7 @@ const { clearDashboardCache } = vi.hoisted(() => ({ clearDashboardCache: vi.fn()
 // to observe end-to-end through, so mocking the export (rather than injecting a fake store
 // signOutSafely has no way to accept anyway) is the accurate way to test this boundary.
 vi.mock("@/app/forge/financial/dashboardCache.js", () => ({ clearDashboardCache }));
+vi.mock("@/hooks/swrCache.js", () => ({ clearSWRCache }));
 
 function fakeSupabase(signOutResult) {
   return { auth: { signOut: vi.fn().mockResolvedValue(signOutResult) } };
@@ -21,6 +23,7 @@ describe("signOutSafely", () => {
 
   beforeEach(() => {
     clearDashboardCache.mockReset().mockResolvedValue(undefined);
+    clearSWRCache.mockReset();
     originalLocation = window.location;
     delete window.location;
     window.location = { ...originalLocation, href: "" };
@@ -39,6 +42,16 @@ describe("signOutSafely", () => {
     // No identity argument -- clearDashboardCache() wipes the entire store on its own; see
     // dashboardCache.test.js for proof it actually does.
     expect(clearDashboardCache).toHaveBeenCalledWith();
+    expect(window.location.href).toBe("/");
+  });
+
+  it("on success: clears the SWR data cache too, so the next user never hydrates the previous user's data", async () => {
+    const supabase = fakeSupabase({ error: null });
+
+    const result = await signOutSafely({ supabase, redirectTo: "/" });
+
+    expect(result).toEqual({ success: true, error: null });
+    expect(clearSWRCache).toHaveBeenCalledWith();
     expect(window.location.href).toBe("/");
   });
 
@@ -62,6 +75,7 @@ describe("signOutSafely", () => {
     expect(result).toEqual({ success: false, error: { message: "network error" } });
     // A failed sign-out must never wipe a still-legitimately-signed-in user's cached data.
     expect(clearDashboardCache).not.toHaveBeenCalled();
+    expect(clearSWRCache).not.toHaveBeenCalled();
     expect(window.location.href).toBe("");
   });
 

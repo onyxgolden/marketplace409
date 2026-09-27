@@ -4,7 +4,9 @@ import ImpactSiteVerificationMeta from "./ImpactSiteVerificationMeta";
 
 import ThemeProvider from "@/components/theme/ThemeProvider";
 import PrivacySafeAnalyticsProvider from "@/components/analytics/PrivacySafeAnalyticsProvider";
+import SWRIdentityBridge from "@/components/SWRIdentityBridge";
 import { buildNoFlashThemeScript } from "@/lib/theme/noFlashThemeScript";
+import { createClient } from "@/lib/supabase/server";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -40,7 +42,19 @@ export const viewport = {
   themeColor: "#1B2A4A",
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  // Resolve the signed-in user server-side (cookie read, no network) so the
+  // SWR cache identity is initialized before any page hydrates from disk.
+  // Signed out or auth unavailable: the bridge stays fail-closed (memory-only).
+  let initialUserId = null;
+  try {
+    const supabase = await createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    initialUserId = session?.user?.id ?? null;
+  } catch {
+    initialUserId = null;
+  }
+
   return (
     <html
       lang="en"
@@ -51,6 +65,7 @@ export default function RootLayout({ children }) {
         <ImpactSiteVerificationMeta />
       </head>
       <body className="min-h-full flex flex-col">
+        <SWRIdentityBridge initialUserId={initialUserId} />
         <script
           // Runs before hydration to apply the resolved theme class and
           // prevent a light-mode flash on initial load. See

@@ -42,6 +42,8 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
       setUser(session?.user ?? null);
+      // SWR cache identity is managed application-wide by SWRIdentityBridge in the
+      // root layout -- no per-component wiring needed here.
       // The server-computed workspace list (stats, Health/Dev authorization, saved favorite) was
       // resolved for whoever was signed in when this page last rendered -- any auth change here
       // makes that stale. router.refresh() re-runs the server component in place, so the visitor
