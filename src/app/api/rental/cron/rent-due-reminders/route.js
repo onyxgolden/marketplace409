@@ -9,6 +9,7 @@ import {
 import { planReminderRun } from "@/domains/rent-reminders/rentReminderRunPlanner";
 import { mapRentScheduleRow } from "@/domains/rent-schedule";
 import { generateRentCharge, mapRentChargeToRow } from "@/domains/rent-charge";
+import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
 
 export const runtime = "nodejs";
 
@@ -119,8 +120,13 @@ async function ensureChargesForReminderWindow(db, asOfDate, { dryRun = false } =
 async function loadChargesForReminderRun(db, asOfDate) {
   const windowEnd = addDaysISODate(asOfDate, RENT_REMINDER_LEAD_DAYS);
   const { data: charges, error: chargeError } = await db.from("rent_charges")
-    .select("owner_id, id, lease_id, schedule_id, due_date, amount_cents, paid_amount_cents, status")
+    // Automatic collection is fenced to rent/proration/late_fee: ad-hoc charge
+    // types are payable voluntarily through the portal but must never receive
+    // automatic reminders. (Ad-hoc charges are also already excluded by the
+    // schedule filter below; the allowlist makes the rule explicit per spec.)
+    .select("owner_id, id, lease_id, schedule_id, due_date, amount_cents, paid_amount_cents, status, charge_type")
     .in("status", REMINDABLE_CHARGE_STATUSES)
+    .in("charge_type", AUTOPAY_COLLECTIBLE_CHARGE_TYPES)
     .gte("due_date", asOfDate)
     .lte("due_date", windowEnd);
   if (chargeError) throw chargeError;

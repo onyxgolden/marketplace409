@@ -474,6 +474,10 @@ describe("chargeCollectionLabel", () => {
     const schedules = [{ id: "schedule_future", collection_mode: "forge", forge_cutover_date: "2099-01-01" }];
     expect(chargeCollectionLabel({ schedule_id: "schedule_future", due_date: "2099-01-02" }, schedules)).toBe("Externally managed — reconciliation required");
   });
+  it("labels an ad-hoc charge (no schedule_id) as portal-payable instead of externally managed", () => {
+    expect(chargeCollectionLabel({ schedule_id: null, charge_type: "damage", due_date: "2026-08-01" }, [], "2026-08-16"))
+      .toBe("Ad-hoc charge — payable through the tenant portal");
+  });
 });
 
 // "Landlord charge lists" containment: every charge row must show whether it's FORGE-collectible

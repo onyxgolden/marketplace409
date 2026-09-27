@@ -35,8 +35,18 @@ export async function POST(request) {
     // Server-side collection-authority gate: rejects a pre-cutover/external charge even if a URL
     // or stale UI still exposes it. Never inferred from the charge's own status — an 'external'
     // schedule's charge would otherwise look exactly like a payable one.
-    const { data: schedule, error: scheduleError } = await database.from("rent_schedules")
-      .select("collection_mode, forge_cutover_date").eq("owner_id", tenant.owner_id).eq("id", charge.schedule_id).maybeSingle();
+    // Voluntary portal payment stays open to every valid charge type (no charge-type gate here).
+    // Ad-hoc charges have schedule_id NULL, so .eq("id", NULL) would match nothing and wrongly
+    // reject them: fall back to the lease's active schedule (same pattern as executeAutopayAttempt).
+    let schedule, scheduleError;
+    if (charge.schedule_id) {
+      ({ data: schedule, error: scheduleError } = await database.from("rent_schedules")
+        .select("collection_mode, forge_cutover_date").eq("owner_id", tenant.owner_id).eq("id", charge.schedule_id).maybeSingle());
+    } else {
+      ({ data: schedule, error: scheduleError } = await database.from("rent_schedules")
+        .select("collection_mode, forge_cutover_date").eq("owner_id", tenant.owner_id).eq("lease_id", charge.lease_id)
+        .eq("status", "active").order("effective_start_date", { ascending: false }).limit(1).maybeSingle());
+    }
     if (scheduleError) throw scheduleError;
     const today = new Date().toISOString().slice(0, 10);
     const isForgeCollectible = schedule?.collection_mode === "forge"
