@@ -422,27 +422,37 @@ export async function POST(request) {
         if (leaseError) throw leaseError;
         if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
         if (lease.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be edited." }, { status: 409 });
-        // The schedule row is written first: when it is missing the request fails before the
-        // lease row is touched, so the two can never drift apart. Reports read
-        // lease.monthly_rent_cents while the charge cron (generate_monthly_rent_charge) reads
-        // the schedule row when each charge is generated -- so the new terms apply to future
-        // charges only. Already-generated charges keep their original terms and are never
+        // Atomic write: update_lease_terms updates the rent_schedules row and the
+        // rental_leases row inside a single database transaction, so the two can
+        // never drift apart. Reports read lease.monthly_rent_cents while the
+        // charge cron (generate_monthly_rent_charge) reads the schedule row when
+        // each charge is generated — so the new terms apply to future charges
+        // only. Already-generated charges keep their original terms and are never
         // rewritten by this operation.
-        const { data: schedule, error: scheduleError } = await authenticated.supabaseClient.from("rent_schedules")
-          .update({ amount_cents: monthlyRentCents, due_day: rentDueDay, effective_start_date: input.startDate,
-            effective_end_date: endDate, early_pay_days: earlyPayDays, updated_at: timestamp })
-          .eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId)
-          .select("id, lease_id, amount_cents, due_day, effective_start_date, effective_end_date, early_pay_days").maybeSingle();
-        if (scheduleError) throw scheduleError;
-        if (!schedule) return NextResponse.json({ error: "No rent schedule found for this lease — save one before editing terms." }, { status: 409 });
-        const { data: updatedLease, error: updateError } = await authenticated.supabaseClient.from("rental_leases")
-          .update({ monthly_rent_cents: monthlyRentCents, rent_due_day: rentDueDay, start_date: input.startDate,
-            end_date: endDate, updated_at: timestamp })
-          .eq("owner_id", effectiveOwnerId).eq("id", leaseId)
-          .select("id, status, monthly_rent_cents, rent_due_day, start_date, end_date").maybeSingle();
-        if (updateError) throw updateError;
-        if (!updatedLease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
-        return NextResponse.json({ success: true, lease: updatedLease, schedule });
+        //
+        // All auth decisions stay here in the route (owner-scoped lease lookup
+        // above, read-only gate, cancelled rejection); the function only does the
+        // atomic write. The schedule-existence check lives inside the function's
+        // transaction (locked SELECT) — there is no separate pre-check here, so
+        // no race can slip between the check and the write.
+        const { data: termsResult, error: termsError } = await authenticated.supabaseClient.rpc("update_lease_terms", {
+          p_owner_id: effectiveOwnerId,
+          p_lease_id: leaseId,
+          p_monthly_rent_cents: monthlyRentCents,
+          p_due_day: rentDueDay,
+          p_start_date: input.startDate,
+          p_end_date: endDate,
+          p_early_pay_days: earlyPayDays,
+        });
+        if (termsError) {
+          const message = String(termsError.message || "");
+          if (message.includes("rent schedule not found for lease"))
+            return NextResponse.json({ error: "No rent schedule found for this lease — save one before editing terms." }, { status: 409 });
+          if (message.includes("lease not found"))
+            return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
+          throw termsError;
+        }
+        return NextResponse.json({ success: true, lease: termsResult?.lease, schedule: termsResult?.schedule });
       }
       case "generate-charge": {
         if (!body.scheduleId || !body.period) return badRequest("scheduleId and period are required.");
