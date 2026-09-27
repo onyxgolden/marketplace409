@@ -3,9 +3,11 @@ import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/crea
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { buildBankLedger } from "@/application/rental/bankLedger";
 
-// Dedicated bank account ledger read route — the Rentec-style bank register:
-// Date | Description | Check # | Debit | Credit | Balance | Cleared, with a running
-// balance, for one financial account at a time.
+// Dedicated bank account ledger read route — the bank register: Date,
+// Description, Check #, Debit, Credit, Balance, C/leared, per-row edit for
+// manual entries. Bank entries that name a property or tenant also carry the
+// labels so the register can link back to those ledgers; transfer legs carry
+// their transfer-group and counterpart metadata.
 //
 // Sources: financial_events rows linked to the account via bank_account_id.
 // Pure read model; the monolith GET /api/rental is intentionally untouched.
@@ -39,9 +41,33 @@ export async function GET(request) {
 
     // Paginated: PostgREST silently caps a plain .select() at 1000 rows.
     const events = await fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
-      columns: "id, event_date, description, amount, transaction_kind, normalized_category, property_id, payee, check_number, bank_account_id, cleared, cleared_at, source_system, status, is_deleted",
+      columns: "id, event_date, description, amount, transaction_kind, normalized_category, property_id, payee, check_number, bank_account_id, cleared, cleared_at, source_system, status, is_deleted, transfer_group_id, metadata",
     });
     const accountEvents = (events || []).filter((event) => event.bank_account_id === bankAccountId);
+
+    // Property / tenant labels for cross-links back to those ledgers. The
+    // labels live on rental_units / rental_tenants; RLS scopes both to the
+    // caller's workspace, so no explicit owner predicate is needed here.
+    const [unitsResult, tenantsResult] = await Promise.all([
+      supabaseClient.from("rental_units").select("property_id, label"),
+      supabaseClient.from("rental_tenants").select("id, display_name"),
+    ]);
+    const unitLabelByPropertyId = new Map(
+      ((unitsResult && unitsResult.data) || []).map((unit) => [unit.property_id, unit.label]),
+    );
+    const tenantLabelById = new Map(
+      ((tenantsResult && tenantsResult.data) || []).map((tenant) => [tenant.id, tenant.display_name]),
+    );
+    for (const event of accountEvents) {
+      if (event.property_id && unitLabelByPropertyId.has(event.property_id)) {
+        event.property_label = unitLabelByPropertyId.get(event.property_id);
+      }
+      const tenantId = event.metadata?.tenant_id;
+      if (tenantId) {
+        event.tenant_id = tenantId;
+        if (tenantLabelById.has(tenantId)) event.tenant_label = tenantLabelById.get(tenantId);
+      }
+    }
 
     const ledger = buildBankLedger({
       financialEvents: accountEvents,
