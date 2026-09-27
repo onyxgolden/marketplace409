@@ -14,6 +14,70 @@ const inflight = new Map(); // key -> Promise (dedupe concurrent fetches)
 const versions = new Map(); // key -> int (drop stale resolutions after invalidate)
 const listeners = new Map(); // key -> Set<() => void>
 
+// Disk persistence: the in-memory cache dies with the page, so every full page
+// load (bookmark, fresh tab, phone browser discarding the tab) used to flash
+// "Loading…" everywhere. Persisted entries hydrate the cache on boot: the UI
+// renders the last good data instantly and the hook's normal staleness check
+// refreshes it in the background. Data persists, refresh just happens.
+const PERSIST_PREFIX = "forge.swr.v1:";
+const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000; // disk entries older than this are ignored
+const PERSIST_MAX_BYTES = 2_000_000; // per-entry cap; oversized payloads stay memory-only
+
+function storageAvailable() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function persistEntry(key, entry) {
+  if (!storageAvailable() || key == null || entry == null) return;
+  try {
+    const payload = JSON.stringify({ data: entry.data ?? null, error: entry.error ?? "", updatedAt: entry.updatedAt ?? Date.now() });
+    if (payload.length > PERSIST_MAX_BYTES) return;
+    window.localStorage.setItem(PERSIST_PREFIX + key, payload);
+  } catch {
+    // Quota or private-mode failure: the in-memory cache keeps working.
+  }
+}
+
+function readPersistedEntry(key) {
+  if (!storageAvailable() || key == null) return undefined;
+  try {
+    const raw = window.localStorage.getItem(PERSIST_PREFIX + key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.updatedAt !== "number") return undefined;
+    if (Date.now() - parsed.updatedAt > PERSIST_MAX_AGE_MS) {
+      window.localStorage.removeItem(PERSIST_PREFIX + key);
+      return undefined;
+    }
+    return { data: parsed.data ?? null, error: parsed.error ?? "", updatedAt: parsed.updatedAt };
+  } catch {
+    return undefined;
+  }
+}
+
+function dropPersistedEntry(key) {
+  if (!storageAvailable() || key == null) return;
+  try {
+    window.localStorage.removeItem(PERSIST_PREFIX + key);
+  } catch {
+    // ignore
+  }
+}
+
+function clearPersistedEntries() {
+  if (!storageAvailable()) return;
+  try {
+    const doomed = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const name = window.localStorage.key(i);
+      if (typeof name === "string" && name.startsWith(PERSIST_PREFIX)) doomed.push(name);
+    }
+    for (const name of doomed) window.localStorage.removeItem(name);
+  } catch {
+    // ignore
+  }
+}
+
 function notify(key) {
   const set = listeners.get(key);
   if (!set) return;
@@ -27,7 +91,12 @@ function notify(key) {
 }
 
 export function getCacheEntry(key) {
-  return entries.get(key);
+  const live = entries.get(key);
+  if (live) return live;
+  // Cold boot: hydrate from disk so the first paint already has data.
+  const revived = readPersistedEntry(key);
+  if (revived) entries.set(key, revived);
+  return revived;
 }
 
 /**
@@ -68,7 +137,9 @@ export function subscribe(key, fn) {
 
 function setEntry(key, patch) {
   const prev = entries.get(key);
-  entries.set(key, { data: null, error: "", updatedAt: Date.now(), ...prev, ...patch });
+  const next = { data: null, error: "", updatedAt: Date.now(), ...prev, ...patch };
+  entries.set(key, next);
+  persistEntry(key, next);
   notify(key);
 }
 
@@ -117,6 +188,7 @@ export function invalidate(key) {
   versions.set(key, (versions.get(key) ?? 0) + 1);
   inflight.delete(key);
   entries.delete(key);
+  dropPersistedEntry(key);
   notify(key);
 }
 
@@ -142,4 +214,5 @@ export function clearSWRCache() {
   inflight.clear();
   versions.clear();
   listeners.clear();
+  clearPersistedEntries();
 }

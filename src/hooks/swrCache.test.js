@@ -130,3 +130,74 @@ describe("in-flight cleanup race (PR #334 arch review)", () => {
     expect(isInflight("race")).toBe(false);
   });
 });
+
+describe("localStorage persistence (cold-boot instant render)", () => {
+  function installLocalStorageStub() {
+    const store = new Map();
+    const stub = {
+      getItem: (key) => (store.has(key) ? store.get(key) : null),
+      setItem: (key, value) => { store.set(String(key), String(value)); },
+      removeItem: (key) => { store.delete(key); },
+      clear: () => { store.clear(); },
+      key: (index) => [...store.keys()][index] ?? null,
+      get length() { return store.size; },
+    };
+    vi.stubGlobal("window", { localStorage: stub });
+    return { store, stub };
+  }
+
+  async function freshModule() {
+    vi.resetModules();
+    return import("./swrCache");
+  }
+
+  it("persists fetched entries to localStorage", async () => {
+    const { store } = installLocalStorageStub();
+    await fetchWithDedupe("persist-1", () => Promise.resolve({ units: [1, 2] }));
+    const raw = store.get("forge.swr.v1:persist-1");
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw).data).toEqual({ units: [1, 2] });
+    vi.unstubAllGlobals();
+  });
+
+  it("hydrates a cold cache from disk so first paint has data (simulated page reload)", async () => {
+    installLocalStorageStub();
+    await fetchWithDedupe("persist-2", () => Promise.resolve({ tenants: ["a"] }));
+    // Simulate a full page reload: brand-new module state, same localStorage.
+    const cold = await freshModule();
+    expect(cold.getCacheEntry("persist-2")?.data).toEqual({ tenants: ["a"] });
+    vi.unstubAllGlobals();
+  });
+
+  it("ignores disk entries older than 24h", async () => {
+    const { store } = installLocalStorageStub();
+    store.set("forge.swr.v1:persist-3", JSON.stringify({ data: "stale", error: "", updatedAt: Date.now() - 25 * 60 * 60 * 1000 }));
+    const cold = await freshModule();
+    expect(cold.getCacheEntry("persist-3")).toBeUndefined();
+    expect(store.has("forge.swr.v1:persist-3")).toBe(false); // expired entry is cleaned up
+    vi.unstubAllGlobals();
+  });
+
+  it("invalidate drops the persisted entry", async () => {
+    const { store } = installLocalStorageStub();
+    await fetchWithDedupe("persist-4", () => Promise.resolve("v"));
+    expect(store.has("forge.swr.v1:persist-4")).toBe(true);
+    invalidate("persist-4");
+    expect(store.has("forge.swr.v1:persist-4")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps working when localStorage throws (private mode / quota)", async () => {
+    const { stub } = installLocalStorageStub();
+    stub.setItem = () => { throw new Error("quota"); };
+    await fetchWithDedupe("persist-5", () => Promise.resolve("v"));
+    expect(getCacheEntry("persist-5")?.data).toBe("v"); // memory cache unaffected
+    vi.unstubAllGlobals();
+  });
+
+  it("does not touch window when it is absent (SSR / node)", async () => {
+    expect(typeof window).toBe("undefined");
+    await fetchWithDedupe("persist-6", () => Promise.resolve("v"));
+    expect(getCacheEntry("persist-6")?.data).toBe("v");
+  });
+});
