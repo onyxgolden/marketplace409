@@ -42,6 +42,26 @@ describe("buildPropertyLedger", () => {
     expect(ledger.balanceCents).toBe(160000 - 8841);
   });
 
+  it("exposes check number, cleared state, attachment presence, payee, and memo on manual entries", () => {
+    const ledger = buildPropertyLedger(baseInput({
+      financialEvents: [
+        { id: "e1", property_id: PROP, event_date: "2026-08-01", description: "Water heater", amount: "450.00", transaction_kind: "expense", normalized_category: "property_repairs", source_system: "manual", status: "active", is_deleted: false, check_number: "1024", cleared: true, payee: "Gulf Coast Plumbing", metadata: { memo: "Emergency call" } },
+        { id: "e2", property_id: PROP, event_date: "2026-08-05", description: "Supplies", amount: "88.41", transaction_kind: "expense", normalized_category: "supplies", source_system: "manual", status: "active", is_deleted: false, check_number: null, cleared: false, payee: null, metadata: {} },
+      ],
+      attachmentEventIds: new Set(["e1"]),
+    }));
+    expect(ledger.entries).toHaveLength(2);
+    // Newest first: e2 first.
+    expect(ledger.entries[0].checkNumber).toBeNull();
+    expect(ledger.entries[0].cleared).toBe(false);
+    expect(ledger.entries[0].hasAttachment).toBe(false);
+    expect(ledger.entries[1].checkNumber).toBe("1024");
+    expect(ledger.entries[1].cleared).toBe(true);
+    expect(ledger.entries[1].hasAttachment).toBe(true);
+    expect(ledger.entries[1].payee).toBe("Gulf Coast Plumbing");
+    expect(ledger.entries[1].memo).toBe("Emergency call");
+  });
+
   it("includes succeeded rental payments as rental income via their lease", () => {
     const ledger = buildPropertyLedger(baseInput({
       leases: [{ id: "lease_1", property_id: PROP, unit_id: UNIT }],

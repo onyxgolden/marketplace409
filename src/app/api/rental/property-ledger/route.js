@@ -67,10 +67,11 @@ export async function GET(request) {
       paymentsResult,
       leasesResult,
       tenantsResult,
+      attachmentsResult,
     ] = await Promise.all([
       // Paginated: PostgREST silently caps a plain .select() at 1000 rows.
       paged(fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
-        columns: "id, event_date, description, amount, transaction_kind, normalized_category, property_id, source_system, source_record_id, metadata, status, is_deleted",
+        columns: "id, event_date, description, amount, transaction_kind, normalized_category, property_id, source_system, source_record_id, metadata, status, is_deleted, check_number, cleared, display_as, payee",
       })),
       paged(fetchAllPages(() => supabaseClient.from("rental_contractor_payments")
         .select("id, contractor_id, work_order_id, property_id, paid_at, amount_cents, payment_method, reference, invoice_reference, notes")
@@ -94,12 +95,18 @@ export async function GET(request) {
         .select("id, display_name")
         .eq("owner_id", effectiveOwnerId)
         .order("id", { ascending: true }))),
+      // Attachment presence per event — just the ids, counted in JS.
+      paged(fetchAllPages(() => supabaseClient.from("financial_event_attachments")
+        .select("event_id")
+        .eq("owner_id", effectiveOwnerId)
+        .order("event_id", { ascending: true }))),
     ]);
-    const failed = [eventsResult, contractorPaymentsResult, contractorsResult, paymentsResult, leasesResult, tenantsResult]
+    const failed = [eventsResult, contractorPaymentsResult, contractorsResult, paymentsResult, leasesResult, tenantsResult, attachmentsResult]
       .find((r) => r.error)?.error;
     if (failed) throw failed;
 
     const tenantsById = Object.fromEntries((tenantsResult.data || []).map((t) => [t.id, t]));
+    const attachmentEventIds = new Set((attachmentsResult.data || []).map((row) => row.event_id));
 
     const ledger = buildPropertyLedger({
       propertyId: propertySlug,
@@ -111,6 +118,7 @@ export async function GET(request) {
       rentalPayments: paymentsResult.data || [],
       leases: leasesResult.data || [],
       tenantsById,
+      attachmentEventIds,
     });
 
     return NextResponse.json({
