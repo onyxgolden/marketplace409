@@ -226,6 +226,14 @@ grant execute on function create_expense_with_tenant_charge(text, jsonb, jsonb) 
 -- edit rolls back with it. The caller therefore never sees a "successful"
 -- edit without its audit record, and the route surfaces the failure as a 500
 -- instead of swallowing it.
+--
+-- Authorization follows the shared workspace pattern: the caller's effective
+-- owner is resolved with public.resolve_effective_owner_id(), so an
+-- authorized co-owner edits the primary owner's books instead of being
+-- rejected (or writing under their own id). The caller must name that
+-- effective owner in p_owner_id; anyone naming a different workspace is
+-- rejected. The actor (updated_by / edited_by) is recorded server-side from
+-- auth.uid() — the caller-supplied p_edited_by is never trusted.
 create or replace function update_transaction_with_history(
   p_owner_id text,
   p_event_id text,
@@ -240,7 +248,11 @@ security invoker
 set search_path = public
 as $$
 declare
-  authenticated_owner_id text := auth.uid()::text;
+  v_actor_id text := auth.uid()::text;
+  -- The workspace this edit belongs to: the caller's own id, or the primary
+  -- owner's id when the caller is an authorized co-owner. Null when
+  -- unauthenticated (resolve_effective_owner_id returns null then).
+  effective_owner_id text := public.resolve_effective_owner_id();
   required_owner text := nullif(btrim(p_owner_id), '');
   v_event_id text := nullif(btrim(p_event_id), '');
   v_bank_account_id text := nullif(btrim(p_event ->> 'bankAccountId'), '');
@@ -249,16 +261,25 @@ declare
   v_edited_by text;
   v_row financial_events%rowtype;
 begin
-  if authenticated_owner_id is null then
-    raise exception 'Authenticated owner id is required.' using errcode = '42501';
+  -- Authenticated callers only.
+  if v_actor_id is null or effective_owner_id is null then
+    raise exception 'Not authenticated.' using errcode = '28000';
   end if;
-  if required_owner is null or required_owner <> authenticated_owner_id then
+  -- The caller must name the workspace they are actually authorized for —
+  -- their own effective owner. An authorized co-owner therefore edits the
+  -- primary owner's books; anyone naming a different workspace is rejected
+  -- as an outsider.
+  if required_owner is null or required_owner <> effective_owner_id then
     raise exception 'Owner does not match authenticated owner.' using errcode = '42501';
   end if;
   if v_event_id is null then
     raise exception 'Transaction id is required.' using errcode = '22023';
   end if;
-  v_edited_by := coalesce(nullif(btrim(p_edited_by), ''), authenticated_owner_id);
+  -- The actor is recorded server-side from auth.uid(): the caller-supplied
+  -- p_edited_by is kept in the signature for call-shape stability but never
+  -- trusted, so a co-owner cannot impersonate the primary owner (or anyone
+  -- else) in the audit trail.
+  v_edited_by := v_actor_id;
 
   -- The bank account must belong to this owner — a foreign id fails honestly
   -- instead of writing a dangling reference.

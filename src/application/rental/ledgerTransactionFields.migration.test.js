@@ -28,7 +28,7 @@ describe("ledger transaction fields migration — structural contract", () => {
     expect(sql).toContain("add column if not exists is_recurring boolean not null default false");
     expect(sql).toContain("add column if not exists recurrence_rule text");
     expect(sql).toContain("add column if not exists depreciate boolean not null default false");
-  });
+});
 
   it("creates financial_event_edits keyed to its event with cascade delete", () => {
     expect(sql).toContain("create table if not exists financial_event_edits");
@@ -74,5 +74,31 @@ describe("ledger transaction fields migration — structural contract", () => {
     expect(body).toContain("the selected bank account was not found.");
     expect(sql).toContain("revoke all on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) from public");
     expect(sql).toContain("grant execute on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) to authenticated");
+  });
+  it("authorizes the effective workspace owner and records the actor server-side", () => {
+    const start = sql.indexOf("create or replace function update_transaction_with_history");
+    expect(start).toBeGreaterThan(-1);
+    const body = sql.slice(start, sql.indexOf("revoke all on function update_transaction_with_history"));
+    // The caller's workspace is resolved with the shared helper, NOT bare
+    // auth.uid(): an authorized co-owner's p_owner_id (the primary owner's
+    // id) matches their resolved effective owner, so the edit succeeds
+    // against the primary owner's books instead of being rejected.
+    expect(body).toContain("public.resolve_effective_owner_id()");
+    expect(body).toContain("required_owner <> effective_owner_id");
+    expect(body).not.toContain("required_owner <> v_actor_id");
+    // Unauthenticated callers are rejected before any owner comparison.
+    expect(body).toContain("v_actor_id is null or effective_owner_id is null");
+    expect(body).toContain("not authenticated.");
+    expect(body.indexOf("not authenticated.")).toBeLessThan(body.indexOf("owner does not match authenticated owner."));
+    // An outsider naming a different workspace is rejected.
+    expect(body).toContain("owner does not match authenticated owner.");
+    // The actor is auth.uid(), recorded server-side: the caller-supplied
+    // p_edited_by is never used for updated_by / the history row's edited_by,
+    // so a co-owner cannot impersonate the primary owner in the audit trail.
+    expect(body).toContain("v_edited_by := v_actor_id");
+    expect(body).not.toContain("btrim(p_edited_by)");
+    // The passed p_owner_id still gates every row touched (it now equals the
+    // effective owner by the guard above).
+    expect(body).toContain("where owner_id = required_owner");
   });
 });
