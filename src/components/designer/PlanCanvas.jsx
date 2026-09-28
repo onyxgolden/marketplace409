@@ -938,6 +938,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           commitPipeRun();
         }
       }
+      // Arrow keys nudge the selection one grid square. Skipped while typing
+      // in a field, with modifier keys (Alt+arrow reorders favorites), and
+      // when a focused control already used the key (split-view divider).
+      const NUDGE = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      if (NUDGE[e.key] && tool === "select" && !e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        const tag = e.target?.tagName;
+        const hasSelection = Boolean(selection) || (multiSelection?.length || 0) > 0;
+        if (hasSelection && tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault(); // don't scroll the page
+          const [dx, dy] = NUDGE[e.key];
+          dispatch({ type: "NUDGE_SELECTION", dx, dy });
+        }
+      }
       if (e.key === "Escape") {
         dispatch({ type: "CLEAR_SELECTION" });
         setDrawPreview(null);
@@ -956,7 +969,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [tool, dispatch, commitPipeRun]);
+  }, [tool, dispatch, commitPipeRun, selection, multiSelection]);
 
   // ---- rendering ----
   const thicknessPx = Math.max(3, design.settings.wallThicknessIn * view.scale);
