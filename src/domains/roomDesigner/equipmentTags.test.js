@@ -70,3 +70,21 @@ describe("equipmentSchedule", () => {
     );
   });
 });
+
+describe("equipment schedule — TEMA exchangers", () => {
+  it("adds the three-letter designation and uses the instance size", async () => {
+    const { setSymbolSize, setSymbolTemaConfig } = await import("./temaInstances");
+    let d = placeSymbol(createEmptyDesign(), D, "tema-exchanger", 0, 0, { id: "hx", tag: "E-101" });
+    d = setSymbolTemaConfig(d, "hx", { front: "B", shell: "E", rear: "U", tubePasses: 2 });
+    d = setSymbolSize(d, "hx", { widthIn: 240 });
+    const [row] = equipmentSchedule(d);
+    expect(row.description).toBe("Shell-and-tube exchanger (TEMA, configurable) — BEU");
+    expect(row.sizeLabel).toBe("240″ × 42″ × 48″ H");
+    expect(row.category).toBe("TEMA exchangers");
+  });
+
+  it("leaves simple symbols' descriptions unchanged", () => {
+    const d = place(createEmptyDesign(), "shell-tube-exchanger");
+    expect(equipmentSchedule(d)[0].description).toBe("Shell-and-tube exchanger");
+  });
+});

@@ -52,6 +52,7 @@ import {
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
+import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -2935,7 +2936,13 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
-        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run.</p>
+        {["start", "end"].map((end) => {
+          const ref = run.attachments?.[end];
+          const target = ref && (design.symbols || []).find((s) => s.id === ref.symbolId);
+          const label = target ? `${target.tag || "equipment"} · ${ref.anchorId}` : "not connected";
+          return <Row key={end} label={end === "start" ? "Start connection" : "End connection"} value={label} />;
+        })}
+        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run. Drop an end on an equipment nozzle to connect it; connected ends follow the equipment.</p>
       </PanelShell>
     );
   }
@@ -2969,6 +2976,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <button
           onClick={() => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg: inst.rotationDeg + 45 })}
           className="mt-2 flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"

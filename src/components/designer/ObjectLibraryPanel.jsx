@@ -25,6 +25,19 @@ function categoriesOf(set) {
   return order;
 }
 
+/** Consecutive runs of categories sharing a symbol categoryGroup (null = ungrouped). */
+function categoryOptionGroups(set, categories) {
+  const groupOf = (c) => (set?.symbols || []).find((s) => s.category === c)?.categoryGroup || null;
+  const runs = [];
+  for (const c of categories) {
+    const group = groupOf(c);
+    const last = runs[runs.length - 1];
+    if (last && last.group === group) last.list.push(c);
+    else runs.push({ group, list: [c] });
+  }
+  return runs;
+}
+
 function availableDomains() {
   const order = new Map(LIBRARY_DOMAINS.map((domain, i) => [domain, i]));
   return listSymbolSets()
@@ -107,11 +120,16 @@ export default function ObjectLibraryPanel({
           onChange={(e) => setCategory(e.target.value)}
           className={`${selectClass} mt-1`}
         >
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c} ({activeSet.symbols.filter((s) => s.category === c).length})
-            </option>
-          ))}
+          {categoryOptionGroups(activeSet, categories).map(({ group, list }) => {
+            const options = list.map((c) => (
+              <option key={c} value={c}>
+                {c} ({activeSet.symbols.filter((s) => s.category === c).length})
+              </option>
+            ));
+            // Categories that declare a categoryGroup (e.g. the four TEMA
+            // categories) sit under one heading; the rest stay flat.
+            return group ? <optgroup key={group} label={group}>{options}</optgroup> : options;
+          })}
         </select>
       </label>
 
