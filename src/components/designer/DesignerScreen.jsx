@@ -2946,6 +2946,21 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="w-full"
           />
         </label>
+        {opening.type === "door" && (
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => dispatch({ type: "FLIP_DOOR", openingId: opening.id, part: "hinge" })}
+              className="rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700">
+              ⇄ Flip hinge
+            </button>
+            <button type="button" onClick={() => dispatch({ type: "FLIP_DOOR", openingId: opening.id, part: "swing" })}
+              className="rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700">
+              ⇅ Flip swing
+            </button>
+          </div>
+        )}
+        {opening.type === "door" && (
+          <p className="mt-2 text-[11px] text-gray-500">Tip: or click the ⇄ / ⇅ handles next to the door on the plan. A door follows its wall&apos;s angle — draw the wall at 45° to angle the door.</p>
+        )}
       </PanelShell>
     );
   }
@@ -2977,7 +2992,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
           rotationDeg={piece.rotationDeg}
           onRotate={(rotationDeg) => dispatch({ type: "ROTATE_FURNITURE", furnitureId: piece.id, rotationDeg })}
         />
-        <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the piece on the plan to rotate it too, or drag its corner handles to resize.</p>
+        <p className="mt-2 text-[11px] text-gray-500">Tip: drag the round handle above the piece to rotate it (15° steps, hold Shift for 45°), double-click to turn it, or drag its corner handles to resize.</p>
       </PanelShell>
     );
   }
