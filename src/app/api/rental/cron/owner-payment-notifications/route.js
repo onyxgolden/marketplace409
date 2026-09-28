@@ -465,29 +465,41 @@ export async function GET(request) {
 
     // 3. Deliver.
     // Quiet hours (Jason's rule): between 23:00 and 07:00 America/Chicago no
-    // email goes out. Rows stay 'queued' — untouched, unclaimed — and the
-    // next run after 07:00 delivers them. Checked once per run, before any
-    // claim, so a run inside the window performs zero delivery writes.
-    const quietNow = isQuietHours({
+    // email goes out. The window is checked once up front AND rechecked
+    // before every single email: a run that starts at 22:59 but runs past
+    // 23:00 must stop. The recheck sits before the claim, so the quiet path
+    // never leaves a row claimed-but-unsent — unclaimed rows stay 'queued'
+    // for the next run after 07:00.
+    const quietNow = () => isQuietHours({
       at: new Date(),
       startHour: config.quietStartHour,
       endHour: config.quietEndHour,
       timeZone: config.quietTimeZone,
     });
+    const logQuietDeferral = (deferred) => {
+      if (deferred > 0) {
+        console.log("Owner payment notification delivery deferred by quiet hours", {
+          deferred,
+          timeZone: config.quietTimeZone,
+          window: `${config.quietStartHour}:00-${config.quietEndHour}:00`,
+        });
+      }
+    };
     let sent = 0, failed = 0, superseded = 0, skippedNotAllowlistedDelivery = 0, deferredQuietHours = 0;
     if (!dryRun) {
       const candidates = await loadDeliveryCandidates(db, config);
-      if (quietNow) {
+      if (quietNow()) {
         deferredQuietHours = candidates.length;
-        if (deferredQuietHours > 0) {
-          console.log("Owner payment notification delivery deferred by quiet hours", {
-            deferred: deferredQuietHours,
-            timeZone: config.quietTimeZone,
-            window: `${config.quietStartHour}:00-${config.quietEndHour}:00`,
-          });
-        }
+        logQuietDeferral(deferredQuietHours);
       } else {
-      for (const row of candidates) {
+      for (const [index, row] of candidates.entries()) {
+        if (quietNow()) {
+          // The window opened mid-run: stop here. This row and the rest
+          // were never claimed, so they remain safely queued.
+          deferredQuietHours = candidates.length - index;
+          logQuietDeferral(deferredQuietHours);
+          break;
+        }
         const claimToken = await claimRow(db, row);
         if (!claimToken) continue;
         if (!isOwnerNotificationAllowed(config, row.owner_id)) {

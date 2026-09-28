@@ -246,6 +246,38 @@ describe("owner payment notifications cron", () => {
     expect(candidatesNode.update).not.toHaveBeenCalled();
   });
 
+  it("stops mid-run when quiet hours open: the in-flight email finishes, the rest stay queued", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    // 03:30Z = 22:30 CDT — outside quiet hours when the run starts.
+    vi.setSystemTime(new Date("2026-09-28T03:30:00Z"));
+    const rowA = reconciledCandidateRow();
+    const rowB = { ...reconciledCandidateRow(), id: `${reconciledCandidateRow().id}_b` };
+    const send = vi.fn().mockImplementation(() => {
+      // The first send runs long: by the time it resolves it is 23:30 CDT.
+      vi.setSystemTime(new Date("2026-09-28T04:30:00Z"));
+      return Promise.resolve({ messageId: "re_123" });
+    });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const candidatesNode = qb({ data: [rowA, rowB], error: null });
+    const claimNode = qb({ data: [{ id: rowA.id }], error: null });
+    const outcomeNode = qb({ data: [{ id: rowA.id }], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })], // reconciler: nothing to heal
+      // Only three notification-table calls exist: candidates, claim, outcome.
+      // sequenceDb throws on a fourth — proving row B was never claimed.
+      rental_owner_notifications: [candidatesNode, claimNode, outcomeNode],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.sent).toBe(1);
+    expect(body.deferredQuietHours).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it("does not double-queue an already-queued upcoming notice", async () => {
     const db = sequenceDb({
       ...upcomingScanSequences(),
