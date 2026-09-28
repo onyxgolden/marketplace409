@@ -511,6 +511,79 @@ export function crosshairHudLines(point, dimensionLabel = null) {
   return lines;
 }
 
+/**
+ * The plan point the crosshair HUD should report: the snapped point the
+ * click would commit — the live draw endpoint while drawing, the pipe
+ * rubber-band point for the pipe tool, the placement ghost's anchor when one
+ * is showing, and the grid snap otherwise. Pure — the canvas component owns
+ * pointer and screen state.
+ *
+ * Door/window ghosts carry the wall-constrained span (g1/g2), not an x/y
+ * anchor, so the readout follows the span's placement center rather than the
+ * generic grid snap under the cursor. The room ghost (polygon, no x/y) falls
+ * through to the generic snap, which matches its ADD_ROOM commit path that
+ * uses the same snapPoint call.
+ */
+export function crosshairReadout({
+  plan,
+  ghost = null,
+  drawPreview = null,
+  tool = null,
+  hoverPoint = null,
+  pipePreview = null,
+  snapOptions = {},
+  pipeLengthIn = sumPolylineLengthIn,
+} = {}) {
+  let point = plan;
+  let dimLabel = null;
+  if (drawPreview) {
+    point = drawPreview.b;
+    const dx = drawPreview.b.x - drawPreview.a.x;
+    const dy = drawPreview.b.y - drawPreview.a.y;
+    dimLabel = drawPreview.kind === "wall-rect"
+      ? `${feetInchesLabel(Math.abs(dx))} × ${feetInchesLabel(Math.abs(dy))}`
+      : `Len ${feetInchesLabel(Math.hypot(dx, dy))}`;
+  } else if (tool === "pipe" && hoverPoint) {
+    point = hoverPoint;
+    const run = [...(pipePreview || []), hoverPoint];
+    if (run.length >= 2) dimLabel = `Run ${feetInchesLabel(pipeLengthIn(run))}`;
+  } else if (ghost && ghost.kind === "opening" && isValidPoint(ghost.g1) && isValidPoint(ghost.g2)) {
+    point = { x: (ghost.g1.x + ghost.g2.x) / 2, y: (ghost.g1.y + ghost.g2.y) / 2 };
+  } else if (ghost && Number.isFinite(ghost.x) && Number.isFinite(ghost.y)) {
+    point = { x: ghost.x, y: ghost.y };
+  } else {
+    point = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 }).point;
+  }
+  return { point, dimLabel };
+}
+
+/** Total length of a polyline in inches (same math as the pipe-run length). */
+function sumPolylineLengthIn(points) {
+  const pts = (points || []).filter(isValidPoint);
+  let total = 0;
+  for (let i = 1; i < pts.length; i += 1) {
+    total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  }
+  return total;
+}
+
+/**
+ * Screen position (pixels) for the crosshair HUD box. The box parks by the
+ * cursor and flips to the other side when it would overflow, then clamps so
+ * it always stays fully inside the viewport. Returns null when the box cannot
+ * fit at all — the caller hides the box (the crosshair lines still render).
+ */
+export function crosshairHudBox({ cx, cy, w, h, boxW, boxH, dx = 18, dy = 22 }) {
+  if (!(boxW > 0) || !(boxH > 0) || boxW > w || boxH > h) return null;
+  let bx = cx + dx;
+  if (bx + boxW > w) bx = cx - boxW - dx;
+  bx = Math.min(Math.max(bx, 0), w - boxW);
+  let by = cy + dy;
+  if (by + boxH > h) by = cy - boxH - dy;
+  by = Math.min(Math.max(by, 0), h - boxH);
+  return { bx, by };
+}
+
 /** Bounding box of a set of points, or null when empty. */
 export function boundingBox(points) {
   const valid = (points || []).filter(isValidPoint);
