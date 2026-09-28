@@ -499,6 +499,18 @@ export function feetInchesLabel(inches) {
   return `${sign}${feet}' ${rest}"`;
 }
 
+/**
+ * CAD-style crosshair HUD lines for a plan point (inches). Line 1 is always
+ * the live cursor position; `dimensionLabel` is an optional second line with
+ * the in-progress measurement (wall length, rect WxH, pipe run length…).
+ * Pure — the canvas component owns snapping and screen layout.
+ */
+export function crosshairHudLines(point, dimensionLabel = null) {
+  const lines = [`X ${feetInchesLabel(point?.x)}  Y ${feetInchesLabel(point?.y)}`];
+  if (dimensionLabel != null && dimensionLabel !== "") lines.push(dimensionLabel);
+  return lines;
+}
+
 /** Bounding box of a set of points, or null when empty. */
 export function boundingBox(points) {
   const valid = (points || []).filter(isValidPoint);

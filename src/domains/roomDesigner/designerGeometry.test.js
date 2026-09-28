@@ -7,6 +7,7 @@ import {
   alignFurniture,
   boundingBox,
   calibrateUnderlayScale,
+  crosshairHudLines,
   dimensionGeometry,
   distancePointToSegment,
   distributeFurniture,
@@ -648,5 +649,36 @@ describe("ghostOpeningSpan", () => {
   it("throws on a non-positive width", () => {
     expect(() => ghostOpeningSpan(walls, { x: 61, y: 3 }, { widthIn: 0 })).toThrow();
     expect(() => ghostOpeningSpan(walls, { x: 61, y: 3 }, {})).toThrow();
+  });
+});
+
+describe("designerGeometry — crosshair HUD", () => {
+  it("formats the live cursor position as X/Y feet-inches", () => {
+    expect(crosshairHudLines({ x: 150, y: 99 })).toEqual([`X 12' 6"  Y 8' 3"`]);
+  });
+
+  it("rounds to whole inches like the dimension labels", () => {
+    expect(crosshairHudLines({ x: 150.6, y: 0 })).toEqual([`X 12' 7"  Y 0' 0"`]);
+  });
+
+  it("keeps the sign on negative plan coordinates", () => {
+    expect(crosshairHudLines({ x: -30, y: -150 })).toEqual([`X -2' 6"  Y -12' 6"`]);
+  });
+
+  it("shows an em dash for a missing point instead of crashing", () => {
+    expect(crosshairHudLines(null)).toEqual(["X —  Y —"]);
+    expect(crosshairHudLines({})).toEqual(["X —  Y —"]);
+  });
+
+  it("adds the live dimension as a second line when provided", () => {
+    expect(crosshairHudLines({ x: 144, y: 0 }, `Len 12' 0"`)).toEqual([
+      `X 12' 0"  Y 0' 0"`,
+      `Len 12' 0"`,
+    ]);
+  });
+
+  it("omits the second line for null or empty dimensions", () => {
+    expect(crosshairHudLines({ x: 12, y: 12 }, null)).toHaveLength(1);
+    expect(crosshairHudLines({ x: 12, y: 12 }, "")).toHaveLength(1);
   });
 });
