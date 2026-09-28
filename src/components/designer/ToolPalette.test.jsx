@@ -135,9 +135,10 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(favoritesHeader).not.toBeNull();
     // A new category starts collapsed too.
     expect(favoritesHeader.getAttribute("aria-expanded")).toBe("false");
-    // Favorites renders before House in the nav.
+    // Favorites renders before House in the nav (category toggles only — the
+    // phone rail's "All tools" button also ends in "tools").
     const headers = Array.from(
-      container.querySelectorAll('button[aria-label$="tools"]')
+      container.querySelectorAll('button[aria-label^="Expand"], button[aria-label^="Collapse"]')
     ).map((b) => b.getAttribute("aria-label"));
     expect(headers[0]).toMatch(/Favorites/);
     expect(headers[1]).toMatch(/House/);
@@ -465,10 +466,21 @@ describe("ToolPalette (favoritesSection slot)", () => {
     });
     const nav = container.querySelector("nav");
     const slot = container.querySelector('[data-testid="fav-slot"]');
-    const children = [...nav.children];
-    const firstCategory = children.findIndex((el) => el.querySelector?.("[aria-expanded]") && el !== slot);
-    expect(children.indexOf(slot)).toBeGreaterThan(-1);
-    expect(children.indexOf(slot)).toBeLessThan(firstCategory);
+    // Contract: the favorites slot sits after the pinned tools and before the
+    // first stencil category in document order. (It is no longer a direct
+    // child of nav: search/favorites/categories share a responsive wrapper
+    // that collapses to an icon rail below md.)
+    const firstPinned = nav.querySelector(":scope > div.group");
+    // First stencil-category toggle — not the phone rail's "All tools"
+    // button, which also carries aria-expanded.
+    const firstCategoryToggle = nav.querySelector(
+      'button[aria-label^="Expand"], button[aria-label^="Collapse"]'
+    );
+    expect(slot).not.toBeNull();
+    expect(firstPinned).not.toBeNull();
+    expect(firstCategoryToggle).not.toBeNull();
+    expect(firstPinned.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(firstCategoryToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await act(async () => root.unmount());
     container.remove();
   });
