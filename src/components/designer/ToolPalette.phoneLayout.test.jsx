@@ -162,4 +162,30 @@ describe("ToolPalette phone library drawer", () => {
     renderDrawerPalette();
     expect(container.querySelector('[role="dialog"][aria-label="All tools"]')).toBeNull();
   });
+
+  it("shows tool names inside the drawer (labels stay responsive when docked)", () => {
+    renderDrawerPalette();
+    const railButton = container.querySelector('nav > button[aria-label="All tools"]');
+    act(() => {
+      railButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = container.querySelector('[role="dialog"][aria-label="All tools"]');
+    const expand = dialog.querySelector('button[aria-label="Expand House tools"]');
+    act(() => {
+      expand.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // Drawer copy: labels always visible (the drawer is always below md).
+    const drawerLabels = Array.from(dialog.querySelectorAll("button span")).filter(
+      (s) => s.textContent.trim() === "Room"
+    );
+    expect(drawerLabels.length).toBeGreaterThan(0);
+    drawerLabels.forEach((s) => expect(s.className).not.toMatch(/(^|\s)hidden(\s|$)/));
+    // Docked copy (md+): labels keep the responsive hidden-until-md treatment.
+    const docked = container.querySelector("div.hidden.md\\:contents, div.hidden");
+    const dockedLabels = Array.from(docked.querySelectorAll("button span")).filter(
+      (s) => s.textContent.trim() === "Room"
+    );
+    expect(dockedLabels.length).toBeGreaterThan(0);
+    dockedLabels.forEach((s) => expect(s.className).toMatch(/(^|\s)hidden(\s|$)/));
+  });
 });
