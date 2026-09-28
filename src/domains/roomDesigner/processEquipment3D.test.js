@@ -25,6 +25,11 @@ describe("equipmentDescriptors", () => {
     expect(eq[1].rotY).toBeCloseTo(-Math.PI / 2);
   });
 
+  it("carries the symbol id so the 3D builder can specialize equipment", () => {
+    const eq = equipmentDescriptors(plant());
+    expect(eq.map((e) => e.symbolId)).toEqual(["vertical-vessel", "horizontal-drum", "centrifugal-pump"]);
+  });
+
   it("is part of the scene, and the floor grows to include it", () => {
     const d = placeSymbol(createEmptyDesign(), D, "storage-tank", 1000, 1000);
     const scene = buildThreeScene(d);
