@@ -44,6 +44,7 @@ import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
 import { pipeAttachmentErrors } from "./pipeAttachments";
 import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
+import { systemErrors } from "./designSystems";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
@@ -1085,6 +1086,7 @@ export function validateDesign(design) {
     }
     errors.push(...pipeAttachmentErrors(run)); // optional nozzle attachments
   }
+  errors.push(...systemErrors(design)); // optional systems + member colors
   for (const instance of design.symbols || []) {
     const symbol = findSymbol(instance.domain, instance.symbolId);
     if (!symbol) {
