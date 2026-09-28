@@ -30,7 +30,7 @@ function readFavoriteToolIds() {
   }
 }
 
-function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavorite }) {
+function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavorite, showLabel = false }) {
   const Icon = tool.icon;
   return (
     <div className="group relative">
@@ -46,8 +46,10 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
       >
         <Icon size={20} aria-hidden="true" />
-        {/* Phone layout: icon rail below md — labels return at md+. */}
-        <span className="hidden md:inline">{tool.label}</span>
+        {/* Phone layout: the icon rail hides labels below md, but the All
+            tools drawer (always below md) must show them — it is the only
+            surface where a phone user can identify a tool. */}
+        <span className={showLabel ? "" : "hidden md:inline"}>{tool.label}</span>
       </button>
       {disabled && (
         <span id={`${tool.id}-disabled-reason`} className="sr-only">
@@ -165,7 +167,7 @@ export default function ToolPalette({
       ? [{ id: "favorites", label: "Favorites", tools: favoriteTools }, ...grouped.categories]
       : grouped.categories;
 
-  const renderTool = (tool) => (
+  const renderTool = (tool, showLabel = false) => (
     <ToolButton
       key={tool.id}
       tool={tool}
@@ -174,6 +176,7 @@ export default function ToolPalette({
       favorite={isFavorite(tool.id)}
       onSelect={onSelect}
       onToggleFavorite={handleToggleFavorite}
+      showLabel={showLabel}
     />
   );
 
@@ -194,8 +197,10 @@ export default function ToolPalette({
 
   // The full library: search, results, favorites, stencil categories,
   // ungrouped tools. Rendered docked at md+ and inside the phone drawer below
-  // md — one definition so both stay in sync.
-  const renderLibrary = () => (
+  // md — one definition so both stay in sync. `showLabels` forces tool names
+  // visible: the drawer is always below md, so the responsive `md:inline`
+  // labels would otherwise never appear there.
+  const renderLibrary = (showLabels = false) => (
     <>
       <input
         type="search"
@@ -250,11 +255,11 @@ export default function ToolPalette({
                 {category.label} ({category.tools.length})
               </span>
             </button>
-            {!collapsed && <div className="flex flex-col gap-1">{category.tools.map(renderTool)}</div>}
+            {!collapsed && <div className="flex flex-col gap-1">{category.tools.map((t) => renderTool(t, showLabels))}</div>}
           </div>
         );
       })}
-      {!results && grouped.ungrouped.map(renderTool)}
+      {!results && grouped.ungrouped.map((t) => renderTool(t, showLabels))}
     </>
   );
 
@@ -266,7 +271,7 @@ export default function ToolPalette({
       className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:w-28 md:p-2"
       aria-label="Tools"
     >
-      {grouped.pinned.map(renderTool)}
+      {grouped.pinned.map((t) => renderTool(t))}
       {/* Phone layout: the rail shows pinned tools only, so this button opens
           the full library (search, categories, favorites) in a drawer. */}
       <button
@@ -292,7 +297,7 @@ export default function ToolPalette({
         label="All tools"
         side="left"
       >
-        {renderLibrary()}
+        {renderLibrary(/* showLabels */ true)}
       </MobileDrawer>
     </nav>
   );
