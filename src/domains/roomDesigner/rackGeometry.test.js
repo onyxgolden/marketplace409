@@ -10,6 +10,7 @@ import {
   rackLabel,
   rackMembers3D,
   rackParams,
+  rackPlan,
   rackTopIn,
   setRackParams,
 } from "./rackGeometry";
@@ -145,5 +146,21 @@ describe("3D descriptors", () => {
     expect(rack.heightIn).toBe(180 + 2 * 72);
     expect(rack.members.filter((m) => m.kind === "beam")).toHaveLength(9);
     expect(pump.members).toBeUndefined();
+  });
+});
+
+describe("rackPlan", () => {
+  it("pipe rack plan: a bent line and two column squares per bent, two column lines", () => {
+    const plan = rackPlan(rackParams(pipeRack(), {}));
+    expect(plan.bentLines).toHaveLength(3);
+    expect(plan.columns).toHaveLength(6);
+    expect(plan.columnLines).toEqual([-115, 115]);
+    expect(plan.sleepers).toEqual([]);
+    for (const c of plan.columns) expect(Math.abs(c.x) + c.size / 2).toBeLessThanOrEqual(plan.halfL + 1e-9);
+  });
+  it("sleeper plan: one bar per sleeper, no columns", () => {
+    const plan = rackPlan(rackParams(sleeper(), {}));
+    expect(plan.sleepers).toHaveLength(5);
+    expect(plan.columns).toEqual([]);
   });
 });

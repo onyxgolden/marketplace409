@@ -124,6 +124,38 @@ function clampX(x, sx, lengthIn) {
   return Math.max(-lim, Math.min(lim, x));
 }
 
+/**
+ * Plan-view primitives in the local frame (x along, z across), shared by
+ * the screen and print renderers: the rack outline, bent lines, column
+ * squares and column lines (pipe rack) or sleepers and piers (sleeper rack).
+ */
+export function rackPlan(p) {
+  const bents = rackBentOffsets(p.lengthIn, p.bentSpacingIn);
+  const halfL = p.lengthIn / 2;
+  const halfW = p.widthIn / 2;
+  if (p.kind === "sleeper") {
+    const sx = Math.min(STEEL.sleeper, p.lengthIn / 2);
+    return {
+      halfL,
+      halfW,
+      sleepers: bents.map((x) => ({ x: clampX(x, sx, p.lengthIn), w: sx })),
+      columns: [],
+      bentLines: [],
+      columnLines: [],
+    };
+  }
+  const colZ = halfW - STEEL.column / 2;
+  const xs = bents.map((x) => clampX(x, STEEL.column, p.lengthIn));
+  return {
+    halfL,
+    halfW,
+    sleepers: [],
+    columns: xs.flatMap((x) => [{ x, z: -colZ, size: STEEL.column }, { x, z: colZ, size: STEEL.column }]),
+    bentLines: xs,
+    columnLines: [-colZ, colZ],
+  };
+}
+
 /** Drawing note for the plan: TOS elevation and tiers. */
 export function rackLabel(p) {
   if (p.kind === "sleeper") return `SLEEPERS · TOS EL ${feetInchesLabel(p.elevationIn)}`;
