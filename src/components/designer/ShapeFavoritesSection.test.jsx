@@ -30,6 +30,9 @@ const shapes = [
 function render(props = {}) {
   const handlers = { onPlace: vi.fn(), onMove: vi.fn(), onRemove: vi.fn() };
   act(() => root.render(<ShapeFavoritesSection shapes={shapes} {...handlers} {...props} />));
+  // The section starts collapsed (owner decision); open it to inspect rows.
+  const header = container.querySelector('button[aria-label="Expand favorite shapes"]');
+  if (header) act(() => header.click());
   return handlers;
 }
 const byLabel = (label) => container.querySelector(`[aria-label="${label}"]`);
