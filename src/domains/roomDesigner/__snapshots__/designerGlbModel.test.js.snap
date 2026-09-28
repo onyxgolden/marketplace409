@@ -1,0 +1,22 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`designerGlbModel — hierarchy and naming > snapshots the hierarchy for a fixed fixture (renames break loudly) 1`] = `
+[
+  "floors",
+  "forge_design_design",
+  "forge_floor",
+  "forge_furniture_furniture_1",
+  "forge_furniture_furniture_1_body",
+  "forge_opening_opening_1_glass",
+  "forge_room_room_1",
+  "forge_wall_wall_1_seg1",
+  "forge_wall_wall_1_seg2",
+  "forge_wall_wall_1_seg3",
+  "forge_wall_wall_1_seg4",
+  "forge_wall_wall_2_seg1",
+  "furniture",
+  "openings",
+  "rooms",
+  "walls",
+]
+`;

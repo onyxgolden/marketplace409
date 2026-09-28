@@ -138,6 +138,7 @@ import {
 import ElevationSvg from "./ElevationSvg";
 import ElevationPrintOverlay from "./ElevationPrintOverlay";
 import DxfExportDialog from "./DxfExportDialog";
+import GlbExportDialog from "./GlbExportDialog";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
@@ -308,6 +309,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [elevationView, setElevationView] = useState(null);
   // HOME DESIGNER slice 6: DXF export dialog state.
   const [dxfOpen, setDxfOpen] = useState(false);
+  const [glbOpen, setGlbOpen] = useState(false);
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -819,6 +821,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             <Download size={15} /> DXF
           </button>
           <button
+            onClick={() => setGlbOpen(true)}
+            disabled={!project}
+            title="Export the 3D model as GLB…"
+            className="flex items-center gap-1 rounded bg-gray-800 px-3 py-1 text-sm font-semibold text-gray-200 hover:bg-gray-700 disabled:opacity-40"
+          >
+            <Download size={15} /> GLB
+          </button>
+          <button
             onClick={save}
             disabled={saving}
             className="flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
@@ -1047,6 +1057,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           design={design}
           currentLevelId={project.currentLevelId}
           onClose={() => setDxfOpen(false)}
+        />
+      )}
+      {/* Room Designer .glb export (Phase 1): the GLB export dialog. */}
+      {glbOpen && project && (
+        <GlbExportDialog
+          project={project}
+          design={design}
+          onClose={() => setGlbOpen(false)}
         />
       )}
     </div>
