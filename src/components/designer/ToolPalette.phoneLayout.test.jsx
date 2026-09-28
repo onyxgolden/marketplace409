@@ -155,6 +155,9 @@ describe("ToolPalette phone library drawer", () => {
       roomButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onSelect).toHaveBeenCalledWith("room");
+    // Picking a tool from the drawer closes the drawer (one tap back to canvas).
+    expect(toolsOpen).toBe(false);
+    expect(container.querySelector('[role="dialog"][aria-label="All tools"]')).toBeNull();
     expect(toggle).toBeDefined();
   });
 

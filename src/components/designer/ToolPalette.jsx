@@ -167,14 +167,14 @@ export default function ToolPalette({
       ? [{ id: "favorites", label: "Favorites", tools: favoriteTools }, ...grouped.categories]
       : grouped.categories;
 
-  const renderTool = (tool, showLabel = false) => (
+  const renderTool = (tool, showLabel = false, selectFn = onSelect) => (
     <ToolButton
       key={tool.id}
       tool={tool}
       active={activeToolId === tool.id}
       disabled={tool.needsUnderlay && !hasUnderlay}
       favorite={isFavorite(tool.id)}
-      onSelect={onSelect}
+      onSelect={selectFn}
       onToggleFavorite={handleToggleFavorite}
       showLabel={showLabel}
     />
@@ -190,9 +190,16 @@ export default function ToolPalette({
     [grouped],
   );
   const results = query.trim() ? searchShapes(searchIndex, query, 40) : null;
-  const pickResult = (result) => {
-    if (result.kind === "tool") onSelect(result.id);
+  const pickResult = (result, selectFn = onSelect) => {
+    if (result.kind === "tool") selectFn(result.id);
     else if (typeof onPickShape === "function") onPickShape(result);
+  };
+
+  // Phone drawer: picking a tool also closes the drawer (one tap returns to
+  // the canvas). The toggle closes because the drawer is open when tapped.
+  const selectAndCloseDrawer = (toolId) => {
+    onSelect(toolId);
+    if (mobileToolsOpen && typeof onToggleMobileTools === "function") onToggleMobileTools();
   };
 
   // The full library: search, results, favorites, stencil categories,
@@ -200,7 +207,7 @@ export default function ToolPalette({
   // md — one definition so both stay in sync. `showLabels` forces tool names
   // visible: the drawer is always below md, so the responsive `md:inline`
   // labels would otherwise never appear there.
-  const renderLibrary = (showLabels = false) => (
+  const renderLibrary = (showLabels = false, selectFn = onSelect) => (
     <>
       <input
         type="search"
@@ -227,7 +234,7 @@ export default function ToolPalette({
                 data-testid="shape-search-result"
                 disabled={disabled}
                 title={`${r.label} — ${r.group}`}
-                onClick={() => pickResult(r)}
+                onClick={() => pickResult(r, selectFn)}
                 className="rounded px-1 py-1 text-left text-[11px] leading-tight text-gray-200 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {r.label}
@@ -255,11 +262,11 @@ export default function ToolPalette({
                 {category.label} ({category.tools.length})
               </span>
             </button>
-            {!collapsed && <div className="flex flex-col gap-1">{category.tools.map((t) => renderTool(t, showLabels))}</div>}
+            {!collapsed && <div className="flex flex-col gap-1">{category.tools.map((t) => renderTool(t, showLabels, selectFn))}</div>}
           </div>
         );
       })}
-      {!results && grouped.ungrouped.map((t) => renderTool(t, showLabels))}
+      {!results && grouped.ungrouped.map((t) => renderTool(t, showLabels, selectFn))}
     </>
   );
 
@@ -297,7 +304,7 @@ export default function ToolPalette({
         label="All tools"
         side="left"
       >
-        {renderLibrary(/* showLabels */ true)}
+        {renderLibrary(/* showLabels */ true, selectAndCloseDrawer)}
       </MobileDrawer>
     </nav>
   );
