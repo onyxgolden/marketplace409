@@ -52,6 +52,7 @@ import {
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
+import RotateButtons from "./RotateButtons";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
@@ -2848,12 +2849,10 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white placeholder:text-gray-600"
           />
         </label>
-        <button
-          onClick={() => dispatch({ type: "ROTATE_FURNITURE", furnitureId: piece.id, rotationDeg: piece.rotationDeg + 45 })}
-          className="mt-2 flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
-        >
-          <RotateCw size={13} /> Rotate 45°
-        </button>
+        <RotateButtons
+          rotationDeg={piece.rotationDeg}
+          onRotate={(rotationDeg) => dispatch({ type: "ROTATE_FURNITURE", furnitureId: piece.id, rotationDeg })}
+        />
         <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the piece on the plan to rotate it too, or drag its corner handles to resize.</p>
       </PanelShell>
     );
@@ -2977,12 +2976,10 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
           </select>
         </label>
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
-        <button
-          onClick={() => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg: inst.rotationDeg + 45 })}
-          className="mt-2 flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
-        >
-          <RotateCw size={13} /> Rotate 45°
-        </button>
+        <RotateButtons
+          rotationDeg={inst.rotationDeg}
+          onRotate={(rotationDeg) => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg })}
+        />
         <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the symbol on the plan to rotate it too.</p>
       </PanelShell>
     );
