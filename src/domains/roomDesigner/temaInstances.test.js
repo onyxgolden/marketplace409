@@ -158,6 +158,10 @@ describe("validation of saved TEMA fields", () => {
     expect(temaInstanceErrors({ id: "a", tema: { front: "B", shell: "E", rear: "U", tubePasses: 1 } }, hx)[0]).toMatch(/even number/);
     expect(temaInstanceErrors({ id: "a", tema: TEMA_PRESETS.AES }, pump)[0]).toMatch(/not a configurable TEMA/);
     expect(temaInstanceErrors({ id: "a", drawingMode: "3d" }, hx)[0]).toMatch(/drawing mode/);
+    // A symbol with only one drawing cannot carry a drawing mode at all.
+    expect(temaInstanceErrors({ id: "a", drawingMode: "pid" }, pump)[0]).toMatch(/only one drawing/);
+    expect(temaInstanceErrors({ id: "a", drawingMode: "detailed" }, findSymbol(D, "shell-tube-exchanger"))[0]).toMatch(/only one drawing/);
+    expect(temaInstanceErrors({ id: "a", drawingMode: "pid" }, hx)).toEqual([]);
     expect(temaInstanceErrors({ id: "a" }, pump)).toEqual([]);
     const design = setSymbolTag(withExchanger(), "hx", "E-101");
     design.symbols[0] = { ...design.symbols[0], tema: { front: "B", shell: "E", rear: "U", tubePasses: 1 } };

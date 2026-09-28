@@ -116,8 +116,12 @@ export function temaInstanceErrors(instance, symbol) {
       if (!result.valid) errors.push(`Symbol ${instance.id}: ${result.errors.map((e) => e.message).join(" ")}`);
     }
   }
-  if (instance.drawingMode !== undefined && !DRAWING_MODES.includes(instance.drawingMode)) {
-    errors.push(`Symbol ${instance.id} has an unknown drawing mode.`);
+  if (instance.drawingMode !== undefined) {
+    if (!supportsDrawingModes(symbol)) {
+      errors.push(`Symbol ${instance.id} has a drawing mode but its symbol has only one drawing.`);
+    } else if (!DRAWING_MODES.includes(instance.drawingMode)) {
+      errors.push(`Symbol ${instance.id} has an unknown drawing mode.`);
+    }
   }
   return errors;
 }
