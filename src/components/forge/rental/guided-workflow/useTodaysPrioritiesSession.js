@@ -161,12 +161,17 @@ export function useTodaysPrioritiesSession() {
 
   // Re-fetches real data before advancing, so "next" is always evaluated against current
   // authoritative state -- never against a stale in-memory guess of what's still required.
+  // Epoch-fenced like the inits: if restart() or an account switch supersedes this fetch
+  // while it is in flight, its completion is discarded instead of overwriting the new
+  // session's summary or advancing it with the old identity's evaluator results.
   const next = useCallback(() => {
     if (!session || !identity) return Promise.resolve();
+    const epoch = initEpochRef.current;
     setLoading(true);
     setError("");
     return fetchSummaryAndIdentity({ refresh: true })
       .then(({ summary: nextSummary, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
+        if (epoch !== initEpochRef.current) return;
         setSummary(nextSummary);
         setReportsAvailable(nextReportsAvailable);
         setReportsError(nextReportsError);
@@ -174,8 +179,8 @@ export function useTodaysPrioritiesSession() {
         const evaluatorResults = buildTodaysPrioritiesEvaluatorResults(WORKFLOW_DEFINITION, nextSummary.needsAttention, now, { reportsAvailable: nextReportsAvailable });
         setSession((current) => advanceGuidedWorkflowSession(current, WORKFLOW_DEFINITION, evaluatorResults, identity.canonicalOwnerId, now));
       })
-      .catch((reason) => setError(reason.message))
-      .finally(() => setLoading(false));
+      .catch((reason) => { if (epoch === initEpochRef.current) setError(reason.message); })
+      .finally(() => { if (epoch === initEpochRef.current) setLoading(false); });
   }, [session, identity]);
 
   // Retries the reports source. A COMPLETED session has no "current step" to preserve -- it already
@@ -190,16 +195,22 @@ export function useTodaysPrioritiesSession() {
     if (session && session.status === GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED) {
       return restart();
     }
+    // Active session: refresh summary/reportsAvailable in place. Epoch-fenced
+    // for the same reason as next(): a restart or account switch mid-flight
+    // supersedes this fetch, and its completion must not overwrite the new
+    // session's data.
+    const epoch = initEpochRef.current;
     setLoading(true);
     setError("");
     return fetchSummaryAndIdentity({ refresh: true })
       .then(({ summary: nextSummary, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
+        if (epoch !== initEpochRef.current) return;
         setSummary(nextSummary);
         setReportsAvailable(nextReportsAvailable);
         setReportsError(nextReportsError);
       })
-      .catch((reason) => setError(reason.message))
-      .finally(() => setLoading(false));
+      .catch((reason) => { if (epoch === initEpochRef.current) setError(reason.message); })
+      .finally(() => { if (epoch === initEpochRef.current) setLoading(false); });
   }, [session, restart]);
 
   // Pure navigation, re-derived from the last fetched summary rather than a fresh fetch -- Back is for
