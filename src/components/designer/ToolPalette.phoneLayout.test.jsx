@@ -84,3 +84,82 @@ describe("ToolPalette phone layout", () => {
     expect(houseToggle.closest("div.hidden")).not.toBeNull();
   });
 });
+
+describe("ToolPalette phone library drawer", () => {
+  let container;
+  let root;
+  let onSelect;
+  let toolsOpen;
+
+  const renderDrawerPalette = () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    onSelect = vi.fn();
+    toolsOpen = false;
+    const toggle = () => {
+      toolsOpen = !toolsOpen;
+      render();
+    };
+    function render() {
+      act(() => {
+        root.render(
+          <ToolPalette
+            grouped={grouped}
+            activeToolId="select"
+            hasUnderlay={false}
+            onSelect={onSelect}
+            mobileToolsOpen={toolsOpen}
+            onToggleMobileTools={toggle}
+          />
+        );
+      });
+    }
+    render();
+    return { toggle };
+  };
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("opens the full library from the rail and selects a non-pinned tool", () => {
+    const { toggle } = renderDrawerPalette();
+    // The rail's "All tools" button toggles the drawer.
+    const railButton = container.querySelector('nav > button[aria-label="All tools"]');
+    expect(railButton).not.toBeNull();
+    expect(railButton.getAttribute("aria-expanded")).toBe("false");
+    act(() => {
+      railButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(toolsOpen).toBe(true);
+
+    // The drawer hosts the full library: search + stencil categories.
+    const dialog = container.querySelector('[role="dialog"][aria-label="All tools"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.querySelector('input[aria-label="Search shapes"]')).not.toBeNull();
+
+    // A non-pinned tool (Room, inside the collapsed House category) is
+    // reachable: expand the category, then pick the tool.
+    const expand = dialog.querySelector('button[aria-label="Expand House tools"]');
+    expect(expand).not.toBeNull();
+    act(() => {
+      expand.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const roomButton = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent.trim() === "Room"
+    );
+    expect(roomButton).not.toBeUndefined();
+    act(() => {
+      roomButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onSelect).toHaveBeenCalledWith("room");
+    expect(toggle).toBeDefined();
+  });
+
+  it("does not render the library drawer until opened", () => {
+    renderDrawerPalette();
+    expect(container.querySelector('[role="dialog"][aria-label="All tools"]')).toBeNull();
+  });
+});

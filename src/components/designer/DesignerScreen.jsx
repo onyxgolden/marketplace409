@@ -57,6 +57,7 @@ import RotateButtons from "./RotateButtons";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
+import { MobileDrawer } from "./MobileDrawer";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
 import CabinetEstimateSection from "./CabinetEstimateSection";
 import CabinetPriceLine from "./CabinetPriceLine";
@@ -286,9 +287,11 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [saving, setSaving] = useState(false);
   // HOUSE PLANS (HP-L0): docked reference panel, gated behind the feature flag.
   const [housePlansOpen, setHousePlansOpen] = useState(false);
-  // Phone layout: below md the right panel leaves the dock and becomes a
-  // slide-over drawer, toggled from the header.
-  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  // Phone layout: below md the docked panels leave the dock and become
+  // slide-over drawers. Exactly one drawer is open at a time (null | "panel"
+  // | "tools"); the House Plans drawer shares the housePlansOpen flag, which
+  // drives the docked rail on desktop.
+  const [mobileDrawer, setMobileDrawer] = useState(null);
   const housePlansEnabled = isHousePlansEnabled();
   // Printable sheets: overlay state for the single print flow.
   const [printOpen, setPrintOpen] = useState(false);
@@ -740,19 +743,27 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           {/* Phone layout: opens the right panel as a slide-over drawer. */}
           <button
             type="button"
-            onClick={() => setMobilePanelOpen((open) => !open)}
-            aria-pressed={mobilePanelOpen}
+            onClick={() => {
+              setMobileDrawer((d) => toggleExclusiveDrawer(d, "panel"));
+              setHousePlansOpen(false);
+            }}
+            aria-pressed={mobileDrawer === "panel"}
             aria-label="Toggle design panels"
             title="Design panels"
             className={`flex items-center gap-1 rounded px-2 py-1 text-sm md:hidden ${
-              mobilePanelOpen ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              mobileDrawer === "panel" ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
             }`}
           >
             <PanelRight size={15} aria-hidden="true" />
           </button>
           {housePlansEnabled && (
             <button
-              onClick={() => setHousePlansOpen((open) => !open)}
+              // Phone layout: opening the House Plans drawer closes any other
+              // phone drawer (exclusive drawers).
+              onClick={() => {
+                setHousePlansOpen((open) => !open);
+                setMobileDrawer(null);
+              }}
               aria-pressed={housePlansOpen}
               title="Open the HOUSE PLANS reference library"
               className={`flex items-center gap-1 rounded px-3 py-1 text-sm font-semibold ${
@@ -896,6 +907,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               onRemove={(shapeId) => setShapeLibrary((lib) => setShapeFavorite(lib, shapeId, false))}
             />
           }
+          // Phone layout: the full tool library lives in a left-anchored
+          // drawer below md. Drawers are exclusive: opening it closes the
+          // right-panel and House Plans drawers.
+          mobileToolsOpen={mobileDrawer === "tools"}
+          onToggleMobileTools={() => {
+            setMobileDrawer((d) => toggleExclusiveDrawer(d, "tools"));
+            setHousePlansOpen(false);
+          }}
         />
 
         {/* canvas */}
@@ -936,7 +955,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
         <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3 md:block">
           <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
         </aside>
-        <MobileDrawer open={mobilePanelOpen} onClose={() => setMobilePanelOpen(false)} label="Design panels">
+        <MobileDrawer open={mobileDrawer === "panel"} onClose={() => setMobileDrawer(null)} label="Design panels">
           <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
         </MobileDrawer>
 
@@ -1035,45 +1054,19 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
 }
 
 /**
- * Phone layout: slide-over drawer that hosts a docked panel below the md
- * breakpoint. Rendered only below md (the `md:hidden` wrapper); on md+ the
- * caller renders the panel docked instead. Escape and the backdrop close it.
+ * Phone layout drawer (focus-trapped modal below md). Lives in its own module
+ * so the tool palette can use it without a circular import; re-exported here
+ * to keep the existing `./DesignerScreen` import path working for tests.
+ */
+export { MobileDrawer };
+
+/**
+ * Exclusive toggle for the phone drawers: null | "panel" | "tools".
+ * Opening one drawer closes the other (toggling the open one closes it).
  * Exported for unit tests.
  */
-export function MobileDrawer({ open, onClose, label, children }) {
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
-
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-40 md:hidden">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" data-testid="mobile-drawer-backdrop" />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={label}
-        className="absolute inset-y-0 right-0 flex w-80 max-w-[85vw] flex-col overflow-y-auto border-l border-gray-800 bg-gray-900 p-3"
-      >
-        <div className="mb-1 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={`Close ${label}`}
-            className="rounded p-1.5 text-gray-400 hover:bg-gray-800 hover:text-white"
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-        {children}
-      </aside>
-    </div>
-  );
+export function toggleExclusiveDrawer(current, which) {
+  return current === which ? null : which;
 }
 
 function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null }) {

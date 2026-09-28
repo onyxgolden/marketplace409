@@ -40,16 +40,20 @@ describe("ToolPalette shape search", () => {
     act(() => root.render(<ToolPalette grouped={grouped()} activeToolId="select" hasUnderlay={false} onSelect={() => {}} {...props} />));
   const box = () => container.querySelector('input[aria-label="Search shapes"]');
   const results = () => Array.from(container.querySelectorAll('[data-testid="shape-search-result"]'));
+  // Category toggles ("Expand/Collapse <name> tools") — not the "All tools"
+  // rail button, which also ends in "tools".
+  const categoryToggle = () =>
+    container.querySelector('button[aria-label^="Expand"], button[aria-label^="Collapse"]');
 
   it("shows a search box and, while searching, results instead of the categories", () => {
     render();
     expect(box()).not.toBeNull();
     type(box(), "toilet");
     expect(results().map((r) => r.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Toilet")]));
-    expect(container.querySelector('button[aria-label$=" tools"]')).toBeNull(); // categories hidden
+    expect(categoryToggle()).toBeNull(); // categories hidden
     type(box(), "");
     expect(results()).toHaveLength(0);
-    expect(container.querySelector('button[aria-label$=" tools"]')).not.toBeNull();
+    expect(categoryToggle()).not.toBeNull();
   });
 
   it("arms a furniture or symbol result through onPickShape", () => {

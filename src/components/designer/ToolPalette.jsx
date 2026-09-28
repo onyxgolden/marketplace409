@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { FURNITURE_CATALOG } from "@/domains/roomDesigner/furnitureCatalog";
 import { listSymbolSets } from "@/domains/roomDesigner/symbolRegistry";
 import { buildShapeSearchIndex, searchShapes } from "@/domains/roomDesigner/designerShapeSearch";
-import { ChevronDown, ChevronRight, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, Shapes, Star } from "lucide-react";
+import { MobileDrawer } from "./MobileDrawer";
 
 /**
  * Former localStorage key for remembered collapsed categories. No longer read:
@@ -78,6 +79,12 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
  * collapsible stencil categories (House, Mechanical, Process, Plan, plus any
  * runtime-registered categories such as Custom). Collapse state and
  * favorites persist across reloads.
+ *
+ * Phone layout: below md the palette is a slim icon rail (pinned tools plus
+ * an "All tools" button). The full library — search, favorites, stencil
+ * categories — opens in a left-anchored drawer controlled by
+ * `mobileToolsOpen` / `onToggleMobileTools` (owned by the screen so drawers
+ * stay exclusive).
  */
 export default function ToolPalette({
   grouped,
@@ -98,6 +105,10 @@ export default function ToolPalette({
   favoritesSection = null,
   // Shape search picked a furniture/symbol result: arm it for placement.
   onPickShape = null,
+  // Phone layout: full-library drawer below md (state owned by the screen so
+  // the panel/tools/House Plans drawers stay mutually exclusive).
+  mobileToolsOpen = false,
+  onToggleMobileTools = null,
 }) {
   // Every category starts collapsed each time the designer opens (owner
   // decision); expanding is per session and deliberately not remembered.
@@ -181,15 +192,11 @@ export default function ToolPalette({
     else if (typeof onPickShape === "function") onPickShape(result);
   };
 
-  return (
-    <nav
-      // Phone layout: slim icon rail below md (pinned tools only); the full
-      // labeled palette with search and stencil categories returns at md+.
-      className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:w-28 md:p-2"
-      aria-label="Tools"
-    >
-      {grouped.pinned.map(renderTool)}
-      <div className="hidden md:contents">
+  // The full library: search, results, favorites, stencil categories,
+  // ungrouped tools. Rendered docked at md+ and inside the phone drawer below
+  // md — one definition so both stay in sync.
+  const renderLibrary = () => (
+    <>
       <input
         type="search"
         aria-label="Search shapes"
@@ -248,7 +255,45 @@ export default function ToolPalette({
         );
       })}
       {!results && grouped.ungrouped.map(renderTool)}
+    </>
+  );
+
+  return (
+    <nav
+      // Phone layout: slim icon rail below md (pinned tools + an "All tools"
+      // button that opens the full library drawer); the full labeled palette
+      // with search and stencil categories returns at md+.
+      className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:w-28 md:p-2"
+      aria-label="Tools"
+    >
+      {grouped.pinned.map(renderTool)}
+      {/* Phone layout: the rail shows pinned tools only, so this button opens
+          the full library (search, categories, favorites) in a drawer. */}
+      <button
+        type="button"
+        onClick={onToggleMobileTools}
+        aria-expanded={mobileToolsOpen}
+        aria-label="All tools"
+        title="All tools"
+        className={`flex w-full flex-col items-center gap-0.5 rounded px-1 py-2 text-gray-300 hover:bg-gray-800 md:hidden ${
+          mobileToolsOpen ? "bg-emerald-600 text-white" : ""
+        }`}
+      >
+        <Shapes size={20} aria-hidden="true" />
+        <span className="text-[10px] font-semibold">All</span>
+      </button>
+      <div className="hidden md:contents">
+        {renderLibrary()}
       </div>
+      <MobileDrawer
+        open={mobileToolsOpen}
+        // Toggle-when-open closes the drawer; drawers are exclusive.
+        onClose={onToggleMobileTools}
+        label="All tools"
+        side="left"
+      >
+        {renderLibrary()}
+      </MobileDrawer>
     </nav>
   );
 }
