@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
 import { getRentalSummaryPayload } from "../rentalSummaryClient";
+import { useRentalDashboardPayload } from "../useRentalDashboardPayload";
 import {
   buildTodaysPrioritiesWorkflowDefinition,
   buildTodaysPrioritiesEvaluatorResults,
@@ -38,14 +39,18 @@ function generateSessionId() {
 // /api/rental/reports stays soft, exactly as before: only 2 of the 9 needsAttention categories
 // depend on it, so its failure is reported as { available: false, error } and the other
 // categories keep working rather than failing the entire session over an unrelated endpoint.
-function fetchSummaryAndIdentity({ refresh = false } = {}) {
-  return getRentalSummaryPayload({ refresh }).then(({ rentalBody, reports }) => ({
+function processPayload({ rentalBody, reports }) {
+  return {
     summary: buildRentalDashboardSummary(rentalBody, reports.report),
     actingUserId: rentalBody.actingUserId || null,
     canonicalOwnerId: rentalBody.canonicalOwnerId || null,
     reportsAvailable: reports.available,
     reportsError: reports.error,
-  }));
+  };
+}
+
+function fetchSummaryAndIdentity({ refresh = false } = {}) {
+  return getRentalSummaryPayload({ refresh }).then(processPayload);
 }
 
 export function useTodaysPrioritiesSession() {
@@ -57,52 +62,116 @@ export function useTodaysPrioritiesSession() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const sessionIdRef = useRef(generateSessionId());
+  // Init epoch: the mount effect may only initialize the session from the cache
+  // at epoch 0. Every authoritative init (restart, and the identity-change
+  // reinit below) bumps the epoch first, which permanently fences the mount
+  // effect out -- a late cache update can never initialize a second session
+  // from stale data while an authoritative fetch is in flight or completed.
+  const initEpochRef = useRef(0);
+  // Mount-time data comes through the shared SWR cache (same key the Overview panel
+  // uses), so a reload hydrates instantly from the localStorage disk cache instead of
+  // flashing "Loading...". User-triggered refreshes still fetch authoritative state
+  // directly: next/retryReports via fetchSummaryAndIdentity({ refresh: true }), and
+  // restart through runInitialize() below.
+  const { data: cachedPayload, error: cachedError, isLoading: cacheLoading, identityEpoch } = useRentalDashboardPayload();
 
-  // The mount effect calls this directly (no synchronous setState before the fetch -- loading/error
-  // already start at their correct initial values, so there's nothing to reset). `restart` below wraps
-  // it with the explicit reset for the user-triggered "try again" path, which runs from an event
-  // handler rather than an effect body.
-  const runInitialize = useCallback(() => fetchSummaryAndIdentity()
-    .then(({ summary: nextSummary, actingUserId, canonicalOwnerId, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
-      setSummary(nextSummary);
-      setIdentity({ actingUserId, canonicalOwnerId });
-      setReportsAvailable(nextReportsAvailable);
-      setReportsError(nextReportsError);
-      if (!actingUserId || !canonicalOwnerId) {
-        throw new Error("Could not determine your workspace identity -- guidance can't start safely without it.");
-      }
-      const now = new Date().toISOString();
-      const evaluatorResults = buildTodaysPrioritiesEvaluatorResults(WORKFLOW_DEFINITION, nextSummary.needsAttention, now, { reportsAvailable: nextReportsAvailable });
-      setSession(startGuidedWorkflowSession({
-        sessionId: sessionIdRef.current,
-        workflowDefinition: WORKFLOW_DEFINITION,
-        evaluatorResults,
-        actingUserId,
-        canonicalOwnerId,
-        now,
-      }));
-    })
-    .catch((reason) => setError(reason.message))
-    .finally(() => setLoading(false)), []);
+  const applyProcessedPayload = useCallback((processed, epoch) => {
+    // Fenced out: a newer init superseded this one (restart or identity change
+    // while this fetch was in flight). Never apply stale results over them.
+    if (epoch !== initEpochRef.current) return;
+    const { summary: nextSummary, actingUserId, canonicalOwnerId, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError } = processed;
+    setSummary(nextSummary);
+    setIdentity({ actingUserId, canonicalOwnerId });
+    setReportsAvailable(nextReportsAvailable);
+    setReportsError(nextReportsError);
+    if (!actingUserId || !canonicalOwnerId) {
+      throw new Error("Could not determine your workspace identity -- guidance can't start safely without it.");
+    }
+    const now = new Date().toISOString();
+    const evaluatorResults = buildTodaysPrioritiesEvaluatorResults(WORKFLOW_DEFINITION, nextSummary.needsAttention, now, { reportsAvailable: nextReportsAvailable });
+    setSession(startGuidedWorkflowSession({
+      sessionId: sessionIdRef.current,
+      workflowDefinition: WORKFLOW_DEFINITION,
+      evaluatorResults,
+      actingUserId,
+      canonicalOwnerId,
+      now,
+    }));
+  }, []);
 
-  useEffect(() => {
-    runInitialize();
-  }, [runInitialize]);
-
-  const restart = useCallback(() => {
+  // Authoritative init: always bumps the init epoch first, so the mount effect
+  // can never initialize from cache afterwards, and any older in-flight init's
+  // completion is fenced out by the epoch check in applyProcessedPayload.
+  // The mount effect never calls this (it initializes from the cache at epoch
+  // 0); `restart` and the identity watcher are the only callers. The watcher
+  // passes { refresh: true }: the client's in-flight slot is not identity-aware,
+  // so a switch mid-fetch would otherwise hand the old account's pair to the
+  // new session -- refresh bypasses the slot and fetches under the new identity.
+  const runInitialize = useCallback(({ refresh = false } = {}) => {
+    const epoch = ++initEpochRef.current;
     setLoading(true);
     setError("");
-    return runInitialize();
-  }, [runInitialize]);
+    return fetchSummaryAndIdentity({ refresh })
+      .then((processed) => { applyProcessedPayload(processed, epoch); })
+      .catch((reason) => { if (epoch === initEpochRef.current) setError(reason.message); })
+      .finally(() => { if (epoch === initEpochRef.current) setLoading(false); });
+  }, [applyProcessedPayload]);
+
+  // Mount: initialize from the shared cached payload once it arrives. A first-ever
+  // load (empty disk cache) waits for the SWR fetch exactly like the old direct
+  // fetch; a reload hydrates synchronously with no loading flash. Fenced to epoch
+  // 0: once any authoritative init begins, this effect never initializes from
+  // cache again -- a late cache update during restart() can't start a second
+  // session from stale data and race the authoritative fetch.
+  // The body runs async so the effect itself never calls setState synchronously
+  // (lint rule), matching the old runInitialize discipline.
+  useEffect(() => {
+    if (initEpochRef.current !== 0 || cacheLoading) return;
+    const epoch = initEpochRef.current;
+    (async () => {
+      if (epoch !== initEpochRef.current) return;
+      if (!cachedPayload) {
+        if (cachedError) setError(cachedError);
+        setLoading(false);
+        return;
+      }
+      try {
+        applyProcessedPayload(processPayload(cachedPayload), epoch);
+      } catch (reason) {
+        if (epoch === initEpochRef.current) setError(reason.message);
+      } finally {
+        if (epoch === initEpochRef.current) setLoading(false);
+      }
+    })();
+  }, [cachedPayload, cachedError, cacheLoading, applyProcessedPayload]);
+
+  // Account switching: setCacheIdentity() wipes the shared cache and the SWR
+  // hook refetches for the new identity, but without this the session would
+  // keep showing the previous identity's summary. On an epoch change, drop the
+  // old session and reinitialize authoritatively -- the cached payload belongs
+  // to the previous identity and must never initialize the new session.
+  const identityEpochRef = useRef(identityEpoch);
+  useEffect(() => {
+    if (identityEpochRef.current === identityEpoch) return;
+    identityEpochRef.current = identityEpoch;
+    runInitialize({ refresh: true });
+  }, [identityEpoch, runInitialize]);
+
+  const restart = useCallback(() => runInitialize(), [runInitialize]);
 
   // Re-fetches real data before advancing, so "next" is always evaluated against current
   // authoritative state -- never against a stale in-memory guess of what's still required.
+  // Epoch-fenced like the inits: if restart() or an account switch supersedes this fetch
+  // while it is in flight, its completion is discarded instead of overwriting the new
+  // session's summary or advancing it with the old identity's evaluator results.
   const next = useCallback(() => {
     if (!session || !identity) return Promise.resolve();
+    const epoch = initEpochRef.current;
     setLoading(true);
     setError("");
     return fetchSummaryAndIdentity({ refresh: true })
       .then(({ summary: nextSummary, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
+        if (epoch !== initEpochRef.current) return;
         setSummary(nextSummary);
         setReportsAvailable(nextReportsAvailable);
         setReportsError(nextReportsError);
@@ -110,8 +179,8 @@ export function useTodaysPrioritiesSession() {
         const evaluatorResults = buildTodaysPrioritiesEvaluatorResults(WORKFLOW_DEFINITION, nextSummary.needsAttention, now, { reportsAvailable: nextReportsAvailable });
         setSession((current) => advanceGuidedWorkflowSession(current, WORKFLOW_DEFINITION, evaluatorResults, identity.canonicalOwnerId, now));
       })
-      .catch((reason) => setError(reason.message))
-      .finally(() => setLoading(false));
+      .catch((reason) => { if (epoch === initEpochRef.current) setError(reason.message); })
+      .finally(() => { if (epoch === initEpochRef.current) setLoading(false); });
   }, [session, identity]);
 
   // Retries the reports source. A COMPLETED session has no "current step" to preserve -- it already
@@ -126,16 +195,22 @@ export function useTodaysPrioritiesSession() {
     if (session && session.status === GUIDED_WORKFLOW_SESSION_STATUS.COMPLETED) {
       return restart();
     }
+    // Active session: refresh summary/reportsAvailable in place. Epoch-fenced
+    // for the same reason as next(): a restart or account switch mid-flight
+    // supersedes this fetch, and its completion must not overwrite the new
+    // session's data.
+    const epoch = initEpochRef.current;
     setLoading(true);
     setError("");
     return fetchSummaryAndIdentity({ refresh: true })
       .then(({ summary: nextSummary, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
+        if (epoch !== initEpochRef.current) return;
         setSummary(nextSummary);
         setReportsAvailable(nextReportsAvailable);
         setReportsError(nextReportsError);
       })
-      .catch((reason) => setError(reason.message))
-      .finally(() => setLoading(false));
+      .catch((reason) => { if (epoch === initEpochRef.current) setError(reason.message); })
+      .finally(() => { if (epoch === initEpochRef.current) setLoading(false); });
   }, [session, restart]);
 
   // Pure navigation, re-derived from the last fetched summary rather than a fresh fetch -- Back is for

@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 import { validateTransaction } from "@/application/rental/validateTransaction";
-import { toRow } from "@/application/rental/transactionRow";
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { createExpenseWithTenantCharge, validateTenantChargeInput } from "@/application/rental/tenantCharges";
 
@@ -130,18 +129,50 @@ export async function POST(request) {
       } catch (chargeError) {
         console.error("Transaction with tenant charge error", chargeError);
         const message = chargeError?.message || "Unable to save the transaction and tenant charge.";
-        return NextResponse.json({ error: message }, { status: /required|must be|was not found|positive/i.test(message) ? 400 : 500 });
+        return NextResponse.json({ error: message }, { status: /required|must be|was not found|positive|deactivated|unknown account/i.test(message) ? 400 : 500 });
       }
     }
 
-    const { data, error } = await authenticated.supabaseClient
-      .from("financial_events")
-      .insert(toRow({ ownerId: authenticated.effectiveOwnerId, userId: authenticated.user.id, value }))
-      .select("id, event_date, description, amount, transaction_kind, normalized_category, payee, check_number, bank_account_id, cleared, cleared_at, property_id")
-      .limit(1);
-    if (error) throw error;
+    // The insert AND the active-category check happen in one RPC, coordinated
+    // with concurrent deactivation via the chart row lock (PR #420
+    // retrospective finding 1). The validateTransaction pass above is the
+    // early UX rejection; the RPC is the enforcement boundary.
+    const { data: created, error: createError } = await authenticated.supabaseClient.rpc("create_ledger_transaction", {
+      p_owner_id: authenticated.effectiveOwnerId,
+      p_event: {
+        propertyId: value.propertyId,
+        eventDate: value.eventDate,
+        description: value.description,
+        amount: value.amount,
+        transactionKind: value.transactionKind,
+        normalizedCategory: value.normalizedCategory,
+        payee: value.payee,
+        checkNumber: value.checkNumber,
+        bankAccountId: value.bankAccountId,
+        cleared: value.cleared,
+        displayAs: value.displayAs,
+        refNumber: value.refNumber,
+        payeeMailingAddress: value.payeeMailingAddress,
+        assignedTo: value.assignedTo,
+        isRecurring: value.isRecurring,
+        recurrenceRule: value.recurrenceRule,
+        depreciate: value.depreciate,
+        memo: value.memo,
+        tenantId: value.tenantId,
+        paymentMethod: value.paymentMethod,
+      },
+    });
+    if (createError) {
+      const message = createError.message || "";
+      // Validation rejections from the RPC (bad input, unknown or
+      // deactivated account) are the caller's fault, not a server fault.
+      if (["22000", "22023", "P0002"].includes(createError.code)) {
+        return NextResponse.json({ error: message || "Unable to save the transaction." }, { status: 400 });
+      }
+      throw createError;
+    }
 
-    return NextResponse.json({ success: true, event: (data || [])[0] || null });
+    return NextResponse.json({ success: true, event: created });
   } catch (error) {
     console.error("Transaction create error", error);
     return NextResponse.json({ error: "Unable to save the transaction." }, { status: 500 });
@@ -328,7 +359,10 @@ export async function PATCH(request) {
     // so structural changes are refused — delete the transfer and re-create
     // it instead. Memo and check number may still be edited; a date edit is
     // applied to both legs atomically by the transfer-leg RPC below, so the
-    // pair can never diverge.
+    // pair can never diverge. This comparison is the early UX rejection; the
+    // RPC re-checks it against the locked rows (the enforcement boundary),
+    // so a stale read or a direct RPC call cannot sneak a structural edit
+    // through.
     if (existing.transfer_group_id) {
       const structuralChange =
         Number(value.amount) !== Number(existing.amount) ||

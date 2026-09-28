@@ -3,8 +3,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
+import { clearSWRCache, fetchWithDedupe, seedCacheEntry } from "../../../hooks/swrCache";
 import RentalApplicationShell, { buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
+import { resolveRentalRecordContextParam } from "./rentalRecordParam.js";
+import { RENTAL_DASHBOARD_PAYLOAD_SWR_KEY } from "./useRentalDashboardPayload.js";
 import RentalPageClient from "./RentalPageClient.jsx";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
 
@@ -192,6 +194,63 @@ describe("RentalPageClient section deep-linking", () => {
   it("defaults to the dashboard overview with no section", () => {
     const markup = renderToStaticMarkup(<RentalPageClient />);
     expect(markup).toContain('data-active-function="overview"');
+  });
+});
+
+describe("resolveRentalRecordContextParam", () => {
+  it("resolves a valid property context", () => {
+    expect(resolveRentalRecordContextParam({ recordType: "property", recordId: "308-paula", propertyId: "308-paula" }))
+      .toEqual({ recordType: "property", recordId: "308-paula", propertyId: "308-paula" });
+  });
+
+  it("resolves tenant and unit contexts and omits propertyId when absent", () => {
+    expect(resolveRentalRecordContextParam({ recordType: "tenant", recordId: "t1" }))
+      .toEqual({ recordType: "tenant", recordId: "t1" });
+    expect(resolveRentalRecordContextParam({ recordType: "unit", recordId: "u9", propertyId: "p2" }))
+      .toEqual({ recordType: "unit", recordId: "u9", propertyId: "p2" });
+  });
+
+  it("rejects unknown types, missing ids, and overlong values", () => {
+    expect(resolveRentalRecordContextParam({ recordType: "spaceship", recordId: "x" })).toBeNull();
+    expect(resolveRentalRecordContextParam({ recordType: "property", recordId: "" })).toBeNull();
+    expect(resolveRentalRecordContextParam({ recordType: "property", recordId: "x".repeat(201) })).toBeNull();
+    expect(resolveRentalRecordContextParam({})).toBeNull();
+    expect(resolveRentalRecordContextParam({ recordType: "property" })).toBeNull();
+  });
+});
+
+describe("RentalPageClient record-context URL sync", () => {
+  let mounted;
+  beforeEach(() => {
+    // The dashboard overview hydrates from the shared SWR cache -- seed it so
+    // the DOM mounts below never attempt a real network fetch.
+    seedCacheEntry(RENTAL_DASHBOARD_PAYLOAD_SWR_KEY, {
+      rentalBody: { units: [], leases: [] },
+      reports: { available: true, report: { summary: { openBalanceCents: 0, overdueBalanceCents: 0 } } },
+    });
+  });
+  afterEach(() => {
+    if (mounted) { act(() => { mounted.root.unmount(); }); mounted.container.remove(); mounted = null; }
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("writes section and record context to the URL so a reload restores the property page", () => {
+    mounted = mount(
+      <RentalPageClient
+        initialSection="financial-setup"
+        initialRecordContext={{ recordType: "property", recordId: "308-paula", propertyId: "308-paula" }}
+      />,
+    );
+    const search = window.location.search;
+    expect(search).toContain("section=financial-setup");
+    expect(search).toContain("recordType=property");
+    expect(search).toContain("recordId=308-paula");
+    expect(search).toContain("propertyId=308-paula");
+  });
+
+  it("keeps the dashboard URL param-free", () => {
+    mounted = mount(<RentalPageClient />);
+    expect(window.location.search).toBe("");
   });
 });
 

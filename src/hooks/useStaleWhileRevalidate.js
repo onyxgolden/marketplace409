@@ -75,6 +75,11 @@ export function useStaleWhileRevalidate(key, fetcher, options = {}) {
     error: entry?.error ?? "",
     isLoading: key != null && !entry,
     isRefreshing: key != null && !!entry && isInflight(key),
+    // The identity epoch backing this data. Consumers that keep derived state
+    // (like the Today's Priorities session) watch it to reset when the account
+    // switches -- the cache is wiped and refetched for the new identity, but
+    // derived state would otherwise keep showing the previous identity.
+    identityEpoch: identityTick,
     refresh,
     invalidate: invalidateKey,
   };

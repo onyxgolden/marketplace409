@@ -70,6 +70,16 @@ import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMa
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
 import { addSavedEstimate, removeSavedEstimate } from "@/domains/roomDesigner/cabinetPriceBooks";
 import { autoTagFor } from "@/domains/roomDesigner/equipmentTags";
+import {
+  initialTemaFields,
+  replaceWithDetailedVersion,
+  setSymbolDrawingMode,
+  setSymbolSize,
+  setSymbolTemaConfig,
+} from "@/domains/roomDesigner/temaInstances";
+import { detailedVersionFor } from "@/domains/roomDesigner/temaExchangerCatalog";
+import { detectRunAttachments, reconcilePipeAttachments } from "@/domains/roomDesigner/pipeAttachments";
+import { validateTemaConfig } from "@/domains/roomDesigner/temaTypes";
 import { placedSelection } from "@/domains/roomDesigner/customShapes/customShapePlacement";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
@@ -135,7 +145,10 @@ function withPipeDefaults(design) {
  * pushing a new one, so a drag is a single undo step. Any non-coalesced
  * edit clears the redo stack.
  */
-function touch(state, design, coalesceKey) {
+function touch(state, nextDesign, coalesceKey) {
+  // Pipe ends attached to equipment nozzles follow every edit (move,
+  // rotate, resize, reconfigure, delete); a no-op for unattached designs.
+  const design = reconcilePipeAttachments(nextDesign);
   const past = state.past || [];
   if (
     coalesceKey != null &&
@@ -469,8 +482,10 @@ export function designerReducer(state, action) {
     // ---- Phase 2: piping mode ----
     case "ADD_PIPE_RUN": {
       const layer = state.pendingPipe.layer === "auto" ? "piping" : state.pendingPipe.layer;
-      const design = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
-      const run = design.pipes[design.pipes.length - 1];
+      const added = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
+      const run = added.pipes[added.pipes.length - 1];
+      // Ends snapped onto a nozzle attach to it.
+      const design = detectRunAttachments(added, run.id);
       return { ...touch(state, design), selection: { kind: "pipe", id: run.id } };
     }
     case "SET_PIPE_FIELDS":
@@ -478,9 +493,11 @@ export function designerReducer(state, action) {
       return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
     case "MOVE_PIPE_VERTEX":
       if (!findPipeRun(state.design, action.pipeId)) return state;
+      // Dragging an end re-derives its attachment: off a nozzle detaches,
+      // dropped exactly on one attaches.
       return touch(
         state,
-        movePipeVertex(state.design, action.pipeId, action.index, action.point),
+        detectRunAttachments(movePipeVertex(state.design, action.pipeId, action.index, action.point), action.pipeId),
         action.coalesce,
       );
     case "PLACE_SYMBOL": {
@@ -488,13 +505,16 @@ export function designerReducer(state, action) {
       if (!pending) return state;
       const domain = action.domain || pending.domain || "piping";
       const symbolId = action.symbolId || pending.symbolId;
-      const design = placeSymbol(state.design, domain, symbolId, action.x, action.y, {
+      let design = placeSymbol(state.design, domain, symbolId, action.x, action.y, {
         layer: state.pendingPipe.layer === "auto" ? undefined : state.pendingPipe.layer,
         // Process equipment gets the next free tag for its letter code
         // (P-101, P-102, ...); other symbols stay untagged as before.
         tag: autoTagFor(state.design, domain, symbolId) || undefined,
       });
       const inst = design.symbols[design.symbols.length - 1];
+      // A configurable TEMA exchanger saves its default configuration.
+      const { tema } = initialTemaFields(findSymbol(domain, symbolId));
+      if (tema) design = setSymbolTemaConfig(design, inst.id, tema);
       return { ...touch(state, design), selection: { kind: "symbol", id: inst.id } };
     }
     case "MOVE_SYMBOL":
@@ -513,6 +533,37 @@ export function designerReducer(state, action) {
     case "SET_SYMBOL_LAYER":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, setSymbolLayer(state.design, action.symbolId, action.layer));
+    // ---- TEMA exchangers: configuration, drawing mode, size, replace ----
+    case "SET_SYMBOL_TEMA": {
+      const inst = findSymbolInstance(state.design, action.symbolId);
+      if (!inst || findSymbol(inst.domain, inst.symbolId)?.tema?.kind !== "assembly") return state;
+      if (!validateTemaConfig(action.config).valid) return state; // blocked: the picker explains why
+      return touch(state, setSymbolTemaConfig(state.design, action.symbolId, action.config));
+    }
+    case "SET_SYMBOL_DRAWING_MODE": {
+      const inst = findSymbolInstance(state.design, action.symbolId);
+      if (!inst || !findSymbol(inst.domain, inst.symbolId)?.tema) return state;
+      if (action.mode !== "detailed" && action.mode !== "pid") return state;
+      return touch(state, setSymbolDrawingMode(state.design, action.symbolId, action.mode));
+    }
+    case "SET_SYMBOL_SIZE": {
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      const ok = (v) => v === undefined || (Number.isFinite(v) && v > 0);
+      if (!ok(action.widthIn) || !ok(action.depthIn)) return state;
+      return touch(
+        state,
+        setSymbolSize(state.design, action.symbolId, { widthIn: action.widthIn, depthIn: action.depthIn }),
+        action.coalesce,
+      );
+    }
+    case "REPLACE_WITH_DETAILED": {
+      const inst = findSymbolInstance(state.design, action.symbolId);
+      if (!inst || !detailedVersionFor(inst.domain, inst.symbolId)) return state;
+      return {
+        ...touch(state, replaceWithDetailedVersion(state.design, action.symbolId)),
+        selection: { kind: "symbol", id: inst.id },
+      };
+    }
     // ---- Phase 3: people org charts ----
     case "ADD_ORG_CHART": {
       // Placing a chart is a one-shot: drop back to the select tool so the

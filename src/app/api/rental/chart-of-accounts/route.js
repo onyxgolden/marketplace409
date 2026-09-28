@@ -57,6 +57,9 @@ export async function GET(request) {
         .select("id, event_date, description, amount, transaction_kind, property_id")
         .eq("owner_id", effectiveOwnerId)
         .eq("normalized_category", code)
+        // Soft-deleted transactions are excluded: the drawer is a live view
+        // of the account, not the audit trail (PR #420 retrospective finding 2).
+        .eq("is_deleted", false)
         .order("event_date", { ascending: false })
         .limit(50);
       if (error) throw error;
@@ -162,36 +165,59 @@ export async function PATCH(request) {
       }
       updates.label = label;
     }
+    let deactivating = false;
     if (body.is_active !== undefined) {
       if (typeof body.is_active !== "boolean") {
         return NextResponse.json({ error: "is_active must be true or false." }, { status: 400 });
       }
-      if (body.is_active === false && account.is_active) {
-        const usage = await getAccountUsageCount(supabaseClient, effectiveOwnerId, account.code);
-        if (usage > 0) {
-          return NextResponse.json(
-            {
-              error: `This account has ${usage} transaction${usage === 1 ? "" : "s"} posted to it. Reassign ${usage === 1 ? "it" : "them"} to another account before deactivating.`,
-            },
-            { status: 409 }
-          );
-        }
-      }
-      updates.is_active = body.is_active;
+      // Deactivation is the racy half of the deactivation/posting pair; it
+      // goes through the RPC below. Reactivation has no race and stays a
+      // plain update.
+      if (body.is_active === false) deactivating = true;
+      else updates.is_active = true;
     }
-    if (Object.keys(updates).length === 0) {
+    if (Object.keys(updates).length === 0 && !deactivating) {
       return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
     }
-    updates.updated_at = new Date().toISOString();
 
-    const { data: updated, error: updateError } = await supabaseClient
-      .from("chart_of_accounts")
-      .update(updates)
-      .eq("owner_id", effectiveOwnerId)
-      .eq("id", id)
-      .select("id, code, label, account_type, is_active, is_system")
-      .single();
-    if (updateError) throw updateError;
+    // The row lock, the usage check, and the write happen atomically inside
+    // the RPC, coordinated with concurrent postings via the chart row lock
+    // (PR #420 retrospective finding 1). It runs before any label update so
+    // a blocked deactivation leaves the label untouched, as before.
+    if (deactivating) {
+      const { error: deactivateError } = await supabaseClient.rpc("deactivate_chart_account", {
+        p_owner_id: effectiveOwnerId,
+        p_account_id: id,
+      });
+      if (deactivateError) {
+        const message = deactivateError.message || "";
+        if (/has \d+ transactions? posted to it/i.test(message)) {
+          return NextResponse.json({ error: message }, { status: 409 });
+        }
+        if (deactivateError.code === "P0002") {
+          return NextResponse.json({ error: "Account not found." }, { status: 404 });
+        }
+        throw deactivateError;
+      }
+    }
+
+    let updated = account;
+    if (Object.keys(updates).length > 0) {
+      const labelUpdates = { ...updates, updated_at: new Date().toISOString() };
+      const { data, error: updateError } = await supabaseClient
+        .from("chart_of_accounts")
+        .update(labelUpdates)
+        .eq("owner_id", effectiveOwnerId)
+        .eq("id", id)
+        .select("id, code, label, account_type, is_active, is_system")
+        .single();
+      if (updateError) throw updateError;
+      updated = data;
+    } else if (deactivating) {
+      // Deactivation-only: the RPC already wrote the row; reflect it here so
+      // the response carries the new state.
+      updated = { ...account, is_active: false };
+    }
 
     const usage = await getAccountUsageCount(supabaseClient, effectiveOwnerId, updated.code);
     return NextResponse.json({ success: true, account: serialize(updated, usage) });

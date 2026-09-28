@@ -28,6 +28,7 @@ import {
   skyTexture,
   woodFloorTexture,
 } from "./designerThreeTextures";
+import { createTagSpriteCache } from "@/domains/roomDesigner/tagSpriteCache";
 
 const IN = 1; // scene units are inches; camera distances derived from floor size
 
@@ -65,6 +66,238 @@ const REBUILD_DEBOUNCE_MS = 120;
 /** Highlight tint applied to the selected entity's meshes. Cheap: a per-mesh material clone, not a scene rebuild. */
 const HIGHLIGHT_COLOR = 0x2dd4bf; // emerald/teal, distinct from the warm interior palette
 const HIGHLIGHT_INTENSITY = 0.85;
+
+/**
+ * TrueView-style camera framing, extracted so the reset-view button re-runs
+ * exactly what the first build does. Pure w.r.t. the design: the same `built`
+ * scene descriptor always lands the camera in the same spot. Returns false
+ * when there is nothing to frame (so callers can retry on the next build).
+ */
+export function frameCameraOnModel(camera, controls, built) {
+  if (!camera || !controls || !built?.floor) return false;
+  const floorSize = Math.max(
+    built.floor.maxX - built.floor.minX,
+    built.floor.maxZ - built.floor.minZ,
+    240,
+  );
+  const cx = (built.floor.minX + built.floor.maxX) / 2;
+  const cz = (built.floor.minZ + built.floor.maxZ) / 2;
+  const tallest = Math.max(0, ...(built.equipment || []).map((e) => e.heightIn));
+  const frame = Math.max(floorSize, tallest * 1.8);
+  camera.position.set(cx + frame * 0.55, frame * 0.75, cz + frame * 0.55);
+  camera.far = frame * 20;
+  camera.updateProjectionMatrix();
+  controls.target.set(cx, Math.min(tallest, floorSize) * 0.3, cz);
+  controls.update();
+  return true;
+}
+
+/**
+ * Floating tag labels (P-101, E-102, …) above equipment so the 3D reads like
+ * a plot plan. Canvas textures are cached per unique tag at module scope and
+ * shared by every sprite; the cache is reference-counted (see
+ * domains/roomDesigner/tagSpriteCache) so eviction and unmount never dispose
+ * GPU resources out from under live sprites, and nothing module-scoped
+ * outlives the viewport.
+ */
+function createTagLabelCanvas(text) {
+  const font = "600 46px system-ui, -apple-system, sans-serif";
+  const measurer = document.createElement("canvas").getContext("2d");
+  measurer.font = font;
+  const textW = Math.ceil(measurer.measureText(text).width);
+  const padX = 26;
+  const canvas = document.createElement("canvas");
+  canvas.width = textW + padX * 2;
+  canvas.height = 84;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+  pillPath(ctx, 2, 2, canvas.width - 4, canvas.height - 4, 24);
+  ctx.fill();
+  ctx.font = font;
+  ctx.fillStyle = "#f1f5f9";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, padX, canvas.height / 2 + 2);
+  return { canvas, aspect: canvas.width / canvas.height };
+}
+
+const tagSpriteCache = createTagSpriteCache({ THREE, createLabelCanvas: createTagLabelCanvas });
+
+export function makeTagSprite(tag) {
+  if (typeof document === "undefined") return null;
+  const acquired = tagSpriteCache.acquire(tag);
+  if (!acquired) return null;
+  const sprite = new THREE.Sprite(acquired.material);
+  // Marks this sprite as one reference on the shared cache entry; the
+  // rebuild disposer consumes it via releaseTagSprite().
+  sprite.userData.tagCacheKey = acquired.key;
+  const worldW = 120; // inches — readable without dominating the equipment
+  sprite.scale.set(worldW, worldW / acquired.aspect, 1);
+  sprite.center.set(0.5, 0); // bottom-center anchored, so position.y is the label's base
+  return sprite;
+}
+
+/** Release one sprite's reference on its shared cache entry (idempotent). */
+export function releaseTagSprite(sprite) {
+  return tagSpriteCache.release(sprite);
+}
+
+/**
+ * Dispose every cache entry with no live sprite references. Called on
+ * viewport unmount (after the content group's sprites are released) so the
+ * module-scoped GPU resources don't leak. Returns the entry count disposed.
+ */
+export function sweepTagSpriteCache() {
+  return tagSpriteCache.sweep();
+}
+
+function pillPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/**
+ * Recognizable process-equipment assemblies from the primitive shape
+ * descriptors. Towers get dished heads + a support skirt, tall slender
+ * shapes read as stacks with a tip band, horizontal vessels get dished ends
+ * on saddles, pumps read as skid + casing + motor, spheres keep their legs
+ * and gain a top nozzle. Composed from plain Three.js geometry — no model
+ * files, no new dependencies. `makeLabel` is injected (canvas sprites need
+ * DOM, so tests pass a stub or null).
+ */
+export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = null }) {
+  const group = new THREE.Group();
+  const mat = stdMaterial({ color: eq.color, roughness: 0.55 });
+  const darkMetal = stdMaterial({ color: "#64748b", roughness: 0.7 });
+  const w = eq.widthIn;
+  const d = eq.depthIn;
+  const h = eq.heightIn;
+
+  const addLabel = (labelY) => {
+    if (!makeLabel || !eq.tag) return;
+    const sprite = makeLabel(eq.tag);
+    if (!sprite) return;
+    sprite.position.y = labelY;
+    // Tag labels are hidden by default -- the viewport's Labels toggle flips
+    // them on. userData.isTagLabel lets the component collect them per build.
+    sprite.visible = false;
+    sprite.userData.isTagLabel = true;
+    group.add(sprite);
+  };
+
+  if (eq.shape === "vcyl") {
+    const r = Math.min(w, d) / 2;
+    if (h / (2 * r) > 8) {
+      // Stack (flare, vent): tapered shell with a slightly wider tip band.
+      const shell = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r * 0.82, r, h, 24), mat));
+      shell.position.y = h / 2;
+      group.add(shell);
+      const tipH = Math.min(48, h * 0.06);
+      const tip = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r * 1.08, r * 1.02, tipH, 24), darkMetal));
+      tip.position.y = h - tipH / 2;
+      group.add(tip);
+      addLabel(h + 40);
+    } else {
+      // Tower / column / vertical vessel: skirt + shell + dished heads.
+      const skirtH = clamp(h * 0.12, 12, 72);
+      const skirt = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r * 1.04, r * 1.08, skirtH, 24), darkMetal));
+      skirt.position.y = skirtH / 2;
+      group.add(skirt);
+      const shellH = Math.max(1, h - skirtH);
+      const shell = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, shellH, 24), mat));
+      shell.position.y = skirtH + shellH / 2;
+      group.add(shell);
+      const topHead = shadowed(
+        new THREE.Mesh(new THREE.SphereGeometry(r, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat),
+      );
+      topHead.scale.y = 0.55; // dished head, not a full dome
+      topHead.position.y = skirtH + shellH;
+      group.add(topHead);
+      addLabel(h + r * 0.55 + 40);
+    }
+  } else if (eq.shape === "hcyl") {
+    // Horizontal vessel: shell + dished ends, riding on two saddles.
+    const r = d / 2;
+    const shellL = Math.max(1, w - r);
+    const saddleH = Math.max(0, h - d);
+    const shell = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r, r, shellL, 24), mat));
+    shell.rotation.z = Math.PI / 2;
+    shell.position.y = saddleH + r;
+    group.add(shell);
+    const endGeo = new THREE.SphereGeometry(r, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    for (const side of [-1, 1]) {
+      const end = shadowed(new THREE.Mesh(endGeo, mat));
+      end.scale.y = 0.45; // flatten the dome along its own axis first…
+      end.rotation.z = side > 0 ? -Math.PI / 2 : Math.PI / 2; // …then aim it outward
+      end.position.set((side * shellL) / 2, saddleH + r, 0);
+      group.add(end);
+    }
+    if (saddleH > 0.5) {
+      const saddleW = Math.min(24, w * 0.12);
+      for (const side of [-1, 1]) {
+        const saddle = shadowed(
+          new THREE.Mesh(new THREE.BoxGeometry(saddleW, saddleH, d * 0.7), darkMetal),
+        );
+        saddle.position.set(side * w * 0.3, saddleH / 2, 0);
+        group.add(saddle);
+      }
+    }
+    addLabel(h + r * 0.45 + 40);
+  } else if (eq.shape === "box") {
+    // Skid-mounted block. Pumps read as casing + motor side by side.
+    const skidH = 5;
+    const skid = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w * 1.06, skidH, d * 1.06), darkMetal));
+    skid.position.y = skidH / 2;
+    group.add(skid);
+    const bodyH = Math.max(1, h - skidH);
+    if (/pump/i.test(eq.symbolId || "")) {
+      const casingW = w * 0.45;
+      const casing = shadowed(new THREE.Mesh(new THREE.BoxGeometry(casingW, bodyH, d), mat));
+      casing.position.set(-w / 2 + casingW / 2, skidH + bodyH / 2, 0);
+      group.add(casing);
+      const volute = shadowed(
+        new THREE.Mesh(new THREE.CylinderGeometry(bodyH * 0.3, bodyH * 0.3, d * 1.2, 20), mat),
+      );
+      volute.rotation.x = Math.PI / 2;
+      volute.position.set(-w / 2 + casingW / 2, skidH + bodyH * 0.45, 0);
+      group.add(volute);
+      const motorW = w * 0.42;
+      const motorH = bodyH * 0.72;
+      const motor = shadowed(new THREE.Mesh(new THREE.BoxGeometry(motorW, motorH, d * 0.72), darkMetal));
+      motor.position.set(w / 2 - motorW / 2, skidH + motorH / 2, 0);
+      group.add(motor);
+    } else {
+      const body = shadowed(new THREE.Mesh(new THREE.BoxGeometry(w, bodyH, d), mat));
+      body.position.y = skidH + bodyH / 2;
+      group.add(body);
+    }
+    addLabel(h + 40);
+  } else {
+    // sphere: pressure sphere on legs, with a top nozzle.
+    const r = Math.min(w, d) / 2;
+    const legH = Math.max(0, h - 2 * r);
+    const ball = shadowed(new THREE.Mesh(new THREE.SphereGeometry(r, 28, 20), mat));
+    ball.position.y = legH + r;
+    group.add(ball);
+    const legGeo = new THREE.CylinderGeometry(3, 3, Math.max(legH, 0.5), 10);
+    for (let i = 0; i < 6 && legH > 0.5; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const leg = shadowed(new THREE.Mesh(legGeo, darkMetal));
+      leg.position.set(Math.cos(a) * r * 0.7, legH / 2, Math.sin(a) * r * 0.7);
+      group.add(leg);
+    }
+    const nozzle = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(r * 0.14, r * 0.14, r * 0.5, 12), darkMetal));
+    nozzle.position.y = legH + 2 * r + r * 0.2;
+    group.add(nozzle);
+    addLabel(h + r * 0.5 + 40);
+  }
+
+  return group;
+}
 
 // Selection -> highlight-registry-key mapping now lives in designerThreeModel.js
 // (highlightKeysForSelection / highlightRegistryKey) — the pure domain layer,
@@ -125,6 +358,15 @@ export default function DesignerViewport3D({
   const tierNameRef = useRef("balanced");
   const initialCameraSetRef = useRef(false);
   const rebuildTimerRef = useRef(null);
+  const spinRef = useRef(false); // 360° auto-orbit; mirrored into `spin` state for the button
+  const builtRef = useRef(null); // last buildThreeScene descriptor, for reset-view
+  const [spin, setSpin] = useState(false);
+  // Equipment tag labels (P-101, E-102, …): hidden by default, flipped by the
+  // Labels toggle beside the 360° button. Sprites are collected per scene build
+  // (they're rebuilt with the scene); the ref mirror avoids rebuilding the
+  // whole scene just to flip visibility.
+  const [showLabels, setShowLabels] = useState(false);
+  const showLabelsRef = useRef(false);
   const selectionRef = useRef(selection);
   const multiSelectionRef = useRef(multiSelection);
   const onFloorCenterChangeRef = useRef(onFloorCenterChange);
@@ -280,6 +522,14 @@ export default function DesignerViewport3D({
     // listener on the canvas, so an entity drag can claim the gesture
     // (stopPropagation) before the camera starts orbiting.
     const onPointerDown = (e) => {
+      // TrueView-style: grabbing the model interrupts a 360° auto-orbit.
+      // This runs before the dispatch gate on purpose — the sample viewer is
+      // read-only (no dispatch) and the toggle must still stop there.
+      if (spinRef.current) {
+        spinRef.current = false;
+        setSpin(false);
+        if (controlsRef.current) controlsRef.current.autoRotate = false;
+      }
       if (e.button !== 0 || !dispatchRef.current) return;
       pressAt = { x: e.clientX, y: e.clientY };
       const picked = pickAt(e);
@@ -375,6 +625,10 @@ export default function DesignerViewport3D({
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
       contentGroupRef.current = swapContentGroup(threeScene, contentGroupRef.current, null);
+      // The swap released every tag sprite's cache reference; reap the now-
+      // unreferenced entries so module-scoped GPU resources don't outlive the
+      // viewport.
+      sweepTagSpriteCache();
       for (const m of materialCacheRef.current.values()) m.dispose();
       materialCacheRef.current.clear();
       modelCacheRef.current?.dispose();
@@ -545,44 +799,10 @@ export default function DesignerViewport3D({
         register(highlightRegistryKey("furniture", item.id), fGroup);
       }
 
-      // process equipment: floor-standing primitives, selectable like furniture.
+      // process equipment: composed assemblies (heads, skirts, saddles,
+      // skids, tag labels) — selectable like furniture.
       for (const eq of built.equipment || []) {
-        const mat = stdMaterial({ color: eq.color, roughness: 0.55 });
-        const legs = [];
-        let mesh;
-        if (eq.shape === "vcyl") {
-          const r = Math.min(eq.widthIn, eq.depthIn) / 2;
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, eq.heightIn, 28), mat);
-          mesh.position.y = eq.heightIn / 2;
-        } else if (eq.shape === "hcyl") {
-          // Horizontal vessel along its width, resting on low saddles.
-          const r = eq.depthIn / 2;
-          const saddle = Math.max(0, eq.heightIn - eq.depthIn);
-          mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, eq.widthIn, 28), mat);
-          mesh.rotation.z = Math.PI / 2;
-          mesh.position.y = saddle + r;
-        } else if (eq.shape === "sphere") {
-          // Pressure sphere: the ball sits at the top of its nominal height,
-          // carried on six legs down to the floor.
-          const r = Math.min(eq.widthIn, eq.depthIn) / 2;
-          const cy = Math.max(r, eq.heightIn - r);
-          mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 20), mat);
-          mesh.position.y = cy;
-          const legMat = stdMaterial({ color: "#6b7280", roughness: 0.7 });
-          for (let k = 0; k < 6; k += 1) {
-            const a = (k / 6) * Math.PI * 2;
-            const leg = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(3, 3, cy, 8), legMat));
-            leg.position.set(Math.cos(a) * r * 0.85, cy / 2, Math.sin(a) * r * 0.85);
-            legs.push(leg);
-          }
-        } else {
-          mesh = new THREE.Mesh(new THREE.BoxGeometry(eq.widthIn, eq.heightIn, eq.depthIn), mat);
-          mesh.position.y = eq.heightIn / 2;
-        }
-        shadowed(mesh);
-        const eGroup = new THREE.Group();
-        eGroup.add(mesh);
-        for (const leg of legs) eGroup.add(leg);
+        const eGroup = buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel: makeTagSprite });
         eGroup.position.set(eq.x, 0, eq.z);
         eGroup.rotation.y = eq.rotY;
         eGroup.userData.entityKind = "symbol";
@@ -590,6 +810,9 @@ export default function DesignerViewport3D({
         group.add(eGroup);
         register(highlightRegistryKey("symbol", eq.id), eGroup);
       }
+      // Labels are hidden by default; re-apply the toggle state after every
+      // rebuild (new sprites are born hidden).
+      group.traverse((o) => { if (o.isSprite && o.userData.isTagLabel) o.visible = showLabelsRef.current; });
 
       // stairs: composed runs + landings from pure descriptors, with railings.
       const stairWood = stdMaterial({ color: "#8f6f4b", roughness: 0.75 });
@@ -737,21 +960,13 @@ export default function DesignerViewport3D({
       // that starts empty (the placeholder shown before "Recover unsaved
       // work", or a fresh design before its first wall) must not use up the
       // one-time framing on nothing and leave the real house off-screen.
-      if (camera && controls && !initialCameraSetRef.current && built.floor) {
-        const cx = built.floor ? (built.floor.minX + built.floor.maxX) / 2 : 0;
-        const cz = built.floor ? (built.floor.minZ + built.floor.maxZ) / 2 : 0;
-        // Tall process equipment (towers, stacks, flares) can dwarf the plot
-        // footprint; frame on whichever is bigger so the camera starts
-        // outside the model, looking at mid-height of the tallest piece.
-        const tallest = Math.max(0, ...(built.equipment || []).map((e) => e.heightIn));
-        const frame = Math.max(floorSize, tallest * 1.8);
-        camera.position.set(cx + frame * 0.55, frame * 0.75, cz + frame * 0.55);
-        camera.far = frame * 20;
-        camera.updateProjectionMatrix();
-        controls.target.set(cx, Math.min(tallest, floorSize) * 0.3, cz);
-        controls.update();
-        initialCameraSetRef.current = true;
+      // The camera is centered automatically ONLY on the first non-empty
+      // build; edits after that never move it out from under the user. The
+      // reset-view button re-runs this same framing on demand.
+      if (!initialCameraSetRef.current) {
+        if (frameCameraOnModel(camera, controls, built)) initialCameraSetRef.current = true;
       }
+      builtRef.current = built;
 
       // A rebuild replaces every mesh, so a live highlight would otherwise
       // vanish on the next keystroke; re-apply it against the new registry.
@@ -771,9 +986,93 @@ export default function DesignerViewport3D({
     applyHighlight(selection, design, registryRef, highlightedRef, multiSelection);
   }, [selection, multiSelection, design]);
 
+  // TrueView-style continuous 360° orbit: tap to spin, tap again (or grab
+  // the model) to stop. OrbitControls applies autoRotate inside its update(),
+  // which the render loop already calls every frame.
+  const toggleSpin = () => {
+    const next = !spinRef.current;
+    spinRef.current = next;
+    setSpin(next);
+    const controls = controlsRef.current;
+    if (controls) {
+      controls.autoRotate = next;
+      controls.autoRotateSpeed = 1.8;
+    }
+  };
+
+  const resetView = () => {
+    if (spinRef.current) {
+      spinRef.current = false;
+      setSpin(false);
+      if (controlsRef.current) controlsRef.current.autoRotate = false;
+    }
+    frameCameraOnModel(cameraRef.current, controlsRef.current, builtRef.current);
+  };
+
+  // Equipment tag labels: hidden by default, toggled beside the 360° button.
+  // Flips sprite visibility in place -- no scene rebuild.
+  const toggleLabels = () => {
+    const next = !showLabelsRef.current;
+    showLabelsRef.current = next;
+    setShowLabels(next);
+    const group = contentGroupRef.current;
+    if (group) group.traverse((o) => { if (o.isSprite && o.userData.isTagLabel) o.visible = next; });
+  };
+
   return (
     <div className="relative h-full w-full overflow-hidden">
       <div ref={mountRef} className="h-full w-full" />
+      {/* On-screen navigation cluster (TrueView / Google Earth pattern):
+          360° auto-orbit toggle + reset view. pointer-events-none on the
+          wrapper so drags pass through everywhere except the buttons. */}
+      <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={toggleSpin}
+          title={spin ? "Stop the 360° orbit" : "Start a 360° orbit"}
+          aria-label={spin ? "Stop 360 degree orbit" : "Start 360 degree orbit"}
+          aria-pressed={spin}
+          className={`pointer-events-auto rounded-lg p-2.5 shadow-lg transition-colors ${
+            spin
+              ? "bg-emerald-500 text-white"
+              : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
+          }`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <path d="M21 3v6h-6" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={toggleLabels}
+          title={showLabels ? "Hide equipment labels" : "Show equipment labels"}
+          aria-label={showLabels ? "Hide equipment labels" : "Show equipment labels"}
+          aria-pressed={showLabels}
+          className={`pointer-events-auto rounded-lg p-2.5 shadow-lg transition-colors ${
+            showLabels
+              ? "bg-emerald-500 text-white"
+              : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
+          }`}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+            <circle cx="7" cy="7" r="1.5" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={resetView}
+          title="Reset the view"
+          aria-label="Reset 3D view"
+          className="pointer-events-auto rounded-lg bg-slate-900/80 p-2.5 text-slate-200 shadow-lg transition-colors hover:bg-slate-800/90"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 12l9-9 9 9" />
+            <path d="M5 10v10h14V10" />
+          </svg>
+        </button>
+      </div>
       {dispatch && selection && (
         <div
           ref={popupRef}
@@ -872,11 +1171,20 @@ export function swapContentGroup(scene, oldGroup, newGroup) {
 }
 
 /** Dispose every geometry (and any per-mesh highlight clone) in a content group. */
-function disposeContentGroup(group) {
+export function disposeContentGroup(group) {
   if (!group) return;
   group.traverse((obj) => {
-    // Model clones share their template's geometry (owned by the model
-    // cache, disposed at unmount); everything else is per-rebuild.
+    // Tag-label sprites share reference-counted cache textures/materials:
+    // release this sprite's reference here. The cache disposes the GPU
+    // resources once the last referencing sprite is gone — never per-rebuild
+    // while other sprites still use them, and sweepTagSpriteCache() reaps the
+    // leftovers on unmount.
+    if (obj.isSprite) {
+      releaseTagSprite(obj);
+      return;
+    }
+    // Furniture model clones share their template's geometry (owned by the
+    // model cache, disposed at unmount); everything else is per-rebuild.
     if (obj.geometry && !obj.userData?.sharedAsset) obj.geometry.dispose();
     // Materials are cache-owned and disposed once at unmount, EXCEPT a
     // highlight clone, which belongs to no cache and must go here.

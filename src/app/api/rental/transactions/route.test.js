@@ -407,8 +407,13 @@ describe("DELETE /api/rental/transactions", () => {
 });
 
 describe("POST /api/rental/transactions (regression)", () => {
-  it("still creates with the full field set", async () => {
-    const db = database();
+  it("creates through the create_ledger_transaction RPC with the full field set", async () => {
+    const db = database({
+      rpcResult: {
+        data: { id: "evt-1", event_date: "2026-09-26", description: "Water heater replacement", amount: 450, transaction_kind: "expense", normalized_category: "property_repairs" },
+        error: null,
+      },
+    });
     createAuthenticatedRentalManagerApplication.mockResolvedValue({
       user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
     });
@@ -418,6 +423,39 @@ describe("POST /api/rental/transactions (regression)", () => {
       body: JSON.stringify(validBody),
     }));
     expect(response.status).toBe(200);
+    // The insert AND the active-category check happen in one RPC,
+    // coordinated with concurrent deactivation via the chart row lock.
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(db.rpcCalls[0].name).toBe("create_ledger_transaction");
+    expect(db.rpcCalls[0].args.p_owner_id).toBe("owner_1");
+    expect(db.rpcCalls[0].args.p_event).toMatchObject({
+      eventDate: "2026-09-26",
+      description: "Water heater replacement",
+      amount: 450,
+      transactionKind: "expense",
+      normalizedCategory: "property_repairs",
+    });
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.event.id).toBe("evt-1");
+  });
+
+  it("400s when the RPC rejects a deactivated account", async () => {
+    // A deactivation landed between the route's category read and the RPC:
+    // the RPC is the enforcement boundary and the route surfaces its 400.
+    const db = database({
+      rpcResult: { data: null, error: { code: "22000", message: "This account has been deactivated. Choose an active account." } },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await POST(new Request("https://test/api/rental/transactions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/deactivated/i);
   });
 
   it("503s and writes nothing when the chart read fails", async () => {

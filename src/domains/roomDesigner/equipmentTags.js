@@ -10,6 +10,7 @@
 
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_CATEGORIES, PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
+import { normalizeTemaConfig, temaDesignation } from "./temaTypes";
 
 export const FIRST_TAG_NUMBER = 101;
 
@@ -60,7 +61,10 @@ export function equipmentSchedule(design) {
     rows.push({
       id: inst.id,
       tag: inst.tag || "",
-      description: symbol.label,
+      // A configurable TEMA exchanger carries its designation (e.g. "AES").
+      description: symbol.tema?.kind === "assembly"
+        ? `${symbol.label} — ${temaDesignation(normalizeTemaConfig(inst.tema) || symbol.tema.defaultConfig)}`
+        : symbol.label,
       category: symbol.category,
       sizeLabel: `${w}″ × ${d}″ × ${symbol.heightIn}″ H`,
     });
