@@ -465,10 +465,17 @@ describe("ToolPalette (favoritesSection slot)", () => {
     });
     const nav = container.querySelector("nav");
     const slot = container.querySelector('[data-testid="fav-slot"]');
-    const children = [...nav.children];
-    const firstCategory = children.findIndex((el) => el.querySelector?.("[aria-expanded]") && el !== slot);
-    expect(children.indexOf(slot)).toBeGreaterThan(-1);
-    expect(children.indexOf(slot)).toBeLessThan(firstCategory);
+    // Contract: the favorites slot sits after the pinned tools and before the
+    // first stencil category in document order. (It is no longer a direct
+    // child of nav: search/favorites/categories share a responsive wrapper
+    // that collapses to an icon rail below md.)
+    const firstPinned = nav.querySelector(":scope > div.group");
+    const firstCategoryToggle = nav.querySelector("button[aria-expanded]");
+    expect(slot).not.toBeNull();
+    expect(firstPinned).not.toBeNull();
+    expect(firstCategoryToggle).not.toBeNull();
+    expect(firstPinned.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.compareDocumentPosition(firstCategoryToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await act(async () => root.unmount());
     container.remove();
   });

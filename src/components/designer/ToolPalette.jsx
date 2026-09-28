@@ -45,7 +45,8 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
       >
         <Icon size={20} aria-hidden="true" />
-        {tool.label}
+        {/* Phone layout: icon rail below md — labels return at md+. */}
+        <span className="hidden md:inline">{tool.label}</span>
       </button>
       {disabled && (
         <span id={`${tool.id}-disabled-reason`} className="sr-only">
@@ -182,10 +183,13 @@ export default function ToolPalette({
 
   return (
     <nav
-      className="flex w-28 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-2"
+      // Phone layout: slim icon rail below md (pinned tools only); the full
+      // labeled palette with search and stencil categories returns at md+.
+      className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:w-28 md:p-2"
       aria-label="Tools"
     >
       {grouped.pinned.map(renderTool)}
+      <div className="hidden md:contents">
       <input
         type="search"
         aria-label="Search shapes"
@@ -244,6 +248,7 @@ export default function ToolPalette({
         );
       })}
       {!results && grouped.ungrouped.map(renderTool)}
+      </div>
     </nav>
   );
 }

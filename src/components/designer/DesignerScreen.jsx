@@ -14,6 +14,7 @@ import {
   LockOpen,
   MousePointer2,
   Network,
+  PanelRight,
   Plus,
   Printer,
   Puzzle,
@@ -285,6 +286,9 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [saving, setSaving] = useState(false);
   // HOUSE PLANS (HP-L0): docked reference panel, gated behind the feature flag.
   const [housePlansOpen, setHousePlansOpen] = useState(false);
+  // Phone layout: below md the right panel leaves the dock and becomes a
+  // slide-over drawer, toggled from the header.
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const housePlansEnabled = isHousePlansEnabled();
   // Printable sheets: overlay state for the single print flow.
   const [printOpen, setPrintOpen] = useState(false);
@@ -713,13 +717,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
 
   return (
     <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
-      {/* top bar */}
-      <header className="flex items-center gap-3 border-b border-gray-800 bg-gray-900 px-4 py-2">
-        <Link href="/forge/designer" className="text-sm text-gray-400 hover:text-white">← Designs</Link>
+      {/* top bar: scrolls horizontally on phones so the canvas keeps its width */}
+      <header className="flex items-center gap-2 overflow-x-auto border-b border-gray-800 bg-gray-900 px-3 py-2 md:gap-3 md:px-4">
+        <Link href="/forge/designer" className="shrink-0 text-sm text-gray-400 hover:text-white">← Designs</Link>
         <input
           value={name}
           onChange={(e) => { setName(e.target.value); dispatch({ type: "RENAME", name: e.target.value }); }}
-          className="w-64 rounded bg-gray-800 px-2 py-1 text-sm font-semibold text-white outline-none focus:ring-2 focus:ring-emerald-500"
+          className="w-32 shrink-0 rounded bg-gray-800 px-2 py-1 text-sm font-semibold text-white outline-none focus:ring-2 focus:ring-emerald-500 md:w-64"
           aria-label="Design name"
         />
         {dirty && <span className="text-xs text-amber-400">● unsaved</span>}
@@ -732,7 +736,20 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             {draftInfo.underlayOmitted ? " (background image omitted)" : ""}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* Phone layout: opens the right panel as a slide-over drawer. */}
+          <button
+            type="button"
+            onClick={() => setMobilePanelOpen((open) => !open)}
+            aria-pressed={mobilePanelOpen}
+            aria-label="Toggle design panels"
+            title="Design panels"
+            className={`flex items-center gap-1 rounded px-2 py-1 text-sm md:hidden ${
+              mobilePanelOpen ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+            }`}
+          >
+            <PanelRight size={15} aria-hidden="true" />
+          </button>
           {housePlansEnabled && (
             <button
               onClick={() => setHousePlansOpen((open) => !open)}
@@ -915,16 +932,19 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           )}
         </main>
 
-        {/* right panel */}
-        <aside className="w-72 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3">
+        {/* right panel: docked at md+, slide-over drawer below md */}
+        <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3 md:block">
           <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
         </aside>
+        <MobileDrawer open={mobilePanelOpen} onClose={() => setMobilePanelOpen(false)} label="Design panels">
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
+        </MobileDrawer>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
             primary; this rail only exists behind the feature flag. */}
         {housePlansEnabled && housePlansOpen && (
           <aside
-            className="w-80 shrink-0 overflow-hidden border-l border-gray-800 bg-gray-900"
+            className="hidden w-80 shrink-0 overflow-hidden border-l border-gray-800 bg-gray-900 md:block"
             aria-label="House Plans reference library"
           >
             <HousePlansPanel
@@ -932,6 +952,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               projectId={projectId}
             />
           </aside>
+        )}
+        {housePlansEnabled && housePlansOpen && (
+          <MobileDrawer open label="House Plans reference library" onClose={() => setHousePlansOpen(false)}>
+            <HousePlansPanel
+              onClose={() => setHousePlansOpen(false)}
+              projectId={projectId}
+            />
+          </MobileDrawer>
         )}
       </div>
       {printOpen && (design.sheets || []).length > 0 && (
@@ -1002,6 +1030,48 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           onClose={() => setDxfOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Phone layout: slide-over drawer that hosts a docked panel below the md
+ * breakpoint. Rendered only below md (the `md:hidden` wrapper); on md+ the
+ * caller renders the panel docked instead. Escape and the backdrop close it.
+ * Exported for unit tests.
+ */
+export function MobileDrawer({ open, onClose, label, children }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-40 md:hidden">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" data-testid="mobile-drawer-backdrop" />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        className="absolute inset-y-0 right-0 flex w-80 max-w-[85vw] flex-col overflow-y-auto border-l border-gray-800 bg-gray-900 p-3"
+      >
+        <div className="mb-1 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={`Close ${label}`}
+            className="rounded p-1.5 text-gray-400 hover:bg-gray-800 hover:text-white"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        {children}
+      </aside>
     </div>
   );
 }
