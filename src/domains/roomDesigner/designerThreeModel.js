@@ -352,6 +352,9 @@ export function equipmentDescriptors(design) {
       heightIn: symbol.heightIn,
       color: symbol.color,
       tag: inst.tag || "",
+      // Lets the 3D builder specialize recognizable equipment (a pump reads
+      // as motor + casing, a compressor as a single skid-mounted box).
+      symbolId: inst.symbolId,
     });
   }
   return out;
