@@ -9,11 +9,11 @@
 import { temaDrawing } from "@/domains/roomDesigner/temaGeometry";
 
 /** Map one geometry primitive to SVG. `scale` converts plan inches to screen px. */
-export function temaPrimitiveToSvg(p, key, scale, { stroke, sw, accent, body }) {
+export function temaPrimitiveToSvg(p, key, scale, { stroke, sw, accent, body, flange = "#1e293b" }) {
   const thin = Math.max(0.75, sw - 0.75);
   const paint = {
     body: { fill: body, stroke, strokeWidth: sw },
-    flange: { fill: "#1e293b", stroke, strokeWidth: thin },
+    flange: { fill: flange, stroke, strokeWidth: thin },
     tubesheet: { fill: accent, fillOpacity: 0.35, stroke, strokeWidth: thin },
     internal: { fill: "none", stroke: accent, strokeWidth: thin },
     hidden: { fill: "none", stroke: accent, strokeWidth: thin, strokeDasharray: "4 3", opacity: 0.7 },

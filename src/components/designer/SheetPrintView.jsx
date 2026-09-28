@@ -24,6 +24,8 @@ import {
 } from "@/domains/roomDesigner/designerDocument";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
+import { temaDrawing } from "@/domains/roomDesigner/temaGeometry";
+import { temaPrimitiveToSvg } from "./temaDrawRoutine";
 import {
   dimensionGeometry,
   feetInchesLabel,
@@ -209,12 +211,31 @@ function PrintPipes({ design }) {
   );
 }
 
+// TEMA exchangers print their own geometry in ink at plan scale (1 plan
+// inch = 1 viewBox unit), in the instance's drawing mode.
+function PrintTemaSymbol({ symbol, inst }) {
+  const drawing = temaDrawing(symbol, inst);
+  const style = { stroke: INK, sw: 0.6, accent: INK, body: "#ffffff", flange: "#e5e5e5" };
+  const half = drawing.depthIn / 2;
+  return (
+    <g transform={`translate(${inst.x} ${inst.y}) rotate(${inst.rotationDeg || 0})`} data-print-tema={drawing.designation}>
+      {drawing.prims.map((p, i) => temaPrimitiveToSvg(p, i, 1, style))}
+      {inst.tag && (
+        <text x={0} y={half + 4} textAnchor="middle" fontSize={Math.max(2.5, Math.min(5, half / 3))} fill={INK}>
+          {String(inst.tag).slice(0, 12)}
+        </text>
+      )}
+    </g>
+  );
+}
+
 function PrintSymbols({ design }) {
   return (
     <g>
       {(design.symbols || []).map((inst) => {
         const sym = findSymbol(inst.domain, inst.symbolId);
         if (!sym) return null;
+        if (sym.tema) return <PrintTemaSymbol key={inst.id} symbol={sym} inst={inst} />;
         const w = sym.widthIn || 12;
         const h = sym.depthIn || 12;
         const label = inst.tag || sym.label || inst.symbolId;
