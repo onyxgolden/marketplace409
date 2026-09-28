@@ -26,7 +26,7 @@
     },
     {
       "path": "/api/rental/cron/owner-payment-notifications",
-      "schedule": "0 11 * * *"
+      "schedule": "0 14 * * *"
     },
     {
       "path": "/api/rental/cron/tenant-invite",

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({ createRentalWebhookClient: vi.fn() }));
 vi.mock("@/infrastructure/billing/StripeBillingProvider", () => ({
@@ -124,6 +124,15 @@ beforeEach(() => {
   // The owner allow-list fails closed: tests opt in explicitly.
   process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
   vi.clearAllMocks();
+  // Pin the clock to noon CDT (outside quiet hours) so delivery tests are
+  // deterministic no matter when the suite runs. Individual tests move the
+  // clock with vi.setSystemTime for time-sensitive cases.
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-28T17:00:00Z"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("owner payment notifications cron", () => {
@@ -211,6 +220,30 @@ describe("owner payment notifications cron", () => {
     // ... and the outcome was fenced to that token, then cleared.
     expect(outcomeNode.eq).toHaveBeenCalledWith("claim_token", claimUpdate.claim_token);
     expect(outcomeNode.update.mock.calls[0][0]).toMatchObject({ status: "sent", claim_token: null });
+  });
+
+  it("defers delivery during quiet hours: nothing is claimed or sent, rows stay queued", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    // 04:30Z = 23:30 CDT — inside quiet hours.
+    vi.setSystemTime(new Date("2026-09-28T04:30:00Z"));
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const candidatesNode = qb({ data: [queuedRow()], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })], // reconciler: nothing to heal
+      rental_owner_notifications: [candidatesNode], // candidates — never claimed
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.sendingEnabled).toBe(true);
+    expect(body.deferredQuietHours).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(candidatesNode.update).not.toHaveBeenCalled();
   });
 
   it("does not double-queue an already-queued upcoming notice", async () => {

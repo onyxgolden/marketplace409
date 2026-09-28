@@ -17,6 +17,7 @@ import {
   buildOwnerNotificationEmail,
   buildProviderIdempotencyKey,
   computeUpcomingAutopayCandidate,
+  isQuietHours,
   resolvePaymentNotificationEvent,
 } from "@/domains/owner-notifications/ownerPaymentNotifications";
 
@@ -40,6 +41,9 @@ export const runtime = "nodejs";
 //      with a unique claim token (the claim is the distributed lock), then
 //      either send via Resend when sending is enabled, or log what WOULD
 //      have been sent and mark the row skipped_disabled when it is not.
+//      Quiet hours (23:00-07:00 America/Chicago, Jason's rule): delivery
+//      inside the window is deferred wholesale — rows stay queued for the
+//      next run after 07:00.
 //
 // Terminal payment events are ALSO queued in real time by the Stripe webhook
 // hook (queueOwnerPaymentNotificationForWebhookEvent); the reconciler is the
@@ -460,9 +464,29 @@ export async function GET(request) {
     }
 
     // 3. Deliver.
-    let sent = 0, failed = 0, superseded = 0, skippedNotAllowlistedDelivery = 0;
+    // Quiet hours (Jason's rule): between 23:00 and 07:00 America/Chicago no
+    // email goes out. Rows stay 'queued' — untouched, unclaimed — and the
+    // next run after 07:00 delivers them. Checked once per run, before any
+    // claim, so a run inside the window performs zero delivery writes.
+    const quietNow = isQuietHours({
+      at: new Date(),
+      startHour: config.quietStartHour,
+      endHour: config.quietEndHour,
+      timeZone: config.quietTimeZone,
+    });
+    let sent = 0, failed = 0, superseded = 0, skippedNotAllowlistedDelivery = 0, deferredQuietHours = 0;
     if (!dryRun) {
       const candidates = await loadDeliveryCandidates(db, config);
+      if (quietNow) {
+        deferredQuietHours = candidates.length;
+        if (deferredQuietHours > 0) {
+          console.log("Owner payment notification delivery deferred by quiet hours", {
+            deferred: deferredQuietHours,
+            timeZone: config.quietTimeZone,
+            window: `${config.quietStartHour}:00-${config.quietEndHour}:00`,
+          });
+        }
+      } else {
       for (const row of candidates) {
         const claimToken = await claimRow(db, row);
         if (!claimToken) continue;
@@ -513,6 +537,7 @@ export async function GET(request) {
           }, claimToken)) failed += 1;
         }
       }
+      }
     }
 
     return NextResponse.json({
@@ -521,6 +546,7 @@ export async function GET(request) {
       upcomingDetected: pairs.length, queued, alreadyQueued,
       reconciled, alreadyReconciled,
       sent, wouldSend, failed, skippedDisabled, superseded,
+      deferredQuietHours,
       skippedNotAllowlisted: skippedNotAllowlisted + skippedNotAllowlistedDelivery,
     });
   } catch (error) {

@@ -20,6 +20,37 @@ export const OWNER_NOTIFICATION_EVENT_TYPE = Object.freeze({
 // Charge states that still represent money autopay will try to collect.
 export const UPCOMING_CHARGE_STATUSES = Object.freeze(["scheduled", "due", "partially_paid"]);
 
+// Quiet hours (Jason's rule): no owner email may be DELIVERED between 23:00
+// and 07:00. Delivery runs inside the window defer — the row stays 'queued'
+// and goes out on the next run after 07:00. Detection and queueing are
+// unaffected; only the provider call is gated. The window wraps midnight,
+// so start > end means "from startHour up to 24:00 and from 00:00 up to
+// endHour".
+export const QUIET_HOURS_START = 23;
+export const QUIET_HOURS_END = 7;
+export const QUIET_HOURS_TIME_ZONE = "America/Chicago";
+
+// Hour of day (0-23) for an instant in a named time zone. Uses the
+// Intl API rather than Date#getHours so the result follows the configured
+// zone, not the server's locale.
+export function hourInTimeZone(at, timeZone) {
+  if (!(at instanceof Date) || Number.isNaN(at.getTime())) throw new Error("A valid Date is required.");
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hour12: false }).formatToParts(at);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 24) throw new Error(`Could not resolve the hour in ${timeZone}.`);
+  // Some ICU builds report midnight as 24 with hour12:false.
+  return hour === 24 ? 0 : hour;
+}
+
+export function isQuietHours({ at = new Date(), startHour = QUIET_HOURS_START, endHour = QUIET_HOURS_END, timeZone = QUIET_HOURS_TIME_ZONE } = {}) {
+  if (!Number.isInteger(startHour) || startHour < 0 || startHour > 23) throw new Error("startHour must be an integer hour 0-23.");
+  if (!Number.isInteger(endHour) || endHour < 0 || endHour > 23) throw new Error("endHour must be an integer hour 0-23.");
+  if (startHour === endHour) return false;
+  const hour = hourInTimeZone(at, timeZone);
+  if (startHour < endHour) return hour >= startHour && hour < endHour;
+  return hour >= startHour || hour < endHour;
+}
+
 // Forge payment-id prefixes that are NOT rental tenant payments.
 const NON_RENTAL_PAYMENT_PREFIXES = Object.freeze(["pf_payment_", "reservation_payment_"]);
 
