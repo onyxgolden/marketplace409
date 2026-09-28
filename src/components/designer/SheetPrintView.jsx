@@ -28,6 +28,7 @@ import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols
 import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
 import { temaDrawing } from "@/domains/roomDesigner/temaGeometry";
 import { temaPrimitiveToSvg } from "./temaDrawRoutine";
+import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import {
   dimensionGeometry,
   feetInchesLabel,
@@ -212,10 +213,11 @@ function PrintPipes({ design }) {
           key={run.id}
           points={pts(run.points || [])}
           fill="none"
-          stroke={INK}
+          stroke={effectiveColor(design, run, INK)}
           strokeWidth={Math.max(run.diameterIn || 1, 0.75)}
-          strokeLinecap="round"
+          strokeLinecap={run.underground ? "butt" : "round"}
           strokeLinejoin="round"
+          strokeDasharray={run.underground ? "8 4" : undefined}
         />
       ))}
     </g>
@@ -224,9 +226,9 @@ function PrintPipes({ design }) {
 
 // TEMA exchangers print their own geometry in ink at plan scale (1 plan
 // inch = 1 viewBox unit), in the instance's drawing mode.
-function PrintTemaSymbol({ symbol, inst }) {
+function PrintTemaSymbol({ symbol, inst, ink = INK }) {
   const drawing = temaDrawing(symbol, inst);
-  const style = { stroke: INK, sw: 0.6, accent: INK, body: "#ffffff", flange: "#e5e5e5" };
+  const style = { stroke: ink, sw: 0.6, accent: ink, body: "#ffffff", flange: "#e5e5e5" };
   const half = drawing.depthIn / 2;
   return (
     <g transform={`translate(${inst.x} ${inst.y}) rotate(${inst.rotationDeg || 0})`} data-print-tema={drawing.designation}>
@@ -246,13 +248,14 @@ function PrintSymbols({ design }) {
       {(design.symbols || []).map((inst) => {
         const sym = findSymbol(inst.domain, inst.symbolId);
         if (!sym) return null;
-        if (sym.tema) return <PrintTemaSymbol key={inst.id} symbol={sym} inst={inst} />;
+        const ink = effectiveColor(design, inst, INK); // system / own color, else ink
+        if (sym.tema) return <PrintTemaSymbol key={inst.id} symbol={sym} inst={inst} ink={ink} />;
         const w = sym.widthIn || 12;
         const h = sym.depthIn || 12;
         const label = inst.tag || sym.label || inst.symbolId;
         return (
           <g key={inst.id} transform={`translate(${inst.x} ${inst.y}) rotate(${inst.rotationDeg || 0})`}>
-            <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="#ffffff" stroke={INK} strokeWidth={1} />
+            <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="#ffffff" stroke={ink} strokeWidth={1} />
             <text x={0} y={0} textAnchor="middle" dominantBaseline="middle"
               fontSize={Math.max(2.5, Math.min(5, h / 4))} fill={INK}>
               {String(label).slice(0, 12)}
@@ -315,6 +318,37 @@ function PrintOrgCharts({ design }) {
   );
 }
 
+// Systems legend (physical units, bottom-left above the footer); only when
+// something is in a system or a pipe is underground.
+function PrintSystemsLegend({ design }) {
+  const entries = systemLegend(design);
+  const underground = (design.pipes || []).some((p) => p.underground);
+  if (!entries.length && !underground) return null;
+  return (
+    <div
+      data-print-legend="systems"
+      style={{
+        position: "absolute", left: "0.55in", bottom: "0.5in", padding: "0.05in 0.08in",
+        background: "#ffffff", border: "0.75pt solid #1a1a1a", fontSize: "7.5pt", lineHeight: 1.35,
+      }}
+    >
+      <div style={{ fontWeight: 700 }}>SYSTEMS</div>
+      {entries.map((e) => (
+        <div key={e.id} style={{ display: "flex", alignItems: "center", gap: "0.06in" }}>
+          <span style={{ display: "inline-block", width: "0.25in", height: "0.07in", background: e.color }} />
+          {e.name}
+        </div>
+      ))}
+      {underground && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.06in" }}>
+          <span style={{ display: "inline-block", width: "0.25in", borderTop: "1.5pt dashed #1a1a1a" }} />
+          Underground
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SheetPrintView({ design, sheet, dateLabel }) {
   const dims = sheetDimensions(sheet.sizeId, sheet.orientation);
   const bounds = sheetPlanBounds(sheet);
@@ -357,6 +391,7 @@ export default function SheetPrintView({ design, sheet, dateLabel }) {
           <PrintOrgCharts design={design} />
         </g>
       </svg>
+      <PrintSystemsLegend design={design} />
       {/* Header lives in the top margin: physical units, never scaled. */}
       {hasHeader && <PrintSheetHeader header={header} />}
       {/* Footer strip: custom three-column labels when set, else the legacy strip. */}
