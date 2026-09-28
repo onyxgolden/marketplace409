@@ -74,7 +74,8 @@ export function drawTemaSymbol({ symbol, instance, toScreen, scale, highlighted 
     accent: highlighted ? "#f59e0b" : symbol.color || "#f59e0b",
     body: "#0f172a",
   };
-  const below = (drawing.depthIn * scale) / 2;
+  // Nozzle flanges reach the footprint edge; keep the labels clear of them.
+  const below = (drawing.depthIn * scale) / 2 + 4;
   const label = symbol.tema.kind === "assembly" ? `${symbol.label} · ${drawing.designation}` : symbol.label;
   return (
     <g
