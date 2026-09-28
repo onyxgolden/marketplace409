@@ -52,6 +52,7 @@ import {
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
+import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -2969,6 +2970,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <button
           onClick={() => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg: inst.rotationDeg + 45 })}
           className="mt-2 flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700"
