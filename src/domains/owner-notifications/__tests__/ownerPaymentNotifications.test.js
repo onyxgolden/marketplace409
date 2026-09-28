@@ -8,6 +8,11 @@ import {
   classifyStripePaymentEvent,
   computeUpcomingAutopayCandidate,
   formatCentsAsUsd,
+  hourInTimeZone,
+  isQuietHours,
+  QUIET_HOURS_END,
+  QUIET_HOURS_START,
+  QUIET_HOURS_TIME_ZONE,
   resolvePaymentNotificationEvent,
 } from "../ownerPaymentNotifications";
 
@@ -181,5 +186,51 @@ describe("helpers", () => {
   it("formats cents as USD", () => {
     expect(formatCentsAsUsd(160000)).toBe("$1600.00");
     expect(formatCentsAsUsd(1)).toBe("$0.01");
+  });
+});
+
+describe("quiet hours", () => {
+  // 2026-09-28 is CDT (UTC-5): 04:00Z = 23:00 local, 12:00Z = 07:00 local.
+  const at = (iso) => new Date(iso);
+
+  it("fixes the default window at 23:00-07:00 America/Chicago (Jason's rule)", () => {
+    expect(QUIET_HOURS_START).toBe(23);
+    expect(QUIET_HOURS_END).toBe(7);
+    expect(QUIET_HOURS_TIME_ZONE).toBe("America/Chicago");
+  });
+
+  it("resolves the local hour in the configured time zone", () => {
+    expect(hourInTimeZone(at("2026-09-28T04:00:00Z"), "America/Chicago")).toBe(23);
+    expect(hourInTimeZone(at("2026-09-28T12:00:00Z"), "America/Chicago")).toBe(7);
+    expect(hourInTimeZone(at("2026-09-28T04:00:00Z"), "UTC")).toBe(4);
+  });
+
+  it("is quiet from 23:00 inclusive through 06:59, wrapping midnight", () => {
+    expect(isQuietHours({ at: at("2026-09-28T04:00:00Z") })).toBe(true); // 23:00 CDT
+    expect(isQuietHours({ at: at("2026-09-28T05:00:00Z") })).toBe(true); // 00:00 CDT
+    expect(isQuietHours({ at: at("2026-09-28T11:59:00Z") })).toBe(true); // 06:59 CDT
+  });
+
+  it("is not quiet at 07:00 or during the day", () => {
+    expect(isQuietHours({ at: at("2026-09-28T12:00:00Z") })).toBe(false); // 07:00 CDT
+    expect(isQuietHours({ at: at("2026-09-28T03:59:00Z") })).toBe(false); // 22:59 CDT
+    expect(isQuietHours({ at: at("2026-09-28T17:00:00Z") })).toBe(false); // 12:00 CDT
+  });
+
+  it("supports a non-wrapping daytime window", () => {
+    const window = { startHour: 9, endHour: 17, timeZone: "UTC" };
+    expect(isQuietHours({ at: at("2026-09-28T10:00:00Z"), ...window })).toBe(true);
+    expect(isQuietHours({ at: at("2026-09-28T08:59:00Z"), ...window })).toBe(false);
+    expect(isQuietHours({ at: at("2026-09-28T17:00:00Z"), ...window })).toBe(false);
+  });
+
+  it("treats an empty window (start == end) as never quiet", () => {
+    expect(isQuietHours({ at: at("2026-09-28T05:00:00Z"), startHour: 0, endHour: 0, timeZone: "UTC" })).toBe(false);
+  });
+
+  it("rejects bad hour bounds and bad dates", () => {
+    expect(() => isQuietHours({ at: at("2026-09-28T05:00:00Z"), startHour: 24 })).toThrow();
+    expect(() => isQuietHours({ at: at("2026-09-28T05:00:00Z"), endHour: -1 })).toThrow();
+    expect(() => isQuietHours({ at: new Date("nope") })).toThrow();
   });
 });

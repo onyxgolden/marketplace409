@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
   DEFAULT_OWNER_NOTIFICATION_EMAIL,
   UPCOMING_AUTOPAY_LEAD_DAYS,
+  parseQuietHour,
   resolveOwnerNotificationConfig,
   parseOwnerAllowlist,
   isOwnerNotificationAllowed,
@@ -12,6 +13,9 @@ beforeEach(() => {
   delete process.env.OWNER_PAYMENT_NOTIFICATION_EMAIL;
   delete process.env.RENTAL_EMAIL_SENDER;
   delete process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS;
+  delete process.env.OWNER_NOTIFICATION_QUIET_START;
+  delete process.env.OWNER_NOTIFICATION_QUIET_END;
+  delete process.env.OWNER_NOTIFICATION_QUIET_TZ;
 });
 
 describe("owner notification config", () => {
@@ -70,5 +74,34 @@ describe("owner notification config", () => {
     expect(isOwnerNotificationAllowed(config, "owner_a")).toBe(true);
     expect(isOwnerNotificationAllowed(config, "owner_b")).toBe(true);
     expect(isOwnerNotificationAllowed(config, "owner_c")).toBe(false);
+  });
+
+  it("defaults quiet hours to 23:00-07:00 America/Chicago", () => {
+    const config = resolveOwnerNotificationConfig({});
+    expect(config.quietStartHour).toBe(23);
+    expect(config.quietEndHour).toBe(7);
+    expect(config.quietTimeZone).toBe("America/Chicago");
+  });
+
+  it("honors quiet-hour overrides from env", () => {
+    const config = resolveOwnerNotificationConfig({
+      OWNER_NOTIFICATION_QUIET_START: "22",
+      OWNER_NOTIFICATION_QUIET_END: " 6 ",
+      OWNER_NOTIFICATION_QUIET_TZ: "America/Denver",
+    });
+    expect(config.quietStartHour).toBe(22);
+    expect(config.quietEndHour).toBe(6);
+    expect(config.quietTimeZone).toBe("America/Denver");
+  });
+
+  it("falls back to the default window on garbage quiet-hour input", () => {
+    expect(parseQuietHour(undefined, 23)).toBe(23);
+    expect(parseQuietHour("", 23)).toBe(23);
+    expect(parseQuietHour("nope", 23)).toBe(23);
+    expect(parseQuietHour("24", 23)).toBe(23);
+    expect(parseQuietHour("-1", 23)).toBe(23);
+    expect(parseQuietHour("22.5", 23)).toBe(23);
+    expect(parseQuietHour("22", 23)).toBe(22);
+    expect(parseQuietHour("0", 7)).toBe(0);
   });
 });
