@@ -24,6 +24,8 @@ import {
 } from "@/domains/roomDesigner/designerDocument";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { findSymbol } from "@/domains/roomDesigner/symbolRegistry";
+import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols";
+import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
 import {
   dimensionGeometry,
   feetInchesLabel,
@@ -174,6 +176,15 @@ function PrintFurniture({ design }) {
     <g>
       {(design.furniture || []).map((f) => {
         const { widthIn, depthIn } = pieceSize(f);
+        // Recognizable pieces print their plan symbol in ink at plan scale.
+        const planSymbol = furniturePlanSymbol(f.catalogId, widthIn, depthIn);
+        if (planSymbol) {
+          return (
+            <g key={f.id} transform={`translate(${f.x} ${f.y}) rotate(${f.rotationDeg || 0})`} data-print-plan-symbol={f.catalogId}>
+              {renderPlanSymbol(planSymbol, 1, PLAN_SYMBOL_PALETTES.print({ ink: INK }))}
+            </g>
+          );
+        }
         const corners = rotatedFootprintCorners(f, widthIn, depthIn);
         const entry = getCatalogEntry(f.catalogId);
         const fontSize = Math.max(2.5, Math.min(6, Math.min(widthIn, depthIn) / 5));
