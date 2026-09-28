@@ -16,6 +16,7 @@ import { pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { cabinetCode } from "@/domains/roomDesigner/cabinetCodes";
 import { polygonArea } from "@/domains/roomDesigner/designerGeometry";
 import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
+import { drawTemaSymbol } from "./temaDrawRoutine";
 
 function centroid(points) {
   const n = points.length;
@@ -922,6 +923,8 @@ function renderProcessGlyphSpec(spec, { hw, hh, stroke, sw, accent, body, symbol
  * ctx: { symbol, instance: {id,x,y,rotationDeg,tag,widthIn?,depthIn?}, toScreen, scale, highlighted }
  */
 export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, highlighted }) {
+  // Detailed TEMA exchangers and components have their own geometry.
+  if (symbol.tema) return drawTemaSymbol({ symbol, instance, toScreen, scale, highlighted });
   const c = toScreen({ x: instance.x, y: instance.y });
   const hw = ((instance.widthIn ?? symbol.widthIn) * scale) / 2;
   const hh = ((instance.depthIn ?? symbol.depthIn) * scale) / 2;
