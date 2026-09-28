@@ -91,7 +91,7 @@ describe("ToolPalette phone library drawer", () => {
   let onSelect;
   let toolsOpen;
 
-  const renderDrawerPalette = () => {
+  const renderDrawerPalette = (extraProps = {}) => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -111,6 +111,7 @@ describe("ToolPalette phone library drawer", () => {
             onSelect={onSelect}
             mobileToolsOpen={toolsOpen}
             onToggleMobileTools={toggle}
+            {...extraProps}
           />
         );
       });
@@ -155,7 +156,45 @@ describe("ToolPalette phone library drawer", () => {
       roomButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onSelect).toHaveBeenCalledWith("room");
+    // Picking a tool from the drawer closes the drawer (one tap back to canvas).
+    expect(toolsOpen).toBe(false);
+    expect(container.querySelector('[role="dialog"][aria-label="All tools"]')).toBeNull();
     expect(toggle).toBeDefined();
+  });
+
+  it("closes the drawer when a furniture piece is armed from drawer search", () => {
+    const onPickShape = vi.fn();
+    renderDrawerPalette({ onPickShape });
+    // Open the drawer from the rail.
+    const railButton = container.querySelector('nav > button[aria-label="All tools"]');
+    act(() => {
+      railButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(toolsOpen).toBe(true);
+    const dialog = container.querySelector('[role="dialog"][aria-label="All tools"]');
+    expect(dialog).not.toBeNull();
+
+    // Search for a furniture piece inside the drawer.
+    const input = dialog.querySelector('input[aria-label="Search shapes"]');
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "toilet");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const furnitureResult = Array.from(
+      dialog.querySelectorAll('[data-testid="shape-search-result"]')
+    ).find((r) => r.textContent.includes("Toilet"));
+    expect(furnitureResult).toBeDefined();
+    act(() => {
+      furnitureResult.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // The furniture piece arms for placement…
+    expect(onPickShape).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "catalog", domain: "furniture", id: "toilet" })
+    );
+    // …and the drawer closes (one tap back to the canvas).
+    expect(toolsOpen).toBe(false);
+    expect(container.querySelector('[role="dialog"][aria-label="All tools"]')).toBeNull();
   });
 
   it("does not render the library drawer until opened", () => {
