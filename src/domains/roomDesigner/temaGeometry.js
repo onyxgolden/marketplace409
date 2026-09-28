@@ -122,7 +122,7 @@ function proportions(depthIn, kettle) {
   if (kettle) {
     const R = H * 0.8;
     const r = R * 0.55;
-    return { H, R, r, cy: R - r * 1.15 };
+    return { H, R, r, cy: R - r * 1.05 }; // neck bottom flush with the kettle bottom
   }
   const R = H * 0.7;
   return { H, R, r: R, cy: 0 };
@@ -190,20 +190,19 @@ function frontParts(letter, x0, x1, g, opts) {
       partitionFrom = barrel[0];
       break;
     }
-    case "D": { // forged high-pressure barrel, internal cover held by a shear ring
+    case "D": { // forged high-pressure barrel; internal cover seated in the bore, held by a shear ring
       const wall = 1.25 * r;
       const bore = 0.8 * r;
-      prims.push(band(x0, x0 + 0.2 * r, cy, 1.05 * r, "flange")); // outer retainer
-      barrel = [x0 + 0.2 * r, x1 - ts];
+      barrel = [x0, x1 - ts];
       prims.push(band(barrel[0], barrel[1], cy, wall, "body"));
-      prims.push(line(barrel[0], cy - bore, barrel[1], cy - bore, "internal")); // bore
-      prims.push(line(barrel[0], cy + bore, barrel[1], cy + bore, "internal"));
-      prims.push(rect(x0 + 0.2 * r, cy - 0.97 * r, 0.12 * r, 0.22 * r, "packing")); // shear ring
-      prims.push(rect(x0 + 0.2 * r, cy + 0.75 * r, 0.12 * r, 0.22 * r, "packing"));
-      prims.push(band(x0 + 0.32 * r, x0 + 0.6 * r, cy, bore, "flange")); // internal cover
-      prims.push(line(x0 + 0.9 * r, cy - bore, x0 + 0.9 * r, cy + bore, "internal")); // diaphragm
+      prims.push(line(x0, cy - bore, barrel[1], cy - bore, "internal")); // bore
+      prims.push(line(x0, cy + bore, barrel[1], cy + bore, "internal"));
+      prims.push(band(x0 + 0.06 * r, x0 + 0.4 * r, cy, bore * 0.95, "flange")); // internal cover (plug)
+      prims.push(rect(x0 + 0.1 * r, cy - 0.95 * r, 0.1 * r, 0.2 * r, "packing")); // shear-ring tabs in the wall
+      prims.push(rect(x0 + 0.1 * r, cy + 0.75 * r, 0.1 * r, 0.2 * r, "packing"));
+      prims.push(line(x0 + 0.7 * r, cy - bore, x0 + 0.7 * r, cy, "internal")); // diaphragm (L with the partition)
       prims.push(band(x1 - ts, x1, cy, wall, "tubesheet")); // integral forged tubesheet
-      partitionFrom = x0 + 0.9 * r;
+      partitionFrom = x0 + 0.7 * r;
       surface = wall;
       break;
     }
@@ -264,20 +263,22 @@ function buildRear(letter, x0, x1, g, opts) {
 
   const len = x1 - x0;
   switch (letter) {
-    case "P": { // outside packed floating head
-      out.prims.push(band(x0, x0 + 0.2 * r, cy, 1.25 * r, "flange")); // packing box
-      out.prims.push(rect(x0 + 0.05 * r, cy - 1.0 * r, 0.15 * r, 0.12 * r, "packing"));
-      out.prims.push(rect(x0 + 0.05 * r, cy + 0.88 * r, 0.15 * r, 0.12 * r, "packing"));
-      out.prims.push(band(x0 + 0.2 * r, x0 + 0.35 * r, cy, 1.15 * r, "flange")); // gland
-      out.prims.push(band(x0 + 0.35 * r, x0 + 0.6 * r, cy, 0.88 * r, "body")); // tubesheet skirt
-      out.prims.push(band(x0 + 0.6 * r, x0 + 0.72 * r, cy, 0.95 * r, "tubesheet"));
-      out.prims.push(band(x0 + 0.72 * r, x0 + 0.85 * r, cy, 0.95 * r, "flange"));
-      const dd = Math.min(0.45 * r, x1 - (x0 + 0.85 * r));
-      out.prims.push(band(x0 + 0.85 * r, x1 - dd, cy, 0.88 * r, "body")); // floating head cover
-      out.prims.push(dish(x1 - dd, cy, 0.88 * r, dd, 1));
-      tubes(x0, x0 + 0.6 * r);
-      if (passes >= 4) out.prims.push(line(x0 + 0.85 * r, cy, x1 - dd, cy, "internal"));
-      tubeOut((x0 + 0.85 * r + x1 - dd) / 2, 0.88 * r);
+    case "P": { // outside packed floating head (TEMA Fig. N-1.2 / N-2 AEP)
+      const pb = 0.3 * r; // packing box on the shell end
+      const coverT = 0.12 * r;
+      const bf = x1 - coverT - 0.14 * r; // slip-on backing flange face
+      out.prims.push(band(x0, x0 + pb, cy, 1.25 * r, "flange")); // packing box
+      out.prims.push(rect(x0 + 0.14 * r, cy - 1.0 * r, pb - 0.14 * r, 0.12 * r, "packing"));
+      out.prims.push(rect(x0 + 0.14 * r, cy + 0.88 * r, pb - 0.14 * r, 0.12 * r, "packing"));
+      out.prims.push(band(x0 + pb, x0 + pb + 0.12 * r, cy, 1.15 * r, "flange")); // packing gland
+      out.prims.push(band(x0 + 0.14 * r, bf, cy, 0.88 * r, "body")); // floating tubesheet skirt, outside the shell
+      out.prims.push(band(x0 + 0.02 * r, x0 + 0.14 * r, cy, 0.88 * r, "tubesheet")); // floating tubesheet
+      out.prims.push(rect(bf - 0.08 * r, cy - 0.98 * r, 0.08 * r, 0.1 * r, "packing")); // split shear ring
+      out.prims.push(rect(bf - 0.08 * r, cy + 0.88 * r, 0.08 * r, 0.1 * r, "packing"));
+      out.prims.push(band(bf, x1 - coverT, cy, 1.1 * r, "flange")); // slip-on backing flange
+      out.prims.push(band(x1 - coverT, x1, cy, 1.1 * r, "flange")); // external floating head cover (flat)
+      if (passes >= 4) out.prims.push(line(x0 + 0.14 * r, cy, bf, cy, "internal"));
+      tubeOut((x0 + pb + 0.12 * r + bf) / 2, 0.88 * r);
       return out;
     }
     case "S": // floating head with split backing ring, inside a shell cover
@@ -300,12 +301,17 @@ function buildRear(letter, x0, x1, g, opts) {
         out.prims.push(dish(fts + 0.27 * r, cy, 0.8 * r, 0.35 * r, 1, "internal"));
         tubes(x0, fts, [0.4, 0.2]); // smaller bundle: pull-through clearance
       } else {
+        // TEMA Fig. N-1.2 / N-2 AES: the split backing ring sits BEHIND the
+        // floating tubesheet (bundle side); bolts run ring -> cover flange
+        // outside the tubesheet rim.
+        out.prims.push(rect(fts - 0.15 * r, cy - 0.95 * r, 0.15 * r, 0.2 * r, "flange")); // split backing ring
+        out.prims.push(rect(fts - 0.15 * r, cy + 0.75 * r, 0.15 * r, 0.2 * r, "flange"));
         out.prims.push(band(fts, fts + 0.12 * r, cy, 0.8 * r, "tubesheet"));
-        out.prims.push(rect(fts + 0.12 * r, cy - 0.95 * r, 0.15 * r, 0.23 * r, "flange")); // split backing ring
-        out.prims.push(rect(fts + 0.12 * r, cy + 0.72 * r, 0.15 * r, 0.23 * r, "flange"));
-        out.prims.push(band(fts + 0.27 * r, fts + 0.39 * r, cy, 0.95 * r, "flange")); // floating cover flange
-        out.prims.push(dish(fts + 0.39 * r, cy, 0.8 * r, 0.35 * r, 1, "internal"));
-        tubes(x0, fts);
+        out.prims.push(band(fts + 0.12 * r, fts + 0.24 * r, cy, 0.95 * r, "flange")); // floating cover flange
+        out.prims.push(line(fts - 0.15 * r, cy - 0.87 * r, fts + 0.24 * r, cy - 0.87 * r, "bolt"));
+        out.prims.push(line(fts - 0.15 * r, cy + 0.87 * r, fts + 0.24 * r, cy + 0.87 * r, "bolt"));
+        out.prims.push(dish(fts + 0.24 * r, cy, 0.8 * r, 0.35 * r, 1, "internal"));
+        tubes(x0, fts - 0.15 * r);
       }
       if (g.inKettle) tubeOut(fts + 0.2 * r, 0.8 * r);
       else tubeOut((x0 + 2 * fw + x1 - Math.min(0.5 * r, len * 0.3)) / 2 + 0.3 * r, coverR);
@@ -406,6 +412,7 @@ function buildShell(letter, s0, s1, g, opts = {}) {
     const standalone = opts.standalone;
     const k = kettleOutline(s0, s1, g, true);
     out.prims.push(...k.prims);
+    if (standalone) out.prims.push(band(s0, s0 + 0.1 * r, cy, 1.2 * r, "flange")); // neck flange
     const [xb, xe] = k.barrel;
     const weirX = xe - 0.35 * r;
     const bundleEnd = opts.bundleEnd ?? weirX - 0.3 * r;
@@ -413,7 +420,7 @@ function buildShell(letter, s0, s1, g, opts = {}) {
     if (standalone) out.prims.push(line(bundleEnd, cy - r * 0.6, bundleEnd, cy + r * 0.6, "hidden"));
     out.prims.push(line(weirX, g.R, weirX, cy - r * 1.2, "weir"));
     out.prims.push(line(xb, cy - r * 1.2, weirX, cy - r * 1.2, "hidden")); // liquid level
-    bottom("shell-in", xb + (weirX - xb) * 0.15, w, g.R); // liquid feed
+    bottom("shell-in", s0 + (xb - s0) * 0.6, w, g.R); // liquid feed, under the transition
     top("shell-out", (xb + weirX) / 2, w * 1.4, -g.R); // vapor outlet
     bottom("shell-out-2", (weirX + xe) / 2, w, g.R); // liquid overflow past the weir
     out.prims.push(arrow((xb + weirX) / 2, -g.R * 0.55, "up", a));
@@ -421,6 +428,10 @@ function buildShell(letter, s0, s1, g, opts = {}) {
   }
 
   out.prims.push(band(s0, s1, cy, r, "body"));
+  if (opts.standalone) {
+    out.prims.push(band(s0, s0 + 0.1 * r, cy, 1.15 * r, "flange"));
+    out.prims.push(band(s1 - 0.1 * r, s1, cy, 1.15 * r, "flange"));
+  }
   tubes(s0, s1);
   switch (letter) {
     case "E":
@@ -441,31 +452,28 @@ function buildShell(letter, s0, s1, g, opts = {}) {
     case "G":
       top("shell-in", at(0.5));
       bottom("shell-out", at(0.5));
-      out.prims.push(line(at(0.25), cy, at(0.75), cy, "internal")); // split-flow baffle
-      out.prims.push(line(at(0.1), cy - r, at(0.1), cy + r, "hidden")); // support plates
-      out.prims.push(line(at(0.9), cy - r, at(0.9), cy + r, "hidden"));
+      out.prims.push(line(at(0.12), cy, at(0.88), cy, "internal")); // split-flow longitudinal baffle
       out.prims.push(arrow(at(0.38), cy - 0.6 * r, "left", a));
       out.prims.push(arrow(at(0.62), cy - 0.6 * r, "right", a));
       break;
     case "H":
-      top("shell-in", at(0.25));
-      top("shell-in-2", at(0.75));
-      bottom("shell-out", at(0.25));
-      bottom("shell-out-2", at(0.75));
-      out.prims.push(line(at(0.08), cy, at(0.42), cy, "internal"));
-      out.prims.push(line(at(0.58), cy, at(0.92), cy, "internal"));
-      out.prims.push(line(at(0.5), cy - r, at(0.5), cy + r, "internal")); // central transverse baffle
-      out.prims.push(arrow(at(0.15), cy - 0.6 * r, "left", a));
-      out.prims.push(arrow(at(0.35), cy - 0.6 * r, "right", a));
-      out.prims.push(arrow(at(0.65), cy - 0.6 * r, "left", a));
-      out.prims.push(arrow(at(0.85), cy - 0.6 * r, "right", a));
+      top("shell-in", at(0.2));
+      top("shell-in-2", at(0.8));
+      bottom("shell-out", at(0.2));
+      bottom("shell-out-2", at(0.8));
+      out.prims.push(line(at(0.07), cy, at(0.33), cy, "internal")); // longitudinal baffles, one per nozzle pair
+      out.prims.push(line(at(0.67), cy, at(0.93), cy, "internal"));
+      out.prims.push(arrow(at(0.12), cy - 0.6 * r, "left", a));
+      out.prims.push(arrow(at(0.28), cy - 0.6 * r, "right", a));
+      out.prims.push(arrow(at(0.72), cy - 0.6 * r, "left", a));
+      out.prims.push(arrow(at(0.88), cy - 0.6 * r, "right", a));
       break;
     case "J":
       top("shell-in", at(0.5));
-      bottom("shell-out", at(0.12));
-      bottom("shell-out-2", at(0.88));
-      segmentalBaffles(out.prims, at(0.18), at(0.42), cy, r);
-      segmentalBaffles(out.prims, at(0.58), at(0.82), cy, r);
+      bottom("shell-out", at(0.2));
+      bottom("shell-out-2", at(0.8));
+      segmentalBaffles(out.prims, at(0.25), at(0.45), cy, r);
+      segmentalBaffles(out.prims, at(0.55), at(0.75), cy, r);
       out.prims.push(arrow(at(0.3), cy - 0.75 * r, "left", a));
       out.prims.push(arrow(at(0.7), cy - 0.75 * r, "right", a));
       break;

@@ -225,3 +225,69 @@ describe("world-space anchors", () => {
     expect(pidMode).toEqual(base);
   });
 });
+
+// Corrections from the comparison against TEMA's published nomenclature
+// figures (support.tema.org: HeatExchangerNomenclature.pdf = Fig. N-1.2;
+// TEMA_TableN-2AndFigureN-2.pdf = Fig. N-2).
+describe("matches TEMA Figure N-1.2 / N-2", () => {
+  const shellAt = (letter, id) => {
+    const s = temaComponent("shell", letter, 100, 42);
+    return (s.anchors.find((a) => a.id === id).x + 50) / 100; // fraction of shell length
+  };
+  const rects = (prims, role) => prims.filter((p) => p.kind === "rect" && p.role === role);
+
+  it("H: two top and two bottom nozzles near the ends, each on its own longitudinal baffle", () => {
+    expect(shellAt("H", "shell-in")).toBeCloseTo(0.2, 2);
+    expect(shellAt("H", "shell-in-2")).toBeCloseTo(0.8, 2);
+    expect(shellAt("H", "shell-out")).toBeCloseTo(0.2, 2);
+    expect(shellAt("H", "shell-out-2")).toBeCloseTo(0.8, 2);
+    const internals = temaComponent("shell", "H", 100, 42).prims.filter((p) => p.role === "internal");
+    expect(internals.every((p) => p.kind === "line" && p.y1 === p.y2)).toBe(true); // longitudinal only
+    expect(internals).toHaveLength(2);
+  });
+
+  it("J: one top-centre nozzle and two bottom nozzles toward the ends (J1-2)", () => {
+    expect(shellAt("J", "shell-in")).toBeCloseTo(0.5, 2);
+    expect(shellAt("J", "shell-out")).toBeCloseTo(0.2, 2);
+    expect(shellAt("J", "shell-out-2")).toBeCloseTo(0.8, 2);
+  });
+
+  it("G: centre nozzles with a long longitudinal baffle", () => {
+    const baffle = temaComponent("shell", "G", 100, 42).prims.find((p) => p.role === "internal");
+    expect(baffle.x2 - baffle.x1).toBeGreaterThan(70);
+  });
+
+  it("K: flat bottom from the neck to the kettle, transition on top only", () => {
+    const outline = temaComponent("shell", "K", 120, 66).prims.find((p) => p.role === "body" && p.kind === "poly");
+    const ys = outline.points.map(([, y]) => y);
+    const bottom = Math.max(...ys);
+    const neckYs = outline.points.filter(([x]) => x === -60).map(([, y]) => y); // front (neck) end
+    expect(Math.max(...neckYs)).toBeCloseTo(bottom, 6);
+  });
+
+  it("S: the split backing ring sits on the bundle side of the floating tubesheet", () => {
+    const { prims } = temaComponent("rear", "S", 40, 42);
+    const ts = rects(prims, "tubesheet")[0];
+    const ringLike = rects(prims, "flange").filter((p) => p.h < 42 * 0.4); // the two ring segments
+    expect(ringLike.length).toBeGreaterThanOrEqual(2);
+    for (const seg of ringLike) expect(seg.x + seg.w).toBeLessThanOrEqual(ts.x + 1e-9);
+  });
+
+  it("P: floating tubesheet at the packing box and a FLAT external cover (no dished head)", () => {
+    const { prims } = temaComponent("rear", "P", 40, 42);
+    expect(prims.some((p) => p.kind === "poly")).toBe(false);
+    const ts = rects(prims, "tubesheet")[0];
+    const packing = rects(prims, "packing");
+    expect(ts.x).toBeLessThan(-20 + 0.3 * 14.7); // inside the packing box at the shell end
+    expect(packing.length).toBe(4); // packing rings + split shear ring
+    const last = prims.filter((p) => p.kind === "rect").reduce((a, b) => (b.x + b.w > a.x + a.w ? b : a));
+    expect(last.role).toBe("flange"); // external cover plate is the outermost part
+  });
+
+  it("D: internal cover seated inside the forging — nothing protrudes past the barrel face", () => {
+    const { prims } = temaComponent("front", "D", 40, 42);
+    const body = rects(prims, "body")[0];
+    for (const p of rects(prims, "flange")) expect(p.x).toBeGreaterThanOrEqual(body.x);
+    expect(body.x).toBeCloseTo(-20, 6);
+  });
+});
