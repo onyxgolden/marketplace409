@@ -259,6 +259,17 @@ describe("TenantLedgerPage — reference parity (slice 2)", () => {
     expect(container.querySelector("[data-ledger-deposits]").textContent).toContain("Currently held: $1,600.00");
   });
 
+  it("highlights the deposits section when the On Deposit pill is clicked", async () => {
+    // Regression: the pill scrolled with no visible feedback, so the click looked dead.
+    await renderLedger();
+    const pill = [...container.querySelectorAll("button")].find((b) => b.textContent.startsWith("On Deposit:"));
+    expect(pill).not.toBeUndefined();
+    const depositsSection = container.querySelector("[data-ledger-deposits]");
+    expect(depositsSection.className).not.toContain("shadow-[0_0_0_4px_rgba(56,189,248,0.35)]");
+    await act(async () => { pill.click(); });
+    expect(container.querySelector("[data-ledger-deposits]").className).toContain("shadow-[0_0_0_4px_rgba(56,189,248,0.35)]");
+  });
+
   it("filters the table by transaction kind", async () => {
     await renderLedger();
     expect(container.querySelectorAll("[data-ledger-table] tbody tr")).toHaveLength(2);

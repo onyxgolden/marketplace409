@@ -54,7 +54,7 @@ function PortfolioStrip({ units }) {
   );
 }
 
-function DashboardCard({ icon: Icon, label, value, detail, destination, onNavigate, tone }) {
+function DashboardCard({ icon: Icon, label, value, detail, destination, viewFilter = null, onNavigate, tone }) {
   const tones = {
     neutral: "border-slate-200 dark:border-slate-700",
     success: "border-emerald-200 dark:border-emerald-900/60",
@@ -63,7 +63,7 @@ function DashboardCard({ icon: Icon, label, value, detail, destination, onNaviga
   return (
     <button
       type="button"
-      onClick={() => onNavigate?.(destination)}
+      onClick={() => onNavigate?.(destination, null, viewFilter)}
       data-dashboard-card={label}
       className={`min-w-0 rounded-3xl border bg-white p-6 text-left shadow-sm transition hover:shadow-md motion-reduce:transition-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:bg-slate-900 ${tones[tone] || tones.neutral}`}
     >
@@ -160,7 +160,7 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
       detail: summary.openMaintenance > 0 ? OPEN_MAINTENANCE_STATUSES_LABEL : "No open requests",
     },
     {
-      icon: CalendarClock, label: "Expiring leases", destination: "lease-lifecycle",
+      icon: CalendarClock, label: "Expiring leases", destination: "leases", viewFilter: "expiring",
       tone: summary.expiringLeases > 0 ? "attention" : "neutral",
       value: String(summary.expiringLeases),
       detail: summary.expiringLeases > 0

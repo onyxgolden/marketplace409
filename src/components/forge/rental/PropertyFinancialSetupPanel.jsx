@@ -29,7 +29,7 @@ export function setupToFormState(setup) {
   };
 }
 
-export default function PropertyFinancialSetupPanel({ recordContext }) {
+export default function PropertyFinancialSetupPanel({ recordContext, onNavigate }) {
   const propertyId = recordContext?.propertyId || "";
   const [form, setForm] = useState(setupToFormState(null));
   const [transactions, setTransactions] = useState([]);
@@ -101,7 +101,21 @@ export default function PropertyFinancialSetupPanel({ recordContext }) {
   }
 
   if (!propertyId) {
-    return <p role="alert" className="rounded-xl bg-red-50 p-4 font-bold text-red-800">Select a property before opening financial setup.</p>;
+    // Never a dead end: the shell carries the selected property across sidebar
+    // navigation, and this links to Properties as the fallback when nothing is
+    // selected yet.
+    return (
+      <div role="alert" className="space-y-3 rounded-xl bg-red-50 p-4 dark:bg-red-950/40">
+        <p className="font-bold text-red-800 dark:text-red-300">Select a property before opening financial setup.</p>
+        <button
+          type="button"
+          onClick={() => onNavigate?.("setup")}
+          className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300"
+        >
+          Go to Properties
+        </button>
+      </div>
+    );
   }
   if (!data && isLoading) return <ForgeLoadingState label="Loading financial setup…" />;
   if (!data && loadError) {
