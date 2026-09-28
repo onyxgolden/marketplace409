@@ -50,6 +50,7 @@ import {
   resizeFurniture,
   setFurnitureMount,
   resizeOpening,
+  setDoorSwing,
   resetFurnitureSize,
   rotateFurniture,
   rotateSymbol,
@@ -68,6 +69,7 @@ import {
   updateSheetFormat,
   updateUnderlay,
 } from "@/domains/roomDesigner/designerDocument";
+import { doorSwingOf } from "@/domains/roomDesigner/designerHandles";
 import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMapper";
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
 import { addSavedEstimate, removeSavedEstimate } from "@/domains/roomDesigner/cabinetPriceBooks";
@@ -408,6 +410,19 @@ export function designerReducer(state, action) {
         resizeOpening(state.design, action.openingId, action.widthIn),
         action.coalesce,
       );
+    case "FLIP_DOOR": {
+      // Canvas flip handles / inspector buttons: toggle hinge side or swing face.
+      const door = state.design.openings.find((o) => o.id === action.openingId);
+      if (!door || door.type !== "door") return state;
+      const { hinge, swing } = doorSwingOf(door);
+      if (action.part === "hinge") {
+        return touch(state, setDoorSwing(state.design, door.id, { hinge: hinge === "end" ? "start" : "end" }));
+      }
+      if (action.part === "swing") {
+        return touch(state, setDoorSwing(state.design, door.id, { swing: swing === "negative" ? "positive" : "negative" }));
+      }
+      return state;
+    }
     case "DELETE_OBJECT": {
       const target = action.target;
       if (!target) return state;
