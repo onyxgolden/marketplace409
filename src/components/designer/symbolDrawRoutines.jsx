@@ -19,6 +19,9 @@ import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/ro
 import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols";
 import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
 import { drawTemaSymbol } from "./temaDrawRoutine";
+import { uprightTextTransform } from "./uprightText";
+
+export { uprightTextTransform };
 
 function centroid(points) {
   const n = points.length;
@@ -79,7 +82,7 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
       )}
       {/* Cabinets read by their code at the current size (B24, W2430),
           the way cabinet layouts are labeled; other pieces by name. */}
-      <text y={Math.max(w, h) / 2 + 14} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400}>
+      <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill={code ? "#fde68a" : "#d1d5db"} fontWeight={code ? 700 : 400}>
         {code || symbol.label}
       </text>
     </g>
@@ -133,7 +136,7 @@ export function drawDefaultSymbol({ symbol, instance, toScreen, scale, highlight
         stroke={selectionStroke(highlighted, "#374151")}
         strokeWidth={highlighted ? 3 : 1.5}
       />
-      <text y={Math.max(w, h) / 2 + 14} textAnchor="middle" fontSize={11} fill="#d1d5db">
+      <text y={Math.max(w, h) / 2 + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(w, h) / 2 + 14)} textAnchor="middle" fontSize={11} fill="#d1d5db">
         {symbol.label}
       </text>
     </g>
@@ -246,7 +249,7 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
               x={-hw} y={-hh} width={hw * 2} height={hh * 2} rx={3}
               fill="#1f2937" stroke={highlighted ? "#f59e0b" : "#fbbf24"} strokeWidth={sw}
             />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a">
+            <text transform={uprightTextTransform(instance.rotationDeg, 0, 0)} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={700} fill="#fde68a">
               {label}
             </text>
           </g>
@@ -262,7 +265,7 @@ export function drawPipingSymbol({ symbol, instance, toScreen, scale, highlighte
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
         {symbol.label}
       </text>
     </g>
@@ -467,7 +470,7 @@ export function drawBuildingElementSymbol({ symbol, instance, toScreen, scale, h
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
         {symbol.label}
       </text>
     </g>
@@ -588,7 +591,7 @@ export function drawSiteOutdoorSymbol({ symbol, instance, toScreen, scale, highl
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
         {symbol.label}
       </text>
     </g>
@@ -672,7 +675,7 @@ export function drawMepFixtureSymbol({ symbol, instance, toScreen, scale, highli
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
-      <text y={Math.max(hw, hh) + 14} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      <text y={Math.max(hw, hh) + 14} transform={uprightTextTransform(instance.rotationDeg, 0, Math.max(hw, hh) + 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
         {symbol.label}
       </text>
     </g>
@@ -1206,11 +1209,11 @@ export function drawProcessEquipmentSymbol({ symbol, instance, toScreen, scale, 
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {glyph}
       {instance.tag && (
-        <text y={below + 13} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
+        <text y={below + 13} transform={uprightTextTransform(instance.rotationDeg, 0, below + 13)} textAnchor="middle" fontSize={11} fontWeight={700} fill={highlighted ? "#f59e0b" : "#fde68a"}>
           {instance.tag.slice(0, 14)}
         </text>
       )}
-      <text y={below + (instance.tag ? 26 : 14)} textAnchor="middle" fontSize={10} fill="#9ca3af">
+      <text y={below + (instance.tag ? 26 : 14)} transform={uprightTextTransform(instance.rotationDeg, 0, below + (instance.tag ? 26 : 14))} textAnchor="middle" fontSize={10} fill="#9ca3af">
         {symbol.label}
       </text>
     </g>
