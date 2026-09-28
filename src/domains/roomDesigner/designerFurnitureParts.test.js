@@ -76,9 +76,9 @@ describe("designerFurnitureParts — signature compositions", () => {
     const headboard = parts.find((p) => p.dz < -30);
     expect(headboard).toBeDefined();
   });
-  it("toilet: tank + bowl + seat", () => {
+  it("toilet: tank + lid + handle + pedestal + bowl + seat lid (Phase 1 recognizable toilet)", () => {
     const parts = furnitureParts("toilet", dimsOf("toilet"));
-    expect(parts).toHaveLength(3);
+    expect(parts).toHaveLength(6);
     expect(parts.some((p) => p.color === "#ffffff")).toBe(true);
   });
   it("dining table: top + four legs", () => {
@@ -94,5 +94,61 @@ describe("designerFurnitureParts — signature compositions", () => {
   it("floor lamp shade is marked as a glow part", () => {
     const parts = furnitureParts("floor-lamp", dimsOf("floor-lamp"));
     expect(parts.some((p) => p.glow)).toBe(true);
+  });
+});
+
+describe("designerFurnitureParts — recognizable procedural fixtures (Phase 1)", () => {
+  const within = (id) => {
+    const d = dimsOf(id);
+    for (const p of furnitureParts(id, d)) {
+      expect(Math.abs(p.dx) + p.w / 2, `${id} x`).toBeLessThanOrEqual(d.widthIn / 2 + 1e-6);
+      expect(Math.abs(p.dz) + (p.shape === "cyl" ? p.d : p.d) / 2, `${id} z`).toBeLessThanOrEqual(d.depthIn / 2 + 1e-6);
+      expect(p.dy - p.h / 2, `${id} y`).toBeGreaterThanOrEqual(-1e-6);
+    }
+  };
+
+  it("toilet: tank at the back, a tapered oval pedestal and bowl, and a lid — not three boxes", () => {
+    const parts = furnitureParts("toilet", dimsOf("toilet"));
+    const tank = parts.find((p) => p.role === "tank");
+    const bowl = parts.find((p) => p.role === "bowl");
+    expect(tank.shape).toBe("box");
+    expect(tank.dz).toBeLessThan(0); // back
+    expect(bowl.shape).toBe("cyl");
+    expect(bowl.d).toBeGreaterThan(bowl.w); // oval, longer front-to-back
+    expect(bowl.wTop).toBeGreaterThan(bowl.w); // flares outward
+    expect(parts.some((p) => p.role === "pedestal" && p.shape === "cyl")).toBe(true);
+    expect(parts.some((p) => p.role === "lid")).toBe(true);
+    within("toilet");
+  });
+
+  it("round dining table: round top on a pedestal and base", () => {
+    const parts = furnitureParts("dining-table-round", dimsOf("dining-table-round"));
+    expect(parts.map((p) => p.role)).toEqual(expect.arrayContaining(["top", "pedestal", "base"]));
+    expect(parts.every((p) => p.shape === "cyl")).toBe(true);
+    within("dining-table-round");
+  });
+
+  it("round bath sink: flared bowl with a recessed basin and faucet", () => {
+    const parts = furnitureParts("sink-bath-round", dimsOf("sink-bath-round"));
+    const bowl = parts.find((p) => p.role === "bowl");
+    expect(bowl.wTop).toBeGreaterThan(bowl.w);
+    expect(parts.some((p) => p.role === "basin")).toBe(true);
+    expect(parts.some((p) => p.role === "faucet")).toBe(true);
+    within("sink-bath-round");
+  });
+
+  it("kitchen sink: rim with two recessed basins and a faucet", () => {
+    const parts = furnitureParts("sink-kitchen-33", dimsOf("sink-kitchen-33"));
+    expect(parts.filter((p) => p.role === "basin")).toHaveLength(2);
+    expect(parts.some((p) => p.role === "faucet")).toBe(true);
+    within("sink-kitchen-33");
+  });
+
+  it("existing round cylinders keep d === w (unchanged rendering)", () => {
+    for (const id of ["water-heater", "floor-lamp", "office-chair"]) {
+      for (const p of furnitureParts(id, dimsOf(id)).filter((q) => q.shape === "cyl")) {
+        expect(p.wTop, id).toBeUndefined();
+      }
+    }
   });
 });
