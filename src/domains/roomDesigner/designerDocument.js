@@ -40,6 +40,7 @@ import "./mepFixturesCatalog";
 import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
+import { pipeAttachmentErrors } from "./pipeAttachments";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
@@ -990,6 +991,7 @@ export function validateDesign(design) {
     } else if (!(run.diameterIn > 0)) {
       errors.push(`Pipe run ${run.id} has a bad diameter.`);
     }
+    errors.push(...pipeAttachmentErrors(run)); // optional nozzle attachments
   }
   for (const instance of design.symbols || []) {
     const symbol = findSymbol(instance.domain, instance.symbolId);
