@@ -27,9 +27,9 @@
 //
 // Hard rules (same discipline as slices 3–5):
 // - Never pixels. Never invented dimensions. The wall-thickness default is
-//   documented and surfaced in `assumptions`; the door-swing default
-//   (hinge at the opening's start edge, leaf on the +normal face, 90-degree
-//   swing) is documented because hinge side is not stored in geometry.
+//   documented and surfaced in `assumptions`. Door swings follow the
+//   opening's optional hinge/swing fields (default: hinge at the start edge,
+//   leaf on the +normal face, 90-degree swing).
 // - Elevations are NOT exported in slice 6: plan export is the acceptance
 //   bar. Passing includeElevations: true fails closed with a clear error.
 // - Export never mutates the project: every operation is pure.
@@ -42,6 +42,7 @@
 
 import { validateHomeProject } from "./homeProject";
 import { clampOpening } from "./designerGeometry";
+import { doorSwingOf } from "./designerHandles";
 
 /**
  * Review-adjustable export configuration. DXF version and unit choices live
@@ -274,8 +275,8 @@ function dxfPt(p) {
  * face:  "positive" = leaf on the +normal face (geometry default),
  *        "negative" = leaf on the -normal face.
  *
- * Hinge side is not stored in designer geometry; planToDxf always uses the
- * documented defaults (start/positive). The arc angles are normalized to the
+ * planToDxf derives hinge and face from the opening's stored hinge/swing
+ * (see designerHandles.doorSwingOf). The arc angles are normalized to the
  * counter-clockwise convention: endDeg - startDeg is always exactly 90.
  */
 export function doorSwingDxf({
@@ -415,6 +416,7 @@ function exportLevelPlan(design, layers, ctx) {
             type: o.type === "door" ? "door" : "window",
             offsetIn: clamped.offsetIn,
             widthIn: clamped.widthIn,
+            ...doorSwingOf(o),
           };
         } catch {
           return null;
@@ -458,19 +460,25 @@ function exportLevelPlan(design, layers, ctx) {
         ctx.entities += 1;
       }
       if (opening.type === "door") {
-        // Documented default: hinge at the opening's start edge, leaf on
-        // the +normal face, drawn in the closed position with a 90-degree
-        // swing arc. Hinge side is not stored in geometry.
+        // Stored hinge side / swing face (defaults: start edge, +normal
+        // face), drawn in the closed position with a 90-degree swing arc.
+        // The hinge sits on the wall face the door swings to.
+        const { hinge: hingeSide, swing: swingFace } = doorSwingOf(opening);
         const planAngleDeg = (Math.atan2(span.dir.y, span.dir.x) * 180) / Math.PI;
-        const hinge = at(span, off, half);
+        const faceSign = swingFace === "negative" ? -1 : 1;
+        const hinge = at(span, hingeSide === "end" ? off + w : off, faceSign * half);
         const [hx, hy] = dxfPt(hinge);
+        // doorSwingDxf measures its face from the LEAF direction; an end
+        // hinge points the leaf back along the wall, which mirrors that
+        // face relative to the wall's normal.
+        const leafFace = (hingeSide === "end") === (swingFace === "negative") ? "positive" : "negative";
         const swing = doorSwingDxf({
           hingeX: hx,
           hingeY: hy,
-          leafAngleDxfDeg: -planAngleDeg,
+          leafAngleDxfDeg: hingeSide === "end" ? 180 - planAngleDeg : -planAngleDeg,
           widthIn: w,
-          hinge: "start",
-          face: "positive",
+          hinge: hingeSide,
+          face: leafFace,
         });
         const [[lx1, ly1], [lx2, ly2]] = swing.leaf;
         ctx.pairs.push(...emitLine(layer, lx1, ly1, lx2, ly2));

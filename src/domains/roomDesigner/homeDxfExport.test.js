@@ -264,6 +264,36 @@ describe("doorSwingDxf", () => {
   });
 });
 
+describe("planToDxf: stored door hinge side and swing face", () => {
+  // South wall runs plan (0,0) -> (120,0); DXF flips y. Door gap x = 40..76.
+  // Positive face = plan left-hand normal (0,-1) = DXF +y.
+  function doorArc(opening) {
+    const project = roomProject();
+    const design = project.levels[0].design;
+    const door = design.openings.find((o) => o.type === "door");
+    const next = { ...design, openings: design.openings.map((o) => (o === door ? { ...o, ...opening } : o)) };
+    const { dxf } = planToDxf({ ...project, levels: [{ ...project.levels[0], design: next }] });
+    const m = dxf.match(/0\nARC\n8\nA-L01-DOOR\n10\n([^\n]+)\n20\n([^\n]+)\n40\n([^\n]+)\n50\n([^\n]+)\n51\n([^\n]+)/);
+    const [, cx, cy, r, a0, a1] = m.map(Number);
+    const mid = (((a0 + a1) / 2) * Math.PI) / 180;
+    return { cx, cy, r, towardX: Math.sign(Math.round(Math.cos(mid) * 1e6)), towardY: Math.sign(Math.round(Math.sin(mid) * 1e6)) };
+  }
+
+  it.each([
+    [{}, 40, 1, 1],
+    [{ hinge: "end" }, 76, -1, 1],
+    [{ swing: "negative" }, 40, 1, -1],
+    [{ hinge: "end", swing: "negative" }, 76, -1, -1],
+  ])("%o: hinge at x=%d, arc sweeps toward the latch (%d) on the swing face (%d)", (opening, hingeX, towardX, face) => {
+    const a = doorArc(opening);
+    expect(a.cx).toBe(hingeX);
+    expect(Math.sign(a.cy)).toBe(face); // hinge sits on the swing face of the wall
+    expect(a.r).toBe(36);
+    expect(a.towardX).toBe(towardX);
+    expect(a.towardY).toBe(face);
+  });
+});
+
 describe("dxf helpers", () => {
   it("sanitizeDxfText strips control characters", () => {
     expect(sanitizeDxfText("Bed\nroom\x01")).toBe("Bedroom");
