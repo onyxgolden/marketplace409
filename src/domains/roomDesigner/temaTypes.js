@@ -45,11 +45,11 @@ export const TEMA_SHELLS = Object.freeze([
 ]);
 
 export const TEMA_REAR_HEADS = Object.freeze([
-  type("rear", "L", "Fixed tubesheet like \"A\" stationary head",
+  type("rear", "L", "Fixed tubesheet, like stationary head A",
     "Fixed rear tubesheet with a flanged channel and removable flat cover."),
-  type("rear", "M", "Fixed tubesheet like \"B\" stationary head",
+  type("rear", "M", "Fixed tubesheet, like stationary head B",
     "Fixed rear tubesheet with a dished bonnet."),
-  type("rear", "N", "Fixed tubesheet like \"N\" stationary head",
+  type("rear", "N", "Fixed tubesheet, like stationary head N",
     "Fixed rear tubesheet welded to shell and channel, with a removable cover."),
   type("rear", "P", "Outside packed floating head",
     "Floating tubesheet extends through a packing gland at the shell end; the floating head cover sits outside the shell."),
