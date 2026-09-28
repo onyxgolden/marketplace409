@@ -8,7 +8,7 @@
 //     settings: { wallHeightIn, wallThicknessIn, gridIn },
 //     walls:    [{ id, a: {x,y}, b: {x,y} }],
 //     rooms:    [{ id, label, polygon: [{x,y}, ...] }],   // labeled areas
-//     openings: [{ id, wallId, type: "door"|"window", offsetIn, widthIn }],
+//     openings: [{ id, wallId, type: "door"|"window", offsetIn, widthIn, hinge?, swing? }],
 //     furniture:[{ id, catalogId, x, y, rotationDeg }],
 //     sheets:   [{ id, sizeId, orientation, x, y,   // printable paper frames
 //                   planWidthIn, planHeightIn, fitScale,
@@ -41,6 +41,7 @@ import "./processEquipmentCatalog";
 import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
 import { pipeAttachmentErrors } from "./pipeAttachments";
+import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {
@@ -461,6 +462,28 @@ export function resizeOpening(design, openingId, widthIn) {
   });
   if (!changed) throw new Error(`Unknown opening: ${openingId}`);
   return { ...design, openings };
+}
+
+/**
+ * Set which edge a door hinges on ("start" | "end") and which wall face it
+ * swings to ("positive" | "negative"). Either may be omitted to keep it.
+ * Both are optional fields; a door without them draws start / positive.
+ */
+export function setDoorSwing(design, openingId, { hinge, swing } = {}) {
+  assertDesign(design);
+  if (hinge !== undefined && !DOOR_HINGES.includes(hinge)) {
+    throw new Error('Door hinge must be "start" or "end".');
+  }
+  if (swing !== undefined && !DOOR_SWINGS.includes(swing)) {
+    throw new Error('Door swing must be "positive" or "negative".');
+  }
+  const opening = design.openings.find((o) => o.id === openingId);
+  if (!opening) throw new Error(`Unknown opening: ${openingId}`);
+  if (opening.type !== "door") throw new Error("Only a door has a hinge and swing.");
+  const next = { ...opening };
+  if (hinge !== undefined) next.hinge = hinge;
+  if (swing !== undefined) next.swing = swing;
+  return { ...design, openings: design.openings.map((o) => (o.id === openingId ? next : o)) };
 }
 
 export function deleteOpening(design, openingId) {
@@ -1019,6 +1042,12 @@ export function validateDesign(design) {
     const length = wallLength(wall);
     if (opening.offsetIn < 0 || opening.offsetIn + opening.widthIn > length + 1e-6) {
       errors.push(`Opening ${opening.id} overhangs its wall.`);
+    }
+    if (opening.hinge !== undefined && !DOOR_HINGES.includes(opening.hinge)) {
+      errors.push(`Opening ${opening.id} has an unknown hinge side "${opening.hinge}".`);
+    }
+    if (opening.swing !== undefined && !DOOR_SWINGS.includes(opening.swing)) {
+      errors.push(`Opening ${opening.id} has an unknown swing "${opening.swing}".`);
     }
   }
   for (const piece of design.furniture) {
