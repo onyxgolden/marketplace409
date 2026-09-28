@@ -56,6 +56,7 @@ import ObjectLibraryPanel from "./ObjectLibraryPanel";
 import RotateButtons from "./RotateButtons";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
+import { SystemMembershipSection, SystemsSection } from "./SystemsPanels";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import { MobileDrawer } from "./MobileDrawer";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -1241,6 +1242,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         Rooms, areas, and wall lengths are available as plain data for future
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
+      <SystemsSection design={design} dispatch={dispatch} />
       <VsdxImportSection dispatch={dispatch} />
       <DxfImportSection dispatch={dispatch} design={design} />
       <PdfImportPanel design={design} dispatch={dispatch} />
@@ -3004,6 +3006,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <SystemMembershipSection design={design} kind="pipe" member={run} fallbackColor="#7dd3fc" dispatch={dispatch} />
         {["start", "end"].map((end) => {
           const ref = run.attachments?.[end];
           const target = ref && (design.symbols || []).find((s) => s.id === ref.symbolId);
@@ -3044,6 +3047,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <SystemMembershipSection design={design} kind="symbol" member={inst} fallbackColor={symbol.color || "#60a5fa"} dispatch={dispatch} />
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RotateButtons
           rotationDeg={inst.rotationDeg}
