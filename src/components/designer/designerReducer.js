@@ -446,6 +446,50 @@ export function designerReducer(state, action) {
           state.design, action.catalogId, action.x, action.y, action.rotationDeg || 0,
         ),
       );
+    // Arrow keys: move the selection one grid square (design.settings.gridIn)
+    // per press. dx/dy are grid steps (-1, 0, 1). A burst of presses on the
+    // same selection coalesces into one undo step, like a drag.
+    case "NUDGE_SELECTION": {
+      const grid = state.design.settings?.gridIn || 6;
+      const mx = (action.dx || 0) * grid;
+      const my = (action.dy || 0) * grid;
+      if (!mx && !my) return state;
+      const multi = state.multiSelection || [];
+      if (multi.length > 0) {
+        const ids = new Set(multi.map((m) => m.id));
+        let design = state.design;
+        for (const f of design.furniture) if (ids.has(f.id)) design = moveFurniture(design, f.id, f.x + mx, f.y + my);
+        return design === state.design ? state : touch(state, design, `nudge:multi:${[...ids].join(",")}`);
+      }
+      const sel = state.selection;
+      if (!sel) return state;
+      const key = `nudge:${sel.kind}:${sel.id}`;
+      const d = state.design;
+      switch (sel.kind) {
+        case "furniture": {
+          const f = d.furniture.find((p) => p.id === sel.id);
+          return f ? touch(state, moveFurniture(d, f.id, f.x + mx, f.y + my), key) : state;
+        }
+        case "symbol": {
+          const s = findSymbolInstance(d, sel.id);
+          return s ? touch(state, moveSymbol(d, s.id, s.x + mx, s.y + my), key) : state;
+        }
+        case "room":
+          return findRoom(d, sel.id) ? touch(state, moveRoom(d, sel.id, mx, my), key) : state;
+        case "wall":
+          return findWall(d, sel.id) ? touch(state, moveWall(d, sel.id, mx, my), key) : state;
+        case "orgchart": {
+          const c = findOrgChart(d, sel.id);
+          return c ? touch(state, moveOrgChart(d, c.id, c.x + mx, c.y + my), key) : state;
+        }
+        case "sheet": {
+          const sh = findSheet(d, sel.id);
+          return sh ? touch(state, moveSheet(d, sh.id, sh.x + mx, sh.y + my), key) : state;
+        }
+        default:
+          return state; // openings slide along their wall; pipes reshape by vertex
+      }
+    }
     case "MOVE_FURNITURE":
       return touch(
         state,
