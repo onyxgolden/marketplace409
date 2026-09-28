@@ -95,3 +95,10 @@ describe("Phase 2 roles and text", () => {
     expect(draw("refrigerator", { rotationDeg: 180 })).toContain("rotate(180");
   });
 });
+
+describe("lamp visibility", () => {
+  it("fills the lamp shade with the lamp's own color so it shows on the dark canvas", () => {
+    const paint = PLAN_SYMBOL_PALETTES.screen({ color: "#e3c878", stroke: "#374151" })("shade");
+    expect(paint.fill).toBe("#e3c878");
+  });
+});

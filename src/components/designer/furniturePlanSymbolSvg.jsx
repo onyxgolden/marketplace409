@@ -25,7 +25,8 @@ export const PLAN_SYMBOL_PALETTES = Object.freeze({
       case "arm": return { fill: shade(color, 0.8), ...line };
       case "appliance": case "pan": return { fill: "#e5e7eb", ...line };
       case "cabinet": case "counter": return { fill: shade(color, 1.05), ...line };
-      case "burner": case "drum": case "shade": return { fill: "none", stroke: DARK, strokeWidth: 1.25 };
+      case "burner": case "drum": return { fill: "none", stroke: DARK, strokeWidth: 1.25 };
+      case "shade": return { fill: color, stroke: DARK, strokeWidth: 1.25 }; // lamps: visible on the dark canvas
       case "controls": case "screen": return { fill: "#4b5563", stroke: "none" };
       case "door-face": case "drawer-line": case "shelf": case "hinge": case "slope": case "lamp-x": case "tall-x": case "blind": case "door":
         return { fill: "none", stroke: DARK, strokeWidth: 0.9 };
