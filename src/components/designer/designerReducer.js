@@ -78,6 +78,7 @@ import {
   setSymbolTemaConfig,
 } from "@/domains/roomDesigner/temaInstances";
 import { detailedVersionFor } from "@/domains/roomDesigner/temaExchangerCatalog";
+import { detectRunAttachments, reconcilePipeAttachments } from "@/domains/roomDesigner/pipeAttachments";
 import { validateTemaConfig } from "@/domains/roomDesigner/temaTypes";
 import { placedSelection } from "@/domains/roomDesigner/customShapes/customShapePlacement";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
@@ -144,7 +145,10 @@ function withPipeDefaults(design) {
  * pushing a new one, so a drag is a single undo step. Any non-coalesced
  * edit clears the redo stack.
  */
-function touch(state, design, coalesceKey) {
+function touch(state, nextDesign, coalesceKey) {
+  // Pipe ends attached to equipment nozzles follow every edit (move,
+  // rotate, resize, reconfigure, delete); a no-op for unattached designs.
+  const design = reconcilePipeAttachments(nextDesign);
   const past = state.past || [];
   if (
     coalesceKey != null &&
@@ -478,8 +482,10 @@ export function designerReducer(state, action) {
     // ---- Phase 2: piping mode ----
     case "ADD_PIPE_RUN": {
       const layer = state.pendingPipe.layer === "auto" ? "piping" : state.pendingPipe.layer;
-      const design = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
-      const run = design.pipes[design.pipes.length - 1];
+      const added = addPipeRun(state.design, action.points, { ...state.pendingPipe, layer });
+      const run = added.pipes[added.pipes.length - 1];
+      // Ends snapped onto a nozzle attach to it.
+      const design = detectRunAttachments(added, run.id);
       return { ...touch(state, design), selection: { kind: "pipe", id: run.id } };
     }
     case "SET_PIPE_FIELDS":
@@ -487,9 +493,11 @@ export function designerReducer(state, action) {
       return touch(state, setPipeFields(state.design, action.pipeId, action.fields));
     case "MOVE_PIPE_VERTEX":
       if (!findPipeRun(state.design, action.pipeId)) return state;
+      // Dragging an end re-derives its attachment: off a nozzle detaches,
+      // dropped exactly on one attaches.
       return touch(
         state,
-        movePipeVertex(state.design, action.pipeId, action.index, action.point),
+        detectRunAttachments(movePipeVertex(state.design, action.pipeId, action.index, action.point), action.pipeId),
         action.coalesce,
       );
     case "PLACE_SYMBOL": {

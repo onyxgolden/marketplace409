@@ -2936,7 +2936,13 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
-        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run.</p>
+        {["start", "end"].map((end) => {
+          const ref = run.attachments?.[end];
+          const target = ref && (design.symbols || []).find((s) => s.id === ref.symbolId);
+          const label = target ? `${target.tag || "equipment"} · ${ref.anchorId}` : "not connected";
+          return <Row key={end} label={end === "start" ? "Start connection" : "End connection"} value={label} />;
+        })}
+        <p className="text-[11px] text-gray-500">Drag the orange vertices on the plan to reshape the run. Drop an end on an equipment nozzle to connect it; connected ends follow the equipment.</p>
       </PanelShell>
     );
   }

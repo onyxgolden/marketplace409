@@ -765,7 +765,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     }
     // Phase 2: piping mode drags.
     if (drag.kind === "move-pipe-vertex") {
-      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const { point: gridPoint } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      // An END vertex dropped near a nozzle lands exactly on it (and attaches).
+      const run = (design.pipes || []).find((p) => p.id === drag.pipeId);
+      const isEnd = run && (drag.index === 0 || drag.index === run.points.length - 1);
+      const nozzle = isEnd ? nearestConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale) : null;
+      const point = nozzle ? { x: nozzle.x, y: nozzle.y } : gridPoint;
       dispatch({ type: "MOVE_PIPE_VERTEX", pipeId: drag.pipeId, index: drag.index, point, coalesce: `move-pipe-vertex:${drag.pipeId}:${drag.index}` });
     }
     if (drag.kind === "move-symbol") {

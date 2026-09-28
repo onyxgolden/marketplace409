@@ -77,3 +77,66 @@ describe("TEMA exchanger through the reducer", () => {
     expect(designerReducer(pump, { type: "REPLACE_WITH_DETAILED", symbolId: inst(pump).id })).toBe(pump);
   });
 });
+
+describe("pipes attached to TEMA nozzles through the reducer", async () => {
+  const { findSymbol } = await import("@/domains/roomDesigner/symbolRegistry");
+  const { temaAnchorsWorld } = await import("@/domains/roomDesigner/temaGeometry");
+  const nozzle = (state, id) =>
+    temaAnchorsWorld(findSymbol(D, "tema-exchanger"), state.design.symbols[0]).find((a) => a.id === id);
+  function pipedState() {
+    let state = placed();
+    const a = nozzle(state, "tube-in");
+    state = designerReducer(state, { type: "ADD_PIPE_RUN", points: [{ x: a.x, y: a.y }, { x: a.x, y: -300 }] });
+    return state;
+  }
+  const pipe = (state) => state.design.pipes[0];
+  const onNozzle = (state) => {
+    const a = nozzle(state, "tube-in");
+    expect(pipe(state).points[0].x).toBeCloseTo(a.x, 9);
+    expect(pipe(state).points[0].y).toBeCloseTo(a.y, 9);
+  };
+
+  it("attaches a committed run whose end was snapped onto a nozzle", () => {
+    const state = pipedState();
+    expect(pipe(state).attachments).toEqual({ start: { symbolId: inst(state).id, anchorId: "tube-in" } });
+  });
+
+  it("keeps the end on the nozzle through move, rotate, resize and reconfigure — and undo", () => {
+    let state = pipedState();
+    const id = inst(state).id;
+    const start = pipe(state).points[0];
+    state = designerReducer(state, { type: "MOVE_SYMBOL", symbolId: id, x: 180, y: 90, coalesce: `move-symbol:${id}` });
+    state = designerReducer(state, { type: "MOVE_SYMBOL", symbolId: id, x: 200, y: 120, coalesce: `move-symbol:${id}` });
+    onNozzle(state);
+    state = designerReducer(state, { type: "ROTATE_SYMBOL", symbolId: id, rotationDeg: 45 });
+    onNozzle(state);
+    state = designerReducer(state, { type: "SET_SYMBOL_SIZE", symbolId: id, widthIn: 260 });
+    onNozzle(state);
+    state = designerReducer(state, { type: "SET_SYMBOL_TEMA", symbolId: id, config: TEMA_PRESETS.BEU });
+    onNozzle(state);
+    for (let i = 0; i < 4; i += 1) state = designerReducer(state, { type: "UNDO" });
+    expect(pipe(state).points[0]).toEqual(start);
+  });
+
+  it("detaches an end dragged off the nozzle, and re-attaches one dropped back on", () => {
+    let state = pipedState();
+    const a = nozzle(state, "tube-in");
+    state = designerReducer(state, { type: "MOVE_PIPE_VERTEX", pipeId: pipe(state).id, index: 0, point: { x: a.x - 24, y: a.y - 24 } });
+    expect(pipe(state).attachments).toBeUndefined();
+    state = designerReducer(state, { type: "MOVE_SYMBOL", symbolId: inst(state).id, x: 0, y: 0 });
+    expect(pipe(state).points[0]).toEqual({ x: a.x - 24, y: a.y - 24 }); // no longer follows
+    const b = nozzle(state, "tube-in");
+    state = designerReducer(state, { type: "MOVE_PIPE_VERTEX", pipeId: pipe(state).id, index: 0, point: { x: b.x, y: b.y } });
+    expect(pipe(state).attachments.start.anchorId).toBe("tube-in");
+  });
+
+  it("leaves the pipe end where it was when the exchanger is deleted", () => {
+    let state = pipedState();
+    const points = pipe(state).points;
+    state = designerReducer(state, { type: "SELECT", selection: { kind: "symbol", id: inst(state).id } });
+    state = designerReducer(state, { type: "DELETE_SELECTION" });
+    expect(state.design.symbols).toHaveLength(0);
+    expect(pipe(state).points).toEqual(points);
+    expect(pipe(state).attachments).toBeUndefined();
+  });
+});
