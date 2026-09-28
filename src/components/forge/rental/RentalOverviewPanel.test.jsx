@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalOverviewPanel from "./RentalOverviewPanel";
 import { resetRentalSummaryClient } from "./rentalSummaryClient";
+import { clearSWRCache, seedCacheEntry } from "../../../hooks/swrCache";
+import { RENTAL_DASHBOARD_PAYLOAD_SWR_KEY } from "./useRentalDashboardPayload";
 
 const baseData = { units: [{ id: "u1" }], leases: [{ id: "l1", unit_id: "u1", status: "active" }] };
 
@@ -35,7 +37,7 @@ function card(container, label) {
 
 describe("RentalOverviewPanel five-card dashboard", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
 
   function richFixture() {
     return {
@@ -147,11 +149,40 @@ describe("RentalOverviewPanel five-card dashboard", () => {
     expect(card(mounted.container, "Open maintenance").textContent).toContain("No open requests");
     expect(card(mounted.container, "Expiring leases").textContent).toContain("Nothing expiring");
   });
+
+  it("hydrates from the shared SWR disk cache with no network fetch — no reload flash", async () => {
+    seedCacheEntry(RENTAL_DASHBOARD_PAYLOAD_SWR_KEY, { rentalBody: richFixture(), reports: { available: true, report } });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("must not fetch"));
+    mounted = mount(<RentalOverviewPanel onNavigate={() => {}} />);
+    await flushEffects();
+    // Cards render synchronously from cache -- the loading skeleton never appears.
+    expect(mounted.container.textContent).not.toContain("Loading rental summary");
+    expect(card(mounted.container, "Rent collected").textContent).toContain("$1,900.00");
+    expect(card(mounted.container, "Expiring leases").textContent).toContain("1");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows the fatal alert when the cached payload reports the report endpoint unavailable", async () => {
+    seedCacheEntry(RENTAL_DASHBOARD_PAYLOAD_SWR_KEY, { rentalBody: richFixture(), reports: { available: false, report: null, error: "reports down" } });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("must not fetch"));
+    mounted = mount(<RentalOverviewPanel onNavigate={() => {}} />);
+    await flushEffects();
+    expect(mounted.container.querySelector('[role="alert"]').textContent).toContain("reports down");
+  });
+
+  it("renders server-provided initialData synchronously without waiting on the network", () => {
+    // The overview's own data path never touches the network when initialData is
+    // present (the SWR key stays null/disabled). The embedded Today's Priorities
+    // panel keeps its own independent fetch path, as before.
+    mounted = mount(<RentalOverviewPanel initialData={richFixture()} initialReport={report} onNavigate={() => {}} />);
+    expect(mounted.container.textContent).not.toContain("Loading rental summary");
+    expect(card(mounted.container, "Rent collected").textContent).toContain("$1,900.00");
+  });
 });
 
 describe("RentalOverviewPanel billing status visibility", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
 
   it("visibly shows billing as PAUSED when billingEnabled is absent, with no pause/resume control rendered", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);
@@ -182,7 +213,7 @@ describe("RentalOverviewPanel billing status visibility", () => {
 
 describe("RentalOverviewPanel structure and empty state", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
 
   it("uses a real heading hierarchy: one Dashboard heading", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);

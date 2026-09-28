@@ -1,11 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import {
   Building2, AlertTriangle, CalendarClock, Wrench, Wallet,
   PauseCircle, PlayCircle, Home,
 } from "lucide-react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
-import { getRentalSummaryPayload } from "./rentalSummaryClient";
+import { useRentalDashboardPayload } from "./useRentalDashboardPayload";
 import { RentalExceptionAlerts, RentalQuickAccess } from "./RentalExceptionAlerts";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 
@@ -104,19 +104,23 @@ function EmptyPortfolioState({ onNavigate }) {
 }
 
 export default function RentalOverviewPanel({ onNavigate, initialData = null, initialReport = null }) {
-  const [summary, setSummary] = useState(() => (initialData ? buildRentalDashboardSummary(initialData, initialReport) : null));
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (initialData) return;
-    // Shared with Today's Priorities: one deduped network pair, retried on network blips.
-    // Reports stays fatal here, exactly as before -- an unavailable report throws.
-    getRentalSummaryPayload().then(({ rentalBody, reports }) => {
-      if (!reports.available) throw new Error(reports.error || "Rental report could not be loaded.");
-      setSummary(buildRentalDashboardSummary(rentalBody, reports.report));
-    }).catch((reason) => setError(reason.message));
-  }, [initialData]);
+  const hasInitialData = initialData != null;
+  // Shared SWR cache (same key the Today's Priorities session uses): a reload
+  // hydrates from the localStorage disk cache instantly and revalidates in the
+  // background, instead of flashing "Loading rental summary...".
+  const { data: payload, error: payloadError } = useRentalDashboardPayload({ disabled: hasInitialData });
+  const summary = useMemo(() => {
+    if (hasInitialData) return buildRentalDashboardSummary(initialData, initialReport);
+    if (!payload || !payload.reports.available) return null;
+    return buildRentalDashboardSummary(payload.rentalBody, payload.reports.report);
+  }, [hasInitialData, initialData, initialReport, payload]);
+  // Reports stay fatal here, exactly as before -- an unavailable report shows the
+  // alert. A failed background refresh with stale data on screen keeps the data.
+  const fatalError = !hasInitialData && payload && !payload.reports.available
+    ? (payload.reports.error || "Rental report could not be loaded.")
+    : payloadError;
 
-  if (error) return <p role="alert" className="rounded-2xl bg-red-50 p-4 text-red-800 dark:bg-red-950/40 dark:text-red-300">{error}</p>;
+  if (fatalError && !summary) return <p role="alert" className="rounded-2xl bg-red-50 p-4 text-red-800 dark:bg-red-950/40 dark:text-red-300">{fatalError}</p>;
   if (!summary) return (
     <section className="space-y-5" data-rental-overview>
       <div>

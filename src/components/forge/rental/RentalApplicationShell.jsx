@@ -76,6 +76,11 @@ export function resolveRentalSectionParam(value) {
   return group?.items[0]?.id ?? null;
 }
 
+// Re-exported for convenience: the pure ?recordType=/?recordId=/?propertyId=
+// resolver lives in rentalRecordParam.js (no "use client") so the server page
+// can import it too.
+export { resolveRentalRecordContextParam, KNOWN_RECORD_TYPES } from "./rentalRecordParam";
+
 // Every item that may be hidden via the sidebar's Customize control, grouped by the section label
 // shown in that checklist -- everything except Dashboard, which every user needs as a landing view
 // and is therefore never offered as hideable in the first place.

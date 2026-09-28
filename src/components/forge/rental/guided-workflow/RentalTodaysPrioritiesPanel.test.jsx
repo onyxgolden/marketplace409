@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTodaysPrioritiesPanel from "./RentalTodaysPrioritiesPanel";
 import { resetRentalSummaryClient } from "../rentalSummaryClient";
+import { RENTAL_DASHBOARD_PAYLOAD_SWR_KEY } from "../useRentalDashboardPayload";
+import { clearSWRCache, fetchWithDedupe, setCacheIdentity } from "../../../../hooks/swrCache";
 
 function rentalBody(overrides = {}) {
   return {
@@ -73,7 +75,10 @@ async function flush() {
 
 describe("RentalTodaysPrioritiesPanel", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
+  // The session now initializes through the shared SWR cache (same key the
+  // Overview panel uses), which persists to localStorage -- clear it between
+  // tests so each test's fetch stub stays authoritative.
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
 
   it("shows the highest-priority real attention item first, with a live priority count", async () => {
     const fetch = stubFetch([{
@@ -192,5 +197,219 @@ describe("RentalTodaysPrioritiesPanel", () => {
     await flush();
     act(() => { [...mounted.container.querySelectorAll("button")].find((b) => b.textContent.includes("Open")).click(); });
     expect(onNavigate).toHaveBeenCalledWith("setup");
+  });
+
+  it("ignores a late stale cache update while restart's authoritative fetch is in flight", async () => {
+    // Initial mount fails so the panel lands on the "Try again" (restart) path.
+    let rentalMode = "fail"; // "fail" -> "defer" once restart is clicked
+    let resolveRestartFetch;
+    const fetch = vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/reports")) {
+        return { ok: true, json: async () => reportBody() };
+      }
+      if (rentalMode === "fail") {
+        return { ok: false, json: async () => ({ error: "Rental summary could not be loaded." }) };
+      }
+      return new Promise((resolve) => {
+        // B: the authoritative restart payload -- no vacancies.
+        resolveRestartFetch = () => resolve({ ok: true, json: async () => rentalBody() });
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("Try again");
+
+    rentalMode = "defer";
+    act(() => {
+      [...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "Try again").click();
+    });
+    // Restart's authoritative fetch is now in flight; a stale cache update
+    // (2 vacancies) lands first through the shared SWR key.
+    const staleRaw = {
+      rentalBody: rentalBody({ units: [{ id: "u1" }, { id: "u2" }, { id: "u3" }] }),
+      reports: { available: true, report: reportBody().report, error: "" },
+    };
+    await act(async () => {
+      await fetchWithDedupe(RENTAL_DASHBOARD_PAYLOAD_SWR_KEY, async () => staleRaw);
+    });
+    await flush();
+    // The stale write must not initialize a session over the restart: still
+    // loading, never the stale "Priority 1 of 2" session.
+    expect(mounted.container.textContent).toContain("Loading today");
+    expect(mounted.container.textContent).not.toContain("Priority 1 of 2");
+
+    await act(async () => { resolveRestartFetch(); });
+    await flush();
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
+  });
+
+  it("reinitializes the session for the new identity when the account switches", async () => {
+    let identity = "user_1";
+    const fetch = vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/reports")) {
+        return { ok: true, json: async () => reportBody() };
+      }
+      // user_1 has a vacancy; user_2's unit is leased -- the visible session must change.
+      const vacant = identity === "user_1";
+      return {
+        ok: true,
+        json: async () => rentalBody({
+          actingUserId: identity,
+          units: vacant ? [{ id: "u1" }, { id: "u2" }] : [{ id: "u1" }],
+          leases: vacant ? [] : [{ id: "lease_1", unit_id: "u1", status: "active" }],
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("Priority 1 of 1");
+
+    identity = "user_2";
+    await act(async () => { setCacheIdentity("user_2"); });
+    await flush();
+    // The old identity's session must not survive the switch.
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
+    expect(mounted.container.textContent).not.toContain("Priority 1 of 1");
+
+    // Restore the null identity for the rest of the file (the epoch bump from
+    // restoring also reinitializes, which is harmless post-assertion).
+    await act(async () => { setCacheIdentity(null); });
+    await flush();
+  });
+
+  it("discards a Next fetch that completes after an account switch", async () => {
+    // user_1: two attention items (vacancies + routine maintenance).
+    // user_2: nothing urgent.
+    let identity = "user_1";
+    let deferRental = false;
+    const pendingRental = [];
+    const fetch = vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/reports")) {
+        return { ok: true, json: async () => reportBody() };
+      }
+      const body = identity === "user_1"
+        ? rentalBody({
+            actingUserId: "user_1",
+            units: [{ id: "u1" }, { id: "u2" }],
+            leases: [],
+            maintenanceRequests: [{ id: "mr1", status: "open", priority: "low" }],
+          })
+        : rentalBody({
+            actingUserId: "user_2",
+            units: [{ id: "u1" }],
+            leases: [{ id: "lease_1", unit_id: "u1", status: "active" }],
+          });
+      if (deferRental) {
+        return new Promise((resolve) => { pendingRental.push(() => resolve({ ok: true, json: async () => body })); });
+      }
+      return { ok: true, json: async () => body };
+    });
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("Priority 1 of 2");
+
+    // Next starts its refresh fetch, then hangs in flight.
+    deferRental = true;
+    act(() => { mounted.container.querySelector('[data-guided-workflow-control="next"]').click(); });
+    await flush();
+    expect(pendingRental.length).toBe(1);
+
+    // The account switches while Next is in flight: the session reinitializes
+    // for user_2, and the stale Next completion must neither advance the old
+    // session nor overwrite the new one.
+    identity = "user_2";
+    await act(async () => { setCacheIdentity("user_2"); });
+    await flush();
+
+    // The stale Next fetch (user_1's data) completes after the switch. Without
+    // the epoch fence it would advance the session to "Priority 2 of 2" under
+    // the new identity.
+    await act(async () => { pendingRental[0](); });
+    await flush();
+    expect(mounted.container.textContent).not.toContain("Priority 2 of 2");
+
+    // The reinit fetch completes: user_2's real session.
+    await act(async () => { for (const resolve of pendingRental.slice(1)) resolve(); });
+    await flush();
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
+    expect(mounted.container.textContent).not.toContain("Priority 2 of 2");
+
+    await act(async () => { setCacheIdentity(null); });
+    await flush();
+  });
+
+  it("discards a Retry fetch that completes after an account switch", async () => {
+    // Reports starts unavailable so the panel shows the partial-data notice
+    // with a Retry control; the session itself is ACTIVE (one vacancy).
+    let identity = "user_1";
+    let deferRental = false;
+    let deferReports = false;
+    let reportsOk = false;
+    const pendingRental = [];
+    const pendingReports = [];
+    const fetch = vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/reports")) {
+        const ok = reportsOk;
+        if (deferReports) {
+          return new Promise((resolve) => { pendingReports.push(() => resolve(ok
+            ? { ok: true, json: async () => reportBody() }
+            : { ok: false, json: async () => ({ error: "Reports service unavailable." }) })); });
+        }
+        return ok
+          ? { ok: true, json: async () => reportBody() }
+          : { ok: false, json: async () => ({ error: "Reports service unavailable." }) };
+      }
+      const body = identity === "user_1"
+        ? rentalBody({ actingUserId: "user_1", units: [{ id: "u1" }, { id: "u2" }], leases: [] })
+        : rentalBody({
+            actingUserId: "user_2",
+            units: [{ id: "u1" }],
+            leases: [{ id: "lease_1", unit_id: "u1", status: "active" }],
+          });
+      if (deferRental) {
+        return new Promise((resolve) => { pendingRental.push(() => resolve({ ok: true, json: async () => body })); });
+      }
+      return { ok: true, json: async () => body };
+    });
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("Priority 1 of 1");
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeTruthy();
+
+    // Retry starts; its rental half resolves immediately but the reports half
+    // hangs in flight. Reports would now succeed, so a stale completion would
+    // visibly clear the partial-data notice.
+    deferReports = true;
+    reportsOk = true;
+    act(() => { mounted.container.querySelector('[data-guided-workflow-control="retry-reports"]').click(); });
+    await flush();
+    expect(pendingReports.length).toBe(1);
+
+    // The account switches while the retry is in flight.
+    identity = "user_2";
+    deferRental = true;
+    await act(async () => { setCacheIdentity("user_2"); });
+    await flush();
+
+    // The stale retry's reports half completes after the switch. Without the
+    // epoch fence it would overwrite the new session's summary and clear the
+    // notice with the old identity's data.
+    await act(async () => { pendingReports[0](); });
+    await flush();
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeTruthy();
+
+    // The reinit fetch completes: user_2's real session, reports now working.
+    await act(async () => { for (const resolve of pendingRental) resolve(); });
+    await act(async () => { for (const resolve of pendingReports.slice(1)) resolve(); });
+    await flush();
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
+    expect(mounted.container.querySelector("[data-guided-workflow-partial-data]")).toBeFalsy();
+
+    await act(async () => { setCacheIdentity(null); });
+    await flush();
   });
 });
