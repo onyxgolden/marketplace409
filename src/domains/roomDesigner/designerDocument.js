@@ -30,6 +30,7 @@ import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitur
 import { findSymbol } from "./symbolRegistry";
 import { normalizeDesignMode } from "./designerModes";
 import { isCameraPose, nextViewId } from "./namedCameraViews";
+import { systemErrors } from "./designSystems";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
@@ -44,7 +45,6 @@ import { cleanMountIn } from "./furnitureSizing";
 import { temaInstanceErrors } from "./temaInstances";
 import { pipeAttachmentErrors } from "./pipeAttachments";
 import { DOOR_HINGES, DOOR_SWINGS } from "./designerHandles";
-import { systemErrors } from "./designSystems";
 import { layoutOrgChart, ORG_CHART_METRICS, wouldCreateCycle } from "./orgChartLayout";
 import { PRINT_MARGIN_IN, sheetDimensions } from "./sheetCatalog";
 import {

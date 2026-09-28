@@ -35,6 +35,7 @@ import { measureAreaSummary } from "@/domains/roomDesigner/measureArea";
 import { formatArea } from "@/domains/roomDesigner/homeQuantities";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
+import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
@@ -59,7 +60,6 @@ import {
   doorSwingFrame,
   rotationHandlePoint,
 } from "@/domains/roomDesigner/designerHandles";
-import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
