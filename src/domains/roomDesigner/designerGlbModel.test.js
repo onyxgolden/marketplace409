@@ -67,6 +67,41 @@ describe("designerGlbModel — descriptor to mesh mapping", () => {
     expect(mesh.rotation.y).toBe(-0);
   });
 
+  it("maps furniture width/depth/height to BoxGeometry x/y/z without transposing", () => {
+    // Distinct dimensions: 36 wide (plan x) × 24 deep (plan z) × 72 tall (y).
+    // BoxGeometry is (width, height, depth) — a transposition puts the depth
+    // on Y and floats/penetrates the floor.
+    const { group } = sceneDescriptorsToThree(
+      {
+        furniture: [{
+          id: "wardrobe_1",
+          catalogId: "wardrobe",
+          label: "Wardrobe",
+          x: 100,
+          z: 50,
+          widthIn: 36,
+          depthIn: 24,
+          heightIn: 72,
+          elevationIn: 0,
+          rotY: 0,
+          color: "#9aa3b2",
+        }],
+      },
+      { includeFloor: false, designName: "dims", unitScale: 1 },
+    );
+    const mesh = meshByName(group, "forge_furniture_wardrobe_1_body");
+    expect(mesh).not.toBeNull();
+    expect(mesh.geometry).toBeInstanceOf(THREE.BoxGeometry);
+    const { width, height, depth } = mesh.geometry.parameters;
+    expect({ width, height, depth }).toEqual({ width: 36, height: 72, depth: 24 });
+    // The exported bounds: tall on Y, sitting on the floor.
+    const bb = new THREE.Box3().setFromObject(mesh);
+    expect(bb.min.y).toBeCloseTo(0, 6);
+    expect(bb.max.y).toBeCloseTo(72, 6);
+    expect(bb.max.x - bb.min.x).toBeCloseTo(36, 6);
+    expect(bb.max.z - bb.min.z).toBeCloseTo(24, 6);
+  });
+
   it("keeps the -atan2 sign convention on vertical walls", () => {
     const scene = buildThreeScene(baseDesign());
     const { group } = sceneDescriptorsToThree(scene, { includeFloor: false, includeFurniture: false });

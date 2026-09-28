@@ -208,7 +208,9 @@ export function sceneDescriptorsToThree(scene, options = {}) {
       fGroup.position.set(item.x, item.elevationIn || 0, item.z);
       fGroup.rotation.y = item.rotY || 0;
       const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(item.widthIn, item.depthIn, item.heightIn),
+        // BoxGeometry is (width X, height Y, depth Z): the descriptor's
+        // depthIn is the plan depth (glTF Z), heightIn is vertical (glTF Y).
+        new THREE.BoxGeometry(item.widthIn, item.heightIn, item.depthIn),
         furnitureMat(item.color),
       );
       mesh.position.set(0, item.heightIn / 2, 0);
