@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTodaysPrioritiesPanel from "./RentalTodaysPrioritiesPanel";
 import { resetRentalSummaryClient } from "../rentalSummaryClient";
+import { clearSWRCache } from "../../../../hooks/swrCache";
 
 function rentalBody(overrides = {}) {
   return {
@@ -73,7 +74,10 @@ async function flush() {
 
 describe("RentalTodaysPrioritiesPanel", () => {
   let mounted;
-  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); });
+  // The session now initializes through the shared SWR cache (same key the
+  // Overview panel uses), which persists to localStorage -- clear it between
+  // tests so each test's fetch stub stays authoritative.
+  afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
 
   it("shows the highest-priority real attention item first, with a live priority count", async () => {
     const fetch = stubFetch([{

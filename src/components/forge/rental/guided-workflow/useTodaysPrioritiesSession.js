@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
 import { getRentalSummaryPayload } from "../rentalSummaryClient";
+import { useRentalDashboardPayload } from "../useRentalDashboardPayload";
 import {
   buildTodaysPrioritiesWorkflowDefinition,
   buildTodaysPrioritiesEvaluatorResults,
@@ -38,14 +39,18 @@ function generateSessionId() {
 // /api/rental/reports stays soft, exactly as before: only 2 of the 9 needsAttention categories
 // depend on it, so its failure is reported as { available: false, error } and the other
 // categories keep working rather than failing the entire session over an unrelated endpoint.
-function fetchSummaryAndIdentity({ refresh = false } = {}) {
-  return getRentalSummaryPayload({ refresh }).then(({ rentalBody, reports }) => ({
+function processPayload({ rentalBody, reports }) {
+  return {
     summary: buildRentalDashboardSummary(rentalBody, reports.report),
     actingUserId: rentalBody.actingUserId || null,
     canonicalOwnerId: rentalBody.canonicalOwnerId || null,
     reportsAvailable: reports.available,
     reportsError: reports.error,
-  }));
+  };
+}
+
+function fetchSummaryAndIdentity({ refresh = false } = {}) {
+  return getRentalSummaryPayload({ refresh }).then(processPayload);
 }
 
 export function useTodaysPrioritiesSession() {
@@ -57,41 +62,71 @@ export function useTodaysPrioritiesSession() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const sessionIdRef = useRef(generateSessionId());
+  const initializedRef = useRef(false);
+  // Mount-time data comes through the shared SWR cache (same key the Overview panel
+  // uses), so a reload hydrates instantly from the localStorage disk cache instead of
+  // flashing "Loading...". User-triggered refreshes (next/retryReports/restart) still
+  // fetch authoritative state directly via fetchSummaryAndIdentity({ refresh: true }).
+  const { data: cachedPayload, error: cachedError, isLoading: cacheLoading } = useRentalDashboardPayload();
+
+  const applyProcessedPayload = useCallback((processed) => {
+    const { summary: nextSummary, actingUserId, canonicalOwnerId, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError } = processed;
+    setSummary(nextSummary);
+    setIdentity({ actingUserId, canonicalOwnerId });
+    setReportsAvailable(nextReportsAvailable);
+    setReportsError(nextReportsError);
+    if (!actingUserId || !canonicalOwnerId) {
+      throw new Error("Could not determine your workspace identity -- guidance can't start safely without it.");
+    }
+    const now = new Date().toISOString();
+    const evaluatorResults = buildTodaysPrioritiesEvaluatorResults(WORKFLOW_DEFINITION, nextSummary.needsAttention, now, { reportsAvailable: nextReportsAvailable });
+    setSession(startGuidedWorkflowSession({
+      sessionId: sessionIdRef.current,
+      workflowDefinition: WORKFLOW_DEFINITION,
+      evaluatorResults,
+      actingUserId,
+      canonicalOwnerId,
+      now,
+    }));
+    initializedRef.current = true;
+  }, []);
 
   // The mount effect calls this directly (no synchronous setState before the fetch -- loading/error
   // already start at their correct initial values, so there's nothing to reset). `restart` below wraps
   // it with the explicit reset for the user-triggered "try again" path, which runs from an event
   // handler rather than an effect body.
   const runInitialize = useCallback(() => fetchSummaryAndIdentity()
-    .then(({ summary: nextSummary, actingUserId, canonicalOwnerId, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError }) => {
-      setSummary(nextSummary);
-      setIdentity({ actingUserId, canonicalOwnerId });
-      setReportsAvailable(nextReportsAvailable);
-      setReportsError(nextReportsError);
-      if (!actingUserId || !canonicalOwnerId) {
-        throw new Error("Could not determine your workspace identity -- guidance can't start safely without it.");
-      }
-      const now = new Date().toISOString();
-      const evaluatorResults = buildTodaysPrioritiesEvaluatorResults(WORKFLOW_DEFINITION, nextSummary.needsAttention, now, { reportsAvailable: nextReportsAvailable });
-      setSession(startGuidedWorkflowSession({
-        sessionId: sessionIdRef.current,
-        workflowDefinition: WORKFLOW_DEFINITION,
-        evaluatorResults,
-        actingUserId,
-        canonicalOwnerId,
-        now,
-      }));
-    })
+    .then((processed) => { applyProcessedPayload(processed); })
     .catch((reason) => setError(reason.message))
-    .finally(() => setLoading(false)), []);
+    .finally(() => setLoading(false)), [applyProcessedPayload]);
 
+  // Mount: initialize from the shared cached payload once it arrives. A first-ever
+  // load (empty disk cache) waits for the SWR fetch exactly like the old direct
+  // fetch; a reload hydrates synchronously with no loading flash. The body runs
+  // async so the effect itself never calls setState synchronously (lint rule),
+  // matching the old runInitialize discipline.
   useEffect(() => {
-    runInitialize();
-  }, [runInitialize]);
+    if (initializedRef.current || cacheLoading) return;
+    (async () => {
+      if (!cachedPayload) {
+        if (cachedError) setError(cachedError);
+        setLoading(false);
+        return;
+      }
+      try {
+        applyProcessedPayload(processPayload(cachedPayload));
+      } catch (reason) {
+        setError(reason.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [cachedPayload, cachedError, cacheLoading, applyProcessedPayload]);
 
   const restart = useCallback(() => {
     setLoading(true);
     setError("");
+    initializedRef.current = false;
     return runInitialize();
   }, [runInitialize]);
 
