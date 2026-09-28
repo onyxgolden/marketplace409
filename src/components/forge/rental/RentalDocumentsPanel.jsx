@@ -59,6 +59,10 @@ export async function openSignedDocumentUrl({ documentId, action, openTab, fetch
   const open = openTab || ((url) => window.open(url, "_blank"));
   const tab = open("");
   if (!tab) throw new Error("Your browser blocked the preview tab — allow pop-ups for this site and try again.");
+  // Sever the opener link before the tab navigates anywhere: the signed URL can
+  // resolve to a storage/object origin, and a live opener would let that origin
+  // reach back into the app tab (reverse tabnabbing).
+  tab.opener = null;
   try {
     const get = fetchImpl || fetch;
     const response = await get(`/api/rental/documents?documentId=${encodeURIComponent(documentId)}&action=${action}`);

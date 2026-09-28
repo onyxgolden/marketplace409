@@ -121,6 +121,20 @@ describe("openSignedDocumentUrl", () => {
     expect(tab.location.href).toBe("https://signed.example/preview");
   });
 
+  it("severs the opener link before navigating the tab to the signed URL", async () => {
+    const tab = fakeTab();
+    const fetchImpl = async () => ({ ok: true, json: async () => ({ url: "https://signed.example/preview" }) });
+    await openSignedDocumentUrl({
+      documentId: "doc_1", action: "preview",
+      openTab: () => tab,
+      fetchImpl,
+    });
+    // The signed URL can resolve to a storage/object origin; a live opener
+    // would let that origin reach back into the app tab.
+    expect(tab.opener).toBeNull();
+    expect(tab.location.href).toBe("https://signed.example/preview");
+  });
+
   it("closes the tab and surfaces the error when the signed-URL fetch fails", async () => {
     const tab = fakeTab();
     let closed = 0;
