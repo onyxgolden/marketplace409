@@ -17,6 +17,7 @@
 //   { kind: "poly", points: [[x, y], ...], closed, role }
 //   { kind: "circle", cx, cy, r, role }
 //   { kind: "ellipse", cx, cy, rx, ry, role }
+//   { kind: "text", x, y, text, size, role }   (letter codes: REF, DW, W, ...)
 //
 // Pure and framework-free.
 
@@ -25,6 +26,8 @@ const line = (x1, y1, x2, y2, role) => ({ kind: "line", x1, y1, x2, y2, role });
 const poly = (points, role, closed = true) => ({ kind: "poly", points, closed, role });
 const circle = (cx, cy, r, role) => ({ kind: "circle", cx, cy, r, role });
 const ellipse = (cx, cy, rx, ry, role) => ({ kind: "ellipse", cx, cy, rx, ry, role });
+const text = (x, y, value, size) => ({ kind: "text", x, y, text: value, size, role: "text" });
+const labelSize = (w, d) => Math.max(3, Math.min(8, Math.min(w, d) * 0.3));
 
 function bed(w, d, pillows) {
   const top = -d / 2;
@@ -175,6 +178,294 @@ function officeChair(w, d) {
   return out;
 }
 
+
+// ---- Phase 2: the rest of the residential library ----
+
+function seating(w, d, seats, { footrest = false } = {}) {
+  const bodyD = footrest ? d * 0.78 : d;
+  const top = -d / 2;
+  const backD = Math.min(8, bodyD * 0.22);
+  const armW = Math.min(7, w * 0.14);
+  const out = [
+    rect(-w / 2, top, w, bodyD, "frame", 2),
+    rect(-w / 2, top, w, backD, "back", 1.5),
+    rect(-w / 2, top + backD, armW, bodyD - backD, "arm", 1.5),
+    rect(w / 2 - armW, top + backD, armW, bodyD - backD, "arm", 1.5),
+  ];
+  const seatW = (w - 2 * armW - (seats + 1)) / seats;
+  for (let i = 0; i < seats; i += 1) {
+    out.push(rect(-w / 2 + armW + 1 + i * (seatW + 1), top + backD + 1, seatW, bodyD - backD - 2, "cushion", 2));
+  }
+  if (footrest) out.push(rect(-w / 2 + armW, top + bodyD + 1, w - 2 * armW, d - bodyD - 1, "footrest", 1.5));
+  return out;
+}
+
+function roundSideTable(w, d) {
+  const r = Math.min(w, d) / 2;
+  return [circle(0, 0, r, "top"), circle(0, 0, r - Math.min(1.2, r * 0.08), "top-edge")];
+}
+
+function desk(w, d) {
+  const pw = Math.min(16, w * 0.33);
+  return [
+    rect(-w / 2, -d / 2, w, d, "top", 1),
+    rect(w / 2 - pw, -d / 2 + 1, pw - 1, d - 2, "drawer", 0.5),
+    line(w / 2 - pw, -d / 6, w / 2 - 1, -d / 6, "top-edge"),
+    line(w / 2 - pw, d / 6, w / 2 - 1, d / 6, "top-edge"),
+  ];
+}
+
+function island(w, d) {
+  const over = Math.min(12, d * 0.3);
+  return [
+    rect(-w / 2, -d / 2, w, d, "counter", 1),
+    line(-w / 2, d / 2 - over, w / 2, d / 2 - over, "overhang"), // seating overhang
+    line(-w / 2, -d / 2 + 1.5, w / 2, -d / 2 + 1.5, "door-face"),
+  ];
+}
+
+function nightstand(w, d) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "top", 1),
+    line(-w / 2 + 1, d / 2 - 2, w / 2 - 1, d / 2 - 2, "door-face"),
+    circle(0, d / 2 - 3.5, Math.min(0.8, w * 0.04), "knob"),
+  ];
+}
+
+function dresser(w, d) {
+  const out = [rect(-w / 2, -d / 2, w, d, "top", 1), line(-w / 2 + 1, d / 2 - 2, w / 2 - 1, d / 2 - 2, "door-face")];
+  for (const f of [-0.25, 0.25]) out.push(circle(w * f, d / 2 - 3.5, Math.min(0.8, d * 0.05), "knob"));
+  out.push(line(0, d / 2 - 2, 0, -d / 2 + 1, "grain")); // two drawer columns
+  return out;
+}
+
+function appliance(w, d, code, extra = []) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "appliance", 1),
+    line(-w / 2 + 1, d / 2 - 2, w / 2 - 1, d / 2 - 2, "door-face"),
+    ...extra,
+    text(0, 0, code, labelSize(w, d)),
+  ];
+}
+
+function refrigerator(w, d) {
+  return appliance(w, d, "REF", [line(0, d / 2 - 2, 0, d / 2 - Math.min(8, d * 0.3), "door-face")]);
+}
+
+function range(w, d) {
+  const out = [rect(-w / 2, -d / 2, w, d, "appliance", 1), rect(-w / 2 + 1, -d / 2 + 1, w - 2, Math.min(3, d * 0.12), "controls")];
+  const r = Math.min(w, d) * 0.15;
+  const top = -d / 2 + Math.min(3, d * 0.12) + 1;
+  const rows = [top + (d - (top + d / 2)) * 0.28, top + (d - (top + d / 2)) * 0.72];
+  for (const y of rows) for (const x of [-w / 4, w / 4]) out.push(circle(x, y, r, "burner"));
+  return out;
+}
+
+function microwaveCart(w, d) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "top", 1),
+    rect(-w / 2 + 3, -d / 2 + 2, w * 0.6, d - 5, "appliance", 0.5),
+    text(-w / 2 + 3 + w * 0.3, -0.5, "MW", labelSize(w * 0.6, d - 5)),
+  ];
+}
+
+function vanity(w, d, basins) {
+  const out = [rect(-w / 2, -d / 2, w, d, "counter", 1)];
+  const slot = w / basins;
+  for (let i = 0; i < basins; i += 1) {
+    const cx = -w / 2 + slot * (i + 0.5);
+    const rx = Math.min(slot * 0.32, 8);
+    out.push(ellipse(cx, 1, rx, Math.min(d * 0.3, 6), "basin"));
+    out.push(circle(cx, 1, Math.min(0.8, rx * 0.12), "drain"));
+    out.push(rect(cx - 1, -d / 2 + 1, 2, 3, "faucet"));
+  }
+  return out;
+}
+
+function shower(w, d) {
+  const inset = Math.min(2, Math.min(w, d) * 0.06);
+  const dx = 0;
+  const dy = 0;
+  const x0 = -w / 2 + inset;
+  const y0 = -d / 2 + inset;
+  const x1 = w / 2 - inset;
+  const y1 = d / 2 - inset;
+  return [
+    rect(-w / 2, -d / 2, w, d, "shell", 1),
+    rect(x0, y0, x1 - x0, y1 - y0, "pan", 0.5),
+    line(x0, y0, dx, dy, "slope"),
+    line(x1, y0, dx, dy, "slope"),
+    line(x0, y1, dx, dy, "slope"),
+    line(x1, y1, dx, dy, "slope"),
+    circle(dx, dy, Math.min(1.5, w * 0.04), "drain"),
+    line(-w / 2, d / 2, w / 2, d / 2, "door"), // glass door / curtain side
+  ];
+}
+
+function washer(w, d) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "appliance", 1),
+    rect(-w / 2 + 1, -d / 2 + 1, w - 2, Math.min(3, d * 0.12), "controls"),
+    circle(0, 2, Math.min(w, d) * 0.32, "drum"),
+    text(0, 2, "W", labelSize(w, d)),
+  ];
+}
+
+function dryer(w, d) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "appliance", 1),
+    rect(-w / 2 + 1, -d / 2 + 1, w - 2, Math.min(3, d * 0.12), "controls"),
+    text(0, 2, "D", labelSize(w, d)),
+  ];
+}
+
+function waterHeater(w, d) {
+  const r = Math.min(w, d) / 2;
+  return [circle(0, 0, r, "shell"), circle(0, 0, r * 0.8, "top-edge"), text(0, 0, "WH", labelSize(w, d) * 0.9)];
+}
+
+function utilitySink(w, d) {
+  const inset = Math.min(2.5, Math.min(w, d) * 0.12);
+  return [
+    rect(-w / 2, -d / 2, w, d, "shell", 1),
+    rect(-w / 2 + inset, -d / 2 + inset + 2, w - 2 * inset, d - 2 * inset - 2, "basin", 2),
+    circle(0, 2, Math.min(1, w * 0.05), "drain"),
+    rect(-1, -d / 2 + 0.5, 2, inset + 1, "faucet"),
+  ];
+}
+
+function bookshelf(w, d) {
+  const out = [rect(-w / 2, -d / 2, w, d, "frame", 0.5), line(-w / 2, -d / 2 + 1, w / 2, -d / 2 + 1, "back")];
+  const bays = Math.max(1, Math.round(w / 12));
+  for (let i = 1; i < bays; i += 1) out.push(line(-w / 2 + (w * i) / bays, -d / 2, -w / 2 + (w * i) / bays, d / 2, "shelf"));
+  return out;
+}
+
+function tvStand(w, d) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "top", 1),
+    rect(-w * 0.4, -d / 2 + 1.5, w * 0.8, Math.min(2, d * 0.15), "screen"),
+    line(-w / 2 + 1, d / 2 - 2, w / 2 - 1, d / 2 - 2, "door-face"),
+  ];
+}
+
+function arcPoints(cx, cy, r, a0, a1, n = 8) {
+  const pts = [];
+  for (let i = 0; i <= n; i += 1) {
+    const a = a0 + ((a1 - a0) * i) / n;
+    pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return pts;
+}
+
+function wardrobe(w, d) {
+  const door = Math.min(w / 2, d); // swing radius kept inside the footprint
+  return [
+    rect(-w / 2, -d / 2, w, d, "frame", 0.5),
+    line(-w / 2, 0, w / 2, 0, "rod"), // hanging rod
+    line(0, d / 2 - 1, 0, d / 2, "door"),
+    poly(arcPoints(-w / 2, d / 2, door, -Math.PI / 2, 0).map(([x, y]) => [x, Math.min(y, d / 2)]), "swing", false),
+    poly(arcPoints(w / 2, d / 2, door, Math.PI, 1.5 * Math.PI).map(([x, y]) => [x, Math.min(y, d / 2)]), "swing", false),
+  ];
+}
+
+function storageChest(w, d) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "top", 1),
+    rect(-w / 2 + 1.5, -d / 2 + 1.5, w - 3, d - 3, "top-edge", 0.5),
+    line(-w / 2 + 2, -d / 2 + 1, w / 2 - 2, -d / 2 + 1, "hinge"),
+  ];
+}
+
+function lamp(w, d) {
+  const r = Math.min(w, d) / 2;
+  const k = r * 0.7071;
+  return [
+    circle(0, 0, r, "shade"),
+    line(-k, -k, k, k, "lamp-x"),
+    line(-k, k, k, -k, "lamp-x"),
+  ];
+}
+
+// ---- cabinets (plan conventions) ----
+const FACE = 1.5; // door-face line inset from the front
+
+function baseCabinet(w, d, extra = []) {
+  return [
+    rect(-w / 2, -d / 2, w, d, "cabinet", 0.5),
+    line(-w / 2, d / 2 - FACE, w / 2, d / 2 - FACE, "door-face"),
+    ...extra,
+  ];
+}
+
+const drawerBase = (w, d) => baseCabinet(w, d, [
+  line(-w / 2 + 1, d / 2 - FACE - 3, w / 2 - 1, d / 2 - FACE - 3, "drawer-line"),
+]);
+
+const trashBase = (w, d) => baseCabinet(w, d, [rect(-w * 0.3, -d * 0.3, w * 0.6, d * 0.5, "bin", 1)]);
+
+const sinkBase = (w, d, { apron = false } = {}) => baseCabinet(w, d, [
+  rect(-w * 0.35, apron ? -d / 2 + 3 : -d / 2 + 4, w * 0.7, apron ? d - 3 : d - 9, "basin", 1.5),
+  circle(0, apron ? 1.5 : 0, Math.min(1, w * 0.03), "drain"),
+]);
+
+function lShape(w, d, arm) {
+  // Corner base: two 24"-deep arms meeting at the back-left corner.
+  return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, -d / 2 + arm], [-w / 2 + arm, -d / 2 + arm], [-w / 2 + arm, d / 2], [-w / 2, d / 2]];
+}
+
+function cornerBase(w, d) {
+  const arm = Math.min(24, Math.min(w, d) * 0.66);
+  return [
+    poly(lShape(w, d, arm), "cabinet"),
+    circle(-w / 2 + arm * 0.6, -d / 2 + arm * 0.6, arm * 0.45, "susan"),
+    line(-w / 2 + arm, -d / 2 + arm, -w / 2 + arm, d / 2, "door-face"),
+  ];
+}
+
+function easyReachBase(w, d) {
+  const arm = Math.min(24, Math.min(w, d) * 0.66);
+  return [
+    poly(lShape(w, d, arm), "cabinet"),
+    line(w / 2, -d / 2 + arm, -w / 2 + arm, d / 2, "door-face"), // angled easy-reach door
+  ];
+}
+
+function blindBase(w, d, side) {
+  const blind = Math.min(12, w * 0.33);
+  const x0 = side < 0 ? -w / 2 : w / 2 - blind;
+  const out = baseCabinet(w, d);
+  for (let i = 0; i <= 3; i += 1) {
+    const x = x0 + (blind * i) / 3;
+    out.push(line(x, -d / 2, Math.min(x0 + blind, x + blind / 2), d / 2 - FACE, "blind"));
+  }
+  return out;
+}
+
+function wallCabinet(w, d, extra = []) {
+  // Wall cabinets hang above the counter: dashed outline and door face.
+  return [
+    rect(-w / 2, -d / 2, w, d, "wall-cabinet", 0.5),
+    line(-w / 2, d / 2 - FACE, w / 2, d / 2 - FACE, "wall-face"),
+    ...extra,
+  ];
+}
+
+function wallCornerCabinet(w, d) {
+  const arm = Math.min(12, Math.min(w, d) * 0.5);
+  return [poly(lShape(w, d, arm), "wall-cabinet"), line(-w / 2 + arm, -d / 2 + arm, w / 2, -d / 2 + arm, "door-face")];
+}
+
+function tallCabinet(w, d, code) {
+  const out = [
+    rect(-w / 2, -d / 2, w, d, "cabinet", 0.5),
+    line(-w / 2, -d / 2, w / 2, d / 2, "tall-x"),
+    line(-w / 2, d / 2, w / 2, -d / 2, "tall-x"),
+  ];
+  if (code) out.push(text(0, 0, code, labelSize(w, d)));
+  return out;
+}
+
 const SYMBOLS = Object.freeze({
   "bed-twin": (w, d) => bed(w, d, 1),
   "bed-full": (w, d) => bed(w, d, 2),
@@ -189,6 +480,59 @@ const SYMBOLS = Object.freeze({
   "dining-table-round": roundTable,
   "dining-chair": diningChair,
   "office-chair": officeChair,
+  // Phase 2
+  "sofa-3seat": (w, d) => seating(w, d, 3),
+  loveseat: (w, d) => seating(w, d, 2),
+  armchair: (w, d) => seating(w, d, 1),
+  recliner: (w, d) => seating(w, d, 1, { footrest: true }),
+  "coffee-table": rectTable,
+  "side-table": roundSideTable,
+  desk,
+  "kitchen-island": island,
+  nightstand,
+  dresser,
+  refrigerator,
+  range,
+  dishwasher: (w, d) => appliance(w, d, "DW"),
+  "microwave-cart": microwaveCart,
+  "vanity-single": (w, d) => vanity(w, d, 1),
+  "vanity-double": (w, d) => vanity(w, d, 2),
+  shower,
+  "shower-48x36": shower,
+  washer,
+  dryer,
+  "water-heater": waterHeater,
+  "utility-sink": utilitySink,
+  bookshelf,
+  "tv-stand": tvStand,
+  wardrobe,
+  "storage-chest": storageChest,
+  "floor-lamp": lamp,
+  "table-lamp": lamp,
+  // cabinets
+  "cabinet-base-24": (w, d) => baseCabinet(w, d),
+  "cabinet-base-db": drawerBase,
+  "cabinet-base-drawer": drawerBase,
+  "cabinet-sink-36": (w, d) => sinkBase(w, d),
+  "cabinet-sink-farm": (w, d) => sinkBase(w, d, { apron: true }),
+  "cabinet-base-trash": trashBase,
+  "cabinet-base-corner": cornerBase,
+  "cabinet-base-blind": (w, d) => blindBase(w, d, -1),
+  "cabinet-base-blind-rh": (w, d) => blindBase(w, d, 1),
+  "cabinet-base-easy-reach": easyReachBase,
+  "cabinet-island-base": (w, d) => baseCabinet(w, d, [line(-w / 2, -d / 2 + FACE, w / 2, -d / 2 + FACE, "door-face")]),
+  "cabinet-wall-24": (w, d) => wallCabinet(w, d),
+  "cabinet-wall-corner": wallCornerCabinet,
+  "cabinet-wall-bridge": (w, d) => wallCabinet(w, d),
+  "cabinet-wall-microwave": (w, d) => wallCabinet(w, d, [text(0, 0, "MW", labelSize(w, d))]),
+  "cabinet-open-shelf": (w, d) => wallCabinet(w, d, [line(-w / 2, 0, w / 2, 0, "shelf")]),
+  "cabinet-pantry-24": (w, d) => tallCabinet(w, d),
+  "cabinet-tall-oven": (w, d) => tallCabinet(w, d, "OV"),
+  "cabinet-tall-utility": (w, d) => tallCabinet(w, d, "U"),
+  "cabinet-vanity-sink": (w, d) => sinkBase(w, d),
+  "cabinet-vanity-drawer": drawerBase,
+  "cabinet-linen-tower": (w, d) => tallCabinet(w, d, "L"),
+  "cabinet-bath-wall": (w, d) => wallCabinet(w, d),
 });
 
 /** Catalog ids that have a recognizable plan symbol. */
