@@ -24,9 +24,8 @@ describe("SheetPrintView — furniture plan symbols", () => {
     expect(html).not.toContain("#f5f7fa"); // no screen porcelain fill on paper
   });
 
-  it("keeps the outline + label print for a sofa", () => {
+  it("prints the sofa as its plan symbol too (Phase 2: every catalog piece has one)", () => {
     const html = printed();
-    expect(html).toContain("Sofa (3-seat)");
-    expect(html).not.toContain('data-print-plan-symbol="sofa-3seat"');
+    expect(html).toContain('data-print-plan-symbol="sofa-3seat"');
   });
 });

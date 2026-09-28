@@ -11,6 +11,7 @@ import { getCatalogEntry } from "./furnitureCatalog";
 import {
   FURNITURE_ASSETS,
   FURNITURE_MODEL_FOR_CATALOG,
+  MAX_HEIGHT_RATIO,
   MAX_PLAN_DISTORTION,
   fitFurnitureModel,
   furnitureAsset,
@@ -26,7 +27,7 @@ const parseGlb = (bytes) =>
 
 describe("asset manifest records", () => {
   it("records source, author, license, format and redistribution for every asset", () => {
-    expect(FURNITURE_ASSETS.length).toBe(7);
+    expect(FURNITURE_ASSETS.length).toBe(19);
     for (const a of FURNITURE_ASSETS) {
       expect(a.license).toBe("CC0-1.0");
       expect(a.licenseUrl).toBe("https://creativecommons.org/publicdomain/zero/1.0/");
@@ -75,13 +76,24 @@ describe("fit rule: exact plan footprint, no unrealistic stretching", () => {
     expect(fit.ok).toBe(true);
   });
 
-  it("uses the model for every mapped catalog item at its nominal size", () => {
+  it("uses the model for every mapped catalog item at its nominal size, footprint AND height", () => {
     for (const catalogId of Object.keys(FURNITURE_MODEL_FOR_CATALOG)) {
       const e = getCatalogEntry(catalogId);
-      const rep = resolveFurnitureRepresentation(catalogId, { widthIn: e.widthIn, depthIn: e.depthIn });
+      const rep = resolveFurnitureRepresentation(catalogId, { widthIn: e.widthIn, depthIn: e.depthIn, heightIn: e.heightIn });
       expect(rep.kind, catalogId).toBe("model");
       expect(rep.fit.distortion, catalogId).toBeLessThanOrEqual(MAX_PLAN_DISTORTION);
+      expect(rep.fit.heightRatio, catalogId).toBeLessThanOrEqual(MAX_HEIGHT_RATIO);
+      expect(1 / rep.fit.heightRatio, catalogId).toBeLessThanOrEqual(MAX_HEIGHT_RATIO);
     }
+  });
+
+  it("refuses a model whose natural height is far from the catalog height (no 6-ft kitchen islands)", () => {
+    const bar = { assetId: "test/bar", nativeSize: { x: 0.43, y: 0.42, z: 0.21 } }; // Kenney kitchenBar proportions
+    const fit = fitFurnitureModel(bar, { widthIn: 72, depthIn: 36, heightIn: 36 });
+    expect(fit.distortion).toBeLessThan(1.05); // footprint alone would pass
+    expect(fit.heightRatio).toBeGreaterThan(1.9); // ~71" tall vs 36"
+    expect(fit.ok).toBe(false);
+    expect(fitFurnitureModel(bar, { widthIn: 72, depthIn: 36 }).ok).toBe(true); // height unknown: footprint rule only
   });
 
   it("falls back to procedural geometry when a resize would stretch the model too far", () => {
@@ -91,7 +103,7 @@ describe("fit rule: exact plan footprint, no unrealistic stretching", () => {
   });
 
   it("keeps items without a suitable model procedural (toilet, round table, drop-in sinks)", () => {
-    for (const id of ["toilet", "dining-table-round", "sink-bath-round", "sink-kitchen-33", "sofa-3seat"]) {
+    for (const id of ["toilet", "dining-table-round", "sink-bath-round", "sink-kitchen-33", "loveseat", "kitchen-island", "bookshelf", "cabinet-base-24"]) {
       expect(resolveFurnitureRepresentation(id, { widthIn: 30, depthIn: 30 }).kind, id).toBe("procedural");
     }
     expect(resolveFurnitureRepresentation("bed-queen", { widthIn: 0, depthIn: 80 }).kind).toBe("procedural");
