@@ -10,6 +10,7 @@ import {
   setPipeUnderground,
   updateSystem,
 } from "@/domains/roomDesigner/designSystems";
+import { setRackParams } from "@/domains/roomDesigner/rackGeometry";
 import {
   addOpening,
   addOrgChart,
@@ -598,6 +599,13 @@ export function designerReducer(state, action) {
       if (action.mode !== "detailed" && action.mode !== "pid") return state;
       return touch(state, setSymbolDrawingMode(state.design, action.symbolId, action.mode));
     }
+    case "SET_RACK_PARAMS":
+      // Rack inspector (tiers / elevation / spacing); fails soft on bad input.
+      try {
+        return touch(state, setRackParams(state.design, action.symbolId, action.fields || {}), action.coalesce);
+      } catch {
+        return state;
+      }
     case "SET_SYMBOL_SIZE": {
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       const ok = (v) => v === undefined || (Number.isFinite(v) && v > 0);
