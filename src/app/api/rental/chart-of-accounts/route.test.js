@@ -29,13 +29,20 @@ function chainFor({ list = { data: [], error: null }, single = { data: null, err
   return chain;
 }
 
-function authed(client, role = "owner") {
+function authed(client, role = "owner", { rpcResult = { data: { id: "a1", code: "property_repairs", is_active: false }, error: null } } = {}) {
+  const rpcCalls = [];
+  const rpc = vi.fn(async (name, args) => {
+    rpcCalls.push({ name, args });
+    return rpcResult;
+  });
+  const supabaseClient = { ...client, rpc, rpcCalls };
   createAuthenticatedRentalManagerApplication.mockResolvedValue({
     user: { id: "user-1" },
     effectiveOwnerId: "owner_1",
-    supabaseClient: client,
+    supabaseClient,
   });
   getActiveWorkspaceRole.mockResolvedValue(role);
+  return supabaseClient;
 }
 
 const accountA = { id: "a1", code: "property_repairs", label: "Repairs", account_type: "expense", is_active: true, is_system: true };
@@ -60,15 +67,19 @@ describe("GET /api/rental/chart-of-accounts", () => {
     expect(body.transactions).toBeNull();
   });
 
-  it("returns recent postings for ?transactionsFor=", async () => {
+  it("returns recent postings for ?transactionsFor=, excluding soft-deleted rows", async () => {
     getChartAccounts.mockResolvedValue([accountA]);
     getAccountUsageCount.mockResolvedValue(1);
     const rows = [{ id: "e1", event_date: "2026-09-20", description: "Plumber", amount: 250, transaction_kind: "expense", property_id: "p1" }];
-    authed({ from: vi.fn(() => chainFor({ list: { data: rows, error: null } })) });
+    const chain = chainFor({ list: { data: rows, error: null } });
+    authed({ from: vi.fn(() => chain) });
 
     const response = await GET(new Request("https://test/api/rental/chart-of-accounts?transactionsFor=property_repairs"));
     expect(response.status).toBe(200);
     expect((await response.json()).transactions).toEqual(rows);
+    // The drawer is a live view of the account, not the audit trail:
+    // soft-deleted transactions must not appear (PR #420 finding 2).
+    expect(chain.eq.mock.calls).toContainEqual(["is_deleted", false]);
   });
 
   it("404s for an unknown account code", async () => {
@@ -140,18 +151,29 @@ describe("PATCH /api/rental/chart-of-accounts", () => {
     expect((await response.json()).account.label).toBe("Repairs & maintenance");
   });
 
-  it("deactivates an unused account", async () => {
+  it("deactivates an unused account through the atomic RPC", async () => {
     const deactivated = { ...accountA, is_active: false };
-    authed({ from: vi.fn(() => chainFor({ single: { data: deactivated, error: null } })) });
+    const supabaseClient = authed({ from: vi.fn(() => chainFor({ single: { data: deactivated, error: null } })) });
     getAccountUsageCount.mockResolvedValue(0);
 
     const response = await PATCH(patchRequest({ id: "a1", is_active: false }));
     expect(response.status).toBe(200);
     expect((await response.json()).account.is_active).toBe(false);
+    // The row lock, the usage check, and the write happen atomically inside
+    // the RPC, coordinated with concurrent postings via the chart row lock.
+    expect(supabaseClient.rpc).toHaveBeenCalledTimes(1);
+    expect(supabaseClient.rpc.mock.calls[0][0]).toBe("deactivate_chart_account");
+    expect(supabaseClient.rpc.mock.calls[0][1]).toEqual({ p_owner_id: "owner_1", p_account_id: "a1" });
   });
 
   it("blocks deactivating an account with postings", async () => {
-    authed({ from: vi.fn(() => chainFor({ single: { data: accountA, error: null } })) });
+    const client = { from: vi.fn(() => chainFor({ single: { data: accountA, error: null } })) };
+    authed(client, "owner", {
+      rpcResult: {
+        data: null,
+        error: { code: "P0002", message: "This account has 3 transactions posted to it. Reassign them to another account before deactivating." },
+      },
+    });
     getAccountUsageCount.mockResolvedValue(3);
 
     const response = await PATCH(patchRequest({ id: "a1", is_active: false }));
