@@ -17,6 +17,7 @@ import { findWall, pieceSize } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
+import { effectiveColor } from "./designSystems";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -350,7 +351,7 @@ export function equipmentDescriptors(design) {
       widthIn: inst.widthIn ?? symbol.widthIn,
       depthIn: inst.depthIn ?? symbol.depthIn,
       heightIn: symbol.heightIn,
-      color: symbol.color,
+      color: effectiveColor(design, inst, symbol.color), // own > system > catalog
       tag: inst.tag || "",
       // Lets the 3D builder specialize recognizable equipment (a pump reads
       // as motor + casing, a compressor as a single skid-mounted box).
