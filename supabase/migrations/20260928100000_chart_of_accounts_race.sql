@@ -520,7 +520,7 @@ create or replace function update_transaction_with_history(
   p_event jsonb,
   p_changes jsonb,
   p_edited_by text,
-  p_cleared_at text
+  p_cleared_at timestamptz
 )
 returns jsonb
 language plpgsql
@@ -616,10 +616,7 @@ begin
          check_number = nullif(btrim(p_event ->> 'checkNumber'), ''),
          bank_account_id = v_bank_account_id,
          cleared = coalesce((p_event ->> 'cleared')::boolean, false),
-         cleared_at = case
-           when p_cleared_at is null or btrim(p_cleared_at) = '' then null
-           else btrim(p_cleared_at)::timestamptz
-         end,
+         cleared_at = p_cleared_at,
          display_as = nullif(btrim(p_event ->> 'displayAs'), ''),
          ref_number = nullif(btrim(p_event ->> 'refNumber'), ''),
          payee_mailing_address = nullif(btrim(p_event ->> 'payeeMailingAddress'), ''),
@@ -653,8 +650,8 @@ begin
 end;
 $$;
 
-revoke all on function update_transaction_with_history(text, text, jsonb, jsonb, text, text) from public;
-grant execute on function update_transaction_with_history(text, text, jsonb, jsonb, text, text) to authenticated;
+revoke all on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) from public;
+grant execute on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 5. deactivate_chart_account: the atomic deactivation half of the race.

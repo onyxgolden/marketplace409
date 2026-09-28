@@ -57,6 +57,13 @@ describe("chart-of-accounts race migration — structural contract", () => {
 
   it("hardens update_transaction_with_history: row lock first, category check on change only", () => {
     expect(sql).toContain("create or replace function update_transaction_with_history(");
+    // The signature must match the applied 20260927120000 function EXACTLY
+    // (p_cleared_at timestamptz): a text parameter would create a second
+    // overload instead of replacing the original, leaving the race fix
+    // incomplete (retro re-review NO-GO).
+    expect(sql).toContain("p_cleared_at timestamptz");
+    expect(sql).toContain("revoke all on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) from public");
+    expect(sql).toContain("grant execute on function update_transaction_with_history(text, text, jsonb, jsonb, text, timestamptz) to authenticated");
     // The pre-lock: the category check must see a stable row.
     expect(sql).toContain("from financial_events where owner_id = required_owner and id = v_event_id and source_system = 'manual' and is_deleted = false for update");
     // Only a re-categorization takes the chart lock; ordinary memo/date
