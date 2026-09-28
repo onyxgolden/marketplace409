@@ -30,6 +30,7 @@ import {
 } from "@/domains/roomDesigner/pipingGeometry";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
+import { nearestConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
   FURNITURE_MAX_SIZE_IN,
@@ -57,6 +58,9 @@ const OPENING_MIN_WIDTH_IN = 12;
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
  * plan <-> screen with a pan/zoom transform kept in local state.
  */
+// Screen-pixel radius within which the pipe tool snaps to a nozzle anchor.
+const ANCHOR_SNAP_PX = 12;
+
 export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, onViewCenterChange = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
@@ -447,10 +451,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // ortho option is on). Double-click or Enter commits the run.
     if (tool === "pipe") {
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      // A nearby equipment nozzle wins over grid/ortho snapping so the run
+      // ends exactly on the connection anchor.
+      const nozzle = nearestConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale);
       setPipePreview((prev) => {
         const next = prev ? [...prev] : [];
         const last = next[next.length - 1];
-        const snapped = last && orthoSnap ? applyOrthoSnap(last, point) : point;
+        const snapped = nozzle
+          ? { x: nozzle.x, y: nozzle.y }
+          : last && orthoSnap ? applyOrthoSnap(last, point) : point;
         return [...next, snapped];
       });
       return;
@@ -665,8 +674,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (tool === "pipe" && !drag) {
       const plan = toPlan(screen);
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      const nozzle = nearestConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale);
       const last = pipePreview?.[pipePreview.length - 1];
-      setHoverPoint(last && orthoSnap ? applyOrthoSnap(last, point) : point);
+      setHoverPoint(nozzle ? { x: nozzle.x, y: nozzle.y } : last && orthoSnap ? applyOrthoSnap(last, point) : point);
       return;
     }
     // Placement ghost follows the mouse while a placement tool is active.

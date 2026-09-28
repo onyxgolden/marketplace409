@@ -12,6 +12,7 @@
 
 import { findSymbol } from "./symbolRegistry";
 import { detailedVersionFor } from "./temaExchangerCatalog";
+import { temaAnchorsWorld } from "./temaGeometry";
 import { normalizeTemaConfig, validateTemaConfig } from "./temaTypes";
 
 export const DRAWING_MODES = Object.freeze(["detailed", "pid"]);
@@ -119,4 +120,26 @@ export function temaInstanceErrors(instance, symbol) {
     errors.push(`Symbol ${instance.id} has an unknown drawing mode.`);
   }
   return errors;
+}
+
+/**
+ * The closest connection anchor (nozzle flange face) to `point` within
+ * `radiusIn` plan inches, across every placed symbol that has anchors:
+ * { symbolInstanceId, anchorId, x, y, distance } or null. Anchors are the
+ * same in both drawing modes, so a pipe snapped to one stays put when the
+ * symbol switches between detailed and P&ID.
+ */
+export function nearestConnectionAnchor(design, point, radiusIn) {
+  let best = null;
+  for (const inst of design?.symbols || []) {
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol?.tema) continue;
+    for (const a of temaAnchorsWorld(symbol, inst)) {
+      const distance = Math.hypot(a.x - point.x, a.y - point.y);
+      if (distance <= radiusIn && (!best || distance < best.distance)) {
+        best = { symbolInstanceId: inst.id, anchorId: a.id, x: a.x, y: a.y, distance };
+      }
+    }
+  }
+  return best;
 }

@@ -18,6 +18,7 @@ import {
   DRAWING_MODES,
   initialTemaFields,
   instanceDrawingMode,
+  nearestConnectionAnchor,
   replaceWithDetailedVersion,
   setSymbolDrawingMode,
   setSymbolSize,
@@ -26,6 +27,7 @@ import {
   temaInstanceErrors,
 } from "./temaInstances";
 import { findSymbol } from "./symbolRegistry";
+import { temaAnchorsWorld } from "./temaGeometry";
 
 const D = "processEquipment";
 const hxSymbol = () => findSymbol(D, "tema-exchanger");
@@ -167,5 +169,30 @@ describe("validation of saved TEMA fields", () => {
     const json = serializeDesign(design);
     expect(serializeDesign(parseDesign(json))).toBe(json);
     expect(validateDesign(parseDesign(json))).toEqual([]);
+  });
+});
+
+describe("nearestConnectionAnchor", () => {
+  it("finds the closest nozzle within the radius, in plan coordinates", () => {
+    let design = placeSymbol(createEmptyDesign(), D, "tema-exchanger", 100, 100, { id: "hx" });
+    design = setSymbolTemaConfig(design, "hx", TEMA_PRESETS.AES);
+    const anchors = temaAnchorsWorld(hxSymbol(), design.symbols[0]);
+    const tubeIn = anchors.find((a) => a.id === "tube-in");
+    const hit = nearestConnectionAnchor(design, { x: tubeIn.x + 3, y: tubeIn.y - 2 }, 6);
+    expect(hit).toMatchObject({ symbolInstanceId: "hx", anchorId: "tube-in", x: tubeIn.x, y: tubeIn.y });
+    expect(nearestConnectionAnchor(design, { x: tubeIn.x, y: tubeIn.y - 30 }, 6)).toBeNull();
+  });
+
+  it("ignores symbols without connection anchors", () => {
+    const design = placeSymbol(createEmptyDesign(), D, "centrifugal-pump", 0, 0, { id: "p" });
+    expect(nearestConnectionAnchor(design, { x: 0, y: 0 }, 100)).toBeNull();
+  });
+
+  it("gives the same anchors in detailed and P&ID mode", () => {
+    let design = placeSymbol(createEmptyDesign(), D, "tema-exchanger", 0, 0, { id: "hx", rotationDeg: 90 });
+    design = setSymbolTemaConfig(design, "hx", TEMA_PRESETS.BEM);
+    const detailed = temaAnchorsWorld(hxSymbol(), design.symbols[0]);
+    const pid = temaAnchorsWorld(hxSymbol(), setSymbolDrawingMode(design, "hx", "pid").symbols[0]);
+    expect(pid).toEqual(detailed);
   });
 });
