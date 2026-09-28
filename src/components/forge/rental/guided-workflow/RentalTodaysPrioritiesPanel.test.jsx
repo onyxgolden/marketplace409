@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RentalTodaysPrioritiesPanel from "./RentalTodaysPrioritiesPanel";
 import { resetRentalSummaryClient } from "../rentalSummaryClient";
-import { clearSWRCache } from "../../../../hooks/swrCache";
+import { RENTAL_DASHBOARD_PAYLOAD_SWR_KEY } from "../useRentalDashboardPayload";
+import { clearSWRCache, fetchWithDedupe, setCacheIdentity } from "../../../../hooks/swrCache";
 
 function rentalBody(overrides = {}) {
   return {
@@ -196,5 +197,85 @@ describe("RentalTodaysPrioritiesPanel", () => {
     await flush();
     act(() => { [...mounted.container.querySelectorAll("button")].find((b) => b.textContent.includes("Open")).click(); });
     expect(onNavigate).toHaveBeenCalledWith("setup");
+  });
+
+  it("ignores a late stale cache update while restart's authoritative fetch is in flight", async () => {
+    // Initial mount fails so the panel lands on the "Try again" (restart) path.
+    let rentalMode = "fail"; // "fail" -> "defer" once restart is clicked
+    let resolveRestartFetch;
+    const fetch = vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/reports")) {
+        return { ok: true, json: async () => reportBody() };
+      }
+      if (rentalMode === "fail") {
+        return { ok: false, json: async () => ({ error: "Rental summary could not be loaded." }) };
+      }
+      return new Promise((resolve) => {
+        // B: the authoritative restart payload -- no vacancies.
+        resolveRestartFetch = () => resolve({ ok: true, json: async () => rentalBody() });
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("Try again");
+
+    rentalMode = "defer";
+    act(() => {
+      [...mounted.container.querySelectorAll("button")].find((b) => b.textContent === "Try again").click();
+    });
+    // Restart's authoritative fetch is now in flight; a stale cache update
+    // (2 vacancies) lands first through the shared SWR key.
+    const staleRaw = {
+      rentalBody: rentalBody({ units: [{ id: "u1" }, { id: "u2" }, { id: "u3" }] }),
+      reports: { available: true, report: reportBody().report, error: "" },
+    };
+    await act(async () => {
+      await fetchWithDedupe(RENTAL_DASHBOARD_PAYLOAD_SWR_KEY, async () => staleRaw);
+    });
+    await flush();
+    // The stale write must not initialize a session over the restart: still
+    // loading, never the stale "Priority 1 of 2" session.
+    expect(mounted.container.textContent).toContain("Loading today");
+    expect(mounted.container.textContent).not.toContain("Priority 1 of 2");
+
+    await act(async () => { resolveRestartFetch(); });
+    await flush();
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
+  });
+
+  it("reinitializes the session for the new identity when the account switches", async () => {
+    let identity = "user_1";
+    const fetch = vi.fn(async (url) => {
+      if (String(url).includes("/api/rental/reports")) {
+        return { ok: true, json: async () => reportBody() };
+      }
+      // user_1 has a vacancy; user_2's unit is leased -- the visible session must change.
+      const vacant = identity === "user_1";
+      return {
+        ok: true,
+        json: async () => rentalBody({
+          actingUserId: identity,
+          units: vacant ? [{ id: "u1" }, { id: "u2" }] : [{ id: "u1" }],
+          leases: vacant ? [] : [{ id: "lease_1", unit_id: "u1", status: "active" }],
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetch);
+    mounted = mount(<RentalTodaysPrioritiesPanel />);
+    await flush();
+    expect(mounted.container.textContent).toContain("Priority 1 of 1");
+
+    identity = "user_2";
+    await act(async () => { setCacheIdentity("user_2"); });
+    await flush();
+    // The old identity's session must not survive the switch.
+    expect(mounted.container.textContent).toContain("Nothing urgent right now.");
+    expect(mounted.container.textContent).not.toContain("Priority 1 of 1");
+
+    // Restore the null identity for the rest of the file (the epoch bump from
+    // restoring also reinitializes, which is harmless post-assertion).
+    await act(async () => { setCacheIdentity(null); });
+    await flush();
   });
 });

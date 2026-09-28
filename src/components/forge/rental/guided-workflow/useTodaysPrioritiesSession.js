@@ -62,14 +62,23 @@ export function useTodaysPrioritiesSession() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const sessionIdRef = useRef(generateSessionId());
-  const initializedRef = useRef(false);
+  // Init epoch: the mount effect may only initialize the session from the cache
+  // at epoch 0. Every authoritative init (restart, and the identity-change
+  // reinit below) bumps the epoch first, which permanently fences the mount
+  // effect out -- a late cache update can never initialize a second session
+  // from stale data while an authoritative fetch is in flight or completed.
+  const initEpochRef = useRef(0);
   // Mount-time data comes through the shared SWR cache (same key the Overview panel
   // uses), so a reload hydrates instantly from the localStorage disk cache instead of
-  // flashing "Loading...". User-triggered refreshes (next/retryReports/restart) still
-  // fetch authoritative state directly via fetchSummaryAndIdentity({ refresh: true }).
-  const { data: cachedPayload, error: cachedError, isLoading: cacheLoading } = useRentalDashboardPayload();
+  // flashing "Loading...". User-triggered refreshes still fetch authoritative state
+  // directly: next/retryReports via fetchSummaryAndIdentity({ refresh: true }), and
+  // restart through runInitialize() below.
+  const { data: cachedPayload, error: cachedError, isLoading: cacheLoading, identityEpoch } = useRentalDashboardPayload();
 
-  const applyProcessedPayload = useCallback((processed) => {
+  const applyProcessedPayload = useCallback((processed, epoch) => {
+    // Fenced out: a newer init superseded this one (restart or identity change
+    // while this fetch was in flight). Never apply stale results over them.
+    if (epoch !== initEpochRef.current) return;
     const { summary: nextSummary, actingUserId, canonicalOwnerId, reportsAvailable: nextReportsAvailable, reportsError: nextReportsError } = processed;
     setSummary(nextSummary);
     setIdentity({ actingUserId, canonicalOwnerId });
@@ -88,47 +97,67 @@ export function useTodaysPrioritiesSession() {
       canonicalOwnerId,
       now,
     }));
-    initializedRef.current = true;
   }, []);
 
-  // The mount effect calls this directly (no synchronous setState before the fetch -- loading/error
-  // already start at their correct initial values, so there's nothing to reset). `restart` below wraps
-  // it with the explicit reset for the user-triggered "try again" path, which runs from an event
-  // handler rather than an effect body.
-  const runInitialize = useCallback(() => fetchSummaryAndIdentity()
-    .then((processed) => { applyProcessedPayload(processed); })
-    .catch((reason) => setError(reason.message))
-    .finally(() => setLoading(false)), [applyProcessedPayload]);
+  // Authoritative init: always bumps the init epoch first, so the mount effect
+  // can never initialize from cache afterwards, and any older in-flight init's
+  // completion is fenced out by the epoch check in applyProcessedPayload.
+  // The mount effect never calls this (it initializes from the cache at epoch
+  // 0); `restart` and the identity watcher are the only callers. The watcher
+  // passes { refresh: true }: the client's in-flight slot is not identity-aware,
+  // so a switch mid-fetch would otherwise hand the old account's pair to the
+  // new session -- refresh bypasses the slot and fetches under the new identity.
+  const runInitialize = useCallback(({ refresh = false } = {}) => {
+    const epoch = ++initEpochRef.current;
+    setLoading(true);
+    setError("");
+    return fetchSummaryAndIdentity({ refresh })
+      .then((processed) => { applyProcessedPayload(processed, epoch); })
+      .catch((reason) => { if (epoch === initEpochRef.current) setError(reason.message); })
+      .finally(() => { if (epoch === initEpochRef.current) setLoading(false); });
+  }, [applyProcessedPayload]);
 
   // Mount: initialize from the shared cached payload once it arrives. A first-ever
   // load (empty disk cache) waits for the SWR fetch exactly like the old direct
-  // fetch; a reload hydrates synchronously with no loading flash. The body runs
-  // async so the effect itself never calls setState synchronously (lint rule),
-  // matching the old runInitialize discipline.
+  // fetch; a reload hydrates synchronously with no loading flash. Fenced to epoch
+  // 0: once any authoritative init begins, this effect never initializes from
+  // cache again -- a late cache update during restart() can't start a second
+  // session from stale data and race the authoritative fetch.
+  // The body runs async so the effect itself never calls setState synchronously
+  // (lint rule), matching the old runInitialize discipline.
   useEffect(() => {
-    if (initializedRef.current || cacheLoading) return;
+    if (initEpochRef.current !== 0 || cacheLoading) return;
+    const epoch = initEpochRef.current;
     (async () => {
+      if (epoch !== initEpochRef.current) return;
       if (!cachedPayload) {
         if (cachedError) setError(cachedError);
         setLoading(false);
         return;
       }
       try {
-        applyProcessedPayload(processPayload(cachedPayload));
+        applyProcessedPayload(processPayload(cachedPayload), epoch);
       } catch (reason) {
-        setError(reason.message);
+        if (epoch === initEpochRef.current) setError(reason.message);
       } finally {
-        setLoading(false);
+        if (epoch === initEpochRef.current) setLoading(false);
       }
     })();
   }, [cachedPayload, cachedError, cacheLoading, applyProcessedPayload]);
 
-  const restart = useCallback(() => {
-    setLoading(true);
-    setError("");
-    initializedRef.current = false;
-    return runInitialize();
-  }, [runInitialize]);
+  // Account switching: setCacheIdentity() wipes the shared cache and the SWR
+  // hook refetches for the new identity, but without this the session would
+  // keep showing the previous identity's summary. On an epoch change, drop the
+  // old session and reinitialize authoritatively -- the cached payload belongs
+  // to the previous identity and must never initialize the new session.
+  const identityEpochRef = useRef(identityEpoch);
+  useEffect(() => {
+    if (identityEpochRef.current === identityEpoch) return;
+    identityEpochRef.current = identityEpoch;
+    runInitialize({ refresh: true });
+  }, [identityEpoch, runInitialize]);
+
+  const restart = useCallback(() => runInitialize(), [runInitialize]);
 
   // Re-fetches real data before advancing, so "next" is always evaluated against current
   // authoritative state -- never against a stale in-memory guess of what's still required.
