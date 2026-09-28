@@ -31,6 +31,7 @@ function box(points) {
 }
 const wallBox = (design) => box(design.walls.flatMap((w) => [w.a, w.b]));
 const reopensClean = (design) => validateDesign(parseDesign(serializeDesign(design)));
+const napi = await import("@napi-rs/canvas").catch(() => null);
 
 describe("import library manifest", () => {
   it("lists every fixture file, with matching size and sha256", () => {
@@ -159,6 +160,34 @@ describe("PDF (real pdf.js, legacy build for Node)", () => {
     const prep = await preparePdfImport(bytesOf("pdf/habs-davenport-house-sheet1-scanned.pdf"), { pageNumber: 1, mode: "vector" });
     expect(prep.counts.paths).toBe(0);
     expect(prep.issues.map((i) => i.message).join(" ")).toMatch(/No vector paths were found/);
+  });
+
+  // The scanned-page path, rendered through FORGE's own raster code with a
+  // Node canvas (@napi-rs/canvas ships with pdfjs-dist; skipped if absent).
+  async function rasterInk() {
+    const prep = await preparePdfImport(bytesOf("pdf/habs-davenport-house-sheet1-scanned.pdf"), {
+      pageNumber: 1, mode: "raster", createCanvas: (w, h) => napi.createCanvas(w, h),
+    });
+    const img = await napi.loadImage(Buffer.from(prep.image.dataUrl.split(",")[1], "base64"));
+    const c = napi.createCanvas(img.width, img.height);
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, img.width, img.height).data;
+    let dark = 0;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4 * 7, n++) if ((d[i] + d[i + 1] + d[i + 2]) / 3 < 128) dark++;
+    return { prep, inkPct: (100 * dark) / n };
+  }
+
+  it.skipIf(!napi)("habs-davenport-house-sheet1-scanned.pdf as an image underlay: places the whole sheet at 150 DPI", async () => {
+    const { prep } = await rasterInk();
+    expect(prep.image.widthPx).toBe(3499);
+    expect(prep.image.heightPx).toBe(2676);
+  });
+
+  it.skipIf(!napi).fails("KNOWN GAP: the scanned sheet's linework survives rasterization (CCITT fax image decoded, not blank white)", async () => {
+    const { inkPct } = await rasterInk(); // today 0.00%: pdf.js 5 needs wasmUrl to decode CCITT/JBIG2; poppler shows ~5%
+    expect(inkPct).toBeGreaterThan(1);
   });
 
   it("malformed-truncated.pdf: refused as unreadable", async () => {

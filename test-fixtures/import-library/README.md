@@ -70,7 +70,7 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
 | poi-github260.vsdx | annotations only; skipped shapes reported | none |
 | malformed-not-a-zip / missing-pages .vsdx | refused (`bad-zip` / `missing-part`) | none |
 | forge-test-house-vector.pdf @ 1/4" | geometry imports at the right scale | **G4**: ~400 "walls", including the sheet border |
-| habs-davenport scanned PDF | vector mode: 0 paths, points to the image path | none (image path is checked in the running app) |
+| habs-davenport scanned PDF | vector mode: 0 paths, points to the image path; image mode places a 3499×2676 px, 150 DPI underlay | **G5**: the placed image is blank white (0% ink; poppler shows ~5%) |
 | malformed-truncated.pdf | refused (`unreadable`) | none |
 
 ### Bug briefs
@@ -87,6 +87,12 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
   furniture, dimensions, text strokes, hatch and the sheet border. Fix direction: detect
   paired parallel strokes (wall faces) and ignore the page-border rectangle; the rest become
   annotations.
+- **G5: Scanned PDFs encoded as CCITT fax (and JBIG2 / JPEG 2000) render blank.** pdf.js 5 decodes
+  these with WebAssembly and needs `wasmUrl` in `getDocument`; `openDocument` in `pdfImporter.js`
+  doesn't pass it, so pdf.js logs "JBig2 failed to initialize", skips the image, and FORGE places an
+  all-white underlay with no warning. 1-bit CCITT is the usual encoding for scanned plan sheets. Verified:
+  the same page with `wasmUrl` pointing at `pdfjs-dist/wasm/` renders 5.4% ink. Fix direction: pass a
+  bundled `wasmUrl` (resolved like the worker, no CDN), and warn when a raster page comes back empty.
 - **Units (external floorplan.dxf, below).** A DXF with a millimetre header drawn in inch-sized
   numbers imports 47"×34" instead of house-sized. The importer trusts `$INSUNITS`; a sanity check
   on the resulting extents (a "house" 4 ft wide) should prompt for the unit.
