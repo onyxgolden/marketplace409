@@ -53,9 +53,9 @@ describe("coverage for refinery and chemical-plant work", () => {
   const ids = new Set(PROCESS_EQUIPMENT.map((e) => e.id));
   const has = (...list) => list.forEach((id) => expect(ids, id).toContain(id));
 
-  it("has 100+ items across the 12 categories plus 4 TEMA categories", () => {
+  it("has 100+ items across the 13 categories (incl. Structures) plus 4 TEMA categories", () => {
     expect(PROCESS_EQUIPMENT.length).toBeGreaterThanOrEqual(100);
-    expect(PROCESS_EQUIPMENT_CATEGORIES).toHaveLength(16);
+    expect(PROCESS_EQUIPMENT_CATEGORIES).toHaveLength(17);
   });
 
   it("covers pumps, compressors, and drivers", () => {
