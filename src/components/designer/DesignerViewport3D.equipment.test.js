@@ -166,3 +166,62 @@ describe("frameCameraOnModel", () => {
     expect(camera.position.equals(before)).toBe(true);
   });
 });
+
+describe("tag label cache lifecycle", () => {
+  // Minimal document stub so makeTagSprite's canvas path runs in Node.
+  const stubDocument = () => {
+    const ctx2d = {
+      font: "",
+      fillStyle: "",
+      textBaseline: "",
+      measureText: () => ({ width: 120 }),
+      beginPath() {},
+      moveTo() {},
+      arcTo() {},
+      closePath() {},
+      fill() {},
+      fillText() {},
+    };
+    const canvas = { width: 300, height: 84, getContext: () => ctx2d };
+    return { createElement: () => canvas };
+  };
+
+  it("disposeContentGroup releases sprite references so a later sweep disposes them", async () => {
+    const mod = await import("./DesignerViewport3D");
+    const realDocument = globalThis.document;
+    globalThis.document = stubDocument();
+    try {
+      mod.sweepTagSpriteCache(); // isolate from other tests' entries
+      const group = new THREE.Group();
+      const s1 = mod.makeTagSprite("P-901");
+      const s2 = mod.makeTagSprite("P-901"); // shared entry, two references
+      expect(s1.userData.tagCacheKey).toBe("P-901");
+      group.add(s1, s2);
+      mod.disposeContentGroup(group); // what rebuild/unmount does
+      // Both references released; the sweep (unmount path) reaps the entry.
+      expect(mod.sweepTagSpriteCache()).toBe(1);
+      expect(mod.sweepTagSpriteCache()).toBe(0); // second sweep: nothing left
+    } finally {
+      globalThis.document = realDocument;
+    }
+  });
+
+  it("a live sprite's entry survives the sweep", async () => {
+    const mod = await import("./DesignerViewport3D");
+    const realDocument = globalThis.document;
+    globalThis.document = stubDocument();
+    try {
+      mod.sweepTagSpriteCache();
+      const live = mod.makeTagSprite("P-902");
+      const dead = mod.makeTagSprite("P-903");
+      const group = new THREE.Group();
+      group.add(dead);
+      mod.disposeContentGroup(group); // only the dead sprite's group is disposed
+      expect(mod.sweepTagSpriteCache()).toBe(1); // P-903 reaped, P-902 lives
+      mod.releaseTagSprite(live);
+      expect(mod.sweepTagSpriteCache()).toBe(1); // now P-902 goes too
+    } finally {
+      globalThis.document = realDocument;
+    }
+  });
+});

@@ -26,6 +26,7 @@ import {
   skyTexture,
   woodFloorTexture,
 } from "./designerThreeTextures";
+import { createTagSpriteCache } from "@/domains/roomDesigner/tagSpriteCache";
 
 const IN = 1; // scene units are inches; camera distances derived from floor size
 
@@ -92,11 +93,60 @@ export function frameCameraOnModel(camera, controls, built) {
 /**
  * Floating tag labels (P-101, E-102, …) above equipment so the 3D reads like
  * a plot plan. Canvas textures are cached per unique tag at module scope and
- * shared by every sprite; the rebuild disposer must therefore skip sprites
- * (see disposeContentGroup) — these resources are never per-rebuild.
+ * shared by every sprite; the cache is reference-counted (see
+ * domains/roomDesigner/tagSpriteCache) so eviction and unmount never dispose
+ * GPU resources out from under live sprites, and nothing module-scoped
+ * outlives the viewport.
  */
-const TAG_SPRITE_ENTRIES = new Map(); // tag text -> { texture, material, aspect }
-const TAG_SPRITE_CACHE_CAP = 250;
+function createTagLabelCanvas(text) {
+  const font = "600 46px system-ui, -apple-system, sans-serif";
+  const measurer = document.createElement("canvas").getContext("2d");
+  measurer.font = font;
+  const textW = Math.ceil(measurer.measureText(text).width);
+  const padX = 26;
+  const canvas = document.createElement("canvas");
+  canvas.width = textW + padX * 2;
+  canvas.height = 84;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+  pillPath(ctx, 2, 2, canvas.width - 4, canvas.height - 4, 24);
+  ctx.fill();
+  ctx.font = font;
+  ctx.fillStyle = "#f1f5f9";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, padX, canvas.height / 2 + 2);
+  return { canvas, aspect: canvas.width / canvas.height };
+}
+
+const tagSpriteCache = createTagSpriteCache({ THREE, createLabelCanvas: createTagLabelCanvas });
+
+export function makeTagSprite(tag) {
+  if (typeof document === "undefined") return null;
+  const acquired = tagSpriteCache.acquire(tag);
+  if (!acquired) return null;
+  const sprite = new THREE.Sprite(acquired.material);
+  // Marks this sprite as one reference on the shared cache entry; the
+  // rebuild disposer consumes it via releaseTagSprite().
+  sprite.userData.tagCacheKey = acquired.key;
+  const worldW = 120; // inches — readable without dominating the equipment
+  sprite.scale.set(worldW, worldW / acquired.aspect, 1);
+  sprite.center.set(0.5, 0); // bottom-center anchored, so position.y is the label's base
+  return sprite;
+}
+
+/** Release one sprite's reference on its shared cache entry (idempotent). */
+export function releaseTagSprite(sprite) {
+  return tagSpriteCache.release(sprite);
+}
+
+/**
+ * Dispose every cache entry with no live sprite references. Called on
+ * viewport unmount (after the content group's sprites are released) so the
+ * module-scoped GPU resources don't leak. Returns the entry count disposed.
+ */
+export function sweepTagSpriteCache() {
+  return tagSpriteCache.sweep();
+}
 
 function pillPath(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -106,48 +156,6 @@ function pillPath(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-}
-
-export function makeTagSprite(tag) {
-  const text = String(tag || "").trim();
-  if (!text || typeof document === "undefined") return null;
-  let entry = TAG_SPRITE_ENTRIES.get(text);
-  if (!entry) {
-    const font = "600 46px system-ui, -apple-system, sans-serif";
-    const measurer = document.createElement("canvas").getContext("2d");
-    measurer.font = font;
-    const textW = Math.ceil(measurer.measureText(text).width);
-    const padX = 26;
-    const canvas = document.createElement("canvas");
-    canvas.width = textW + padX * 2;
-    canvas.height = 84;
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-    pillPath(ctx, 2, 2, canvas.width - 4, canvas.height - 4, 24);
-    ctx.fill();
-    ctx.font = font;
-    ctx.fillStyle = "#f1f5f9";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, padX, canvas.height / 2 + 2);
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 4;
-    const material = new THREE.SpriteMaterial({ map: texture, depthWrite: false, transparent: true });
-    entry = { texture, material, aspect: canvas.width / canvas.height };
-    if (TAG_SPRITE_ENTRIES.size >= TAG_SPRITE_CACHE_CAP) {
-      const oldestKey = TAG_SPRITE_ENTRIES.keys().next().value;
-      const oldest = TAG_SPRITE_ENTRIES.get(oldestKey);
-      oldest?.texture.dispose();
-      oldest?.material.dispose();
-      TAG_SPRITE_ENTRIES.delete(oldestKey);
-    }
-    TAG_SPRITE_ENTRIES.set(text, entry);
-  }
-  const sprite = new THREE.Sprite(entry.material);
-  const worldW = 120; // inches — readable without dominating the equipment
-  sprite.scale.set(worldW, worldW / entry.aspect, 1);
-  sprite.center.set(0.5, 0); // bottom-center anchored, so position.y is the label's base
-  return sprite;
 }
 
 /**
@@ -610,6 +618,10 @@ export default function DesignerViewport3D({
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
       contentGroupRef.current = swapContentGroup(threeScene, contentGroupRef.current, null);
+      // The swap released every tag sprite's cache reference; reap the now-
+      // unreferenced entries so module-scoped GPU resources don't outlive the
+      // viewport.
+      sweepTagSpriteCache();
       for (const m of materialCacheRef.current.values()) m.dispose();
       materialCacheRef.current.clear();
       for (const { originalMaterial } of highlightedRef.current) {
@@ -1147,12 +1159,18 @@ export function swapContentGroup(scene, oldGroup, newGroup) {
 }
 
 /** Dispose every geometry (and any per-mesh highlight clone) in a content group. */
-function disposeContentGroup(group) {
+export function disposeContentGroup(group) {
   if (!group) return;
   group.traverse((obj) => {
-    // Tag-label sprites share module-cached textures/materials — never
-    // per-rebuild resources, so skip them entirely here.
-    if (obj.isSprite) return;
+    // Tag-label sprites share reference-counted cache textures/materials:
+    // release this sprite's reference here. The cache disposes the GPU
+    // resources once the last referencing sprite is gone — never per-rebuild
+    // while other sprites still use them, and sweepTagSpriteCache() reaps the
+    // leftovers on unmount.
+    if (obj.isSprite) {
+      releaseTagSprite(obj);
+      return;
+    }
     if (obj.geometry) obj.geometry.dispose();
     // Materials are cache-owned and disposed once at unmount, EXCEPT a
     // highlight clone, which belongs to no cache and must go here.
