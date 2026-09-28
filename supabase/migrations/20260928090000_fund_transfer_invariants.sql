@@ -10,11 +10,12 @@
 -- direct authenticated RPC call skips the route entirely -- so one leg of a
 -- transfer could be edited into a different amount, kind, or account while
 -- the other leg kept the original values, silently breaking the two-leg
--- invariant. The RPC now locks BOTH legs (SELECT ... FOR UPDATE) before
--- anything is written, verifies the pair currently balances, and rejects any
--- structural change against the LOCKED rows -- the database is the
--- enforcement boundary, the route's comparison is just the early UX
--- rejection.
+-- invariant. The RPC now locks BOTH legs in a single statement (row locks
+-- acquired in id order, so simultaneous edits to opposite legs serialize
+-- instead of deadlocking) before anything is written, verifies the pair
+-- currently balances, and rejects any structural change against the LOCKED
+-- rows -- the database is the enforcement boundary, the route's comparison
+-- is just the early UX rejection.
 --
 -- Finding 2: create_fund_transfer validated amount > 0 but never enforced
 -- two-decimal currency precision in SQL, so a direct RPC caller could post
@@ -228,6 +229,14 @@ declare
   v_peer_amount numeric;
   v_peer_kind text;
   v_peer_account text;
+  -- Ordered lock acquisition: every session locks the pair's legs in id
+  -- order, so two sessions editing opposite legs serialize instead of
+  -- deadlocking.
+  v_leg_count integer;
+  v_leg_ids text[];
+  v_leg_amounts numeric[];
+  v_leg_kinds text[];
+  v_leg_accounts text[];
   -- Proposed structural values from the caller's edit.
   v_new_amount numeric;
   v_new_kind text;
@@ -257,45 +266,69 @@ begin
     raise exception 'This transaction is not part of a fund transfer.' using errcode = 'P0002';
   end if;
 
-  -- 1. Lock BOTH legs of the pair before anything is written. Row locks
-  -- serialize concurrent edits: no direct RPC caller or second session can
-  -- change either leg's structural fields between this check and the
-  -- delegated write below. The route performs the same structural comparison
-  -- for UX, but its read can go stale -- the locked rows are the authority.
-  select id, amount, transaction_kind, bank_account_id
-    into v_init_id, v_init_amount, v_init_kind, v_init_account
-    from financial_events
-   where owner_id = effective_owner_id
-     and id = v_event_id
-     and is_deleted = false
-     for update;
-  if not found then
+  -- 1. Lock BOTH legs of the pair in a single statement, acquiring the row
+  -- locks in id order. Two sessions editing opposite legs of the same
+  -- transfer take the locks in the same order, so they serialize instead of
+  -- deadlocking. (Locking the initiating leg first let simultaneous edits
+  -- to opposite legs deadlock: each session held its own leg and waited on
+  -- the other's.) Row locks serialize concurrent edits: no direct RPC
+  -- caller or second session can change either leg's structural fields
+  -- between this check and the delegated write below. The route performs
+  -- the same structural comparison for UX, but its read can go stale -- the
+  -- locked rows are the authority.
+  with locked as (
+    select id, amount, transaction_kind, bank_account_id
+      from financial_events
+     where owner_id = effective_owner_id
+       and transfer_group_id = v_group_id
+       and is_deleted = false
+     order by id
+     for update
+  )
+  select count(*),
+         array_agg(id order by id),
+         array_agg(amount order by id),
+         array_agg(transaction_kind order by id),
+         array_agg(bank_account_id order by id)
+    into v_leg_count, v_leg_ids, v_leg_amounts, v_leg_kinds, v_leg_accounts
+    from locked;
+
+  -- A transfer is exactly two non-deleted legs. A missing leg means the
+  -- counterpart was deleted concurrently; a third row sharing the group id
+  -- means the id was reused or corrupted -- refuse rather than propagate
+  -- into a broken pair.
+  if v_leg_count <> 2 then
+    if v_leg_count = 0 then
+      raise exception 'This transaction is not part of a fund transfer.' using errcode = 'P0002';
+    elsif v_leg_count = 1 then
+      raise exception 'This fund transfer is missing its counterpart leg.' using errcode = 'P0002';
+    else
+      raise exception 'This fund transfer does not have exactly two legs. Delete the transfer and re-create it.' using errcode = 'P0002';
+    end if;
+  end if;
+
+  -- The edited event must still be one of the locked legs: it could have
+  -- been deleted between the group lookup above and the lock acquisition.
+  if v_leg_ids[1] = v_event_id then
+    v_init_id := v_leg_ids[1];
+    v_init_amount := v_leg_amounts[1];
+    v_init_kind := v_leg_kinds[1];
+    v_init_account := v_leg_accounts[1];
+    v_peer_id := v_leg_ids[2];
+    v_peer_amount := v_leg_amounts[2];
+    v_peer_kind := v_leg_kinds[2];
+    v_peer_account := v_leg_accounts[2];
+  elsif v_leg_ids[2] = v_event_id then
+    v_init_id := v_leg_ids[2];
+    v_init_amount := v_leg_amounts[2];
+    v_init_kind := v_leg_kinds[2];
+    v_init_account := v_leg_accounts[2];
+    v_peer_id := v_leg_ids[1];
+    v_peer_amount := v_leg_amounts[1];
+    v_peer_kind := v_leg_kinds[1];
+    v_peer_account := v_leg_accounts[1];
+  else
     raise exception 'This transaction is not part of a fund transfer.' using errcode = 'P0002';
-  end if;
-
-  select id, amount, transaction_kind, bank_account_id
-    into v_peer_id, v_peer_amount, v_peer_kind, v_peer_account
-    from financial_events
-   where owner_id = effective_owner_id
-     and transfer_group_id = v_group_id
-     and id <> v_event_id
-     and is_deleted = false
-     for update;
-  if not found then
-    raise exception 'This fund transfer is missing its counterpart leg.' using errcode = 'P0002';
-  end if;
-
-  -- A transfer is exactly two non-deleted legs. A third row sharing the
-  -- group id means the id was reused or corrupted -- refuse rather than
-  -- propagate into a broken pair.
-  perform 1
-    from financial_events
-   where owner_id = effective_owner_id
-     and transfer_group_id = v_group_id
-     and id not in (v_init_id, v_peer_id)
-     and is_deleted = false;
-  if found then
-    raise exception 'This fund transfer does not have exactly two legs. Delete the transfer and re-create it.' using errcode = 'P0002';
   end if;
 
   -- The pair must currently balance: equal amounts, opposite kinds (expense

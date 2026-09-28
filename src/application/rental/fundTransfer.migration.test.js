@@ -102,9 +102,14 @@ describe("fund transfer invariants migration — structural contract", () => {
     expect(hardened).toContain("the transfer amount is unreasonably large.");
   });
 
-  it("locks both legs before anything is written", () => {
-    expect(hardenedLegRpc).toContain("and id = v_event_id and is_deleted = false for update");
-    expect(hardenedLegRpc).toContain("and id <> v_event_id and is_deleted = false for update");
+  it("locks both legs in one statement, in id order, before anything is written", () => {
+    // Single lock statement: two sessions editing opposite legs acquire the
+    // row locks in the same id order, so they serialize instead of
+    // deadlocking (re-review GO WITH CHANGES finding).
+    expect(hardenedLegRpc).toContain("order by id");
+    expect(hardenedLegRpc).toContain("for update");
+    expect(hardenedLegRpc).not.toContain("and id = v_event_id and is_deleted = false for update");
+    expect(hardenedLegRpc).not.toContain("and id <> v_event_id and is_deleted = false for update");
   });
 
   it("refuses a pair that does not have exactly two non-deleted legs", () => {
