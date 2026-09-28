@@ -133,3 +133,17 @@ describe("setRackParams", () => {
     expect(validateDesign(bad).some((e) => /tiers/.test(e))).toBe(true);
   });
 });
+
+describe("3D descriptors", () => {
+  it("a rack instance carries its members and true height; other equipment does not", async () => {
+    const { equipmentDescriptors } = await import("./designerThreeModel");
+    let d = placeSymbol(createEmptyDesign("R"), "processEquipment", "pipe-rack", 0, 0, { id: "r1" });
+    d = setRackParams(d, "r1", { tiers: 3 });
+    d = placeSymbol(d, "processEquipment", "centrifugal-pump", 0, 300, { id: "p1" });
+    const [rack, pump] = ["r1", "p1"].map((id) => equipmentDescriptors(d).find((e) => e.id === id));
+    expect(rack.shape).toBe("rack");
+    expect(rack.heightIn).toBe(180 + 2 * 72);
+    expect(rack.members.filter((m) => m.kind === "beam")).toHaveLength(9);
+    expect(pump.members).toBeUndefined();
+  });
+});
