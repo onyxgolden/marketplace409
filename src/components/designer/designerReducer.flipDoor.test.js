@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createInitialState, designerReducer } from "./designerReducer";
-import { addOpening, addWall, createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
+import { addOpening, addWall, createEmptyDesign, placeFurniture, placeSymbol } from "@/domains/roomDesigner/designerDocument";
 
 function withOpening(type = "door") {
   let d = addWall(createEmptyDesign("Flip"), { x: 0, y: 0 }, { x: 120, y: 0 });
@@ -37,5 +37,28 @@ describe("FLIP_DOOR", () => {
     const { state, id } = withOpening();
     expect(flip(state, "nope", "hinge")).toBe(state);
     expect(flip(state, id, "sideways")).toBe(state);
+  });
+});
+
+describe("rotation-handle drags", () => {
+  it("coalesce into one undo step for furniture", () => {
+    let state = createInitialState(placeFurniture(createEmptyDesign("R"), "bed-queen", 100, 100, 0));
+    const id = state.design.furniture[0].id;
+    for (const deg of [15, 30, 45]) {
+      state = designerReducer(state, { type: "ROTATE_FURNITURE", furnitureId: id, rotationDeg: deg, coalesce: `rotate:${id}` });
+    }
+    expect(state.design.furniture[0].rotationDeg).toBe(45);
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.furniture[0].rotationDeg).toBe(0);
+  });
+
+  it("coalesce into one undo step for process-equipment symbols", () => {
+    let state = createInitialState(placeSymbol(createEmptyDesign("R"), "processEquipment", "centrifugal-pump", 0, 0, { id: "p1" }));
+    for (const deg of [300, 315]) {
+      state = designerReducer(state, { type: "ROTATE_SYMBOL", symbolId: "p1", rotationDeg: deg, coalesce: "rotate:p1" });
+    }
+    expect(state.design.symbols[0].rotationDeg).toBe(315);
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.symbols[0].rotationDeg).toBe(0);
   });
 });

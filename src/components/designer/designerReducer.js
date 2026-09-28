@@ -514,7 +514,7 @@ export function designerReducer(state, action) {
         action.coalesce,
       );
     case "ROTATE_FURNITURE":
-      return touch(state, rotateFurniture(state.design, action.furnitureId, action.rotationDeg));
+      return touch(state, rotateFurniture(state.design, action.furnitureId, action.rotationDeg), action.coalesce);
     case "RESIZE_FURNITURE":
       return touch(
         state,
@@ -587,7 +587,7 @@ export function designerReducer(state, action) {
       );
     case "ROTATE_SYMBOL":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
-      return touch(state, rotateSymbol(state.design, action.symbolId, action.rotationDeg));
+      return touch(state, rotateSymbol(state.design, action.symbolId, action.rotationDeg), action.coalesce);
     case "SET_SYMBOL_TAG":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, setSymbolTag(state.design, action.symbolId, action.tag));
