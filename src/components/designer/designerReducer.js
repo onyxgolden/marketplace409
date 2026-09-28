@@ -70,6 +70,15 @@ import { applyImportResult } from "@/domains/roomDesigner/importers/vsdx/visioMa
 import { insertShapeCentered } from "@/domains/roomDesigner/customShapes/customShapeInstantiate";
 import { addSavedEstimate, removeSavedEstimate } from "@/domains/roomDesigner/cabinetPriceBooks";
 import { autoTagFor } from "@/domains/roomDesigner/equipmentTags";
+import {
+  initialTemaFields,
+  replaceWithDetailedVersion,
+  setSymbolDrawingMode,
+  setSymbolSize,
+  setSymbolTemaConfig,
+} from "@/domains/roomDesigner/temaInstances";
+import { detailedVersionFor } from "@/domains/roomDesigner/temaExchangerCatalog";
+import { validateTemaConfig } from "@/domains/roomDesigner/temaTypes";
 import { placedSelection } from "@/domains/roomDesigner/customShapes/customShapePlacement";
 import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/designerGeometry";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
@@ -488,13 +497,16 @@ export function designerReducer(state, action) {
       if (!pending) return state;
       const domain = action.domain || pending.domain || "piping";
       const symbolId = action.symbolId || pending.symbolId;
-      const design = placeSymbol(state.design, domain, symbolId, action.x, action.y, {
+      let design = placeSymbol(state.design, domain, symbolId, action.x, action.y, {
         layer: state.pendingPipe.layer === "auto" ? undefined : state.pendingPipe.layer,
         // Process equipment gets the next free tag for its letter code
         // (P-101, P-102, ...); other symbols stay untagged as before.
         tag: autoTagFor(state.design, domain, symbolId) || undefined,
       });
       const inst = design.symbols[design.symbols.length - 1];
+      // A configurable TEMA exchanger saves its default configuration.
+      const { tema } = initialTemaFields(findSymbol(domain, symbolId));
+      if (tema) design = setSymbolTemaConfig(design, inst.id, tema);
       return { ...touch(state, design), selection: { kind: "symbol", id: inst.id } };
     }
     case "MOVE_SYMBOL":
@@ -513,6 +525,37 @@ export function designerReducer(state, action) {
     case "SET_SYMBOL_LAYER":
       if (!findSymbolInstance(state.design, action.symbolId)) return state;
       return touch(state, setSymbolLayer(state.design, action.symbolId, action.layer));
+    // ---- TEMA exchangers: configuration, drawing mode, size, replace ----
+    case "SET_SYMBOL_TEMA": {
+      const inst = findSymbolInstance(state.design, action.symbolId);
+      if (!inst || findSymbol(inst.domain, inst.symbolId)?.tema?.kind !== "assembly") return state;
+      if (!validateTemaConfig(action.config).valid) return state; // blocked: the picker explains why
+      return touch(state, setSymbolTemaConfig(state.design, action.symbolId, action.config));
+    }
+    case "SET_SYMBOL_DRAWING_MODE": {
+      const inst = findSymbolInstance(state.design, action.symbolId);
+      if (!inst || !findSymbol(inst.domain, inst.symbolId)?.tema) return state;
+      if (action.mode !== "detailed" && action.mode !== "pid") return state;
+      return touch(state, setSymbolDrawingMode(state.design, action.symbolId, action.mode));
+    }
+    case "SET_SYMBOL_SIZE": {
+      if (!findSymbolInstance(state.design, action.symbolId)) return state;
+      const ok = (v) => v === undefined || (Number.isFinite(v) && v > 0);
+      if (!ok(action.widthIn) || !ok(action.depthIn)) return state;
+      return touch(
+        state,
+        setSymbolSize(state.design, action.symbolId, { widthIn: action.widthIn, depthIn: action.depthIn }),
+        action.coalesce,
+      );
+    }
+    case "REPLACE_WITH_DETAILED": {
+      const inst = findSymbolInstance(state.design, action.symbolId);
+      if (!inst || !detailedVersionFor(inst.domain, inst.symbolId)) return state;
+      return {
+        ...touch(state, replaceWithDetailedVersion(state.design, action.symbolId)),
+        selection: { kind: "symbol", id: inst.id },
+      };
+    }
     // ---- Phase 3: people org charts ----
     case "ADD_ORG_CHART": {
       // Placing a chart is a one-shot: drop back to the select tool so the
