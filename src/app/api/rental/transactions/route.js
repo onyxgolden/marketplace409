@@ -328,7 +328,10 @@ export async function PATCH(request) {
     // so structural changes are refused — delete the transfer and re-create
     // it instead. Memo and check number may still be edited; a date edit is
     // applied to both legs atomically by the transfer-leg RPC below, so the
-    // pair can never diverge.
+    // pair can never diverge. This comparison is the early UX rejection; the
+    // RPC re-checks it against the locked rows (the enforcement boundary),
+    // so a stale read or a direct RPC call cannot sneak a structural edit
+    // through.
     if (existing.transfer_group_id) {
       const structuralChange =
         Number(value.amount) !== Number(existing.amount) ||

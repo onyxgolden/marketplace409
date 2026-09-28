@@ -70,6 +70,72 @@ describe("fund transfer migration — structural contract", () => {
   });
 });
 
+describe("fund transfer invariants migration — structural contract", () => {
+  // 20260928090000_fund_transfer_invariants.sql: retrospective hardening of
+  // the slice-3 RPCs. Never touches a database: proves the new migration text
+  // carries the lock-and-recheck + currency-precision contract. The migration
+  // itself is NOT applied anywhere by this test.
+  const hardened = readFileSync(
+    resolve(process.cwd(), "supabase/migrations/20260928090000_fund_transfer_invariants.sql"),
+    "utf8",
+  ).toLowerCase().replace(/\s+/g, " ");
+  const hardenedLegRpc = hardened.split("create or replace function update_transfer_leg_with_history(")[1];
+
+  it("replaces both RPCs without touching the already-applied migration", () => {
+    expect(hardened).toContain("create or replace function create_fund_transfer(");
+    expect(hardenedLegRpc).toBeDefined();
+    expect(hardened).toContain("revoke all on function create_fund_transfer(text, text, jsonb) from public");
+    expect(hardened).toContain("grant execute on function create_fund_transfer(text, text, jsonb) to authenticated");
+    expect(hardened).toContain("revoke all on function update_transfer_leg_with_history(text, text, jsonb, jsonb, text, timestamptz) from public");
+    expect(hardened).toContain("grant execute on function update_transfer_leg_with_history(text, text, jsonb, jsonb, text, timestamptz) to authenticated");
+  });
+
+  it("enforces two-decimal currency precision in SQL on create", () => {
+    expect(hardened).toContain("v_amount := round(v_amount, 2)");
+    // Positivity is re-checked AFTER rounding: 0.004 rounds to 0.00 and is rejected.
+    const rounded = hardened.split("v_amount := round(v_amount, 2)")[1];
+    expect(rounded).toContain("the transfer amount must be greater than zero.");
+  });
+
+  it("rejects absurdly large transfer amounts in SQL", () => {
+    expect(hardened).toContain("if v_amount >= 1000000000 then");
+    expect(hardened).toContain("the transfer amount is unreasonably large.");
+  });
+
+  it("locks both legs before anything is written", () => {
+    expect(hardenedLegRpc).toContain("and id = v_event_id and is_deleted = false for update");
+    expect(hardenedLegRpc).toContain("and id <> v_event_id and is_deleted = false for update");
+  });
+
+  it("refuses a pair that does not have exactly two non-deleted legs", () => {
+    expect(hardenedLegRpc).toContain("this fund transfer is missing its counterpart leg.");
+    expect(hardenedLegRpc).toContain("this fund transfer does not have exactly two legs.");
+  });
+
+  it("verifies the pair currently balances before editing", () => {
+    expect(hardenedLegRpc).toContain("v_init_amount is distinct from v_peer_amount");
+    expect(hardenedLegRpc).toContain("v_init_kind is not distinct from v_peer_kind");
+    expect(hardenedLegRpc).toContain("v_init_account is not distinct from v_peer_account");
+    expect(hardenedLegRpc).toContain("this fund transfer''s legs do not balance.");
+  });
+
+  it("rejects structural edits against the locked rows, not the caller's read", () => {
+    expect(hardenedLegRpc).toContain("v_new_amount is distinct from v_init_amount");
+    expect(hardenedLegRpc).toContain("v_new_kind is distinct from v_init_kind");
+    expect(hardenedLegRpc).toContain("v_new_account is distinct from v_init_account");
+    expect(hardenedLegRpc).toContain(
+      "this transaction is part of a fund transfer. delete the transfer and re-create it to change the amount or accounts."
+    );
+  });
+
+  it("still delegates the edit + audit row with no subtransactions and propagates the date pair-wide", () => {
+    expect(hardenedLegRpc).toContain("v_result := update_transaction_with_history(");
+    expect(hardenedLegRpc).not.toContain("exception when");
+    expect(hardenedLegRpc).toContain("and event_date is distinct from v_new_date");
+    expect(hardenedLegRpc).toContain("return v_result;");
+  });
+});
+
 describe("transfer-leg date edit migration — structural contract", () => {
   // update_transfer_leg_with_history: the PATCH route calls this RPC -- and
   // nothing else -- when the edited event is a transfer leg. The initiating
