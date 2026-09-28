@@ -43,7 +43,10 @@ export const runtime = "nodejs";
 //      have been sent and mark the row skipped_disabled when it is not.
 //      Quiet hours (23:00-07:00 America/Chicago, Jason's rule): delivery
 //      inside the window is deferred wholesale — rows stay queued for the
-//      next run after 07:00.
+//      next run after 07:00. The window is checked before the run, rechecked
+//      before every claim, and checked a final time immediately before the
+//      provider call; a claim interrupted by the final gate is released
+//      back to 'queued' without burning a retry attempt.
 //
 // Terminal payment events are ALSO queued in real time by the Stripe webhook
 // hook (queueOwnerPaymentNotificationForWebhookEvent); the reconciler is the
@@ -383,6 +386,26 @@ async function recordOutcome(db, row, outcome, claimToken) {
   return data?.length === 1;
 }
 
+// Quiet-hours release: returns a claimed row to 'queued' as if the claim
+// never happened — status, claim token, attempt count, and attempt
+// timestamps are all restored to their pre-claim values, so a deferral
+// never burns one of the row's retry attempts. Fenced to this run's claim
+// token, mirroring recordOutcome: a row reclaimed by a newer worker keeps
+// the newer worker's state.
+async function releaseClaimToQueue(db, row, claimToken) {
+  const { data, error } = await db.from("rental_owner_notifications").update({
+    status: "queued",
+    claim_token: null,
+    attempt_count: row.attempt_count,
+    failure_reason: null,
+    first_attempted_at: row.first_attempted_at,
+    last_attempted_at: row.last_attempted_at,
+  }).eq("owner_id", row.owner_id).eq("id", row.id).eq("claim_token", claimToken)
+    .select("id");
+  if (error) throw error;
+  return data?.length === 1;
+}
+
 // Live recheck for the upcoming-autopay notice, run after the claim and
 // before the provider call. The world may have moved between detection and
 // delivery: the charge may be gone, no longer collectible, a different type,
@@ -529,6 +552,16 @@ export async function GET(request) {
           continue;
         }
         const email = buildOwnerNotificationEmail({ eventType: row.event_type, facts: factsFromPayload(row.payload) });
+        // Final gate: the clock may have crossed into quiet hours during the
+        // claim and the live rechecks above. Check once more immediately
+        // before the provider call; on quiet, release the claim back to
+        // 'queued' (the attempt is not burned) and stop the run.
+        if (quietNow()) {
+          await releaseClaimToQueue(db, row, claimToken);
+          deferredQuietHours = candidates.length - index;
+          logQuietDeferral(deferredQuietHours);
+          break;
+        }
         try {
           const result = await createResendRentalEmailProvider().send({
             id: buildProviderIdempotencyKey(row.id),

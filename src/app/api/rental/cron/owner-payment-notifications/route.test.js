@@ -278,6 +278,50 @@ describe("owner payment notifications cron", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("releases the claim back to queued when quiet hours open between the check and the send", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    // 03:30Z = 22:30 CDT — outside quiet hours when the run starts.
+    vi.setSystemTime(new Date("2026-09-28T03:30:00Z"));
+    const row = reconciledCandidateRow();
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const candidatesNode = qb({ data: [row], error: null });
+    const claimNode = qb({ data: [{ id: row.id }], error: null });
+    // The claim's DB write runs long: the clock crosses into quiet hours
+    // (23:30 CDT) after the loop-top check but before the provider call.
+    claimNode.update.mockImplementation((payload) => {
+      vi.setSystemTime(new Date("2026-09-28T04:30:00Z"));
+      return claimNode;
+    });
+    const releaseNode = qb({ data: [{ id: row.id }], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })], // reconciler: nothing to heal
+      rental_owner_notifications: [candidatesNode, claimNode, releaseNode],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.sent).toBe(0);
+    expect(body.deferredQuietHours).toBe(1);
+    expect(send).not.toHaveBeenCalled();
+    // The claim was fenced and released: the row goes back to queued with
+    // the attempt count and timestamps restored — the deferral never burns
+    // one of the row's retry attempts.
+    const claimUpdate = claimNode.update.mock.calls[0][0];
+    expect(claimUpdate.claim_token).toMatch(/^claim_/);
+    expect(releaseNode.update.mock.calls[0][0]).toMatchObject({
+      status: "queued",
+      claim_token: null,
+      attempt_count: 0,
+      first_attempted_at: null,
+      last_attempted_at: null,
+    });
+    expect(releaseNode.eq).toHaveBeenCalledWith("claim_token", claimUpdate.claim_token);
+  });
+
   it("does not double-queue an already-queued upcoming notice", async () => {
     const db = sequenceDb({
       ...upcomingScanSequences(),
