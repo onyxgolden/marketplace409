@@ -1,34 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { FURNITURE_CATALOG } from "@/domains/roomDesigner/furnitureCatalog";
+import { listSymbolSets } from "@/domains/roomDesigner/symbolRegistry";
+import { buildShapeSearchIndex, searchShapes } from "@/domains/roomDesigner/designerShapeSearch";
 import { ChevronDown, ChevronRight, Star } from "lucide-react";
 
-/** localStorage key scoping collapsed tool-category state to the designer palette. */
+/**
+ * Former localStorage key for remembered collapsed categories. No longer read:
+ * every category now starts collapsed each session (owner decision).
+ */
 export const COLLAPSED_STORAGE_KEY = "forge-designer.tool-categories.collapsed.v1";
 
 /** localStorage key for the user's favorite tool ids (left palette). */
 export const FAVORITE_STORAGE_KEY = "forge-designer.favorite-tools.v1";
-
-/**
- * Lazily read the collapsed-by-category map ({ [categoryId]: true }).
- * Anything missing/unparseable defaults to expanded, so all categories
- * start expanded on first load and after any schema change.
- */
-function readCollapsedByCategory() {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    // Only a strict boolean `true` collapses a category. Valid JSON with
-    // wrong-typed values ("false", 0, {}, []) must not silently collapse
-    // anything, so anything that is not exactly `true` means expanded.
-    return Object.fromEntries(Object.entries(parsed).filter(([, value]) => value === true));
-  } catch {
-    return {};
-  }
-}
 
 /** Lazily read the favorite tool id list; corrupt data falls back to []. */
 function readFavoriteToolIds() {
@@ -110,18 +95,14 @@ export default function ToolPalette({
   // one-tap section, so they are left out of the generic Favorites category
   // below instead of appearing twice.
   favoritesSection = null,
+  // Shape search picked a furniture/symbol result: arm it for placement.
+  onPickShape = null,
 }) {
-  const [collapsedByCategory, setCollapsedByCategory] = useState(readCollapsedByCategory);
+  // Every category starts collapsed each time the designer opens (owner
+  // decision); expanding is per session and deliberately not remembered.
+  const [expandedByCategory, setExpandedByCategory] = useState({});
   const [favoriteIds, setFavoriteIds] = useState(readFavoriteToolIds);
-
-  // Persist on every change so the expand/collapse layout survives reloads.
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(collapsedByCategory));
-    } catch {
-      // Storage may be unavailable (private mode, quota); the palette still works in-memory.
-    }
-  }, [collapsedByCategory]);
+  const [query, setQuery] = useState("");
 
   // Persist favorites on every change.
   useEffect(() => {
@@ -133,7 +114,7 @@ export default function ToolPalette({
   }, [favoriteIds]);
 
   const toggleCategory = (categoryId) =>
-    setCollapsedByCategory((prev) => ({ ...prev, [categoryId]: !prev[categoryId] }));
+    setExpandedByCategory((prev) => ({ ...prev, [categoryId]: !prev[categoryId] }));
 
   const toggleFavorite = (toolId) =>
     setFavoriteIds((prev) =>
@@ -184,15 +165,65 @@ export default function ToolPalette({
     />
   );
 
+  // One search across palette tools (incl. saved shapes), furniture and
+  // every symbol domain. While a query is typed, results replace the
+  // favorites and categories.
+  const searchIndex = useMemo(
+    () => buildShapeSearchIndex({ tools: allTools, furniture: FURNITURE_CATALOG, symbolSets: listSymbolSets() }),
+    // allTools is rebuilt each render from `grouped`; key the index on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [grouped],
+  );
+  const results = query.trim() ? searchShapes(searchIndex, query, 40) : null;
+  const pickResult = (result) => {
+    if (result.kind === "tool") onSelect(result.id);
+    else if (typeof onPickShape === "function") onPickShape(result);
+  };
+
   return (
     <nav
       className="flex w-28 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-2"
       aria-label="Tools"
     >
       {grouped.pinned.map(renderTool)}
-      {favoritesSection}
-      {categories.map((category) => {
-        const collapsed = Boolean(collapsedByCategory[category.id]);
+      <input
+        type="search"
+        aria-label="Search shapes"
+        placeholder="Search shapes"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setQuery("");
+        }}
+        className="mt-1 w-full rounded bg-gray-800 px-1.5 py-1 text-[11px] text-white placeholder:text-gray-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+      />
+      {results && (
+        <div className="flex flex-col gap-0.5" role="list" aria-label="Shape search results">
+          {results.length === 0 && <p className="px-1 text-[10px] text-gray-500">No shapes match.</p>}
+          {results.map((r) => {
+            const t = r.kind === "tool" ? toolById.get(r.id) : null;
+            const disabled = Boolean(t?.needsUnderlay && !hasUnderlay);
+            return (
+              <button
+                key={`${r.kind}:${r.domain || ""}:${r.id}`}
+                type="button"
+                role="listitem"
+                data-testid="shape-search-result"
+                disabled={disabled}
+                title={`${r.label} — ${r.group}`}
+                onClick={() => pickResult(r)}
+                className="rounded px-1 py-1 text-left text-[11px] leading-tight text-gray-200 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {r.label}
+                <span className="block truncate text-[9px] text-gray-500">{r.group}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {!results && favoritesSection}
+      {!results && categories.map((category) => {
+        const collapsed = !expandedByCategory[category.id];
         const Chevron = collapsed ? ChevronRight : ChevronDown;
         return (
           <div key={category.id} className="mt-1">
@@ -212,7 +243,7 @@ export default function ToolPalette({
           </div>
         );
       })}
-      {grouped.ungrouped.map(renderTool)}
+      {!results && grouped.ungrouped.map(renderTool)}
     </nav>
   );
 }

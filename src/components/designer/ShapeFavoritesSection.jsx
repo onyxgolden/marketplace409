@@ -15,7 +15,8 @@ import { ChevronDown, ChevronRight, ChevronUp, Puzzle, Star } from "lucide-react
  * library, and every change goes out through the callbacks.
  */
 export default function ShapeFavoritesSection({ shapes, onPlace, onMove, onRemove }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Starts collapsed like every palette category (owner decision).
+  const [collapsed, setCollapsed] = useState(true);
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   const count = shapes.length;
 

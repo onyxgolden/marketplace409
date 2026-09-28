@@ -837,6 +837,12 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               : tool
           }
           hasUnderlay={Boolean(design.underlay)}
+          // Shape search: arm a furniture piece or symbol exactly as the
+          // object library would (click the plan to place it).
+          onPickShape={(result) => {
+            if (result.domain === "furniture") dispatch({ type: "SET_PENDING_CATALOG", catalogId: result.id });
+            else dispatch({ type: "SET_PENDING_SYMBOL", domain: result.domain, symbolId: result.id });
+          }}
           onSelect={(toolId) => {
             // Room/structure presets are palette shortcuts: they arm the
             // room tool with that template pending instead of switching to

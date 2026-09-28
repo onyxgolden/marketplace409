@@ -68,7 +68,14 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
   let container;
   let root;
 
-  const renderPalette = async (props = {}) => {
+  // Categories start collapsed; most tests look at tools inside them, so
+  // the helper expands every category unless { expand: false }.
+  const expandAll = async () => {
+    for (const header of Array.from(container.querySelectorAll('button[aria-expanded="false"][aria-label$=" tools"]'))) {
+      await act(async () => header.click());
+    }
+  };
+  const renderPalette = async (props = {}, { expand = true } = {}) => {
     await act(async () => {
       root.render(
         <ToolPalette
@@ -80,6 +87,7 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
         />
       );
     });
+    if (expand) await expandAll();
   };
 
   beforeEach(() => {
@@ -125,7 +133,8 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     });
     const favoritesHeader = queryCategoryHeader(container, "Favorites");
     expect(favoritesHeader).not.toBeNull();
-    expect(favoritesHeader.getAttribute("aria-expanded")).toBe("true");
+    // A new category starts collapsed too.
+    expect(favoritesHeader.getAttribute("aria-expanded")).toBe("false");
     // Favorites renders before House in the nav.
     const headers = Array.from(
       container.querySelectorAll('button[aria-label$="tools"]')
@@ -175,18 +184,25 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(queryCategoryHeader(container, "Favorites")).toBeNull();
   });
 
-  it("renders House, Rooms, Structures, Mechanical and Plan categories expanded by default", async () => {
-    await renderPalette();
+  it("starts every category collapsed (Jason: all categories start collapsed)", async () => {
+    await renderPalette({}, { expand: false });
     for (const label of ["House", "Rooms", "Structures", "Mechanical", "Plan"]) {
       const header = queryCategoryHeader(container, label);
       expect(header).not.toBeNull();
-      expect(header.getAttribute("aria-expanded")).toBe("true");
+      expect(header.getAttribute("aria-expanded")).toBe("false");
     }
-    // Representative tools are visible.
-    expect(queryToolButton(container, "room-bedroom")).not.toBeNull();
-    expect(queryToolButton(container, "structure-container-40")).not.toBeNull();
+    expect(queryToolButton(container, "wall")).toBeUndefined();
+    expect(queryToolButton(container, "pipe")).toBeUndefined();
+    // Pinned tools stay visible.
+    expect(queryToolButton(container, "select")).not.toBeNull();
+  });
+
+  it("expanding one category shows its tools and leaves the others collapsed", async () => {
+    await renderPalette({}, { expand: false });
+    await act(async () => queryCategoryHeader(container, "Mechanical").click());
+    expect(queryCategoryHeader(container, "Mechanical").getAttribute("aria-expanded")).toBe("true");
     expect(queryToolButton(container, "pipe")).not.toBeNull();
-    expect(queryToolButton(container, "orgchart")).not.toBeNull();
+    expect(queryCategoryHeader(container, "House").getAttribute("aria-expanded")).toBe("false");
   });
 
   it("hides the empty Process category until process tools exist", async () => {
@@ -223,29 +239,21 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(queryToolButton(container, "pipe")).not.toBeNull();
   });
 
-  it("persists collapsed state across remounts", async () => {
-    await renderPalette();
-    await act(async () => {
-      queryCategoryHeader(container, "House").click();
-    });
-    expect(window.localStorage.getItem(COLLAPSED_STORAGE_KEY)).toContain('"house":true');
-
-    await act(async () => {
-      root.unmount();
-    });
+  it("starts collapsed again after a remount, even if categories were expanded", async () => {
+    await renderPalette({}, { expand: false });
+    await act(async () => queryCategoryHeader(container, "House").click());
+    expect(queryCategoryHeader(container, "House").getAttribute("aria-expanded")).toBe("true");
+    await act(async () => root.unmount());
     root = createRoot(container);
-    await renderPalette();
-
+    await renderPalette({}, { expand: false });
     expect(queryCategoryHeader(container, "House").getAttribute("aria-expanded")).toBe("false");
-    expect(queryToolButton(container, "wall")).toBeUndefined();
-    expect(queryCategoryHeader(container, "Mechanical").getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("falls back to all-expanded when stored state is corrupt", async () => {
-    window.localStorage.setItem(COLLAPSED_STORAGE_KEY, "not-json{{{");
-    await renderPalette();
+  it("ignores the old stored collapse layout (it would contradict starting collapsed)", async () => {
+    window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify({ house: false, mechanical: false }));
+    await renderPalette({}, { expand: false });
     for (const label of ["House", "Mechanical", "Plan"]) {
-      expect(queryCategoryHeader(container, label).getAttribute("aria-expanded")).toBe("true");
+      expect(queryCategoryHeader(container, label).getAttribute("aria-expanded")).toBe("false");
     }
   });
 
@@ -278,17 +286,6 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(queryToolButton(container, "door").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("treats valid-JSON wrong-typed collapse values as expanded", async () => {
-    window.localStorage.setItem(
-      COLLAPSED_STORAGE_KEY,
-      JSON.stringify({ house: "false", mechanical: 0, plan: {} })
-    );
-    await renderPalette();
-    for (const label of ["House", "Mechanical", "Plan"]) {
-      expect(queryCategoryHeader(container, label).getAttribute("aria-expanded")).toBe("true");
-    }
-  });
-
   it("associates the disabled calibrate reason as accessible text", async () => {
     await renderPalette({ hasUnderlay: false });
     const calibrate = queryToolButton(container, "calibrate");
@@ -306,7 +303,14 @@ describe("ToolPalette (external favorites)", () => {
 
   const customTool = (id, favorite) => tool(id, { favorite });
 
-  const renderPalette = async (props = {}) => {
+  // Categories start collapsed; most tests look at tools inside them, so
+  // the helper expands every category unless { expand: false }.
+  const expandAll = async () => {
+    for (const header of Array.from(container.querySelectorAll('button[aria-expanded="false"][aria-label$=" tools"]'))) {
+      await act(async () => header.click());
+    }
+  };
+  const renderPalette = async (props = {}, { expand = true } = {}) => {
     await act(async () => {
       root.render(
         <ToolPalette
@@ -318,6 +322,7 @@ describe("ToolPalette (external favorites)", () => {
         />
       );
     });
+    if (expand) await expandAll();
   };
 
   beforeEach(() => {
@@ -355,6 +360,7 @@ describe("ToolPalette (external favorites)", () => {
         />
       );
     });
+    await expandAll();
     // An externally-owned favorite (a custom shape) is NOT duplicated into
     // the generic Favorites category — the screen's favoritesSection shows
     // favorite shapes in their own ordered section...
@@ -386,6 +392,7 @@ describe("ToolPalette (external favorites)", () => {
         />
       );
     });
+    await expandAll();
     const star = queryFavoriteToggle(container, "custom-shape-a");
     await act(async () => {
       star.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
