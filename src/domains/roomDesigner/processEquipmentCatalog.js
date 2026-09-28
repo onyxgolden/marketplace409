@@ -26,6 +26,7 @@
 //     "sphere" sphere on legs (diameter = min(width, depth))
 
 import { registerSymbolSet } from "./symbolRegistry";
+import { TEMA_CATEGORIES, TEMA_EQUIPMENT } from "./temaExchangerCatalog";
 
 export const PROCESS_EQUIPMENT_DOMAIN = "processEquipment";
 
@@ -42,6 +43,8 @@ export const PROCESS_EQUIPMENT_CATEGORIES = Object.freeze([
   "Mixing",
   "Utilities & environmental",
   "Valves & instruments",
+  // Detailed TEMA shell-and-tube entries (temaExchangerCatalog.js).
+  ...TEMA_CATEGORIES,
 ]);
 
 export const PROCESS_SHAPES_3D = Object.freeze(["vcyl", "hcyl", "box", "sphere"]);
@@ -191,6 +194,9 @@ export const PROCESS_EQUIPMENT = Object.freeze([
   eq("temperature-element", "Temperature element", VALVES, "instrument-temperature", 12, 12, 12, "box", "TE", C.inst, "piping"),
   eq("level-gauge", "Level gauge", VALVES, "instrument-level", 8, 8, 36, "box", "LG", C.inst, "piping"),
   eq("process-analyzer", "Process analyzer", VALVES, "analyzer", 36, 36, 84, "box", "AT", C.inst),
+
+  // ---- TEMA shell-and-tube exchangers: detailed, configurable ----
+  ...TEMA_EQUIPMENT,
 ]);
 
 registerSymbolSet({

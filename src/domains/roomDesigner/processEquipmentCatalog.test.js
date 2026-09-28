@@ -34,7 +34,9 @@ describe("process equipment catalog", () => {
     expect(e.heightIn).toBeLessThanOrEqual(1200); // flare stacks run to 100'
 
     expect(PROCESS_SHAPES_3D).toContain(e.shape3d);
-    expect(e.tagPrefix).toMatch(/^[A-Z]{1,3}$/);
+    // TEMA component shapes are parts of an exchanger, not tagged items.
+    if (e.tema?.kind === "component") expect(e.tagPrefix).toBeNull();
+    else expect(e.tagPrefix).toMatch(/^[A-Z]{1,3}$/);
     expect(PIPE_LAYERS).toContain(e.defaultLayer);
     expect(e.color).toMatch(/^#[0-9a-f]{6}$/i);
     expect(Object.isFrozen(e)).toBe(true);
@@ -51,9 +53,9 @@ describe("coverage for refinery and chemical-plant work", () => {
   const ids = new Set(PROCESS_EQUIPMENT.map((e) => e.id));
   const has = (...list) => list.forEach((id) => expect(ids, id).toContain(id));
 
-  it("has 100+ items across the 12 categories", () => {
+  it("has 100+ items across the 12 categories plus 4 TEMA categories", () => {
     expect(PROCESS_EQUIPMENT.length).toBeGreaterThanOrEqual(100);
-    expect(PROCESS_EQUIPMENT_CATEGORIES).toHaveLength(12);
+    expect(PROCESS_EQUIPMENT_CATEGORIES).toHaveLength(16);
   });
 
   it("covers pumps, compressors, and drivers", () => {
