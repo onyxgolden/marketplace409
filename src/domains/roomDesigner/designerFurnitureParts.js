@@ -15,6 +15,10 @@
 //   color: optional per-part color override (defaults to the piece color)
 //   glow:  part is a light source shade (warm emissive in the renderer)
 //   rotX:  optional extra X rotation in radians (e.g. front-facing discs)
+//   wTop:  "cyl" only — top diameter for a tapered cylinder (w = bottom)
+//   role:  optional semantic tag ("tank", "bowl", ...) for tests/debugging
+//   For "cyl", d is the front-to-back (z) diameter at the widest end, so
+//   d !== w makes an oval; the renderer scales z by d / max(w, wTop).
 //
 // Unknown catalog ids fall back to a single box so nothing ever fails to
 // render. Compositions are camera-agnostic (no baked view assumptions) so a
@@ -31,6 +35,10 @@ export function shade(hex, factor) {
   const b = mix(n & 255);
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
+
+const PORCELAIN = "#f8fafc";
+const CHROME = "#c0c6cd";
+const STAINLESS = "#d3d8de";
 
 const box = (dx, dy, dz, w, h, d, extra) => ({ shape: "box", dx, dy, dz, w, h, d, ...(extra || {}) });
 const cyl = (dx, dy, dz, w, h, d, extra) => ({ shape: "cyl", dx, dy, dz, w, h, d, ...(extra || {}) });
@@ -121,9 +129,9 @@ const COMPOSERS = {
   ],
   "dining-table-rect": (w, d, h, c) => tableWithLegs(w, d, h, c, 3),
   "dining-table-round": (w, d, h, c) => [
-    cyl(0, h - 1.25, 0, w, 2.5, d, { color: shade(c, 1.05) }),
-    cyl(0, (h - 2.5) / 2, 0, 6, h - 2.5, 6, { color: shade(c, 0.9) }),
-    cyl(0, 1, 0, 24, 2, 24, { color: shade(c, 0.9) }),
+    cyl(0, h - 1.25, 0, w, 2.5, d, { color: shade(c, 1.05), role: "top" }),
+    cyl(0, (h - 2.5 + 2) / 2, 0, 5, h - 4.5, 5, { color: shade(c, 0.85), role: "pedestal" }),
+    cyl(0, 1, 0, w * 0.45, 2, d * 0.45, { wTop: w * 0.35, color: shade(c, 0.8), role: "base" }),
   ],
   desk: (w, d, h, c) => [
     box(0, h - 1.25, 0, w, 2.5, d, { color: shade(c, 1.05) }),
@@ -206,16 +214,30 @@ const COMPOSERS = {
     ...kitchenBox(w, d, h, c, {}),
     box(0, h / 2, (d - 1) / 2 + 0.3, w - 2, h - 2, 0.3, { color: "#c9dce8" }),
   ],
-  "sink-kitchen-33": (w, d, h, c) => [
-    box(0, h / 2, 0, w, h, d),
-    box(0, h - 1, 0, w - 6, 2, d - 6, { color: "#8f979f" }),
-  ],
+  "sink-kitchen-33": (w, d, h) => {
+    const bw = w / 2 - 3;
+    return [
+      box(0, (h - 1.5) / 2, 1, w - 2, h - 1.5, d - 4, { color: "#b9c0c8", role: "body" }),
+      box(0, h - 0.75, 0, w, 1.5, d, { color: STAINLESS, role: "rim" }),
+      box(-(bw / 2 + 1.5), h - 3.5, 1.5, bw, 5, d - 6, { color: "#7d858e", role: "basin" }),
+      box(bw / 2 + 1.5, h - 3.5, 1.5, bw, 5, d - 6, { color: "#7d858e", role: "basin" }),
+      cyl(0, h + 4, -(d / 2 - 2), 1.2, 8, 1.2, { color: CHROME, role: "faucet" }),
+      box(0, h + 7.5, -(d / 2 - 2) + 2.5, 1, 1, 5, { color: CHROME, role: "spout" }),
+    ];
+  },
   // bath
-  toilet: (w, d, h, c) => [
-    box(0, h - 7, -(d / 2 - 3.5), 20, 14, 7), // tank
-    box(0, 7, 2, 18, 14, 16), // bowl
-    box(0, 15.25, 2, 19, 2.5, 17, { color: "#ffffff" }), // seat
-  ],
+  toilet: (w, d, h) => {
+    const tankW = Math.min(20, w - 2);
+    const tankZ = -(d / 2 - 3.5);
+    return [
+      box(0, h - 7, tankZ, tankW, 14, 7, { color: PORCELAIN, role: "tank" }),
+      box(0, h - 0.5, tankZ, tankW, 1, 7, { color: "#ffffff", role: "tank-lid" }),
+      box(-tankW / 2 + 3, h - 4, tankZ + 3.9, 3, 0.8, 0.8, { color: CHROME, role: "handle" }),
+      cyl(0, 4, 1.5, 9, 8, 13, { wTop: 11, color: PORCELAIN, role: "pedestal" }),
+      cyl(0, 11.5, 1.8, 12, 7, 20, { wTop: 15.5, color: PORCELAIN, role: "bowl" }),
+      cyl(0, 15.6, 1.8, 15, 1.2, 19, { color: "#ffffff", role: "lid" }),
+    ];
+  },
   "vanity-single": (w, d, h, c) => [
     box(0, (h - 4) / 2, 0, w - 2, h - 4, d - 2),
     box(0, h - 1, 0, w, 2, d, { color: "#f4f6f8" }),
@@ -245,7 +267,11 @@ const COMPOSERS = {
     box(0, (h - 6) / 2, 0, 8, h - 6, 8),
     box(0, h - 3, 0, w - 2, 6, d - 2, { color: "#ffffff" }),
   ],
-  "sink-bath-round": (w, d, h, c) => [cyl(0, h / 2, 0, w - 1, h, d - 1, { color: "#ffffff" })],
+  "sink-bath-round": (w, d, h) => [
+    cyl(0, h / 2, 0, w * 0.55, h, d, { wTop: w, color: PORCELAIN, role: "bowl" }),
+    cyl(0, h - 0.6, 0.5, w * 0.78, 0.8, d * 0.74, { color: "#c9d6e3", role: "basin" }),
+    cyl(0, h + 3, -(d / 2 - 1.5), 1, 6, 1, { color: CHROME, role: "faucet" }),
+  ],
   // laundry
   washer: (w, d, h, c) => [
     box(0, (h - 2) / 2, 0, w, h - 2, d),

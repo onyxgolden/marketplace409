@@ -16,6 +16,8 @@ import { pieceSize } from "@/domains/roomDesigner/designerDocument";
 import { cabinetCode } from "@/domains/roomDesigner/cabinetCodes";
 import { polygonArea } from "@/domains/roomDesigner/designerGeometry";
 import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
+import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols";
+import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
 import { drawTemaSymbol } from "./temaDrawRoutine";
 
 function centroid(points) {
@@ -44,9 +46,17 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
   const w = widthIn * scale;
   const h = depthIn * scale;
   const stroke = selectionStroke(highlighted, "#374151");
+  // Recognizable plan symbol (bed, toilet, tub, ...) when the piece has one;
+  // everything else keeps the rectangle / circle below.
+  const planSymbol = instance.catalogId ? furniturePlanSymbol(instance.catalogId, widthIn, depthIn) : null;
   return (
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
-      {symbol.symbol === "circle" ? (
+      {planSymbol ? (
+        <g data-plan-symbol={instance.catalogId}>
+          {renderPlanSymbol(planSymbol, scale, PLAN_SYMBOL_PALETTES.screen({ color: symbol.color, stroke: highlighted ? "#f59e0b" : "#374151" }))}
+          {highlighted && <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="none" stroke={stroke} strokeWidth={2} />}
+        </g>
+      ) : symbol.symbol === "circle" ? (
         <circle
           r={Math.min(w, h) / 2}
           fill={symbol.color}

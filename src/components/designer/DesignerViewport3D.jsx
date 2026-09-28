@@ -10,6 +10,7 @@ import {
   highlightRegistryKey,
 } from "@/domains/roomDesigner/designerThreeModel";
 import { furnitureParts } from "@/domains/roomDesigner/designerFurnitureParts";
+import { resolveFurnitureRepresentation } from "@/domains/roomDesigner/furnitureAssetManifest";
 import {
   beginDrag3D,
   dragStep3D,
@@ -19,6 +20,7 @@ import {
   selectionFromPick,
 } from "@/domains/roomDesigner/designer3DEditing";
 import Viewport3DSizePopup from "./Viewport3DSizePopup";
+import { createFurnitureModelCache, furniturePartGeometry } from "./furnitureModelCache";
 import {
   acquireTextureCaches,
   plasterTexture,
@@ -346,6 +348,10 @@ export default function DesignerViewport3D({
   const sunRef = useRef(null);
   const contentGroupRef = useRef(null);
   const materialCacheRef = useRef(null);
+  // CC0 furniture models: loaded once per viewport; a model arriving (or
+  // failing) bumps modelEpoch so the scene rebuilds with it.
+  const modelCacheRef = useRef(null);
+  const [modelEpoch, setModelEpoch] = useState(0);
   const registryRef = useRef(new Map());
   const highlightedRef = useRef([]); // [{ mesh, originalMaterial }]
   const tierRef = useRef(TIERS.balanced);
@@ -439,6 +445,7 @@ export default function DesignerViewport3D({
     sunRef.current = sun;
 
     materialCacheRef.current = new Map();
+    modelCacheRef.current = createFurnitureModelCache({ onChange: () => setModelEpoch((n) => n + 1) });
 
     // Pin the size popup above the selection: project its world anchor to
     // pane pixels every frame and move the element directly — orbiting must
@@ -624,6 +631,8 @@ export default function DesignerViewport3D({
       sweepTagSpriteCache();
       for (const m of materialCacheRef.current.values()) m.dispose();
       materialCacheRef.current.clear();
+      modelCacheRef.current?.dispose();
+      modelCacheRef.current = null;
       for (const { originalMaterial } of highlightedRef.current) {
         // The clone that stood in for the original is on the (now-disposed)
         // mesh; nothing further to release here besides the bookkeeping.
@@ -762,22 +771,25 @@ export default function DesignerViewport3D({
         if (pane.openingId) register(highlightRegistryKey("opening", pane.openingId), mesh);
       }
 
-      // furniture: composed groups from pure part descriptors
+      // furniture: a vendored CC0 model when one fits the piece's footprint
+      // and has loaded, otherwise composed groups from pure part descriptors
       for (const item of built.furniture) {
         const fGroup = new THREE.Group();
-        const parts = furnitureParts(item.catalogId || "unknown", {
-          widthIn: item.widthIn, depthIn: item.depthIn, heightIn: item.heightIn, color: item.color,
-        });
-        for (const part of parts) {
-          const geo =
-            part.shape === "cyl"
-              ? new THREE.CylinderGeometry(part.w / 2, part.w / 2, part.h, 20)
-              : new THREE.BoxGeometry(part.w, part.h, part.d);
-          const mat = stdMaterial({ color: part.color || item.color, roughness: 0.8 });
-          const mesh = shadowed(new THREE.Mesh(geo, mat));
-          mesh.position.set(part.dx, part.dy, part.dz);
-          if (part.rotX) mesh.rotation.x = part.rotX;
-          fGroup.add(mesh);
+        const rep = resolveFurnitureRepresentation(item.catalogId, item);
+        const model = rep.kind === "model" ? modelCacheRef.current?.instantiate(rep.asset, rep.fit) : null;
+        if (model) {
+          fGroup.add(model);
+        } else {
+          const parts = furnitureParts(item.catalogId || "unknown", {
+            widthIn: item.widthIn, depthIn: item.depthIn, heightIn: item.heightIn, color: item.color,
+          });
+          for (const part of parts) {
+            const mat = stdMaterial({ color: part.color || item.color, roughness: 0.8 });
+            const mesh = shadowed(new THREE.Mesh(furniturePartGeometry(part), mat));
+            mesh.position.set(part.dx, part.dy, part.dz);
+            if (part.rotX) mesh.rotation.x = part.rotX;
+            fGroup.add(mesh);
+          }
         }
         fGroup.position.set(item.x, item.elevationIn || 0, item.z);
         fGroup.rotation.y = item.rotY;
@@ -967,7 +979,7 @@ export default function DesignerViewport3D({
         rebuildTimerRef.current = null;
       }
     };
-  }, [design]);
+  }, [design, modelEpoch]);
 
   // ---- highlight: on selection change, cheap ----
   useEffect(() => {
@@ -1171,7 +1183,9 @@ export function disposeContentGroup(group) {
       releaseTagSprite(obj);
       return;
     }
-    if (obj.geometry) obj.geometry.dispose();
+    // Furniture model clones share their template's geometry (owned by the
+    // model cache, disposed at unmount); everything else is per-rebuild.
+    if (obj.geometry && !obj.userData?.sharedAsset) obj.geometry.dispose();
     // Materials are cache-owned and disposed once at unmount, EXCEPT a
     // highlight clone, which belongs to no cache and must go here.
     if (obj.material && obj.material.userData?.__isHighlightClone) obj.material.dispose();
