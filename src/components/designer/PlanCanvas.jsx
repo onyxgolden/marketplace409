@@ -7,6 +7,9 @@ import {
   DEFAULT_GRID_IN,
   GRID_SPACING_OPTIONS,
   MAJOR_GRID_EVERY,
+  crosshairHudBox,
+  crosshairHudLines,
+  crosshairReadout,
   dimensionGeometry,
   distancePointToSegment,
   feetInchesLabel,
@@ -72,6 +75,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [drag, setDrag] = useState(null); // active drag descriptor
   const [spaceDown, setSpaceDown] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+  // Raw cursor position in screen px for the CAD crosshair overlay. Null
+  // when the pointer is off the canvas. Screen-space only — never plan
+  // data, never dispatched, so it can't touch the document or undo stack.
+  const [cursorScreen, setCursorScreen] = useState(null);
 
   // Leaving the pipe tool abandons the in-progress run. React's sanctioned
   // "adjust state during render" pattern (no effect) so we don't set state
@@ -669,6 +676,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   const onPointerMove = (e) => {
     const screen = eventPoint(e);
+    setCursorScreen(screen); // CAD crosshair follows every move
     // Pipe tool rubber band: track the cursor even without a drag so the
     // in-progress run previews the next segment and its length.
     if (tool === "pipe" && !drag) {
@@ -1486,6 +1494,65 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     );
   };
 
+  // CAD-style precision crosshair: full-viewport lines through the cursor
+  // plus a live position/dimension HUD. Screen-space and pointer-transparent
+  // so it never interferes with drawing; hidden while panning.
+  const renderCrosshair = () => {
+    if (!cursorScreen || drag?.kind === "pan") return null;
+    const { w, h } = canvasSize;
+    if (w < 80 || h < 80) return null;
+    const cx = cursorScreen.x;
+    const cy = cursorScreen.y;
+    // The readout reports the snapped point the click would commit (see
+    // crosshairReadout): the live draw endpoint while drawing, the pipe
+    // rubber-band point for the pipe tool, the placement ghost's anchor when
+    // one is showing, and the grid snap otherwise.
+    const plan = toPlan(cursorScreen);
+    const { point, dimLabel } = crosshairReadout({
+      plan,
+      ghost,
+      drawPreview,
+      tool,
+      hoverPoint,
+      pipePreview,
+      snapOptions,
+      pipeLengthIn: pipeRunLengthIn,
+    });
+    const lines = crosshairHudLines(point, dimLabel);
+    // HUD box parks by the cursor, flips inside the viewport at the edges,
+    // and hides when the viewport is too small to hold it (the crosshair
+    // lines still render).
+    const boxW = 172;
+    const rowH = 17;
+    const pad = 9;
+    const boxH = lines.length * rowH + pad * 2 - 5;
+    const box = crosshairHudBox({ cx, cy, w, h, boxW, boxH });
+    return (
+      <g pointerEvents="none">
+        <line x1={cx} y1={0} x2={cx} y2={h} stroke="#7dd3fc" strokeOpacity={0.28} strokeWidth={1} />
+        <line x1={0} y1={cy} x2={w} y2={cy} stroke="#7dd3fc" strokeOpacity={0.28} strokeWidth={1} />
+        <rect x={cx - 5} y={cy - 5} width={10} height={10} fill="none" stroke="#7dd3fc" strokeWidth={1.5} />
+        {box && (
+          <>
+            <rect x={box.bx} y={box.by} width={boxW} height={boxH} rx={4} fill="#0b1220" fillOpacity={0.92} stroke="#334155" strokeWidth={1} />
+            {lines.map((ln, i) => (
+              <text
+                key={i}
+                x={box.bx + pad}
+                y={box.by + pad + 12 + i * rowH}
+                fontSize={12}
+                fontFamily="ui-monospace, SFMono-Regular, monospace"
+                fill={i === 0 ? "#e2e8f0" : "#6ee7b7"}
+              >
+                {ln}
+              </text>
+            ))}
+          </>
+        )}
+      </g>
+    );
+  };
+
   // Furniture counts too: a furniture-only plan (e.g. a set dropped from
   // Favorites onto a blank plan) must not stay hidden under the prompt.
   const isEmpty = design.walls.length === 0 && design.rooms.length === 0
@@ -1550,7 +1617,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); }}
+        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
       >
@@ -1608,6 +1675,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           );
         })()}
         {renderRulers()}
+        {renderCrosshair()}
       </svg>
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

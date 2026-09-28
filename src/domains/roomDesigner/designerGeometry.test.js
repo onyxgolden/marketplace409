@@ -7,6 +7,9 @@ import {
   alignFurniture,
   boundingBox,
   calibrateUnderlayScale,
+  crosshairHudBox,
+  crosshairHudLines,
+  crosshairReadout,
   dimensionGeometry,
   distancePointToSegment,
   distributeFurniture,
@@ -648,5 +651,155 @@ describe("ghostOpeningSpan", () => {
   it("throws on a non-positive width", () => {
     expect(() => ghostOpeningSpan(walls, { x: 61, y: 3 }, { widthIn: 0 })).toThrow();
     expect(() => ghostOpeningSpan(walls, { x: 61, y: 3 }, {})).toThrow();
+  });
+});
+
+describe("designerGeometry — crosshair HUD", () => {
+  it("formats the live cursor position as X/Y feet-inches", () => {
+    expect(crosshairHudLines({ x: 150, y: 99 })).toEqual([`X 12' 6"  Y 8' 3"`]);
+  });
+
+  it("rounds to whole inches like the dimension labels", () => {
+    expect(crosshairHudLines({ x: 150.6, y: 0 })).toEqual([`X 12' 7"  Y 0' 0"`]);
+  });
+
+  it("keeps the sign on negative plan coordinates", () => {
+    expect(crosshairHudLines({ x: -30, y: -150 })).toEqual([`X -2' 6"  Y -12' 6"`]);
+  });
+
+  it("shows an em dash for a missing point instead of crashing", () => {
+    expect(crosshairHudLines(null)).toEqual(["X —  Y —"]);
+    expect(crosshairHudLines({})).toEqual(["X —  Y —"]);
+  });
+
+  it("adds the live dimension as a second line when provided", () => {
+    expect(crosshairHudLines({ x: 144, y: 0 }, `Len 12' 0"`)).toEqual([
+      `X 12' 0"  Y 0' 0"`,
+      `Len 12' 0"`,
+    ]);
+  });
+
+  it("omits the second line for null or empty dimensions", () => {
+    expect(crosshairHudLines({ x: 12, y: 12 }, null)).toHaveLength(1);
+    expect(crosshairHudLines({ x: 12, y: 12 }, "")).toHaveLength(1);
+  });
+});
+
+describe("crosshairReadout — the point the click would commit", () => {
+  // Pointer off the wall: generic grid snap ({61,3} → {60,6}) must NOT win
+  // over the wall-constrained opening span (g1 {60,0} → g2 {96,0}).
+  const openingGhost = {
+    kind: "opening",
+    type: "door",
+    g1: { x: 60, y: 0 },
+    g2: { x: 96, y: 0 },
+  };
+  const snapOptions = { gridIn: 6, snapToGrid: true };
+
+  it("reports the opening ghost's wall-constrained center, not the grid snap", () => {
+    const { point, dimLabel } = crosshairReadout({
+      plan: { x: 61, y: 3 },
+      ghost: openingGhost,
+      snapOptions,
+    });
+    expect(point).toEqual({ x: 78, y: 0 });
+    expect(dimLabel).toBeNull();
+  });
+
+  it("falls back to generic snap when the opening ghost has no span", () => {
+    const { point } = crosshairReadout({
+      plan: { x: 61, y: 3 },
+      ghost: { kind: "opening", type: "door" },
+      snapOptions,
+    });
+    expect(point).toEqual({ x: 60, y: 6 });
+  });
+
+  it("keeps x/y ghosts (footprint, anchor) on their anchor", () => {
+    expect(
+      crosshairReadout({
+        plan: { x: 61, y: 3 },
+        ghost: { kind: "footprint", x: 120, y: 48 },
+        snapOptions,
+      }).point,
+    ).toEqual({ x: 120, y: 48 });
+    expect(
+      crosshairReadout({
+        plan: { x: 61, y: 3 },
+        ghost: { kind: "anchor", x: 60, y: 0 },
+        snapOptions,
+      }).point,
+    ).toEqual({ x: 60, y: 0 });
+  });
+
+  it("reports the live draw endpoint and wall/rect dimensions while drawing", () => {
+    const { point, dimLabel } = crosshairReadout({
+      plan: { x: 0, y: 0 },
+      drawPreview: { kind: "wall", a: { x: 0, y: 0 }, b: { x: 144, y: 0 } },
+      snapOptions,
+    });
+    expect(point).toEqual({ x: 144, y: 0 });
+    expect(dimLabel).toBe(`Len 12' 0"`);
+  });
+
+  it("reports the pipe rubber-band point and run length for the pipe tool", () => {
+    const { point, dimLabel } = crosshairReadout({
+      plan: { x: 0, y: 0 },
+      tool: "pipe",
+      hoverPoint: { x: 120, y: 0 },
+      pipePreview: [{ x: 0, y: 0 }],
+      snapOptions,
+    });
+    expect(point).toEqual({ x: 120, y: 0 });
+    expect(dimLabel).toBe(`Run 10' 0"`);
+  });
+
+  it("falls back to the grid snap when there is no ghost", () => {
+    const { point, dimLabel } = crosshairReadout({
+      plan: { x: 61, y: 3 },
+      ghost: null,
+      snapOptions,
+    });
+    expect(point).toEqual({ x: 60, y: 6 });
+    expect(dimLabel).toBeNull();
+  });
+});
+
+describe("crosshairHudBox — viewport-safe HUD placement", () => {
+  const box = { boxW: 172, boxH: 31 };
+
+  it("parks right and below the cursor in open space", () => {
+    expect(crosshairHudBox({ cx: 100, cy: 100, w: 800, h: 600, ...box })).toEqual({
+      bx: 118,
+      by: 122,
+    });
+  });
+
+  it("flips left when the box would overflow the right edge", () => {
+    const { bx } = crosshairHudBox({ cx: 750, cy: 100, w: 800, h: 600, ...box });
+    expect(bx).toBe(750 - 172 - 18);
+  });
+
+  it("clamps to the left edge when it fits on neither side", () => {
+    const { bx } = crosshairHudBox({ cx: 40, cy: 100, w: 200, h: 600, ...box });
+    expect(bx).toBe(0);
+  });
+
+  it("flips above when the box would overflow the bottom edge", () => {
+    const { by } = crosshairHudBox({ cx: 100, cy: 590, w: 800, h: 600, ...box });
+    expect(by).toBe(590 - 31 - 22);
+  });
+
+  it("clamps to the top edge when it fits neither below nor above", () => {
+    const { by } = crosshairHudBox({ cx: 100, cy: 10, w: 800, h: 60, ...box });
+    expect(by).toBe(0);
+  });
+
+  it("returns null when the canvas is narrower than the box", () => {
+    expect(crosshairHudBox({ cx: 50, cy: 50, w: 100, h: 600, ...box })).toBeNull();
+  });
+
+  it("returns null when the canvas is shorter than the box", () => {
+    expect(crosshairHudBox({ cx: 50, cy: 10, w: 800, h: 20, ...box })).toBeNull();
   });
 });
