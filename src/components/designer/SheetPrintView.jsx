@@ -28,6 +28,7 @@ import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols
 import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
 import { temaDrawing } from "@/domains/roomDesigner/temaGeometry";
 import { temaPrimitiveToSvg } from "./temaDrawRoutine";
+import { rackLabel, rackParams, rackPlan } from "@/domains/roomDesigner/rackGeometry";
 import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import {
   dimensionGeometry,
@@ -242,6 +243,27 @@ function PrintTemaSymbol({ symbol, inst, ink = INK }) {
   );
 }
 
+// Pipe rack / sleeper rack in ink (or its system color): dashed edges,
+// bents and columns or sleepers from rackPlan, never filled so the pipes it
+// carries stay visible.
+function PrintRack({ symbol, inst, ink }) {
+  const p = rackParams(symbol, inst);
+  const plan = rackPlan(p);
+  const { halfL: hl, halfW: hw } = plan;
+  return (
+    <g transform={`translate(${inst.x} ${inst.y}) rotate(${inst.rotationDeg || 0})`} data-print-rack={p.kind} stroke={ink} fill="none">
+      <rect x={-hl} y={-hw} width={hl * 2} height={hw * 2} strokeWidth={0.75} strokeDasharray="8 4" />
+      {plan.columnLines.map((z) => <line key={`cl${z}`} x1={-hl} y1={z} x2={hl} y2={z} strokeWidth={0.6} />)}
+      {plan.bentLines.map((x) => <line key={`b${x}`} x1={x} y1={-hw} x2={x} y2={hw} strokeWidth={1} />)}
+      {plan.columns.map((c, i) => <rect key={`c${i}`} x={c.x - c.size / 2} y={c.z - c.size / 2} width={c.size} height={c.size} fill={ink} stroke="none" />)}
+      {plan.sleepers.map((sl) => <rect key={`s${sl.x}`} x={sl.x - sl.w / 2} y={-hw} width={sl.w} height={hw * 2} strokeWidth={0.75} />)}
+      <text x={0} y={hw + 6} textAnchor="middle" fontSize={5} fill={ink} stroke="none">
+        {[inst.tag, rackLabel(p)].filter(Boolean).join(" · ")}
+      </text>
+    </g>
+  );
+}
+
 function PrintSymbols({ design }) {
   return (
     <g>
@@ -250,6 +272,7 @@ function PrintSymbols({ design }) {
         if (!sym) return null;
         const ink = effectiveColor(design, inst, INK); // system / own color, else ink
         if (sym.tema) return <PrintTemaSymbol key={inst.id} symbol={sym} inst={inst} ink={ink} />;
+        if (sym.rack) return <PrintRack key={inst.id} symbol={sym} inst={inst} ink={ink} />;
         const w = sym.widthIn || 12;
         const h = sym.depthIn || 12;
         const label = inst.tag || sym.label || inst.symbolId;
