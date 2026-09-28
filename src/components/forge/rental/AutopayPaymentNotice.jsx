@@ -9,7 +9,9 @@
 //   happened — autopay still runs for that period, so the notice says so instead of promising
 //   a skip that will not happen.
 
-const autopayDateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+// Run dates are UTC-midnight calendar dates (see nextMonthlyChargeDate), so format them on the
+// UTC calendar too; formatting in the viewer's zone showed the day before anywhere west of UTC.
+const autopayDateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 export function formatAutopayDateLabel(date) { return autopayDateFormat.format(date); }
 
 // Next calendar date (UTC) carrying the given day-of-month on or after `now` — i.e. the date

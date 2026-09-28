@@ -45,6 +45,17 @@ describe("nextMonthlyChargeDate", () => {
   it("formats the label like the notice shows it", () => {
     expect(formatAutopayDateLabel(new Date(Date.UTC(2026, 8, 15)))).toBe("Sep 15");
   });
+  it("keeps the run's calendar day for viewers west of UTC (not the day before)", () => {
+    const saved = process.env.TZ;
+    process.env.TZ = "America/Chicago";
+    try {
+      expect(new Date(Date.UTC(2026, 8, 15)).getDate()).toBe(14); // local view really is the 14th
+      expect(formatAutopayDateLabel(new Date(Date.UTC(2026, 8, 15)))).toBe("Sep 15");
+      expect(formatAutopayDateLabel(new Date(Date.UTC(2027, 0, 1)))).toBe("Jan 1");
+    } finally {
+      if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+    }
+  });
   it("detects the same billing month on the UTC calendar the sweep uses", () => {
     expect(sameBillingMonth(new Date(Date.UTC(2026, 8, 15)), new Date(Date.UTC(2026, 8, 1)))).toBe(true);
     expect(sameBillingMonth(new Date(Date.UTC(2026, 9, 15)), new Date(Date.UTC(2026, 8, 30)))).toBe(false);
