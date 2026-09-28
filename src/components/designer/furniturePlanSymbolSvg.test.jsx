@@ -31,10 +31,11 @@ describe("drawFurnitureSymbol with plan symbols", () => {
   });
 
   it("keeps the existing rectangle drawing for pieces without a symbol", () => {
-    const m = draw("sofa-3seat");
+    const legacy = { id: "legacy-piece", label: "Legacy piece", widthIn: 30, depthIn: 20, color: "#9aa2ad", symbol: "rect" };
+    const m = renderToStaticMarkup(<svg>{drawFurnitureSymbol({ symbol: legacy, instance: { id: "l", catalogId: "legacy-piece", x: 0, y: 0, rotationDeg: 0 }, ...ctx })}</svg>);
     expect(m).not.toContain("data-plan-symbol");
     expect(m).toContain('rx="3"');
-    expect(m).toContain("Sofa (3-seat)");
+    expect(m).toContain("Legacy piece");
   });
 
   it("marks the selection with the highlight stroke", () => {
@@ -64,5 +65,33 @@ describe("renderPlanSymbol", () => {
     for (const role of ["frame", "pillow", "shell", "basin", "top", "seat"]) {
       expect(ink(role).stroke).toBe("#1a1a1a");
     }
+  });
+});
+
+describe("Phase 2 roles and text", () => {
+  const screen = PLAN_SYMBOL_PALETTES.screen({ color: "#a8a29e", stroke: "#374151" });
+  const print = PLAN_SYMBOL_PALETTES.print({ ink: "#1a1a1a" });
+
+  it("draws wall cabinets, footrests, door swings and rods dashed on screen and in print", () => {
+    for (const role of ["wall-cabinet", "wall-face", "footrest", "swing", "rod", "overhang", "bin"]) {
+      expect(screen(role).strokeDasharray, role).toBeTruthy();
+      expect(print(role).strokeDasharray, role).toBeTruthy();
+    }
+    expect(screen("wall-cabinet").fill).toBe("none"); // hangs above: see-through
+  });
+
+  it("renders letter codes as text, kept upright when the piece is turned past 90 degrees", () => {
+    const prims = [{ kind: "text", x: 0, y: 2, text: "REF", size: 6, role: "text" }];
+    const upright = renderToStaticMarkup(<svg>{renderPlanSymbol(prims, 2, screen)}</svg>);
+    expect(upright).toContain(">REF<");
+    expect(upright).not.toContain("rotate(180");
+    const flipped = renderToStaticMarkup(<svg>{renderPlanSymbol(prims, 2, screen, { rotationDeg: 180 })}</svg>);
+    expect(flipped).toContain("rotate(180 0 4)");
+  });
+
+  it("draws a refrigerator on the canvas with its REF code and a range with four burners", () => {
+    expect(draw("refrigerator")).toContain(">REF<");
+    expect((draw("range").match(/data-role="burner"/g) || []).length).toBe(4);
+    expect(draw("refrigerator", { rotationDeg: 180 })).toContain("rotate(180");
   });
 });

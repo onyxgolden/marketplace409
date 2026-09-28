@@ -3,6 +3,9 @@
 // canvas / thumbnails (screen palette) and sheet printing (ink palette).
 
 import { shade } from "@/domains/roomDesigner/designerFurnitureParts";
+import { uprightTextTransform } from "./uprightText";
+
+const DASHED = new Set(["wall-cabinet", "wall-face", "footrest", "swing", "rod", "overhang", "bin"]);
 
 const PORCELAIN = "#f5f7fa";
 const BASIN = "#c9d6e3";
@@ -16,7 +19,19 @@ const DARK = "#1f2937";
 export const PLAN_SYMBOL_PALETTES = Object.freeze({
   screen: ({ color, stroke }) => (role) => {
     const line = { stroke, strokeWidth: 1.25 };
+    if (DASHED.has(role)) return { fill: "none", stroke: role === "wall-cabinet" || role === "wall-face" ? "#9ca3af" : stroke, strokeWidth: 1.1, strokeDasharray: "4 3" };
     switch (role) {
+      case "cushion": return { fill: shade(color, 1.15), ...line };
+      case "arm": return { fill: shade(color, 0.8), ...line };
+      case "appliance": case "pan": return { fill: "#e5e7eb", ...line };
+      case "cabinet": case "counter": return { fill: shade(color, 1.05), ...line };
+      case "burner": case "drum": case "shade": return { fill: "none", stroke: DARK, strokeWidth: 1.25 };
+      case "controls": case "screen": return { fill: "#4b5563", stroke: "none" };
+      case "door-face": case "drawer-line": case "shelf": case "hinge": case "slope": case "lamp-x": case "tall-x": case "blind": case "door":
+        return { fill: "none", stroke: DARK, strokeWidth: 0.9 };
+      case "susan": return { fill: "none", stroke: DARK, strokeWidth: 1 };
+      case "knob": return { fill: DARK, stroke: "none" };
+      case "text": return { fill: DARK, stroke: "none" };
       case "frame": return { fill: shade(color, 0.7), ...line };
       case "headboard": return { fill: shade(color, 0.45), ...line };
       case "pillow": return { fill: "#ffffff", ...line };
@@ -38,6 +53,8 @@ export const PLAN_SYMBOL_PALETTES = Object.freeze({
   },
   print: ({ ink }) => (role) => {
     const base = { fill: "#ffffff", stroke: ink, strokeWidth: 0.6 };
+    if (DASHED.has(role)) return { ...base, fill: "none", strokeDasharray: "2 1.5" };
+    if (role === "text" || role === "knob") return { fill: ink, stroke: "none" };
     if (role === "drain" || role === "caster") return { fill: ink, stroke: ink, strokeWidth: 0.3 };
     if (role === "pedestal") return { ...base, fill: "none", strokeDasharray: "2 1.5" };
     if (role === "top-edge" || role === "seat-edge" || role === "grain" || role === "spoke") return { ...base, fill: "none", strokeWidth: 0.4 };
@@ -47,7 +64,7 @@ export const PLAN_SYMBOL_PALETTES = Object.freeze({
 });
 
 /** Render plan-symbol primitives (local inches) at `scale` px per inch with a palette. */
-export function renderPlanSymbol(prims, scale, paintFor) {
+export function renderPlanSymbol(prims, scale, paintFor, { rotationDeg = 0 } = {}) {
   return prims.map((p, i) => {
     const paint = paintFor(p.role);
     const common = { "data-role": p.role, ...paint };
@@ -62,6 +79,13 @@ export function renderPlanSymbol(prims, scale, paintFor) {
       }
       case "circle":
         return <circle key={i} {...common} cx={p.cx * scale} cy={p.cy * scale} r={p.r * scale} />;
+      case "text":
+        return (
+          <text key={i} {...common} x={p.x * scale} y={p.y * scale} fontSize={p.size * scale} fontWeight={700}
+            textAnchor="middle" dominantBaseline="central" transform={uprightTextTransform(rotationDeg, p.x * scale, p.y * scale)}>
+            {p.text}
+          </text>
+        );
       case "ellipse":
         return <ellipse key={i} {...common} cx={p.cx * scale} cy={p.cy * scale} rx={p.rx * scale} ry={p.ry * scale} />;
       default:

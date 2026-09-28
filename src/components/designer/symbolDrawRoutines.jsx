@@ -56,7 +56,7 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
     <g key={instance.id} transform={`translate(${c.x} ${c.y}) rotate(${instance.rotationDeg || 0})`}>
       {planSymbol ? (
         <g data-plan-symbol={instance.catalogId}>
-          {renderPlanSymbol(planSymbol, scale, PLAN_SYMBOL_PALETTES.screen({ color: symbol.color, stroke: highlighted ? "#f59e0b" : "#374151" }))}
+          {renderPlanSymbol(planSymbol, scale, PLAN_SYMBOL_PALETTES.screen({ color: symbol.color, stroke: highlighted ? "#f59e0b" : "#374151" }), { rotationDeg: instance.rotationDeg })}
           {highlighted && <rect x={-w / 2} y={-h / 2} width={w} height={h} fill="none" stroke={stroke} strokeWidth={2} />}
         </g>
       ) : symbol.symbol === "circle" ? (

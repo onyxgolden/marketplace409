@@ -183,7 +183,7 @@ function PrintFurniture({ design }) {
         if (planSymbol) {
           return (
             <g key={f.id} transform={`translate(${f.x} ${f.y}) rotate(${f.rotationDeg || 0})`} data-print-plan-symbol={f.catalogId}>
-              {renderPlanSymbol(planSymbol, 1, PLAN_SYMBOL_PALETTES.print({ ink: INK }))}
+              {renderPlanSymbol(planSymbol, 1, PLAN_SYMBOL_PALETTES.print({ ink: INK }), { rotationDeg: f.rotationDeg })}
             </g>
           );
         }
