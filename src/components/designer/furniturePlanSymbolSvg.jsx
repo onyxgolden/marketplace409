@@ -50,20 +50,20 @@ export const PLAN_SYMBOL_PALETTES = Object.freeze({
 export function renderPlanSymbol(prims, scale, paintFor) {
   return prims.map((p, i) => {
     const paint = paintFor(p.role);
-    const common = { key: i, "data-role": p.role, ...paint };
+    const common = { "data-role": p.role, ...paint };
     switch (p.kind) {
       case "rect":
-        return <rect {...common} x={p.x * scale} y={p.y * scale} width={p.w * scale} height={p.h * scale} rx={(p.rx || 0) * scale} />;
+        return <rect key={i} {...common} x={p.x * scale} y={p.y * scale} width={p.w * scale} height={p.h * scale} rx={(p.rx || 0) * scale} />;
       case "line":
-        return <line {...common} x1={p.x1 * scale} y1={p.y1 * scale} x2={p.x2 * scale} y2={p.y2 * scale} />;
+        return <line key={i} {...common} x1={p.x1 * scale} y1={p.y1 * scale} x2={p.x2 * scale} y2={p.y2 * scale} />;
       case "poly": {
         const pts = p.points.map(([x, y]) => `${x * scale},${y * scale}`).join(" ");
-        return p.closed ? <polygon {...common} points={pts} /> : <polyline {...common} points={pts} fill="none" />;
+        return p.closed ? <polygon key={i} {...common} points={pts} /> : <polyline key={i} {...common} points={pts} fill="none" />;
       }
       case "circle":
-        return <circle {...common} cx={p.cx * scale} cy={p.cy * scale} r={p.r * scale} />;
+        return <circle key={i} {...common} cx={p.cx * scale} cy={p.cy * scale} r={p.r * scale} />;
       case "ellipse":
-        return <ellipse {...common} cx={p.cx * scale} cy={p.cy * scale} rx={p.rx * scale} ry={p.ry * scale} />;
+        return <ellipse key={i} {...common} cx={p.cx * scale} cy={p.cy * scale} rx={p.rx * scale} ry={p.ry * scale} />;
       default:
         return null;
     }
