@@ -40,8 +40,10 @@ let backdropReady = false;
 function showAimTools() {
   // Crosshairs stay up while dragging (the OS cursor is hidden); the
   // loupe and readout stand down so the selection stays readable.
-  const cross = backdropReady && !busy;
-  const hover = cross && !start;
+  // The crosshair never depends on the frozen backdrop: even when the
+  // preview is unavailable the drag picker (and Esc) must keep working.
+  const cross = !busy;
+  const hover = backdropReady && cross && !start;
   chV.style.display = cross ? "block" : "none";
   chH.style.display = cross ? "block" : "none";
   loupe.style.display = hover ? "block" : "none";

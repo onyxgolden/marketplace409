@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use forge_capture_core::ai_edit;
 use forge_capture_core::artifact::{CaptureArtifact, CaptureKind, CursorState, RasterMime};
@@ -28,7 +28,7 @@ use forge_capture_core::engines::{
     RasterObservationScrollEngine,
 };
 use forge_capture_core::native;
-use forge_capture_core::png::png_dimensions;
+use forge_capture_core::png::{decode_own, png_dimensions};
 use forge_capture_core::result::ScrollingResult;
 use forge_capture_core::scroll::{
     AbortFlag, ProgressCallback, ScrollDirection, ScrollEngineKind, ScrollLimits, ScrollRequest,
@@ -61,6 +61,10 @@ struct OverlayContext {
     /// the context instead of the capture dto.
     delay_ms: u64,
     include_cursor: bool,
+    /// Frozen fullscreen frame, captured BEFORE the overlay window was
+    /// created (so the overlay can never appear in its own backdrop) and
+    /// blank-checked. Served to the overlay page by `region_pick_backdrop`.
+    backdrop_png: Option<Vec<u8>>,
 }
 
 struct AppState {
@@ -744,6 +748,16 @@ fn build_mode(
             .ok_or("no pending region overlay; call begin_region_pick first")?;
         if let Some(w) = app.get_webview_window("overlay") {
             let _ = w.close();
+            // `close()` is asynchronous: wait until the window is actually
+            // gone (or time out) before the BitBlt below, or the
+            // always-on-top overlay would appear in its own capture.
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            while app.get_webview_window("overlay").is_some() {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
         }
         let r = dto
             .overlay_rect
@@ -1160,7 +1174,7 @@ fn export_capture(
     Ok(dest_path.to_string_lossy().into_owned())
 }
 
-/// Open the fullscreen transparent region-picker overlay on a monitor.
+/// Open the fullscreen region-picker overlay on a monitor.
 /// The overlay page calls `overlay_context` for its origin/DPR, then
 /// `capture` with mode "region-overlay" when the user finishes dragging.
 /// `delay_ms` / `include_cursor` are the user's selections from the main
@@ -1190,6 +1204,14 @@ fn begin_region_pick(
 
 /// Shared overlay path: the `begin_region_pick` command and the
 /// Shift+PrintScreen hotkey both open the overlay through here.
+///
+/// The frozen backdrop is captured BEFORE the overlay window is created, so
+/// the overlay can never appear in (or blank) its own backdrop. A frame
+/// that comes back a single solid color is rejected — a real screen is
+/// never perfectly uniform, so that means the capture pipeline produced a
+/// dead frame, and opening the picker on it would trap the user on a blank
+/// square. The overlay window itself is opaque: it draws the frozen PNG, so
+/// no transparent-window compositing is required.
 fn open_region_overlay(
     app: tauri::AppHandle,
     state: State<AppState>,
@@ -1202,12 +1224,20 @@ fn open_region_overlay(
         .iter()
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("unknown monitor id: {monitor_id}"))?;
+    // 1. Frozen backdrop first, while no overlay window exists.
+    let backdrop_png = capture_region_backdrop(&monitors, &monitor.id)?;
+    let (_, _, rgba) =
+        decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
+    if solid_frame_rgba(&rgba) {
+        return Err("screen capture returned a blank frame; region pick aborted".to_string());
+    }
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         monitor_id: monitor_id.to_string(),
         origin_virtual: monitor.origin_virtual,
         dpr: monitor.scale,
         delay_ms,
         include_cursor,
+        backdrop_png: Some(backdrop_png),
     });
     if let Some(w) = app.get_webview_window("overlay") {
         let _ = w.close();
@@ -1219,7 +1249,7 @@ fn open_region_overlay(
         monitor.origin_virtual.0 as i64,
         monitor.origin_virtual.1 as i64,
     );
-    let _window = tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         &app,
         "overlay",
         tauri::WebviewUrl::App("overlay.html".into()),
@@ -1227,14 +1257,64 @@ fn open_region_overlay(
     .title("Select region")
     .position(origin.x, origin.y)
     .inner_size(monitor.size_logical.0 as f64, monitor.size_logical.1 as f64)
-    .transparent(true)
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
     .resizable(false)
     .build()
     .map_err(|e| format!("cannot open overlay: {e}"))?;
+    // Esc / right-click cancel lives in the overlay page, so the window must
+    // own keyboard focus for the escape hatches to work.
+    let _ = window.set_focus();
+    spawn_overlay_watchdog(app.clone());
     Ok(())
+}
+
+/// Capture the frozen fullscreen frame for region picking. The caller must
+/// invoke this BEFORE creating the overlay window.
+fn capture_region_backdrop(monitors: &[Monitor], monitor_id: &str) -> Result<Vec<u8>, String> {
+    let request = CaptureRequest {
+        mode: CaptureMode::FullMonitor {
+            monitor_id: monitor_id.to_string(),
+        },
+        include_cursor: false,
+        id: "region-pick-backdrop".to_string(),
+    };
+    let mut engine = NativeRasterEngine;
+    match engine.acquire(&request, monitors) {
+        ScrollingResult::Complete { artifact } => Ok(artifact.raster_bytes),
+        other => Err(format!("backdrop capture failed: {}", other.describe())),
+    }
+}
+
+/// True when every pixel of an RGBA frame is byte-identical. A real screen
+/// capture is never a single solid color, so this detects a dead/blank
+/// capture pipeline before a blank frame can trap the region picker.
+fn solid_frame_rgba(rgba: &[u8]) -> bool {
+    if rgba.len() < 8 || rgba.len() % 4 != 0 {
+        return false;
+    }
+    let (first, rest) = rgba.split_at(4);
+    rest.chunks_exact(4).all(|px| px == first)
+}
+
+/// Watchdog: if a region pick is still pending after 60 s (the overlay never
+/// reported back — e.g. its page failed to load), close the overlay and
+/// clear the context so the user is never trapped on a dead fullscreen
+/// window. A real region pick takes seconds; 60 s is generous.
+fn spawn_overlay_watchdog(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(60));
+        let state: State<AppState> = app.state();
+        let mut guard = state.pending_overlay.lock().unwrap();
+        if guard.is_some() {
+            *guard = None;
+            drop(guard);
+            if let Some(w) = app.get_webview_window("overlay") {
+                let _ = w.close();
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -1266,8 +1346,9 @@ fn cancel_region_pick(app: tauri::AppHandle, state: State<AppState>) -> Result<(
 /// Frozen fullscreen frame the overlay page draws its crosshair and
 /// magnifier loupe over — the Snagit approach: freeze first, aim on the
 /// frozen image, then capture the live region. Without a frozen frame the
-/// loupe would have no pixels to magnify (the overlay window is
-/// transparent; it cannot see the screen behind it).
+/// loupe would have no pixels to magnify. The frame is captured (and
+/// blank-checked) by `open_region_overlay` BEFORE the overlay window is
+/// created; this command just serves the stored bytes to the page.
 #[derive(Debug, Serialize, Clone)]
 struct BackdropDto {
     png_b64: String,
@@ -1277,28 +1358,27 @@ struct BackdropDto {
 
 #[tauri::command]
 fn region_pick_backdrop(state: State<AppState>) -> Result<BackdropDto, String> {
-    let monitor_id = {
-        let guard = state.pending_overlay.lock().unwrap();
-        guard
-            .as_ref()
-            .map(|o| o.monitor_id.clone())
-            .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?
-    };
-    let monitors = current_monitors()?;
-    let request = CaptureRequest {
-        mode: CaptureMode::FullMonitor { monitor_id },
-        include_cursor: false,
-        id: "region-pick-backdrop".to_string(),
-    };
-    let mut engine = NativeRasterEngine;
-    match engine.acquire(&request, &monitors) {
-        ScrollingResult::Complete { artifact } => Ok(BackdropDto {
-            png_b64: base64_encode(&artifact.raster_bytes),
-            width: artifact.raster_width,
-            height: artifact.raster_height,
-        }),
-        other => Err(format!("backdrop capture failed: {}", other.describe())),
-    }
+    let guard = state.pending_overlay.lock().unwrap();
+    let png = stored_backdrop_png(guard.as_ref())?;
+    let (width, height) =
+        png_dimensions(png).map_err(|e| format!("backdrop dimensions unreadable: {e}"))?;
+    Ok(BackdropDto {
+        png_b64: base64_encode(png),
+        width,
+        height,
+    })
+}
+
+/// Stored-backdrop lookup for `region_pick_backdrop`, pure over the context
+/// so the serve-from-context contract is unit-testable: the overlay page
+/// must always receive the frame captured before its window existed, never
+/// trigger a fresh capture (which could catch the overlay itself).
+fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
+    let ctx = ctx
+        .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?;
+    ctx.backdrop_png
+        .as_deref()
+        .ok_or_else(|| "no stored backdrop for this region pick".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -3144,5 +3224,86 @@ mod dto_ipc_tests {
         assert!(!is_library_url_allowed(
             "https://www.409marketplace.online/forge/capture/library?capture=123e4567-e89b-42d3-a456-426614174000 "
         ));
+    }
+}
+
+#[cfg(test)]
+mod region_picker_tests {
+    //! Regression tests for the region-picker white-square failure
+    //! (2026-09-28, real hardware: the Region overlay opened on a blank
+    //! white square with no crosshair and trapped the screen).
+    //!
+    //! The overlay now opens only after a verified-good frozen backdrop has
+    //! been captured, and the page is served those stored bytes — it never
+    //! triggers a fresh capture that could catch the overlay itself.
+
+    use super::*;
+
+    fn overlay_ctx_with_backdrop(png: Option<Vec<u8>>) -> OverlayContext {
+        OverlayContext {
+            monitor_id: "DISPLAY1".to_string(),
+            origin_virtual: (0, 0),
+            dpr: 1.0,
+            delay_ms: 0,
+            include_cursor: false,
+            backdrop_png: png,
+        }
+    }
+
+    #[test]
+    fn solid_frame_detector_rejects_uniform_white() {
+        // 4x1 RGBA frame, every pixel 0xFF — the dead-frame signature.
+        let rgba = vec![0xFFu8; 16];
+        assert!(solid_frame_rgba(&rgba));
+    }
+
+    #[test]
+    fn solid_frame_detector_rejects_uniform_black() {
+        let rgba = vec![0x00u8; 16];
+        assert!(solid_frame_rgba(&rgba));
+    }
+
+    #[test]
+    fn solid_frame_detector_accepts_one_different_pixel() {
+        let mut rgba = vec![0xFFu8; 16];
+        rgba[5] = 0x00; // green channel of the second pixel differs
+        assert!(!solid_frame_rgba(&rgba));
+    }
+
+    #[test]
+    fn solid_frame_detector_accepts_one_different_byte() {
+        let mut rgba = vec![0xABu8; 64];
+        rgba[63] = 0xAC; // last byte of the last pixel differs
+        assert!(!solid_frame_rgba(&rgba));
+    }
+
+    #[test]
+    fn solid_frame_detector_rejects_degenerate_inputs() {
+        assert!(!solid_frame_rgba(&[]));
+        assert!(!solid_frame_rgba(&[0xFFu8; 4])); // single pixel: too small to judge
+        assert!(!solid_frame_rgba(&[0xFFu8; 7])); // not a whole number of pixels
+    }
+
+    #[test]
+    fn backdrop_lookup_serves_stored_bytes() {
+        let png = vec![137u8, 80, 78, 71];
+        let ctx = overlay_ctx_with_backdrop(Some(png.clone()));
+        assert_eq!(stored_backdrop_png(Some(&ctx)).unwrap(), png.as_slice());
+    }
+
+    #[test]
+    fn backdrop_lookup_errors_without_pending_overlay() {
+        let err = stored_backdrop_png(None).unwrap_err();
+        assert!(err.contains("no pending region overlay"), "got: {err}");
+    }
+
+    #[test]
+    fn backdrop_lookup_errors_when_backdrop_missing() {
+        // The overlay must never open without a stored backdrop; if the
+        // context somehow has none, the page gets an error, not a fresh
+        // capture that could see the overlay itself.
+        let ctx = overlay_ctx_with_backdrop(None);
+        let err = stored_backdrop_png(Some(&ctx)).unwrap_err();
+        assert!(err.contains("no stored backdrop"), "got: {err}");
     }
 }
