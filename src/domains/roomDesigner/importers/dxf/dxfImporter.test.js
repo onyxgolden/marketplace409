@@ -59,6 +59,23 @@ describe("parser", () => {
     expect(g.polylines).toHaveLength(1);
     expect(g.polylines[0]).toMatchObject({ closed: true, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }] });
   });
+
+  it("marks a well-formed DXF (ending 0/EOF) as not truncated", () => {
+    expect(parseDxf(dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] })).truncated).toBe(false);
+  });
+
+  it("marks a DXF cut off before its EOF marker as truncated", () => {
+    const whole = dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] });
+    const cut = whole.slice(0, whole.lastIndexOf("EOF")); // entity + ENDSEC intact, EOF missing
+    expect(parseDxf(cut).truncated).toBe(true);
+  });
+
+  it("surfaces a truncated file as a note readDxfDrawing reports, not silently", () => {
+    const whole = dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] });
+    const cut = whole.slice(0, whole.lastIndexOf("EOF"));
+    const notes = readDxfDrawing(cut).geometry.notes.map((n) => n.message).join(" ");
+    expect(notes).toMatch(/truncat|EOF/i);
+  });
 });
 
 describe("geometry", () => {

@@ -33,6 +33,12 @@ const MIN_ROOM_AREA_SQIN = 4 * 144;
 export function readDxfDrawing(input) {
   const parsed = parseDxf(input);
   const geometry = collectGeometry(parsed);
+  if (parsed.truncated) {
+    geometry.notes.push({
+      provenance: "drawing",
+      message: "This DXF looks truncated: it's missing the EOF marker every DXF ends with, so the file was likely cut off before saving finished. Geometry near the end may be missing — check the drawing carefully before relying on this import.",
+    });
+  }
   const byLayer = new Map();
   const touch = (name) => {
     if (!byLayer.has(name)) byLayer.set(name, { polylines: 0, texts: 0 });

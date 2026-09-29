@@ -128,7 +128,7 @@ describe("DXF: difficult and malformed input", () => {
     expect(reopensClean(design)).toEqual([]);
   });
 
-  it.fails("KNOWN GAP: malformed-truncated.dxf warns that the file is incomplete (no EOF)", () => {
+  it("malformed-truncated.dxf warns that the file is incomplete (no EOF)", () => {
     const prep = prepareDxfImport(readDxfDrawing(bytesOf("dxf/malformed-truncated.dxf")));
     expect(prep.issues.map((i) => i.message).join(" ")).toMatch(/truncat|incomplete|end of file|EOF/i);
   });

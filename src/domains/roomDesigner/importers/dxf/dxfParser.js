@@ -80,6 +80,19 @@ export function decodeDxfInput(input) {
   return text;
 }
 
+/**
+ * Every valid DXF ends with the mandatory group-code-0 "EOF" pair — the
+ * file format's own end-of-file marker, not a guess about content. A file
+ * missing it was cut off before writing finished, and anything read from
+ * the truncated tail (an unclosed entity, half a group-code pair) should
+ * be treated as suspect. Checked against the last ~64 chars: comfortably
+ * more than "0\nEOF\n" needs, with no risk of matching an unrelated "0" far
+ * inside the real content.
+ */
+export function hasEofMarker(text) {
+  return /0[ \t]*[\r\n]+[ \t]*EOF[ \t]*[\r\n]*$/.test(text.slice(-64));
+}
+
 /** Decode commonly used fields of an entity from its group pairs. */
 function decodeEntity(type, groups) {
   const e = { type, layer: "0", groups };
@@ -258,5 +271,5 @@ export function parseDxf(input) {
     }
   }
 
-  return { header, layers, blocks, entities };
+  return { header, layers, blocks, entities, truncated: !hasEofMarker(text) };
 }
