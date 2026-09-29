@@ -1,21 +1,26 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 
 import { loadManifest } from "./loadManifest.mjs";
 import { runQuery } from "./runQuery.mjs";
+import { searchBugCatalog } from "./searchBugCatalog.mjs";
 import { renderQueryOutputJson, renderQueryOutputText } from "./renderQueryOutput.mjs";
 import { createCachedGitReader } from "./createCachedGitReader.mjs";
 import { readFileAtCommit, readMigrationsAtCommit } from "../gitRepository.mjs";
 
 const DEFAULT_MANIFEST_PATH = path.join("engineering-brain", "index-manifest.json");
+const BUG_CATALOG_FILENAME = "bug-catalog.json";
 
 function parseArgs(argv) {
-  const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined };
+  const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined, bugCatalogPath: null, noBugs: false };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--json") args.json = true;
     else if (arg === "--metadata-only") args.metadataOnly = true;
     else if (arg === "--manifest") args.manifestPath = argv[++i];
+    else if (arg === "--bug-catalog") args.bugCatalogPath = argv[++i];
+    else if (arg === "--no-bugs") args.noBugs = true;
     else if (arg === "--source-type") args.filters.sourceType = argv[++i];
     else if (arg === "--authority-level") args.filters.authorityLevel = argv[++i];
     else if (arg === "--commit-sha") args.filters.commitSha = argv[++i];
@@ -26,6 +31,17 @@ function parseArgs(argv) {
   }
   args.queryText = rest.join(" ");
   return args;
+}
+
+/** Load the bug catalog next to the manifest (or at an explicit path). Returns [] when absent/invalid. */
+export function loadBugCatalogRecords({ manifestPath, bugCatalogPath }) {
+  const catalogPath = bugCatalogPath || path.join(path.dirname(manifestPath), BUG_CATALOG_FILENAME);
+  try {
+    const parsed = JSON.parse(readFileSync(catalogPath, "utf8"));
+    return Array.isArray(parsed.records) ? parsed.records : [];
+  } catch {
+    return [];
+  }
 }
 
 export function runCli(argv, { cwd = process.cwd() } = {}) {
@@ -46,6 +62,16 @@ export function runCli(argv, { cwd = process.cwd() } = {}) {
     contentProvider: (commitSha, sourcePath) => cachedReader.readFileAtCommit(commitSha, sourcePath),
     excerptReader: cachedReader,
   });
+
+  // Related past fixes: the bug catalog is optional — when present next to
+  // the manifest it is searched with the same query and attached for review.
+  response.related_fixes = [];
+  if (!args.noBugs && args.queryText.trim()) {
+    const bugRecords = loadBugCatalogRecords({ manifestPath, bugCatalogPath: args.bugCatalogPath });
+    if (bugRecords.length > 0) {
+      response.related_fixes = searchBugCatalog({ records: bugRecords, queryText: args.queryText, maxResults: 5 });
+    }
+  }
 
   return { response, output: args.json ? renderQueryOutputJson(response) : renderQueryOutputText(response) };
 }
