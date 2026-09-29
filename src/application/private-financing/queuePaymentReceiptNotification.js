@@ -8,19 +8,20 @@
 // owner-notification config) and a 'borrower' receipt to the borrower's own email.
 //
 // Detection-time disposition mirrors the rental owner-notification precedent: rows are written
-// as 'queued' when sending is enabled at detection time AND the owner is allowlisted, or
-// terminally as 'skipped_disabled' when it is not. A disabled-at-detection event can never be
+// as 'queued' when sending is enabled at detection time AND the owner is allowlisted AND the
+// borrower is on the PF_RECEIPT_BORROWER_IDS allowlist (recipient-level rollout restriction —
+// the owner allowlist alone would receipt every borrower), or terminally as
+// 'skipped_disabled' when they are not. A disabled-at-detection event can never be
 // delivered later. The deliveries table's unique constraint on (owner_id, payment_id,
 // recipient_type) makes every queue insertion idempotent, so webhook redeliveries can never
 // double-notify.
 import {
   RECEIPT_RECIPIENT_TYPE,
   buildReceiptDeliveryId,
+  isBorrowerReceiptAllowed,
+  resolvePaymentReceiptConfig,
 } from "@/domains/private-financing/paymentReceiptNotifications";
-import {
-  isOwnerNotificationAllowed,
-  resolveOwnerNotificationConfig,
-} from "@/domains/owner-notifications/ownerNotificationConfig";
+import { isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 
 // Pure row builder, shared with the cron route's reconciler. The reconciler exists so a lost
 // webhook queue write (caught and swallowed here to protect webhook processing) still heals
@@ -33,8 +34,9 @@ export function buildReceiptDeliveryRow({
   recipientEmail,
   sendingEnabled,
   ownerAllowed,
+  borrowerAllowed,
 }) {
-  const deliverable = sendingEnabled && ownerAllowed && Boolean(recipientEmail);
+  const deliverable = sendingEnabled && ownerAllowed && borrowerAllowed && Boolean(recipientEmail);
   return {
     owner_id: payment.owner_id,
     id: buildReceiptDeliveryId({
@@ -54,17 +56,23 @@ export function buildReceiptDeliveryRow({
         ? "Sending disabled at detection time."
         : !ownerAllowed
           ? "Owner not allowlisted for notifications."
-          : "Recipient email unavailable.",
+          : !borrowerAllowed
+            ? "Borrower not allowlisted for payment receipts."
+            : "Recipient email unavailable.",
   };
 }
 
 export async function queuePaymentReceiptNotificationForWebhookEvent(db, payment, options = {}) {
   try {
-    const config = resolveOwnerNotificationConfig();
+    const config = resolvePaymentReceiptConfig();
     const sendingEnabled = options.sendingEnabled ?? config.enabled;
     const ownerAllowed = isOwnerNotificationAllowed(
       { allowedOwnerIds: options.allowedOwnerIds ?? config.allowedOwnerIds },
       payment.owner_id,
+    );
+    const borrowerAllowed = isBorrowerReceiptAllowed(
+      { allowedBorrowerIds: options.allowedBorrowerIds ?? config.allowedBorrowerIds },
+      payment.borrower_id,
     );
 
     const borrowerResult = await db
@@ -82,6 +90,7 @@ export async function queuePaymentReceiptNotificationForWebhookEvent(db, payment
         recipientEmail: config.recipientEmail,
         sendingEnabled,
         ownerAllowed,
+        borrowerAllowed,
       }),
       buildReceiptDeliveryRow({
         payment,
@@ -89,6 +98,7 @@ export async function queuePaymentReceiptNotificationForWebhookEvent(db, payment
         recipientEmail: borrower.email,
         sendingEnabled,
         ownerAllowed,
+        borrowerAllowed,
       }),
     ];
 

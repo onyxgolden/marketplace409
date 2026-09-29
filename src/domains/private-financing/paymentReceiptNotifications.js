@@ -5,11 +5,34 @@
 // instruction) and one to the borrower. The queue/application layer decides *whether* to send
 // (enabled flag, owner allowlist, quiet hours); this module only decides *what* a send says.
 import { formatCentsAsUsd } from "./paymentDueReminders.js";
+import {
+  parseOwnerAllowlist,
+  resolveOwnerNotificationConfig,
+} from "../owner-notifications/ownerNotificationConfig.js";
 
 export const RECEIPT_RECIPIENT_TYPE = Object.freeze({
   OWNER: "owner",
   BORROWER: "borrower",
 });
+
+// Full receipt config: the shared owner-notification config plus the borrower-level
+// allowlist. Recipient-level rollout restriction (Jason's 2026-09-29 instruction): receipts
+// queue only for borrowers listed in PF_RECEIPT_BORROWER_IDS — the owner-level allowlist is
+// not granular enough, because enabling it for Jason's owner id would receipt every
+// borrower. The gate is fail-closed: a missing or empty PF_RECEIPT_BORROWER_IDS queues
+// nothing.
+export function resolvePaymentReceiptConfig(env = process.env) {
+  const base = resolveOwnerNotificationConfig(env);
+  return {
+    ...base,
+    allowedBorrowerIds: parseOwnerAllowlist(env.PF_RECEIPT_BORROWER_IDS),
+  };
+}
+
+export function isBorrowerReceiptAllowed(config, borrowerId) {
+  const allowlist = config?.allowedBorrowerIds ?? [];
+  return allowlist.length > 0 && borrowerId != null && allowlist.includes(String(borrowerId));
+}
 
 const VALID_RECIPIENT_TYPES = new Set(Object.values(RECEIPT_RECIPIENT_TYPE));
 

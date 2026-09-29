@@ -6,6 +6,8 @@ import {
   buildReceiptDeliveryId,
   buildReceiptEmail,
   buildReceiptProviderIdempotencyKey,
+  isBorrowerReceiptAllowed,
+  resolvePaymentReceiptConfig,
 } from "../paymentReceiptNotifications.js";
 
 const FACTS = {
@@ -83,5 +85,44 @@ describe("buildReceiptEmail", () => {
 
   it("rejects unknown recipient types", () => {
     expect(() => buildReceiptEmail({ recipientType: "nope", facts: FACTS })).toThrow();
+  });
+});
+
+describe("resolvePaymentReceiptConfig", () => {
+  it("parses the borrower allowlist from PF_RECEIPT_BORROWER_IDS", () => {
+    const config = resolvePaymentReceiptConfig({
+      PF_RECEIPT_BORROWER_IDS: "pf_brw_ethan, pf_brw_tyler",
+      OWNER_PAYMENT_NOTIFICATIONS_ENABLED: "true",
+    });
+    expect(config.allowedBorrowerIds).toEqual(["pf_brw_ethan", "pf_brw_tyler"]);
+  });
+
+  it("fails closed with no borrower allowlist configured", () => {
+    const config = resolvePaymentReceiptConfig({ OWNER_PAYMENT_NOTIFICATIONS_ENABLED: "true" });
+    expect(config.allowedBorrowerIds).toEqual([]);
+    expect(isBorrowerReceiptAllowed(config, "pf_brw_ethan")).toBe(false);
+  });
+});
+
+describe("isBorrowerReceiptAllowed", () => {
+  const config = { allowedBorrowerIds: ["pf_brw_ethan", "pf_brw_tyler"] };
+
+  it("allows listed borrowers", () => {
+    expect(isBorrowerReceiptAllowed(config, "pf_brw_ethan")).toBe(true);
+    expect(isBorrowerReceiptAllowed(config, "pf_brw_tyler")).toBe(true);
+  });
+
+  it("denies unlisted borrowers", () => {
+    expect(isBorrowerReceiptAllowed(config, "pf_brw_stranger")).toBe(false);
+  });
+
+  it("denies missing borrower ids", () => {
+    expect(isBorrowerReceiptAllowed(config, null)).toBe(false);
+    expect(isBorrowerReceiptAllowed(config, undefined)).toBe(false);
+  });
+
+  it("denies everything when the allowlist is empty", () => {
+    expect(isBorrowerReceiptAllowed({ allowedBorrowerIds: [] }, "pf_brw_ethan")).toBe(false);
+    expect(isBorrowerReceiptAllowed({}, "pf_brw_ethan")).toBe(false);
   });
 });

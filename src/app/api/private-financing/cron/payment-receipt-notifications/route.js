@@ -6,13 +6,12 @@ import {
   buildReceiptDeliveryId,
   buildReceiptEmail,
   buildReceiptProviderIdempotencyKey,
+  isBorrowerReceiptAllowed,
+  resolvePaymentReceiptConfig,
   RECEIPT_RECIPIENT_TYPE,
 } from "@/domains/private-financing/paymentReceiptNotifications";
 import { buildReceiptDeliveryRow } from "@/application/private-financing/queuePaymentReceiptNotification";
-import {
-  isOwnerNotificationAllowed,
-  resolveOwnerNotificationConfig,
-} from "@/domains/owner-notifications/ownerNotificationConfig";
+import { isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 import { isQuietHours } from "@/domains/owner-notifications/ownerPaymentNotifications";
 
 export const runtime = "nodejs";
@@ -20,9 +19,10 @@ export const runtime = "nodejs";
 // Personal-loan payment-received notifications. Two jobs in one run:
 //   1. Reconcile succeeded borrower payments from the last few days: any payment without a
 //      receipt-delivery row gets its owner + borrower rows queued (detection-time disposition:
-//      'queued' when sending is on and the owner is allowlisted, terminal 'skipped_disabled'
-//      otherwise). This is the durable healing path for webhook queue writes that were caught
-//      and swallowed to protect webhook processing.
+//      'queued' when sending is on and both the owner allowlist and the PF_RECEIPT_BORROWER_IDS
+//      borrower allowlist pass — recipient-level rollout restriction, Jason's 2026-09-29
+//      instruction; terminal 'skipped_disabled' otherwise). This is the durable healing path
+//      for webhook queue writes that were caught and swallowed to protect webhook processing.
 //   2. Deliver queued rows: claim each row BEFORE the provider call with a unique claim token
 //      (the claim is the distributed lock), then send via Resend when sending is enabled.
 //      Quiet hours (23:00-07:00 America/Chicago, Jason's rule): delivery inside the window is
@@ -106,6 +106,7 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
   let skippedAtDetection = 0;
   for (const payment of payments) {
     const ownerAllowed = isOwnerNotificationAllowed(config, payment.owner_id);
+    const borrowerAllowed = isBorrowerReceiptAllowed(config, payment.borrower_id);
     for (const recipientType of [RECEIPT_RECIPIENT_TYPE.OWNER, RECEIPT_RECIPIENT_TYPE.BORROWER]) {
       if (existingKeys.has(`${payment.id}:${recipientType}`)) continue;
       const row = buildReceiptDeliveryRow({
@@ -117,6 +118,7 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
             : borrowerEmailById.get(payment.borrower_id),
         sendingEnabled: config.enabled,
         ownerAllowed,
+        borrowerAllowed,
       });
       if (row.status === "skipped_disabled") skippedAtDetection += 1;
       else reconciled += 1;
@@ -266,7 +268,7 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
-  const config = resolveOwnerNotificationConfig();
+  const config = resolvePaymentReceiptConfig();
 
   try {
     const db = createRentalWebhookClient();
