@@ -13,6 +13,7 @@
  */
 
 import { dedupeConsecutivePoints } from "../../pipingGeometry.js";
+import { bridgeWallGaps } from "./visioWallGaps.js";
 
 function sanitizeIdPart(value) {
   return String(value || "?").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40);
@@ -76,6 +77,15 @@ export function buildImportRecords(items, { pageIndex = 0, page = null } = {}) {
 
   const note = (resolved, message) => notes.push({ provenance: resolved.provenance, message });
 
+  // Walls and openings are resolved in a dedicated pass below, once every
+  // wall and opening candidate on the page is known — Visio draws a wall as
+  // a separate shape per span, broken at each opening the same way CAD
+  // faces are (see visioWallGaps.js), so an opening can only be placed
+  // correctly once ALL walls (not just the ones classified before it in
+  // shape-tree order) are available to bridge across its gap.
+  const wallCandidates = []; // { id, a, b }
+  const openingCandidates = []; // { type, widthIn, center, resolved, polylines, source }
+
   for (const item of items) {
     const { resolved, polylines, classification } = item;
     const kind = classification.kind;
@@ -135,7 +145,7 @@ export function buildImportRecords(items, { pageIndex = 0, page = null } = {}) {
         note(resolved, `Skipped: wall segment under 1 inch (${length.toFixed(2)} in).`);
         continue;
       }
-      records.walls.push({ id: newId(resolved.id, "wall"), a: { ...a }, b: { ...b } });
+      wallCandidates.push({ id: newId(resolved.id, "wall"), a: { ...a }, b: { ...b } });
       counts.mapped += 1;
       continue;
     }
@@ -157,26 +167,23 @@ export function buildImportRecords(items, { pageIndex = 0, page = null } = {}) {
     }
 
     if (kind === "opening") {
-      const placed = tryPlaceOpening(records.walls, classification.detail, newId, resolved);
-      if (placed) {
-        records.openings.push(placed);
+      const detail = classification.detail;
+      const center = detail && detail.center;
+      if (detail && Number.isFinite(detail.widthIn) && center && Number.isFinite(center.x) && Number.isFinite(center.y)) {
+        openingCandidates.push({
+          type: detail.openingType === "window" ? "window" : "door",
+          widthIn: Math.min(Math.max(detail.widthIn, 6), 96),
+          center,
+          resolved,
+          polylines,
+          source,
+        });
         counts.mapped += 1;
       } else {
-        // Not safely resolvable on a wall → keep the outline as an annotation.
-        const main = mainPolyline(polylines);
-        if (main) {
-          records.annotations.push({
-            id: newId(resolved.id, "path"),
-            kind: "path",
-            points: main.points.map((p) => ({ x: p.x, y: p.y })),
-            closed: !!main.closed,
-            text: resolved.text ? resolved.text.slice(0, 200) : undefined,
-            source,
-          });
-          counts.annotations += 1;
-        }
+        // No usable width/position at all — never resolvable, same
+        // annotation fallback as an opening that resolves to no wall.
+        keepOpeningAsAnnotation(records, counts, note, newId, resolved, polylines, source);
         counts.mapped += 1;
-        note(resolved, `Door/window kept as annotation: no imported wall resolved nearby to cut the opening into.`);
       }
       continue;
     }
@@ -234,7 +241,57 @@ export function buildImportRecords(items, { pageIndex = 0, page = null } = {}) {
     note(resolved, `Skipped: unhandled classification '${kind}'.`);
   }
 
+  // ---- resolve wall gaps + openings, now that every wall and opening on
+  // the page is known. ----------------------------------------------------
+  const { walls: bridgedWalls, matched } = bridgeWallGaps(
+    wallCandidates,
+    openingCandidates.map((c) => ({ type: c.type, center: c.center })),
+  );
+  records.walls.push(...bridgedWalls.map(({ id, a, b }) => ({ id, a, b })));
+  bridgedWalls.forEach((w) => {
+    w.openings.forEach((op) => {
+      const c = openingCandidates[op.candidateIndex];
+      records.openings.push({
+        id: newId(c.resolved.id, "opening"),
+        wallId: w.id,
+        type: op.type,
+        offsetIn: op.offsetIn,
+        widthIn: op.widthIn,
+      });
+    });
+  });
+
+  // Any opening a gap didn't consume falls back to the flat nearest-whole-
+  // wall check (already-bridged walls give it a fair shot at genuinely
+  // unbroken walls too, not just fragments).
+  openingCandidates.forEach((c, ci) => {
+    if (matched.has(ci)) return;
+    const placed = tryPlaceOpening(records.walls, { widthIn: c.widthIn, center: c.center, openingType: c.type }, newId, c.resolved);
+    if (placed) {
+      records.openings.push(placed);
+    } else {
+      keepOpeningAsAnnotation(records, counts, note, newId, c.resolved, c.polylines, c.source);
+    }
+  });
+
   return { records, notes, counts };
+}
+
+/** Not safely resolvable on any wall → keep the door/window outline as an annotation. */
+function keepOpeningAsAnnotation(records, counts, note, newId, resolved, polylines, source) {
+  const main = mainPolyline(polylines);
+  if (main) {
+    records.annotations.push({
+      id: newId(resolved.id, "path"),
+      kind: "path",
+      points: main.points.map((p) => ({ x: p.x, y: p.y })),
+      closed: !!main.closed,
+      text: resolved.text ? resolved.text.slice(0, 200) : undefined,
+      source,
+    });
+    counts.annotations += 1;
+  }
+  note(resolved, `Door/window kept as annotation: no imported wall resolved nearby to cut the opening into.`);
 }
 
 /**
