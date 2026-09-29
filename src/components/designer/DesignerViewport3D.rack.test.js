@@ -47,3 +47,26 @@ describe("rack 3D", () => {
     expect(sleepers[0].material.color.getHexString()).toBe("94a3b8");
   });
 });
+
+describe("camera framing with a tall rack", () => {
+  it("starts outside the rack, looking at the model", async () => {
+    const { frameCameraOnModel } = await import("./DesignerViewport3D");
+    const { buildThreeScene } = await import("@/domains/roomDesigner/designerThreeModel");
+    const { createEmptyDesign, placeSymbol, addPipeRun } = await import("@/domains/roomDesigner/designerDocument");
+    const { setRackParams } = await import("@/domains/roomDesigner/rackGeometry");
+    let d = placeSymbol(createEmptyDesign("R"), "processEquipment", "pipe-rack", 300, 160, { id: "pr" });
+    d = setRackParams(d, "pr", { tiers: 5, elevationIn: 360, tierSpacingIn: 96 }); // 62 ft top of steel
+    d = addPipeRun(d, [{ x: 40, y: 120 }, { x: 560, y: 120 }]);
+    const built = buildThreeScene(d);
+    const cam = new THREE.PerspectiveCamera(50, 1.6, 1, 1e7);
+    const controls = { target: new THREE.Vector3(), update() {} };
+    expect(frameCameraOnModel(cam, controls, built)).toBe(true);
+    const rack = built.equipment.find((e) => e.id === "pr");
+    const inside =
+      Math.abs(cam.position.x - rack.x) < rack.widthIn / 2 &&
+      Math.abs(cam.position.z - rack.z) < rack.depthIn / 2 &&
+      cam.position.y < rack.heightIn;
+    expect(inside).toBe(false);
+    expect(cam.position.y).toBeGreaterThan(rack.heightIn); // above the top tier, looking down
+  });
+});
