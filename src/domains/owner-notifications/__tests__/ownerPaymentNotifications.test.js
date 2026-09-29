@@ -173,6 +173,30 @@ describe("buildOwnerNotificationEmail", () => {
     expect(email.subject).toContain("A tenant");
   });
 
+  it("includes the property in payment-event subjects and bodies when provided", () => {
+    for (const eventType of [
+      OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED,
+      OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_COMPLETED,
+      OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_FAILED,
+    ]) {
+      const email = buildOwnerNotificationEmail({
+        eventType,
+        facts: { tenantName: TENANT, amountCents: 160000, propertyLabel: "308 Paula" },
+      });
+      expect(email.subject).toContain("308 Paula");
+      expect(email.bodyText).toContain("308 Paula");
+    }
+  });
+
+  it("omits property clauses when no property label is provided", () => {
+    const email = buildOwnerNotificationEmail({
+      eventType: OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED,
+      facts: { tenantName: TENANT, amountCents: 160000 },
+    });
+    expect(email.subject).not.toContain(" — ");
+    expect(email.bodyText).not.toContain("undefined");
+  });
+
   it("rejects unknown event types", () => {
     expect(() => buildOwnerNotificationEmail({ eventType: "nope", facts: {} })).toThrow();
   });
