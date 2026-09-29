@@ -64,10 +64,18 @@ export const PLACEHOLDER_PATTERNS = [
 ];
 
 const EXTERNAL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
-const LINK_RE = /!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g;
+const INLINE_LINK_RE = /!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g;
+const REF_DEF_RE = /^[ \t]{0,3}\[([^\]]+)\]:[ \t]*<?([^\s>]+)>?(?:[ \t]+["'(][^"')]*["')])?[ \t]*$/gm;
+const REF_LINK_RE = /!?\[([^\]]*)\]\[([^\]]*)\]/g;
+const SHORTCUT_RE = /\[([^\]]+)\]/g;
+const AUTOLINK_RE = /<([^<>\s]+)>/g;
 const FENCED_BLOCK_RE = /```[\s\S]*?```/g;
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/gm;
-const STAMP_RE = /(?:last\s+updated|updated|date)\s*[:\-–]?\s*(\d{4}-\d{2}-\d{2})/i;
+// Explicit review-stamp metadata convention: the label must start the line and
+// the ISO date must end it. Bare "Date:" lines and mid-paragraph dates do not
+// count as review stamps.
+const STAMP_LINE_RE = /^[ \t]*(?:last[ \t]+updated|updated)[ \t]*[:\-–][ \t]*(\d{4})-(\d{2})-(\d{2})[ \t]*$/im;
+const ABSOLUTE_FS_PATH_RE = /^([a-zA-Z]:[\\/]|\\\\|\/)/;
 
 // ---------------------------------------------------------------------------
 // Small utilities
@@ -116,20 +124,92 @@ export function stripFencedBlocks(markdown) {
 }
 
 /**
- * Extract inline Markdown links (and images) with 1-based line numbers.
- * Links inside fenced code blocks are ignored.
+ * Extract inline, reference-style, shortcut-reference, and autolink Markdown
+ * links with 1-based line numbers. Links inside fenced code blocks are
+ * ignored. Footnote syntax ([^x]) is never treated as a link. A reference
+ * like [text][missing-id] with no definition is returned with target null and
+ * undefinedRef set — the definition is demonstrably absent.
  */
+export function extractReferenceDefinitions(markdown) {
+  const defs = new Map();
+  REF_DEF_RE.lastIndex = 0;
+  let m;
+  while ((m = REF_DEF_RE.exec(markdown)) !== null) {
+    const id = m[1].toLowerCase();
+    if (id.startsWith('^')) continue; // footnotes are not links
+    if (!defs.has(id)) defs.set(id, m[2]);
+  }
+  return defs;
+}
+
+function lineOf(text, index) {
+  return text.slice(0, index).split('\n').length;
+}
+
+function isAutolinkTarget(t) {
+  if (isExternalTarget(t)) return true; // skipped as external later
+  return t.includes('/') && (t.includes('.') || t.startsWith('.'));
+}
+
 export function extractLinks(markdown) {
+  const text = stripFencedBlocks(markdown);
+  const defs = extractReferenceDefinitions(text);
   const links = [];
-  const lines = stripFencedBlocks(markdown).split('\n');
-  lines.forEach((lineText, idx) => {
-    LINK_RE.lastIndex = 0;
-    let m;
-    while ((m = LINK_RE.exec(lineText)) !== null) {
-      links.push({ text: m[0].slice(0, 80), target: m[1], line: idx + 1 });
-    }
-  });
-  return links;
+  const consumed = []; // [start, end) ranges already claimed by a match
+  const overlaps = (s, e) => consumed.some(([a, b]) => s < b && e > a);
+  const claim = (s, e) => consumed.push([s, e]);
+  const push = (index, raw, target, undefinedRef) => {
+    links.push({
+      text: raw.slice(0, 80),
+      target,
+      line: lineOf(text, index),
+      pos: index,
+      ...(undefinedRef ? { undefinedRef } : {}),
+    });
+  };
+
+  INLINE_LINK_RE.lastIndex = 0;
+  let m;
+  while ((m = INLINE_LINK_RE.exec(text)) !== null) {
+    claim(m.index, m.index + m[0].length);
+    push(m.index, m[0], m[1]);
+  }
+
+  // Reference definitions are never links themselves.
+  REF_DEF_RE.lastIndex = 0;
+  while ((m = REF_DEF_RE.exec(text)) !== null) claim(m.index, m.index + m[0].length);
+
+  REF_LINK_RE.lastIndex = 0;
+  while ((m = REF_LINK_RE.exec(text)) !== null) {
+    if (overlaps(m.index, m.index + m[0].length)) continue;
+    const rawId = m[2] || m[1]; // [text][] collapses to id = text
+    if (rawId.startsWith('^')) continue;
+    claim(m.index, m.index + m[0].length);
+    const target = defs.get(rawId.toLowerCase());
+    push(m.index, m[0], target || null, target ? undefined : rawId);
+  }
+
+  AUTOLINK_RE.lastIndex = 0;
+  while ((m = AUTOLINK_RE.exec(text)) !== null) {
+    if (overlaps(m.index, m.index + m[0].length)) continue;
+    if (!isAutolinkTarget(m[1])) continue;
+    claim(m.index, m.index + m[0].length);
+    push(m.index, m[0], m[1]);
+  }
+
+  SHORTCUT_RE.lastIndex = 0;
+  while ((m = SHORTCUT_RE.exec(text)) !== null) {
+    if (overlaps(m.index, m.index + m[0].length)) continue;
+    const id = m[1].toLowerCase();
+    if (id.startsWith('^')) continue;
+    const target = defs.get(id);
+    if (!target) continue; // bare [brackets] in prose are not links
+    claim(m.index, m.index + m[0].length);
+    push(m.index, m[0], target);
+  }
+
+  links.sort((a, b) => a.line - b.line || a.pos - b.pos);
+  return links.map(({ pos, ...rest }) => rest);
 }
 
 export function extractHeadingIds(markdown) {
@@ -142,12 +222,23 @@ export function extractHeadingIds(markdown) {
   return ids;
 }
 
-/** First YYYY-MM-DD review stamp found in the document, or null. */
+/** First review stamp matching the explicit metadata convention, or null. */
 export function parseReviewStamp(markdown) {
-  const m = STAMP_RE.exec(markdown);
-  if (!m) return null;
-  const d = new Date(`${m[1]}T00:00:00Z`);
-  return Number.isNaN(d.getTime()) ? null : d;
+  const m = STAMP_LINE_RE.exec(markdown);
+  if (!m || !validDateParts(m[1], m[2], m[3])) return null;
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
+
+/** Reject impossible dates (JS Date normalizes e.g. 2026-02-30 to Mar 2). */
+function validDateParts(y, mo, d) {
+  const yy = Number(y);
+  const mm = Number(mo);
+  const dd = Number(d);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+  const dt = new Date(Date.UTC(yy, mm - 1, dd));
+  return (
+    dt.getUTCFullYear() === yy && dt.getUTCMonth() === mm - 1 && dt.getUTCDate() === dd
+  );
 }
 
 export function classifyAge(stampDate, asOfDate) {
@@ -366,10 +457,18 @@ function readDirNames(dir) {
   }
 }
 
+function stripQuery(t) {
+  const q = t.indexOf('?');
+  return q >= 0 ? t.slice(0, q) : t;
+}
+
 /**
  * Resolve one internal link target against the containing document's directory.
- * Returns { kind: 'resolved'|'dead'|'unresolved', note? }.
- * `readDir` is injectable for tests; defaults to reading the real directory.
+ * Returns { kind: 'resolved'|'dead'|'unresolved'|'needs-anchor-check', ... }.
+ * Query strings are stripped before filesystem resolution; the fragment is
+ * retained for anchor validation. Absolute filesystem paths are never resolved
+ * against the real FS and never echoed into reports. An unreadable directory
+ * yields 'unresolved' (not evidence of absence). `readDir` is injectable.
  */
 export function resolveLinkTarget({ docDir, target, readDir = readDirNames }) {
   const raw = target.trim();
@@ -378,24 +477,41 @@ export function resolveLinkTarget({ docDir, target, readDir = readDirNames }) {
   if (isPlaceholderTarget(raw)) {
     return { kind: 'resolved', note: 'intentional-placeholder-per-rule' };
   }
-  const hashIdx = raw.indexOf('#');
-  const pathPart = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
-  const anchor = hashIdx >= 0 ? raw.slice(hashIdx + 1) : null;
+  if (ABSOLUTE_FS_PATH_RE.test(raw)) {
+    return { kind: 'unresolved', note: 'absolute-path-not-resolved' };
+  }
+  const noQuery = stripQuery(raw);
+  const hashIdx = noQuery.indexOf('#');
+  const pathPart = hashIdx >= 0 ? noQuery.slice(0, hashIdx) : noQuery;
+  const anchor = hashIdx >= 0 && noQuery.slice(hashIdx + 1) !== ''
+    ? noQuery.slice(hashIdx + 1)
+    : null;
 
   // Pure same-document anchor: validated by the caller against heading IDs.
   if (pathPart === '') return { kind: 'needs-anchor-check', anchor };
 
   const candidate = resolve(docDir, pathPart);
-  if (existsSync(candidate) && statSync(candidate).isFile()) {
-    return { kind: 'resolved' };
+  if (existsSync(candidate)) {
+    try {
+      const st = statSync(candidate);
+      if (st.isFile()) {
+        return { kind: 'resolved', anchor, resolvedAbsPath: candidate };
+      }
+      if (st.isDirectory()) {
+        return { kind: 'resolved', anchor, note: 'directory-link' };
+      }
+    } catch {
+      return { kind: 'unresolved', note: 'target-unstatable' };
+    }
   }
   // Case-insensitive fallback within the target directory.
   const names = readDir(dirname(candidate));
-  if (names === null) return { kind: 'dead', note: 'directory-unreadable' };
+  if (names === null) return { kind: 'unresolved', note: 'directory-unreadable' };
   const base = candidate.split(sep).pop().toLowerCase();
   const matches = names.filter((n) => n.toLowerCase() === base);
   if (matches.length === 1) {
-    return { kind: 'resolved', note: 'case-variant-match' };
+    const p = join(dirname(candidate), matches[0]);
+    return { kind: 'resolved', anchor, resolvedAbsPath: p, note: 'case-variant-match' };
   }
   if (matches.length > 1) {
     return { kind: 'unresolved', note: 'ambiguous-case-variants' };
@@ -403,11 +519,72 @@ export function resolveLinkTarget({ docDir, target, readDir = readDirNames }) {
   return { kind: 'dead', note: 'target-absent' };
 }
 
+function readFileText(abs) {
+  try {
+    return readFileSync(abs, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Report-safe link target: absolute filesystem paths are never echoed —
+ * they are replaced by a redacted category. Everything else is sanitized
+ * (query/fragment/credentials stripped).
+ */
+export function reportableTarget(target) {
+  const t = String(target == null ? '' : target).trim();
+  if (ABSOLUTE_FS_PATH_RE.test(t)) return '[redacted:absolute-path]';
+  return sanitizeTarget(t);
+}
+
+function safeSlug(anchor) {
+  try {
+    return slugifyHeading(decodeURIComponent(anchor));
+  } catch {
+    return slugifyHeading(anchor);
+  }
+}
+
+function staleLink(docRepoPath, link, reason) {
+  return {
+    check: 'C3.link',
+    target: docRepoPath,
+    state: STATES.STALE,
+    evidence: {
+      line: link.line,
+      linkTarget: reportableTarget(link.target),
+      reason,
+    },
+  };
+}
+
+function pendingLink(docRepoPath, link, reason) {
+  return {
+    check: 'C3.link',
+    target: docRepoPath,
+    state: STATES.REVIEW_PENDING,
+    evidence: {
+      line: link.line,
+      linkTarget: reportableTarget(link.target),
+      reason,
+    },
+  };
+}
+
 /**
  * C3 — internal link resolution for one document. Emits one result per dead
- * or unresolved link, plus a per-document summary result.
+ * or unresolved link, plus a per-document summary result. The summary state
+ * follows finding severity: STALE if any STALE finding, else REVIEW_PENDING
+ * if any REVIEW_PENDING finding, else CURRENT.
  */
-export function checkDocLinks({ docRepoPath, markdown, docDir, readDir }) {
+export function checkDocLinks({
+  docRepoPath,
+  markdown,
+  docDir,
+  readDir = readDirNames,
+  readFile = readFileText,
+}) {
   const results = [];
   const headingIds = extractHeadingIds(markdown);
   const links = extractLinks(markdown);
@@ -415,24 +592,17 @@ export function checkDocLinks({ docRepoPath, markdown, docDir, readDir }) {
   let external = 0;
   let placeholders = 0;
 
-  const sorted = [...links].sort((a, b) => a.line - b.line || (a.target < b.target ? -1 : 1));
-  for (const link of sorted) {
+  for (const link of links) {
+    if (link.undefinedRef) {
+      results.push(staleLink(docRepoPath, link, 'reference-undefined'));
+      continue;
+    }
     const outcome = resolveLinkTarget({ docDir, target: link.target, readDir });
     if (outcome.kind === 'needs-anchor-check') {
-      const slug = slugifyHeading(decodeURIComponent(outcome.anchor || ''));
-      if (headingIds.has(slug)) {
+      if (headingIds.has(safeSlug(outcome.anchor || ''))) {
         resolved += 1;
       } else {
-        results.push({
-          check: 'C3.link',
-          target: docRepoPath,
-          state: STATES.STALE,
-          evidence: {
-            line: link.line,
-            linkTarget: sanitizeTarget(link.target),
-            reason: 'anchor-absent',
-          },
-        });
+        results.push(staleLink(docRepoPath, link, 'anchor-absent'));
       }
       continue;
     }
@@ -444,49 +614,51 @@ export function checkDocLinks({ docRepoPath, markdown, docDir, readDir }) {
       placeholders += 1;
       continue;
     }
+    if (outcome.kind === 'resolved' && outcome.anchor) {
+      if (!outcome.resolvedAbsPath) {
+        results.push(pendingLink(docRepoPath, link, 'directory-anchor-unverifiable'));
+        continue;
+      }
+      const content = readFile(outcome.resolvedAbsPath);
+      if (content === null) {
+        results.push(pendingLink(docRepoPath, link, 'target-unreadable'));
+        continue;
+      }
+      if (extractHeadingIds(content).has(safeSlug(outcome.anchor))) {
+        resolved += 1;
+      } else {
+        results.push(staleLink(docRepoPath, link, 'anchor-absent'));
+      }
+      continue;
+    }
     if (outcome.kind === 'resolved') {
       resolved += 1;
       continue;
     }
     if (outcome.kind === 'unresolved') {
-      results.push({
-        check: 'C3.link',
-        target: docRepoPath,
-        state: STATES.REVIEW_PENDING,
-        evidence: {
-          line: link.line,
-          linkTarget: sanitizeTarget(link.target),
-          reason: outcome.note || 'ambiguous',
-        },
-      });
+      results.push(pendingLink(docRepoPath, link, outcome.note || 'ambiguous'));
       continue;
     }
-    results.push({
-      check: 'C3.link',
-      target: docRepoPath,
-      state: STATES.STALE,
-      evidence: {
-        line: link.line,
-        linkTarget: sanitizeTarget(link.target),
-        reason: outcome.note || 'target-absent',
-      },
-    });
+    results.push(staleLink(docRepoPath, link, outcome.note || 'target-absent'));
   }
 
-  const hasFindings = results.length > 0;
+  const found = new Set(results.map((r) => r.state));
+  const summaryState = found.has(STATES.STALE)
+    ? STATES.STALE
+    : found.has(STATES.REVIEW_PENDING)
+      ? STATES.REVIEW_PENDING
+      : STATES.CURRENT;
   results.push({
     check: 'C3.links-summary',
     target: docRepoPath,
-    state: hasFindings ? STATES.STALE : STATES.CURRENT,
+    state: summaryState,
     evidence: {
       linksExtracted: links.length,
       resolved,
       externalSkipped: external,
       intentionalPlaceholders: placeholders,
       findings: results.length,
-      note: hasFindings
-        ? 'see per-link findings above'
-        : 'all internal links resolved',
+      note: results.length ? 'see per-link findings above' : 'all internal links resolved',
     },
   });
   return results;
@@ -550,8 +722,9 @@ export function runDriftCheck({ root, asOf, git = defaultGit(root), readDir = re
   return { report, summary: formatMarkdownSummary(report) };
 }
 
-function stateCell(state) {
-  return state;
+/** Escape a value for a Markdown table cell: pipes and newlines would corrupt the table. */
+export function mdCell(value) {
+  return String(value).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
 }
 
 export function formatMarkdownSummary(report) {
@@ -573,7 +746,7 @@ export function formatMarkdownSummary(report) {
   lines.push('| --- | --- | --- | --- |');
   for (const r of report.results) {
     const ev = JSON.stringify(r.evidence);
-    lines.push(`| ${r.check} | ${r.target} | ${stateCell(r.state)} | ${ev} |`);
+    lines.push(`| ${mdCell(r.check)} | ${mdCell(r.target)} | ${mdCell(r.state)} | ${mdCell(ev)} |`);
   }
   lines.push('');
   lines.push(
@@ -596,7 +769,8 @@ function parseArgs(argv) {
     else if (a === '--out') args.out = argv[++i] || null;
     else if (a === '--md-out') args.mdOut = argv[++i] || null;
     else if (a === '--help' || a === '-h') args.help = true;
-    else throw new Error(`unknown argument: ${a}`);
+    // Never echo the raw value: an unknown argument could carry a secret.
+    else throw new Error('unknown argument (value withheld)');
   }
   return args;
 }

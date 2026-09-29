@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, afterEach } from 'vitest';
 
 import {
@@ -22,14 +23,21 @@ import {
   defaultGit,
   extractHeadingIds,
   extractLinks,
+  extractReferenceDefinitions,
   formatMarkdownSummary,
   isPlaceholderTarget,
+  mdCell,
   parseReviewStamp,
+  reportableTarget,
   resolveLinkTarget,
   runDriftCheck,
   sanitizeTarget,
   slugifyHeading,
 } from '../checkDocDrift.mjs';
+
+// Portable: derive the CLI script path from this test file's location, so the
+// CLI tests run on CI, other developer machines, and Jason's machines.
+const SCRIPT = fileURLToPath(new URL('../checkDocDrift.mjs', import.meta.url));
 
 const tmpRoots = [];
 function makeRoot() {
@@ -148,6 +156,14 @@ describe('review stamps', () => {
   it('returns null when no stamp exists', () => {
     expect(parseReviewStamp('# T\n\nNo stamp here.\n')).toBeNull();
   });
+  it('ignores mid-paragraph dates (explicit convention only)', () => {
+    expect(parseReviewStamp('# T\n\nThe Date: 2020-01-01 release was big.\n')).toBeNull();
+    expect(parseReviewStamp('# T\n\nUpdated sometime in 2020.\n')).toBeNull();
+  });
+  it('rejects impossible dates', () => {
+    expect(parseReviewStamp('Last Updated: 2026-13-45\n')).toBeNull();
+    expect(parseReviewStamp('Last Updated: 2026-02-30\n')).toBeNull();
+  });
   it('old stamps yield REVIEW_PENDING, never STALE', () => {
     const old = new Date('2020-01-01T00:00:00Z');
     expect(classifyAge(old, AS_OF)).toBe(STATES.REVIEW_PENDING);
@@ -221,6 +237,150 @@ describe('C2 live index', () => {
   });
 });
 
+describe('reference-style links', () => {
+  it('resolves full, collapsed, and shortcut references', () => {
+    const md = '# T\n\nSee [a][id1], [b][], and [c].\n\n[id1]: b.md\n[b]: b.md\n[c]: b.md\n';
+    expect(extractLinks(md).map((l) => l.target)).toEqual(['b.md', 'b.md', 'b.md']);
+  });
+  it('parses reference definitions', () => {
+    const defs = extractReferenceDefinitions('[a]: ./x.md\n[^1]: footnote\n');
+    expect(defs.get('a')).toBe('./x.md');
+    expect(defs.has('^1')).toBe(false);
+  });
+  it('flags undefined references as STALE', () => {
+    const root = makeRoot();
+    const rs = checkDocLinks({
+      docRepoPath: 'a.md',
+      markdown: '# T\n\nSee [x][nope].\n',
+      docDir: root,
+    });
+    const stale = rs.filter((r) => r.check === 'C3.link');
+    expect(stale).toHaveLength(1);
+    expect(stale[0].evidence.reason).toBe('reference-undefined');
+  });
+  it('flags broken reference targets as STALE', () => {
+    const root = makeRoot();
+    const rs = checkDocLinks({
+      docRepoPath: 'a.md',
+      markdown: '# T\n\nSee [x][gone].\n\n[gone]: ghost.md\n',
+      docDir: root,
+    });
+    const stale = rs.filter((r) => r.check === 'C3.link' && r.state === 'STALE');
+    expect(stale).toHaveLength(1);
+    expect(stale[0].evidence.linkTarget).toBe('ghost.md');
+  });
+  it('ignores footnote syntax', () => {
+    expect(extractLinks('# T\n\nNote[^1].\n\n[^1]: a footnote\n')).toHaveLength(0);
+  });
+  it('extracts autolinks to internal paths', () => {
+    const links = extractLinks('# T\n\nSee <./b.md> and <https://example.com>.\n');
+    expect(links.map((l) => l.target)).toEqual(['./b.md', 'https://example.com']);
+  });
+});
+
+describe('cross-document anchors', () => {
+  it('validates anchors against the target document headings', () => {
+    const root = makeRoot();
+    writeDoc(root, 'docs/b.md', '# Hello World\n');
+    const good = checkDocLinks({
+      docRepoPath: 'docs/a.md',
+      markdown: '# A\n\nSee [x](b.md#hello-world).\n',
+      docDir: join(root, 'docs'),
+    });
+    expect(good.filter((r) => r.check === 'C3.link')).toHaveLength(0);
+    const bad = checkDocLinks({
+      docRepoPath: 'docs/a.md',
+      markdown: '# A\n\nSee [x](b.md#nope).\n',
+      docDir: join(root, 'docs'),
+    });
+    const stale = bad.filter((r) => r.check === 'C3.link');
+    expect(stale).toHaveLength(1);
+    expect(stale[0].evidence.reason).toBe('anchor-absent');
+  });
+  it('marks unreadable targets REVIEW_PENDING', () => {
+    const root = makeRoot();
+    writeDoc(root, 'docs/b.md', '# B\n');
+    const rs = checkDocLinks({
+      docRepoPath: 'docs/a.md',
+      markdown: '# A\n\nSee [x](b.md#sec).\n',
+      docDir: join(root, 'docs'),
+      readFile: () => null,
+    });
+    const findings = rs.filter((r) => r.check === 'C3.link');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].state).toBe(STATES.REVIEW_PENDING);
+    expect(findings[0].evidence.reason).toBe('target-unreadable');
+  });
+});
+
+describe('link resolution edge cases', () => {
+  it('strips query strings before filesystem resolution', () => {
+    const root = makeRoot();
+    writeDoc(root, 'docs/guide.md', '# G\n');
+    const rs = checkDocLinks({
+      docRepoPath: 'docs/a.md',
+      markdown: '# A\n\nSee [g](guide.md?view=1).\n',
+      docDir: join(root, 'docs'),
+    });
+    expect(rs.filter((r) => r.check === 'C3.link')).toHaveLength(0);
+    expect(rs.find((r) => r.check === 'C3.links-summary').state).toBe(STATES.CURRENT);
+  });
+  it('redacts absolute paths instead of resolving or echoing them', () => {
+    const root = makeRoot();
+    const rs = checkDocLinks({
+      docRepoPath: 'a.md',
+      markdown: '# A\n\nSee [x](/etc/passwd).\n',
+      docDir: root,
+    });
+    const findings = rs.filter((r) => r.check === 'C3.link');
+    expect(findings).toHaveLength(1);
+    expect(findings[0].state).toBe(STATES.REVIEW_PENDING);
+    expect(findings[0].evidence.linkTarget).toBe('[redacted:absolute-path]');
+    expect(JSON.stringify(rs)).not.toContain('/etc/passwd');
+  });
+  it('unreadable directories yield REVIEW_PENDING, not STALE', () => {
+    const r = resolveLinkTarget({
+      docDir: '/nonexistent-dir-xyz',
+      target: 'ghost.md',
+      readDir: () => null,
+    });
+    expect(r.kind).toBe('unresolved');
+    expect(r.note).toBe('directory-unreadable');
+  });
+  it('REVIEW_PENDING-only findings yield a REVIEW_PENDING summary, not STALE', () => {
+    const root = makeRoot();
+    const rs = checkDocLinks({
+      docRepoPath: 'a.md',
+      markdown: '# A\n\nSee [x](Guide.MD).\n',
+      docDir: root,
+      readDir: () => ['guide.md', 'GUIDE.md'],
+    });
+    expect(rs.find((r) => r.check === 'C3.links-summary').state).toBe(STATES.REVIEW_PENDING);
+  });
+});
+
+describe('report sanitization', () => {
+  it('mdCell escapes pipes and newlines', () => {
+    expect(mdCell('a|b\nc')).toBe('a\\|b c');
+  });
+  it('formatMarkdownSummary keeps tables intact on hostile values', () => {
+    const report = {
+      asOf: '2026-09-28T00:00:00.000Z',
+      repoHead: 'abc',
+      results: [
+        { check: 'C3.link', target: 'a|b.md', state: 'STALE', evidence: { note: 'x\ny' } },
+      ],
+    };
+    const row = formatMarkdownSummary(report)
+      .split('\n')
+      .find((l) => l.startsWith('| C3'));
+    expect(row).toBe('| C3.link | a\\|b.md | STALE | {"note":"x\\ny"} |');
+  });
+  it('reportableTarget redacts absolute paths', () => {
+    expect(reportableTarget('/etc/passwd')).toBe('[redacted:absolute-path]');
+    expect(reportableTarget('docs/a.md')).toBe('docs/a.md');
+  });
+});
 describe('C3 link checks', () => {
   it('STALE on a broken link with sanitized target and line evidence', () => {
     const root = makeRoot();
@@ -333,17 +493,23 @@ describe('defaultGit integration', () => {
 });
 
 describe('CLI end to end', () => {
-  function cliRoot({ brokenLink = false } = {}) {
+  function cliRoot({ brokenLink = false, ambiguousLink = false } = {}) {
     const root = makeRoot();
     execFileSync('git', ['init', '-q', root]);
     execFileSync('git', ['-C', root, 'config', 'user.email', 't@t.t']);
     execFileSync('git', ['-C', root, 'config', 'user.name', 't']);
     writeDoc(root, 'docs/b.md', '# B\n');
-    writeDoc(
-      root,
-      'docs/a.md',
-      brokenLink ? '# A\n\n[ghost](ghost.md).\n' : '# A\n\nSee [b](b.md).\n',
-    );
+    let aMd;
+    if (brokenLink) {
+      aMd = '# A\n\n[ghost](ghost.md).\n';
+    } else if (ambiguousLink) {
+      writeDoc(root, 'docs/guide.md', '# G\n');
+      writeDoc(root, 'docs/GUIDE.md', '# G2\n');
+      aMd = '# A\n\nSee [x](Guide.MD).\n';
+    } else {
+      aMd = '# A\n\nSee [b](b.md).\n';
+    }
+    writeDoc(root, 'docs/a.md', aMd);
     writeDoc(root, 'engineering-brain/index-manifest.json', JSON.stringify({ commit_sha: 'pending' }));
     execFileSync('git', ['-C', root, 'add', '.']);
     execFileSync('git', ['-C', root, 'commit', '-qm', 'one']);
@@ -354,64 +520,54 @@ describe('CLI end to end', () => {
     );
     return root;
   }
-  function runCli(root, extra = []) {
+  function runCliRaw(args) {
     try {
-      const out = execFileSync(
-        'node',
-        [
-          '/home/hatch/workspace/doc-drift-phase1/scripts/doc-drift/checkDocDrift.mjs',
-          '--root',
-          root,
-          '--as-of',
-          '2026-09-28T12:00:00Z',
-          ...extra,
-        ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      );
-      return { code: 0, stdout: out };
+      const stdout = execFileSync('node', [SCRIPT, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { code: 0, stdout, stderr: '' };
     } catch (err) {
-      return { code: err.status, stdout: err.stdout };
+      return {
+        code: err.status,
+        stdout: String(err.stdout || ''),
+        stderr: String(err.stderr || ''),
+      };
     }
   }
+  const asOfArgs = (root) => ['--root', root, '--as-of', '2026-09-28T12:00:00Z'];
   it('exits 0 with deterministic stdout when clean', () => {
     const root = cliRoot();
-    const first = runCli(root);
-    const second = runCli(root);
+    const first = runCliRaw(asOfArgs(root));
+    const second = runCliRaw(asOfArgs(root));
     expect(first.code).toBe(0);
     expect(first.stdout).toBe(second.stdout);
     expect(JSON.parse(first.stdout).results.length).toBeGreaterThan(0);
   });
   it('exits 1 when a STALE link exists', () => {
     const root = cliRoot({ brokenLink: true });
-    const r = runCli(root);
+    const r = runCliRaw(asOfArgs(root));
     expect(r.code).toBe(1);
     const report = JSON.parse(r.stdout);
     const stale = report.results.filter((x) => x.state === 'STALE');
     expect(stale.length).toBeGreaterThan(0);
     expect(stale[0].evidence.linkTarget).toBe('ghost.md');
   });
-  it('exits 2 on a bad --as-of', () => {
-    const root = cliRoot();
-    const r = runCli(root, []);
-    const bad = (() => {
-      try {
-        execFileSync(
-          'node',
-          [
-            '/home/hatch/workspace/doc-drift-phase1/scripts/doc-drift/checkDocDrift.mjs',
-            '--root',
-            root,
-            '--as-of',
-            'not-a-date',
-          ],
-          { encoding: 'utf8' },
-        );
-        return 0;
-      } catch (err) {
-        return err.status;
-      }
-    })();
-    expect(bad).toBe(2);
+  it('exits 0 when findings are REVIEW_PENDING-only', () => {
+    const root = cliRoot({ ambiguousLink: true });
+    const r = runCliRaw(asOfArgs(root));
     expect(r.code).toBe(0);
+    const report = JSON.parse(r.stdout);
+    expect(report.results.some((x) => x.state === 'STALE')).toBe(false);
+    expect(report.results.some((x) => x.state === 'REVIEW_PENDING')).toBe(true);
+  });
+  it('exits 2 on a bad --as-of', () => {
+    const r = runCliRaw(['--root', cliRoot(), '--as-of', 'not-a-date']);
+    expect(r.code).toBe(2);
+  });
+  it('does not echo unknown argument values', () => {
+    const r = runCliRaw(['--bogus-flag', 'supersecret123']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).not.toContain('supersecret123');
   });
 });
