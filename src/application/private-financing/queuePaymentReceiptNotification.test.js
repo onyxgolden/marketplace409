@@ -23,10 +23,12 @@ function chain(result) {
   return node;
 }
 
-function mockDb({ borrowerEmail = "borrower@example.com" } = {}) {
+function mockDb({ borrowerEmail = "borrower@example.com", payment = PAYMENT } = {}) {
   const deliveries = chain({ error: null });
   const db = {
     from: vi.fn((table) => {
+      if (table === "private_financing_online_payments")
+        return chain({ data: payment, error: null });
       if (table === "private_financing_borrowers")
         return chain({ data: borrowerEmail ? { email: borrowerEmail } : null, error: null });
       if (table === "private_financing_payment_receipt_deliveries") return deliveries;
@@ -35,6 +37,8 @@ function mockDb({ borrowerEmail = "borrower@example.com" } = {}) {
   };
   return { db, deliveries };
 }
+
+const PAYMENT_REF = { paymentId: PAYMENT.id, providerMode: "test" };
 
 describe("buildReceiptDeliveryRow", () => {
   const base = {
@@ -92,7 +96,7 @@ describe("buildReceiptDeliveryRow", () => {
 describe("queuePaymentReceiptNotificationForWebhookEvent", () => {
   it("queues owner and borrower rows with deterministic ids", async () => {
     const { db, deliveries } = mockDb();
-    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT, {
+    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT_REF, {
       sendingEnabled: true,
       allowedOwnerIds: ["owner_fixture"],
       allowedBorrowerIds: ["pf_brw_fixture"],
@@ -105,13 +109,26 @@ describe("queuePaymentReceiptNotificationForWebhookEvent", () => {
     for (const row of rows) {
       expect(deliveries.upsert).toHaveBeenCalledWith(row, {
         onConflict: "owner_id,payment_id,recipient_type",
+        ignoreDuplicates: true,
       });
     }
   });
 
+  it("skips without throwing when the payment lookup finds no row", async () => {
+    const { db, deliveries } = mockDb({ payment: null });
+    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT_REF, {
+      sendingEnabled: true,
+      allowedOwnerIds: ["owner_fixture"],
+      allowedBorrowerIds: ["pf_brw_fixture"],
+    });
+    expect(result.queued).toBe(0);
+    expect(result.skipped).toBe("payment_not_found");
+    expect(deliveries.upsert).not.toHaveBeenCalled();
+  });
+
   it("skips both rows when the borrower is not on the receipt allowlist", async () => {
     const { db, deliveries } = mockDb();
-    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT, {
+    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT_REF, {
       sendingEnabled: true,
       allowedOwnerIds: ["owner_fixture"],
       allowedBorrowerIds: ["pf_brw_someone_else"],
@@ -128,7 +145,7 @@ describe("queuePaymentReceiptNotificationForWebhookEvent", () => {
   it("fails closed with no borrower allowlist at all", async () => {
     delete process.env.PF_RECEIPT_BORROWER_IDS;
     const { db, deliveries } = mockDb();
-    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT, {
+    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT_REF, {
       sendingEnabled: true,
       allowedOwnerIds: ["owner_fixture"],
     });
@@ -140,7 +157,7 @@ describe("queuePaymentReceiptNotificationForWebhookEvent", () => {
 
   it("marks the borrower row skipped when the borrower has no email", async () => {
     const { db, deliveries } = mockDb({ borrowerEmail: null });
-    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT, {
+    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT_REF, {
       sendingEnabled: true,
       allowedOwnerIds: ["owner_fixture"],
       allowedBorrowerIds: ["pf_brw_fixture"],
@@ -158,7 +175,7 @@ describe("queuePaymentReceiptNotificationForWebhookEvent", () => {
         throw new Error("db down");
       }),
     };
-    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT, {
+    const result = await queuePaymentReceiptNotificationForWebhookEvent(db, PAYMENT_REF, {
       sendingEnabled: true,
       allowedOwnerIds: ["owner_fixture"],
       allowedBorrowerIds: ["pf_brw_fixture"],

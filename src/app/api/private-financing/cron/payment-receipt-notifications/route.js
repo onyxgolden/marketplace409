@@ -120,13 +120,24 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
         ownerAllowed,
         borrowerAllowed,
       });
-      if (row.status === "skipped_disabled") skippedAtDetection += 1;
-      else reconciled += 1;
+      const wouldQueue = row.status === "queued";
       if (!dryRun) {
-        const { error } = await db.from("private_financing_payment_receipt_deliveries").upsert(row, {
-          onConflict: "owner_id,payment_id,recipient_type",
-        });
+        const { data, error } = await db
+          .from("private_financing_payment_receipt_deliveries")
+          .upsert(row, { onConflict: "owner_id,payment_id,recipient_type", ignoreDuplicates: true })
+          .select("id");
         if (error) throw error;
+        // Only the run that actually inserted the row counts it — a no-op
+        // upsert means another writer (webhook, overlapping run, or a send
+        // that already flipped the row) recorded it first, and first-write-wins
+        // leaves that row untouched.
+        if ((data || []).length === 1) {
+          if (wouldQueue) reconciled += 1;
+          else skippedAtDetection += 1;
+        }
+      } else {
+        if (wouldQueue) reconciled += 1;
+        else skippedAtDetection += 1;
       }
     }
   }

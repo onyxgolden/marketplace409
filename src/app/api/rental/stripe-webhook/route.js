@@ -247,16 +247,14 @@ export async function POST(request) {
         await queueOwnerPaymentNotificationForWebhookEvent(supabase, normalized, provider.mode);
       }
       // Personal-loan payment receipts: queue AFTER the projection succeeds,
-      // only for succeeded borrower payments. Same never-throws guarantee as
-      // above — the helper logs and swallows its own failures.
+      // only for succeeded borrower payments. The helper owns the payment
+      // lookup inside its never-throws error handling, so a lookup failure
+      // can never break webhook processing.
       if (processedPrivateFinancing && normalized.eventType === "payment_intent.succeeded" && normalized.paymentId?.startsWith("pf_payment_")) {
-        const { data: succeededPayment } = await supabase.from("private_financing_online_payments")
-          .select("owner_id,id,account_id,borrower_id,amount_cents")
-          .eq("provider", "stripe").eq("provider_mode", provider.mode).eq("id", normalized.paymentId)
-          .maybeSingle();
-        if (succeededPayment) {
-          await queuePaymentReceiptNotificationForWebhookEvent(supabase, succeededPayment);
-        }
+        await queuePaymentReceiptNotificationForWebhookEvent(supabase, {
+          paymentId: normalized.paymentId,
+          providerMode: provider.mode,
+        });
       }
       if (processedPrivateFinancing) {
         const completed = await supabase.from("payment_webhook_events").update({ status: "processed", processed_at: new Date().toISOString(), failure_message: null }).eq("id", eventRowId);
