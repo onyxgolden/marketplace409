@@ -31,19 +31,60 @@ async function resolveDisplayNames(db, table, ids, nameColumn) {
   return ids.map((id) => ({ id, displayName: byId.get(id) ?? null }));
 }
 
-async function pendingDeliveryGroups(db, table, { columns, isEligible, describeExcluded, maxAttempts, staleClaimMinutes }) {
-  const { data, error } = await db
+const PREFLIGHT_PAGE_SIZE = 500;
+const PREFLIGHT_MAX_PAGES = 20;
+
+// Bounded pagination for the eligibility census. PostgREST silently caps a
+// plain .select(), so page deterministically over (owner_id, id) and verify
+// the fetched rows against an exact count. A truncated or drifted census is
+// never presented as complete — the caller surfaces complete:false instead.
+export async function fetchPendingDeliveryRows(
+  db,
+  table,
+  columns,
+  { pageSize = PREFLIGHT_PAGE_SIZE, maxPages = PREFLIGHT_MAX_PAGES } = {},
+) {
+  const selectColumns = `status,attempt_count,last_attempted_at,${columns}`;
+  const { count, error: countError } = await db
     .from(table)
-    .select(`status,attempt_count,last_attempted_at,${columns}`)
+    .select("id", { count: "exact", head: true })
     .in("status", ["queued", "failed", "sending"]);
-  if (error) throw error;
+  if (countError) throw countError;
+
+  const rows = [];
+  let complete = true;
+  for (let page = 0; ; page += 1) {
+    const from = page * pageSize;
+    const { data, error } = await db
+      .from(table)
+      .select(selectColumns)
+      .in("status", ["queued", "failed", "sending"])
+      .order("owner_id", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+    if (page + 1 >= maxPages) {
+      complete = false; // bound hit with a full page — more rows may exist
+      break;
+    }
+  }
+  if (complete && count != null && rows.length !== count) complete = false; // drifted mid-flight
+  return { rows, complete };
+}
+
+async function pendingDeliveryGroups(db, table, { columns, isEligible, describeExcluded, maxAttempts, staleClaimMinutes }) {
+  const { rows, complete } = await fetchPendingDeliveryRows(db, table, columns);
   const thresholds = { maxAttempts, staleClaimMinutes };
   const groups = {
     eligible: { queued: 0, retryable: 0 },
     excluded: { queued: 0, retryable: 0, recipientIds: [] },
+    complete,
   };
   const excludedIds = new Set();
-  for (const row of data || []) {
+  for (const row of rows) {
     const bucket = classifyPendingRow(row, thresholds);
     if (!bucket) continue;
     if (isEligible(row)) {
@@ -83,18 +124,24 @@ export async function GET(request) {
       resolveDisplayNames(db, "private_financing_borrowers", pfConfig.allowedBorrowerIds, "full_name"),
       resolveDisplayNames(db, "rental_tenants", rentalConfig.allowedTenantIds, "display_name"),
       pendingDeliveryGroups(db, "private_financing_payment_receipt_deliveries", {
-        columns: "borrower_id",
+        columns: "owner_id,borrower_id",
         maxAttempts: pfConfig.maxAttempts,
         staleClaimMinutes: pfConfig.staleClaimMinutes,
-        isEligible: (row) => pfConfig.allowedBorrowerIds.includes(row.borrower_id),
-        describeExcluded: (row) => `borrower:${row.borrower_id ?? "unknown"}`,
+        // Both delivery paths gate on the owner allowlist as well as the
+        // borrower/tenant allowlist — the census must apply the same gates.
+        isEligible: (row) =>
+          pfConfig.allowedOwnerIds.includes(row.owner_id) &&
+          pfConfig.allowedBorrowerIds.includes(row.borrower_id),
+        describeExcluded: (row) => `owner:${row.owner_id ?? "unknown"} borrower:${row.borrower_id ?? "unknown"}`,
       }),
       pendingDeliveryGroups(db, "rental_tenant_receipt_deliveries", {
-        columns: "tenant_id",
+        columns: "owner_id,tenant_id",
         maxAttempts: rentalConfig.maxAttempts,
         staleClaimMinutes: rentalConfig.staleClaimMinutes,
-        isEligible: (row) => rentalConfig.allowedTenantIds.includes(row.tenant_id),
-        describeExcluded: (row) => `tenant:${row.tenant_id ?? "unknown"}`,
+        isEligible: (row) =>
+          rentalConfig.allowedOwnerIds.includes(row.owner_id) &&
+          rentalConfig.allowedTenantIds.includes(row.tenant_id),
+        describeExcluded: (row) => `owner:${row.owner_id ?? "unknown"} tenant:${row.tenant_id ?? "unknown"}`,
       }),
       pendingDeliveryGroups(db, "rental_owner_notifications", {
         columns: "owner_id,tenant_id",
