@@ -6,7 +6,7 @@ import { addOpening, addWall, createEmptyDesign, resetDesignerIds, validateDesig
 import { createHomeProject, resetHomeProjectIds } from "../../homeProject";
 import { planToDxf } from "../../homeDxfExport";
 import { wallLength } from "../../designerGeometry";
-import { parseDxf } from "./dxfParser";
+import { hasEofMarker, parseDxf } from "./dxfParser";
 import { bulgePolyline, collectGeometry } from "./dxfGeometry";
 import { suggestRole } from "./dxfLayers";
 import { reconstructWalls } from "./dxfWalls";
@@ -68,6 +68,17 @@ describe("parser", () => {
     const whole = dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] });
     const cut = whole.slice(0, whole.lastIndexOf("EOF")); // entity + ENDSEC intact, EOF missing
     expect(parseDxf(cut).truncated).toBe(true);
+  });
+
+  it("hasEofMarker tolerates trailing whitespace transport/export adds after a genuinely complete file", () => {
+    expect(hasEofMarker("0\nSECTION\n0\nEOF")).toBe(true); // no trailing newline at all
+    expect(hasEofMarker("0\nSECTION\n0\r\nEOF\r\n")).toBe(true); // CRLF
+    expect(hasEofMarker("0\nSECTION\n0\nEOF\n\n  \t \n")).toBe(true); // blank line + spaces/tabs after
+    expect(hasEofMarker(`0\nSECTION\n0\nEOF${"\n".repeat(100)}`)).toBe(true); // >64 chars of trailing whitespace
+  });
+
+  it("hasEofMarker still reports false when EOF is genuinely missing, even with trailing whitespace", () => {
+    expect(hasEofMarker("0\nSECTION\n0\nENDSEC\n\n  \n")).toBe(false);
   });
 
   it("surfaces a truncated file as a note readDxfDrawing reports, not silently", () => {
@@ -196,6 +207,20 @@ describe("prepareDxfImport", () => {
       ],
     });
   }
+
+  it("keeps a truncated-file warning even when every layer is set to Ignore", () => {
+    // The warning is about the FILE, not which layers are selected — it
+    // must survive the early return prepareDxfImport takes when nothing is
+    // selected to import, not just the fuller path other tests exercise.
+    const whole = dxf({ layers: [["A-WALL"]], entities: [line("A-WALL", 0, 0, 10, 0)] });
+    const cut = whole.slice(0, whole.lastIndexOf("EOF")); // truncated: EOF missing
+    const drawing = readDxfDrawing(cut);
+    const prep = prepareDxfImport(drawing, { roles: { "A-WALL": "ignore" } });
+    expect(prep.sizeIn).toEqual({ w: 0, h: 0 }); // confirms the early-return path was taken
+    const text = prep.issues.map((i) => i.message).join(" ");
+    expect(text).toMatch(/truncat|EOF/i);
+    expect(text).toMatch(/Ignore/);
+  });
 
   it("builds walls, a door cut into its gap, a window on its wall, a named room, and annotations", () => {
     const drawing = readDxfDrawing(plan());

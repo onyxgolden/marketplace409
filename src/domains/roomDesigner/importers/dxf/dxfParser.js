@@ -85,12 +85,19 @@ export function decodeDxfInput(input) {
  * file format's own end-of-file marker, not a guess about content. A file
  * missing it was cut off before writing finished, and anything read from
  * the truncated tail (an unclosed entity, half a group-code pair) should
- * be treated as suspect. Checked against the last ~64 chars: comfortably
- * more than "0\nEOF\n" needs, with no risk of matching an unrelated "0" far
- * inside the real content.
+ * be treated as suspect.
+ *
+ * Trailing whitespace is trimmed FIRST: text transport or export can append
+ * a blank line or trailing spaces after a structurally complete file (e.g.
+ * "0\r\nEOF\r\n   "), and matching before trimming both misses that valid
+ * EOF (whitespace after it isn't CR/LF) and — for a long enough trailing
+ * whitespace run — pushes the real marker out of the bounded tail entirely.
+ * Only after trimming is the last ~64 chars checked: comfortably more than
+ * "0\nEOF" needs, with no risk of matching an unrelated "0" far inside the
+ * real content.
  */
 export function hasEofMarker(text) {
-  return /0[ \t]*[\r\n]+[ \t]*EOF[ \t]*[\r\n]*$/.test(text.slice(-64));
+  return /0[ \t]*[\r\n]+[ \t]*EOF$/.test(text.replace(/\s+$/, "").slice(-64));
 }
 
 /** Decode commonly used fields of an entity from its group pairs. */

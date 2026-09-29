@@ -134,7 +134,17 @@ export function prepareDxfImport(drawing, { unit, roles = {} } = {}) {
   const activeTexts = drawing.geometry.texts.filter((t) => roleOf(t.layer) !== "ignore");
   const allPts = [...active.flatMap((pl) => pl.points), ...activeTexts];
   if (allPts.length === 0) {
-    return { unit: usedUnit, sizeIn: { w: 0, h: 0 }, records: emptyRecords(), counts: emptyCounts(), issues: [{ provenance: "drawing", message: "Every layer is set to Ignore — nothing to import." }], wallThicknessIn: null };
+    // File-level diagnostics (e.g. a truncated-file warning) are about the
+    // FILE, not which layers are selected — they must survive even when
+    // every layer is set to Ignore, not just the fuller path below.
+    return {
+      unit: usedUnit,
+      sizeIn: { w: 0, h: 0 },
+      records: emptyRecords(),
+      counts: emptyCounts(),
+      issues: [...drawing.geometry.notes, { provenance: "drawing", message: "Every layer is set to Ignore — nothing to import." }],
+      wallThicknessIn: null,
+    };
   }
   const b = bboxOf(allPts);
   const toPlan = (p) => ({ x: (p.x - b.minX) * f + DXF_MARGIN_IN, y: (b.maxY - p.y) * f + DXF_MARGIN_IN });
