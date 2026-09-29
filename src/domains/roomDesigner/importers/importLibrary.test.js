@@ -14,9 +14,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readDxfDrawing, prepareDxfImport, commitDxfImport } from "./dxf/dxfImporter";
-import { __setPdfjsForTests, preparePdfImport, commitPdfImport } from "./pdf/pdfImporter";
+import { __setPdfjsForTests, __setPdfWasmUrlForTests, preparePdfImport, commitPdfImport } from "./pdf/pdfImporter";
 import { createEmptyDesign, parseDesign, serializeDesign, validateDesign } from "../designerDocument";
 
 const LIB = path.resolve(__dirname, "../../../../test-fixtures/import-library");
@@ -137,7 +137,11 @@ describe("DXF: difficult and malformed input", () => {
 describe("PDF (real pdf.js, legacy build for Node)", () => {
   beforeAll(async () => {
     __setPdfjsForTests(await import("pdfjs-dist/legacy/build/pdf.mjs"));
+    // The decoders the app serves from public/pdfjs/wasm/ (Node reads them
+    // from disk). Set before any page renders: pdf.js caches decoder start-up.
+    __setPdfWasmUrlForTests(path.resolve(__dirname, "../../../../public/pdfjs/wasm") + "/");
   });
+  afterAll(() => __setPdfWasmUrlForTests(undefined));
 
   it("forge-test-house-vector.pdf at 1/4\" = 1'-0\": imports vector geometry and reopens clean", async () => {
     const prep = await preparePdfImport(bytesOf("pdf/forge-test-house-vector.pdf"), { pageNumber: 1, mode: "vector", scaleFactor: 48 });
@@ -164,7 +168,12 @@ describe("PDF (real pdf.js, legacy build for Node)", () => {
 
   // The scanned-page path, rendered through FORGE's own raster code with a
   // Node canvas (@napi-rs/canvas ships with pdfjs-dist; skipped if absent).
-  async function rasterInk() {
+  // Decoding the 400 dpi fax scan is real work, so render it once and share
+  // the result; tests that use it get an explicit budget for loaded CI.
+  let rasterOnce;
+  const rasterInk = () => (rasterOnce ??= renderScan());
+  const SCAN_BUDGET_MS = 60_000;
+  async function renderScan() {
     const prep = await preparePdfImport(bytesOf("pdf/habs-davenport-house-sheet1-scanned.pdf"), {
       pageNumber: 1, mode: "raster", createCanvas: (w, h) => napi.createCanvas(w, h),
     });
@@ -183,12 +192,13 @@ describe("PDF (real pdf.js, legacy build for Node)", () => {
     const { prep } = await rasterInk();
     expect(prep.image.widthPx).toBe(3499);
     expect(prep.image.heightPx).toBe(2676);
-  });
+  }, SCAN_BUDGET_MS);
 
-  it.skipIf(!napi).fails("KNOWN GAP: the scanned sheet's linework survives rasterization (CCITT fax image decoded, not blank white)", async () => {
-    const { inkPct } = await rasterInk(); // today 0.00%: pdf.js 5 needs wasmUrl to decode CCITT/JBIG2; poppler shows ~5%
+  it.skipIf(!napi)("the scanned sheet's linework survives rasterization (CCITT fax image decoded, not blank white) — was G5", async () => {
+    const { prep, inkPct } = await rasterInk(); // poppler shows ~5% ink
     expect(inkPct).toBeGreaterThan(1);
-  });
+    expect(prep.issues.map((i) => i.message).join(" ")).not.toMatch(/could not be decoded/);
+  }, SCAN_BUDGET_MS);
 
   it("malformed-truncated.pdf: refused as unreadable", async () => {
     await expect(preparePdfImport(bytesOf("pdf/malformed-truncated.pdf"), { pageNumber: 1, mode: "vector" })).rejects.toMatchObject({ code: "unreadable" });
