@@ -12,10 +12,12 @@ is not evidence they authored or licensed that file's content. Per this
 library's own rule ("Provenance or it doesn't go in... 'Found it online' is
 not evidence"), that fixture should never have been accepted, and is
 replaced by this originally-authored one: a generic, non-architectural
-org-chart-style diagram (boxes, connectors, text, and a couple of
-deliberately-empty helper shapes) — no third-party content, no rights
-question, same test purpose (a real-looking diagram from "another tool"
-that FORGE must import safely without inventing walls, rooms or openings).
+org-chart-style diagram (64 boxes across an 8x8 grid, 56 connectors, 2
+labeled title/legend boxes, and 2 deliberately-empty helper shapes — see
+diagram_page() below) — no third-party content, no rights question, same
+test purpose: content FORGE must import safely without inventing walls,
+rooms or openings, the way a non-architectural diagram from any source
+(this generator included) should be handled.
 
 Output: vsdx/generic-diagram.vsdx     Run: python make_generic_diagram_vsdx.py
 Deterministic: same input -> same bytes (fixed zip timestamps, stable shape order).
@@ -96,12 +98,12 @@ class Page:
 
 
 def diagram_page():
-    """A generic org-chart: a root terminator, three tiers of process/
-    decision boxes, connectors joining each parent to its children, and a
-    handful of free-floating text labels and empty helper shapes — 78+
-    shapes total, heavily varied text, matching the role's original
-    "why" (a real-looking diagram from another tool) without any third-
-    party content."""
+    """A generic org-chart: an 8x8 grid of process/decision/terminator boxes
+    (64 boxes), a connector joining each box to its left neighbor within its
+    row (56 connectors, since the first column has none to join), 2 labeled
+    title/legend boxes, and 2 deliberately-empty helper shapes — 124 shapes
+    total (122 with importable geometry/text, 2 without), heavily varied
+    text, non-architectural throughout, and no third-party content."""
     p = Page()
     cols = 8
     rows = 8
@@ -111,17 +113,13 @@ def diagram_page():
         "Start", "Intake", "Triage", "Review A", "Review B", "Escalate", "Approve", "Reject",
         "Archive", "Notify", "Route", "Assign", "Verify", "Audit", "Close", "Reopen",
     ]
-    count = 0
     for r in range(rows):
         for c in range(cols):
-            if count >= 78:
-                break
             master = 2 if (r + c) % 3 == 0 else (3 if (r + c) % 7 == 0 else 1)
             label = labels[(r * cols + c) % len(labels)] + f" {r * cols + c + 1}"
             x = 60 + c * (box_w + gap_x)
             y = 60 + r * (box_h + gap_y)
-            sid = p.box(master, x, y, box_w, box_h, text=label, name=["Process", "Decision", "Terminator"][master - 1])
-            count += 1
+            p.box(master, x, y, box_w, box_h, text=label, name=["Process", "Decision", "Terminator"][master - 1])
             if c > 0:
                 p.connector(x - gap_x / 2, y + box_h / 2, x, y + box_h / 2)
     # A few standalone text labels (title, legend) with no box around them.

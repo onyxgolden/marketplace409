@@ -44,7 +44,7 @@ describe("VSDX: forge-test-house.vsdx (detailed)", () => {
 });
 
 describe("VSDX: difficult and malformed input", () => {
-  it("generic-diagram.vsdx (a non-architectural diagram from another tool): imports safely, invents no architecture, reports skips", async () => {
+  it("generic-diagram.vsdx (an original, non-architectural org-chart diagram): imports safely, invents no architecture, reports skips", async () => {
     const prep = await prepareVsdxImport(bytesOf("vsdx/generic-diagram.vsdx"), { pageIndex: 0 });
     const design = commitVsdxImport(createEmptyDesign("x"), prep);
     expect(design.walls).toHaveLength(0);

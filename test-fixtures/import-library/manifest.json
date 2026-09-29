@@ -72,7 +72,7 @@
       "licenseEvidence": "generators/make_generic_diagram_vsdx.py",
       "sha256": "a2c6b2740ddfdae7ecbc6b96b2e3ccc2b7b0aab8c269f4e885b67935dd0c9d59",
       "bytes": 8543,
-      "why": "A generic, non-architectural org-chart-style diagram (78 boxes/connectors, varied text, 2 deliberately empty helper shapes): must import safely without inventing walls, rooms or openings, and reports the empty shapes as skipped."
+      "why": "A generic, non-architectural org-chart-style diagram (64 boxes across an 8x8 grid, 56 connectors, 2 labeled title/legend boxes, 2 deliberately empty helper shapes; 124 shapes total): must import safely without inventing walls, rooms or openings, and reports the empty shapes as skipped."
     },
     {
       "path": "vsdx/malformed-not-a-zip.vsdx",
