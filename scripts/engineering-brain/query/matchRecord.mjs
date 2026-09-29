@@ -1,4 +1,5 @@
 import { tokenize, normalizePhrase } from "./tokenize.mjs";
+import { extractContentTokens } from "../extractContentTokens.mjs";
 
 // The searchable metadata text for a record -- everything the manifest itself carries without
 // touching git: path, symbol/section identifier, and any structured details (table name, route
@@ -16,14 +17,34 @@ export function buildMetadataText(record) {
   return parts.filter(Boolean).join(" ");
 }
 
+// The full pass-1 retrieval surface: metadata text plus the record's indexed content tokens.
+// Records mined before content tokens existed simply have no `content_tokens` field and behave
+// exactly as before -- the tokens only ever ADD candidate matches, never remove them.
+export function buildRetrievalText(record) {
+  const metadataText = buildMetadataText(record);
+  const tokens = Array.isArray(record.content_tokens) ? record.content_tokens.join(" ") : "";
+  return tokens ? `${metadataText} ${tokens}` : metadataText;
+}
+
 // Returns the match signals ranking (requirement 4) is built from. `contentText`, when supplied, is
 // the record's actual re-fetched file content (see searchRecords.mjs) -- optional, since content
-// search is a bounded enhancement over the always-available metadata search.
+// search is a bounded enhancement over the always-available metadata search. Pass 1 always scores
+// against buildRetrievalText (metadata + indexed content tokens), so content terms retrieve
+// candidates even when the bounded content-fetch pass never runs (notably on Vercel, where there
+// is no git checkout to fetch from).
 export function matchRecord(record, { queryTokens, queryPhrase }, contentText = null) {
-  const metadataText = buildMetadataText(record);
-  const haystack = contentText ? `${metadataText} ${contentText}` : metadataText;
-  const haystackLower = haystack.toLowerCase();
-  const haystackTokens = new Set(tokenize(haystack));
+  const retrievalText = buildRetrievalText(record);
+  // Token overlap scores against the FILTERED content signal -- the same pipeline the index uses
+  // (stopwords dropped, min length 3, identifiers split). Raw file content is full of noise tokens
+  // ("t", "as", "why") that long files match by sheer size; scoring overlap on raw content lets a
+  // 2000-line file outrank the 60-line file that actually answers the query. Filtering both sides
+  // through the same vocabulary keeps the comparison honest. Exact-phrase matching still runs
+  // against the raw content so multi-word phrases keep working.
+  const tokenHaystack = contentText
+    ? `${retrievalText} ${extractContentTokens(contentText).join(" ")}`
+    : retrievalText;
+  const phraseHaystack = contentText ? `${retrievalText} ${contentText}` : retrievalText;
+  const haystackTokens = new Set(tokenize(tokenHaystack));
 
   const symbolLower = String(record.symbol_or_section || "").toLowerCase();
   // SQL object keys carry a signature suffix ("has_workspace_access(text)") to distinguish overloads
@@ -37,7 +58,7 @@ export function matchRecord(record, { queryTokens, queryPhrase }, contentText = 
   const exactPathMatch = queryTokens.length > 0 && queryTokens.some((t) => pathLower === t)
     || (queryPhrase !== null && pathLower === queryPhrase)
     || (queryPhrase !== null && pathLower.endsWith(`/${queryPhrase}`));
-  const exactPhraseMatch = queryPhrase !== null && queryPhrase.length > 0 && haystackLower.includes(queryPhrase);
+  const exactPhraseMatch = queryPhrase !== null && queryPhrase.length > 0 && phraseHaystack.toLowerCase().includes(queryPhrase);
   const tokenOverlapCount = queryTokens.filter((t) => haystackTokens.has(t)).length;
 
   return { exactSymbolMatch, exactPathMatch, exactPhraseMatch, tokenOverlapCount, matchedContent: contentText !== null };

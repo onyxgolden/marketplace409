@@ -50,3 +50,29 @@ describe("matchRecord (exact symbol/path/SQL-object and phrase/keyword matching)
     expect(buildMetadataText(record)).toContain("widgets");
   });
 });
+
+describe("matchRecord (content-token retrieval)", () => {
+  const tokenRecord = {
+    source_path: "src/domains/financial-event/loanPaymentCategory.js",
+    symbol_or_section: null,
+    source_type: "application_source_file",
+    content_tokens: ["mortgage", "equity", "home", "categorize", "payment"],
+  };
+
+  it("retrieves a metadata-silent record via its content tokens in pass 1 (no content fetch)", () => {
+    const signals = matchRecord(tokenRecord, buildQuerySignature("home equity mortgage"));
+    expect(signals.tokenOverlapCount).toBe(3);
+    expect(signals.matchedContent).toBe(false);
+  });
+
+  it("a record without content_tokens behaves exactly as before (metadata-only)", () => {
+    const { content_tokens, ...bare } = tokenRecord;
+    const signals = matchRecord(bare, buildQuerySignature("home equity mortgage"));
+    expect(signals.tokenOverlapCount).toBe(0);
+  });
+
+  it("content tokens never remove a metadata match", () => {
+    const signals = matchRecord(tokenRecord, buildQuerySignature("loanPaymentCategory"));
+    expect(signals.tokenOverlapCount).toBeGreaterThan(0);
+  });
+});

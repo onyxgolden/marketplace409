@@ -49,8 +49,14 @@ describe("row mapping (pure functions)", () => {
     const record = { source_path: "a.js", source_type: "application_source_file", symbol_or_section: null, commit_sha: "sha1", content_hash: "h1", authority_level: "current", version: null, details: null };
     expect(manifestRecordToRow(record, "run_1", 0)).toEqual({
       run_id: "run_1", id: "record_0", source_path: "a.js", source_type: "application_source_file",
-      symbol_or_section: null, commit_sha: "sha1", content_hash: "h1", authority_level: "current", version: null, details: null,
+      symbol_or_section: null, commit_sha: "sha1", content_hash: "h1", content_tokens: null,
+      authority_level: "current", version: null, details: null,
     });
+  });
+
+  it("manifestRecordToRow carries content_tokens when the record has them", () => {
+    const record = { source_path: "a.js", source_type: "application_source_file", symbol_or_section: null, commit_sha: "sha1", content_hash: "h1", content_tokens: ["mortgage", "home"], authority_level: "current", version: null, details: null };
+    expect(manifestRecordToRow(record, "run_1", 0).content_tokens).toEqual(["mortgage", "home"]);
   });
 
   it("manifestExcludedToRow maps path and reason", () => {

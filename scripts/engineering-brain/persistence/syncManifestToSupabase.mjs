@@ -64,6 +64,9 @@ export function manifestRecordToRow(record, runId, index) {
     symbol_or_section: record.symbol_or_section,
     commit_sha: record.commit_sha,
     content_hash: record.content_hash,
+    // Bounded retrieval tokens (see extractContentTokens.mjs). Null for runs mined before
+    // the extractor emitted them -- the query path treats missing tokens as metadata-only.
+    content_tokens: Array.isArray(record.content_tokens) ? record.content_tokens : null,
     authority_level: record.authority_level,
     version: record.version,
     details: record.details,
