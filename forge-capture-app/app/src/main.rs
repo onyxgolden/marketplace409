@@ -1494,7 +1494,9 @@ fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
 /// cancelled mid-retry, the window stays down and the retry reports it
 /// instead of resurrecting a dead picker. If the capture itself failed, the
 /// window is reshown with the previous frame intact, so the user is never
-/// stranded on a dead overlay with no way back.
+/// stranded on a dead overlay with no way back. If the hidden window cannot
+/// be reshown at all, the pick is cancelled outright — an invisible picker
+/// with a live session would be unrecoverable.
 #[tauri::command]
 fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
     let (monitor_id, retry_session) = {
@@ -1531,7 +1533,17 @@ fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Resul
         Some(ctx) if ctx.session_id == retry_session => ctx,
         _ => return Err("region pick was cancelled during retry".to_string()),
     };
-    let _ = window.show();
+    // The picker was hidden for the capture. If it cannot be reshown, the
+    // pick is dead: tear the session down exactly like cancel_region_pick
+    // instead of stranding the user on an invisible picker with a live
+    // session and no way to recover it. (set_focus stays best-effort: a
+    // visible window the user can click is not a trap.)
+    if let Err(e) = window.show() {
+        *guard = None;
+        drop(guard);
+        let _ = window.close();
+        return Err(format!("could not restore the region picker window: {e}"));
+    }
     let _ = window.set_focus();
     let backdrop_png = fresh.map_err(|e| format!("retry capture failed: {e}"))?;
     let (_, _, rgba) =
