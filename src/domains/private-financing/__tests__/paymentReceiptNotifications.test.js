@@ -7,6 +7,7 @@ import {
   buildReceiptEmail,
   buildReceiptProviderIdempotencyKey,
   isBorrowerReceiptAllowed,
+  parseActivationCutoff,
   resolvePaymentReceiptConfig,
 } from "../paymentReceiptNotifications.js";
 
@@ -124,5 +125,33 @@ describe("isBorrowerReceiptAllowed", () => {
   it("denies everything when the allowlist is empty", () => {
     expect(isBorrowerReceiptAllowed({ allowedBorrowerIds: [] }, "pf_brw_ethan")).toBe(false);
     expect(isBorrowerReceiptAllowed({}, "pf_brw_ethan")).toBe(false);
+  });
+});
+
+describe("parseActivationCutoff", () => {
+  it("parses an explicit UTC timestamp to ISO", () => {
+    expect(parseActivationCutoff("2026-09-29T20:00:00Z")).toBe("2026-09-29T20:00:00.000Z");
+  });
+
+  it("returns null when unset", () => {
+    expect(parseActivationCutoff(undefined)).toBeNull();
+    expect(parseActivationCutoff("")).toBeNull();
+  });
+
+  it("returns null for unparseable values (fail-closed)", () => {
+    expect(parseActivationCutoff("not-a-date")).toBeNull();
+  });
+});
+
+describe("resolvePaymentReceiptConfig activation cutoff", () => {
+  it("carries the parsed cutoff through", () => {
+    const config = resolvePaymentReceiptConfig({
+      PAYMENT_RECEIPTS_ACTIVATED_AT: "2026-09-29T20:00:00Z",
+    });
+    expect(config.activatedAt).toBe("2026-09-29T20:00:00.000Z");
+  });
+
+  it("is null when the env var is unset", () => {
+    expect(resolvePaymentReceiptConfig({}).activatedAt).toBeNull();
   });
 });

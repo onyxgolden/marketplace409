@@ -26,12 +26,25 @@ export function resolvePaymentReceiptConfig(env = process.env) {
   return {
     ...base,
     allowedBorrowerIds: parseOwnerAllowlist(env.PF_RECEIPT_BORROWER_IDS),
+    // Explicit UTC timestamp (ISO string) or null when unset/unparseable.
+    activatedAt: parseActivationCutoff(env.PAYMENT_RECEIPTS_ACTIVATED_AT),
   };
 }
 
 export function isBorrowerReceiptAllowed(config, borrowerId) {
   const allowlist = config?.allowedBorrowerIds ?? [];
   return allowlist.length > 0 && borrowerId != null && allowlist.includes(String(borrowerId));
+}
+
+// Activation cutoff: an explicit UTC timestamp established when Jason authorizes
+// notification sending. The reconciler must never heal (queue receipts for)
+// payments from before the cutoff — otherwise the first post-activation run would
+// dig up old settled payments and send stale receipts. Fail-closed: an unset or
+// unparseable PAYMENT_RECEIPTS_ACTIVATED_AT means the reconciler heals nothing.
+export function parseActivationCutoff(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 const VALID_RECIPIENT_TYPES = new Set(Object.values(RECEIPT_RECIPIENT_TYPE));

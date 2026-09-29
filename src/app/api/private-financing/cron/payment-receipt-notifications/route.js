@@ -72,7 +72,16 @@ function quietHoursNow(config) {
 
 // Reconciler: succeeded borrower online payments in the lookback window that have no receipt
 // rows yet. Returns the rows it queued (or would queue in dry-run).
+//
+// Activation cutoff (release-safety): payments that settled BEFORE the explicit
+// PAYMENT_RECEIPTS_ACTIVATED_AT timestamp are never healed — the first
+// post-activation run must not dig up old settled payments and send stale
+// receipts. When the cutoff is unset, the reconciler heals nothing (fail-closed).
 async function reconcileMissingReceipts(db, config, { dryRun }) {
+  if (!config.activatedAt) {
+    console.log("Payment receipt reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.");
+    return { reconciled: 0, skippedAtDetection: 0, reconcileSkipped: true };
+  }
   const since = new Date(Date.now() - TERMINAL_PAYMENT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const payments = await fetchAllPages((page) =>
     db
@@ -80,10 +89,11 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
       .select("owner_id,id,account_id,borrower_id,amount_cents,succeeded_at")
       .eq("status", "succeeded")
       .gte("succeeded_at", since)
+      .gte("succeeded_at", config.activatedAt)
       .order("succeeded_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, skippedAtDetection: 0 };
+  if (payments.length === 0) return { reconciled: 0, skippedAtDetection: 0, reconcileSkipped: false };
 
   const paymentIds = payments.map((payment) => payment.id);
   const existing = await fetchAllPages((page) =>
@@ -141,7 +151,7 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
       }
     }
   }
-  return { reconciled, skippedAtDetection };
+  return { reconciled, skippedAtDetection, reconcileSkipped: false };
 }
 
 async function loadDeliveryCandidates(db, config) {
@@ -284,7 +294,7 @@ export async function GET(request) {
   try {
     const db = createRentalWebhookClient();
 
-    const { reconciled, skippedAtDetection } = await reconcileMissingReceipts(db, config, { dryRun });
+    const { reconciled, skippedAtDetection, reconcileSkipped } = await reconcileMissingReceipts(db, config, { dryRun });
 
     let sent = 0;
     let failed = 0;
@@ -418,6 +428,7 @@ export async function GET(request) {
       sendingEnabled: config.enabled,
       reconciled,
       skippedAtDetection,
+      reconcileSkipped: Boolean(reconcileSkipped),
       sent,
       failed,
       skippedDisabled,

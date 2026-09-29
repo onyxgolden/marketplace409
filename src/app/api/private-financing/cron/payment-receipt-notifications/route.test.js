@@ -72,6 +72,8 @@ beforeEach(() => {
   // Both allow-lists fail closed: tests opt in explicitly.
   process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
   process.env.PF_RECEIPT_BORROWER_IDS = BORROWER;
+  // Activation cutoff: the reconciler only heals payments settled at/after this.
+  process.env.PAYMENT_RECEIPTS_ACTIVATED_AT = "2026-09-01T00:00:00Z";
   vi.clearAllMocks();
   // Pin the clock to noon CDT (outside quiet hours) so delivery tests are
   // deterministic no matter when the suite runs.
@@ -137,6 +139,51 @@ describe("payment receipt notifications cron", () => {
     expect(send).not.toHaveBeenCalled();
     expect(body.skippedNotAllowlisted).toBe(1);
     expect(outcomeNode.update.mock.calls[0][0].status).toBe("skipped_not_allowlisted");
+  });
+
+  it("reconciler heals nothing when the activation cutoff is unset", async () => {
+    delete process.env.PAYMENT_RECEIPTS_ACTIVATED_AT;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const db = sequenceDb({
+      // No payments table access at all: the reconciler bails before querying.
+      private_financing_payment_receipt_deliveries: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+    createResendRentalEmailProvider.mockReturnValue({ send: vi.fn() });
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(true);
+    expect(body.reconciled).toBe(0);
+    expect(logSpy).toHaveBeenCalledWith(
+      "Payment receipt reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.",
+    );
+    logSpy.mockRestore();
+  });
+
+  it("reconciler excludes payments settled before the activation cutoff", async () => {
+    const paymentsNode = qb({ data: [], error: null });
+    const db = sequenceDb({
+      private_financing_online_payments: [paymentsNode],
+      private_financing_payment_receipt_deliveries: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+    createResendRentalEmailProvider.mockReturnValue({ send: vi.fn() });
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(false);
+    // The scan filters on both the rolling lookback and the activation cutoff.
+    expect(paymentsNode.gte).toHaveBeenCalledWith("succeeded_at", "2026-09-01T00:00:00.000Z");
+    expect(paymentsNode.gte.mock.calls.filter(([field]) => field === "succeeded_at")).toHaveLength(2);
   });
 
   it("delivery still sends for allow-listed borrowers", async () => {
