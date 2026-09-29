@@ -80,6 +80,33 @@ export function decodeDxfInput(input) {
   return text;
 }
 
+/**
+ * Every valid DXF ends with the mandatory group-code-0 "EOF" pair — the
+ * file format's own end-of-file marker, not a guess about content. A file
+ * missing it was cut off before writing finished, and anything read from
+ * the truncated tail (an unclosed entity, half a group-code pair) should
+ * be treated as suspect.
+ *
+ * Trailing whitespace is trimmed FIRST: text transport or export can append
+ * a blank line or trailing spaces after a structurally complete file (e.g.
+ * "0\r\nEOF\r\n   "), and matching before trimming both misses that valid
+ * EOF (whitespace after it isn't CR/LF) and — for a long enough trailing
+ * whitespace run — pushes the real marker out of the bounded tail entirely.
+ * Only after trimming is the last ~64 chars checked: comfortably more than
+ * "0\nEOF" needs, with no risk of matching an unrelated "0" far inside the
+ * real content.
+ *
+ * The "0" must start its own line: the pattern requires an actual preceding
+ * newline (never the slice's own cut point — `^` is deliberately NOT
+ * accepted as that boundary, since it could coincide with an arbitrary mid-
+ * line position sliced out of the middle of real content, not a genuine
+ * line start) so a group code merely ENDING in 0 — "10" or "100" — can
+ * never be mistaken for the mandatory group-code-0 EOF pair.
+ */
+export function hasEofMarker(text) {
+  return /[\r\n][ \t]*0[ \t]*[\r\n]+[ \t]*EOF$/.test(text.replace(/\s+$/, "").slice(-64));
+}
+
 /** Decode commonly used fields of an entity from its group pairs. */
 function decodeEntity(type, groups) {
   const e = { type, layer: "0", groups };
@@ -258,5 +285,5 @@ export function parseDxf(input) {
     }
   }
 
-  return { header, layers, blocks, entities };
+  return { header, layers, blocks, entities, truncated: !hasEofMarker(text) };
 }

@@ -6,7 +6,7 @@ import { addOpening, addWall, createEmptyDesign, resetDesignerIds, validateDesig
 import { createHomeProject, resetHomeProjectIds } from "../../homeProject";
 import { planToDxf } from "../../homeDxfExport";
 import { wallLength } from "../../designerGeometry";
-import { parseDxf } from "./dxfParser";
+import { hasEofMarker, parseDxf } from "./dxfParser";
 import { bulgePolyline, collectGeometry } from "./dxfGeometry";
 import { suggestRole } from "./dxfLayers";
 import { reconstructWalls } from "./dxfWalls";
@@ -58,6 +58,44 @@ describe("parser", () => {
     const g = collectGeometry(parseDxf(dxf({ entities: [poly] })));
     expect(g.polylines).toHaveLength(1);
     expect(g.polylines[0]).toMatchObject({ closed: true, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }] });
+  });
+
+  it("marks a well-formed DXF (ending 0/EOF) as not truncated", () => {
+    expect(parseDxf(dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] })).truncated).toBe(false);
+  });
+
+  it("marks a DXF cut off before its EOF marker as truncated", () => {
+    const whole = dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] });
+    const cut = whole.slice(0, whole.lastIndexOf("EOF")); // entity + ENDSEC intact, EOF missing
+    expect(parseDxf(cut).truncated).toBe(true);
+  });
+
+  it("hasEofMarker tolerates trailing whitespace transport/export adds after a genuinely complete file", () => {
+    expect(hasEofMarker("0\nSECTION\n0\nEOF")).toBe(true); // no trailing newline at all
+    expect(hasEofMarker("0\nSECTION\n0\r\nEOF\r\n")).toBe(true); // CRLF
+    expect(hasEofMarker("0\nSECTION\n0\nEOF\n\n  \t \n")).toBe(true); // blank line + spaces/tabs after
+    expect(hasEofMarker(`0\nSECTION\n0\nEOF${"\n".repeat(100)}`)).toBe(true); // >64 chars of trailing whitespace
+  });
+
+  it("hasEofMarker still reports false when EOF is genuinely missing, even with trailing whitespace", () => {
+    expect(hasEofMarker("0\nSECTION\n0\nENDSEC\n\n  \n")).toBe(false);
+  });
+
+  it("hasEofMarker requires an actual group-code-0 line, not any digit sequence ending in 0", () => {
+    // "100" and "10" both end in the digit 0, but neither IS group code 0 —
+    // a file that (corruptly) ends right after one of those codes must not
+    // be read as having the mandatory EOF pair.
+    expect(hasEofMarker("0\nSECTION\n100\nEOF")).toBe(false);
+    expect(hasEofMarker("0\nSECTION\n10\nEOF")).toBe(false);
+    // A genuinely indented "0" (leading spaces on its own line) still counts.
+    expect(hasEofMarker("0\nSECTION\n  0\n  EOF")).toBe(true);
+  });
+
+  it("surfaces a truncated file as a note readDxfDrawing reports, not silently", () => {
+    const whole = dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] });
+    const cut = whole.slice(0, whole.lastIndexOf("EOF"));
+    const notes = readDxfDrawing(cut).geometry.notes.map((n) => n.message).join(" ");
+    expect(notes).toMatch(/truncat|EOF/i);
   });
 });
 
@@ -179,6 +217,20 @@ describe("prepareDxfImport", () => {
       ],
     });
   }
+
+  it("keeps a truncated-file warning even when every layer is set to Ignore", () => {
+    // The warning is about the FILE, not which layers are selected — it
+    // must survive the early return prepareDxfImport takes when nothing is
+    // selected to import, not just the fuller path other tests exercise.
+    const whole = dxf({ layers: [["A-WALL"]], entities: [line("A-WALL", 0, 0, 10, 0)] });
+    const cut = whole.slice(0, whole.lastIndexOf("EOF")); // truncated: EOF missing
+    const drawing = readDxfDrawing(cut);
+    const prep = prepareDxfImport(drawing, { roles: { "A-WALL": "ignore" } });
+    expect(prep.sizeIn).toEqual({ w: 0, h: 0 }); // confirms the early-return path was taken
+    const text = prep.issues.map((i) => i.message).join(" ");
+    expect(text).toMatch(/truncat|EOF/i);
+    expect(text).toMatch(/Ignore/);
+  });
 
   it("builds walls, a door cut into its gap, a window on its wall, a named room, and annotations", () => {
     const drawing = readDxfDrawing(plan());

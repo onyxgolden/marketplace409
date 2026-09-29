@@ -33,6 +33,12 @@ const MIN_ROOM_AREA_SQIN = 4 * 144;
 export function readDxfDrawing(input) {
   const parsed = parseDxf(input);
   const geometry = collectGeometry(parsed);
+  if (parsed.truncated) {
+    geometry.notes.push({
+      provenance: "drawing",
+      message: "This DXF looks truncated: it's missing the EOF marker every DXF ends with, so the file was likely cut off before saving finished. Geometry near the end may be missing — check the drawing carefully before relying on this import.",
+    });
+  }
   const byLayer = new Map();
   const touch = (name) => {
     if (!byLayer.has(name)) byLayer.set(name, { polylines: 0, texts: 0 });
@@ -128,7 +134,17 @@ export function prepareDxfImport(drawing, { unit, roles = {} } = {}) {
   const activeTexts = drawing.geometry.texts.filter((t) => roleOf(t.layer) !== "ignore");
   const allPts = [...active.flatMap((pl) => pl.points), ...activeTexts];
   if (allPts.length === 0) {
-    return { unit: usedUnit, sizeIn: { w: 0, h: 0 }, records: emptyRecords(), counts: emptyCounts(), issues: [{ provenance: "drawing", message: "Every layer is set to Ignore — nothing to import." }], wallThicknessIn: null };
+    // File-level diagnostics (e.g. a truncated-file warning) are about the
+    // FILE, not which layers are selected — they must survive even when
+    // every layer is set to Ignore, not just the fuller path below.
+    return {
+      unit: usedUnit,
+      sizeIn: { w: 0, h: 0 },
+      records: emptyRecords(),
+      counts: emptyCounts(),
+      issues: [...drawing.geometry.notes, { provenance: "drawing", message: "Every layer is set to Ignore — nothing to import." }],
+      wallThicknessIn: null,
+    };
   }
   const b = bboxOf(allPts);
   const toPlan = (p) => ({ x: (p.x - b.minX) * f + DXF_MARGIN_IN, y: (b.maxY - p.y) * f + DXF_MARGIN_IN });
