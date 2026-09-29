@@ -108,6 +108,12 @@ describe("queueTenantPaymentReceiptForWebhookEvent", () => {
     expect(deliveries.upsert).toHaveBeenCalledTimes(1);
     const upserted = deliveries.upsert.mock.calls[0][0];
     expect(upserted.status).toBe("queued");
+    // First-write-wins: a redelivery or reconciler pass can never overwrite
+    // an existing delivery's state.
+    expect(deliveries.upsert).toHaveBeenCalledWith(upserted, {
+      onConflict: "owner_id,payment_id",
+      ignoreDuplicates: true,
+    });
   });
 
   it("no-ops for non-rental payment ids", async () => {

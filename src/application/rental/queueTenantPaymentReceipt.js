@@ -133,6 +133,10 @@ export async function queueTenantPaymentReceiptForWebhookEvent(
 
     const { error } = await db.from("rental_tenant_receipt_deliveries").upsert(row, {
       onConflict: "owner_id,payment_id",
+      // First-write-wins: a webhook redelivery or a later reconciler pass can
+      // never flip a terminal row ('sent', 'skipped_disabled',
+      // 'skipped_not_allowlisted') back to 'queued'.
+      ignoreDuplicates: true,
     });
     if (error) throw error;
     return { queued: row.status === "queued", receiptId: row.id, status: row.status };

@@ -194,6 +194,7 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
       event_type: OWNER_NOTIFICATION_EVENT_TYPE.UPCOMING_AUTOPAY,
       charge_id: pair.charge.id,
       lease_id: pair.enrollment.lease_id,
+      tenant_id: pair.tenantId,
       payload: {
         tenant_name: pair.tenantName,
         amount_cents: pair.remainingCents,
@@ -558,6 +559,16 @@ export async function GET(request) {
           // Belt-and-braces: a row queued before the allow-list existed (or
           // for an owner since removed from it) can never be delivered.
           // Terminally marked so it is not retried.
+          if (await recordOutcome(db, row, { status: "skipped_not_allowlisted" }, claimToken)) {
+            skippedNotAllowlistedDelivery += 1;
+          }
+          continue;
+        }
+        if (!isTenantNotificationAllowed(config, row.tenant_id)) {
+          // Belt-and-braces: a row queued for a tenant who is not (or is no
+          // longer) on the tenant allow-list can never be delivered.
+          // Terminally marked so it is not retried. Fail-closed: a row with
+          // no recorded tenant cannot be verified and is never sent.
           if (await recordOutcome(db, row, { status: "skipped_not_allowlisted" }, claimToken)) {
             skippedNotAllowlistedDelivery += 1;
           }
