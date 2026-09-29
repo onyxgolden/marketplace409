@@ -65,12 +65,28 @@ struct OverlayContext {
     /// created (so the overlay can never appear in its own backdrop) and
     /// blank-checked. Served to the overlay page by `region_pick_backdrop`.
     backdrop_png: Option<Vec<u8>>,
+    /// Monotonic session id, captured by the 60-second watchdog at spawn
+    /// time. A stale watchdog (from a cancelled session) must never clear
+    /// or close a NEWER region-pick session — the token is checked before
+    /// the watchdog touches anything.
+    session_id: u64,
+    /// True when the frozen frame came back a single solid color. The
+    /// picker opens anyway with a blank-frame warning (cancel / retry /
+    /// proceed) instead of aborting: a genuinely solid-color desktop is
+    /// rare but legitimate, and a hard abort would strand that user with
+    /// no way to region-pick at all.
+    backdrop_blank: bool,
 }
 
 struct AppState {
     captures: Mutex<HashMap<String, StoredCapture>>,
     pending_overlay: Mutex<Option<OverlayContext>>,
     id_counter: Mutex<u64>,
+    /// Monotonic generation counter for region-pick sessions. Each
+    /// `open_region_overlay` takes the next value as the session's id and
+    /// hands it to that session's watchdog, so a stale watchdog can be
+    /// told apart from the session it was spawned for.
+    overlay_session: Mutex<u64>,
     /// File stems already handed out (in-memory part of stem uniqueness;
     /// the on-disk check in `unique_stem` covers previous runs).
     used_stems: Mutex<HashSet<String>>,
@@ -231,6 +247,10 @@ struct OverlayContextDto {
     monitor_id: String,
     origin_virtual: (i32, i32),
     dpr: f64,
+    /// True when the frozen frame came back a single solid color. The
+    /// overlay page shows a blank-frame warning (retry / proceed / cancel)
+    /// instead of picking blind on a possibly dead frame.
+    backdrop_blank: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -746,19 +766,14 @@ fn build_mode(
             .unwrap()
             .take()
             .ok_or("no pending region overlay; call begin_region_pick first")?;
-        if let Some(w) = app.get_webview_window("overlay") {
-            let _ = w.close();
-            // `close()` is asynchronous: wait until the window is actually
-            // gone (or time out) before the BitBlt below, or the
-            // always-on-top overlay would appear in its own capture.
-            let deadline = Instant::now() + Duration::from_millis(1500);
-            while app.get_webview_window("overlay").is_some() {
-                if Instant::now() >= deadline {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(15));
-            }
-        }
+        // The overlay is always-on-top: the live-region BitBlt below must
+        // never run while the picker window might still be visible.
+        // `close()` is asynchronous, so wait for actual destruction — and
+        // if the window will not go away, abort LOUDLY instead of
+        // screenshotting the picker itself.
+        close_overlay_window(app)?;
+        let gone = wait_for_overlay_gone(app, Duration::from_millis(1500));
+        must_abort_capture_if_overlay_present(!gone)?;
         let r = dto
             .overlay_rect
             .as_ref()
@@ -1207,11 +1222,17 @@ fn begin_region_pick(
 ///
 /// The frozen backdrop is captured BEFORE the overlay window is created, so
 /// the overlay can never appear in (or blank) its own backdrop. A frame
-/// that comes back a single solid color is rejected — a real screen is
-/// never perfectly uniform, so that means the capture pipeline produced a
-/// dead frame, and opening the picker on it would trap the user on a blank
-/// square. The overlay window itself is opaque: it draws the frozen PNG, so
-/// no transparent-window compositing is required.
+/// that comes back a single solid color sets the context's `backdrop_blank`
+/// flag instead of aborting the pick: the overlay opens with a blank-frame
+/// warning (retry / proceed / cancel), because a genuinely solid-color
+/// desktop is rare but legitimate and a hard abort would strand that user.
+/// The overlay window itself is opaque: it draws the frozen PNG, so no
+/// transparent-window compositing is required.
+///
+/// At most one region pick is ever in flight: a second open while a session
+/// is pending is rejected, and a leftover overlay window from a dead
+/// session is fully closed (not just asked to close) before the new window
+/// is built, so two pages can never race against one context.
 fn open_region_overlay(
     app: tauri::AppHandle,
     state: State<AppState>,
@@ -1219,6 +1240,23 @@ fn open_region_overlay(
     delay_ms: u64,
     include_cursor: bool,
 ) -> Result<(), String> {
+    if state.pending_overlay.lock().unwrap().is_some() {
+        return Err("a region pick is already in progress; cancel it first".to_string());
+    }
+    // A leftover overlay window with no pending context (e.g. a session
+    // whose page died without reporting back). Close it and wait until it
+    // is really gone before building the new window on the same label —
+    // `close()` is asynchronous and the builder would otherwise race it.
+    if app.get_webview_window("overlay").is_some() {
+        close_overlay_window(&app)?;
+        if !wait_for_overlay_gone(&app, Duration::from_millis(1500)) {
+            return Err(
+                "stale overlay window did not close; region pick aborted rather than \
+                 racing a new picker against the old one"
+                    .to_string(),
+            );
+        }
+    }
     let monitors = current_monitors()?;
     let monitor = monitors
         .iter()
@@ -1228,9 +1266,12 @@ fn open_region_overlay(
     let backdrop_png = capture_region_backdrop(&monitors, &monitor.id)?;
     let (_, _, rgba) =
         decode_own(&backdrop_png).map_err(|e| format!("backdrop decode failed: {e}"))?;
-    if solid_frame_rgba(&rgba) {
-        return Err("screen capture returned a blank frame; region pick aborted".to_string());
-    }
+    let backdrop_blank = solid_frame_rgba(&rgba);
+    let session_id = {
+        let mut counter = state.overlay_session.lock().unwrap();
+        *counter = counter.wrapping_add(1);
+        *counter
+    };
     *state.pending_overlay.lock().unwrap() = Some(OverlayContext {
         monitor_id: monitor_id.to_string(),
         origin_virtual: monitor.origin_virtual,
@@ -1238,10 +1279,9 @@ fn open_region_overlay(
         delay_ms,
         include_cursor,
         backdrop_png: Some(backdrop_png),
+        session_id,
+        backdrop_blank,
     });
-    if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.close();
-    }
     // Tauri `position`/`inner_size` take *logical* units: convert the
     // monitor's physical virtual-desktop rect, or the overlay lands in the
     // wrong place at the wrong size on mixed-DPI setups.
@@ -1266,8 +1306,47 @@ fn open_region_overlay(
     // Esc / right-click cancel lives in the overlay page, so the window must
     // own keyboard focus for the escape hatches to work.
     let _ = window.set_focus();
-    spawn_overlay_watchdog(app.clone());
+    spawn_overlay_watchdog(app.clone(), session_id);
     Ok(())
+}
+
+/// Close the overlay window, propagating a failure instead of silently
+/// ignoring it: a close that fails leaves an always-on-top fullscreen
+/// window on the user's screen, which must not go unreported.
+fn close_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("overlay") {
+        w.close()
+            .map_err(|e| format!("cannot close overlay window: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Poll until the overlay window is actually destroyed. `close()` is
+/// asynchronous — callers must not capture until this reports the window
+/// gone. Returns false on timeout; the caller reports the abort with the
+/// reason that fits its site.
+fn wait_for_overlay_gone(app: &tauri::AppHandle, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while app.get_webview_window("overlay").is_some() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    true
+}
+
+/// Policy gate for the region-overlay capture path: the overlay must be
+/// gone before the live-region BitBlt runs. Pure so the never-capture-
+/// with-overlay-visible contract is unit-tested.
+fn must_abort_capture_if_overlay_present(overlay_present: bool) -> Result<(), String> {
+    if overlay_present {
+        Err("overlay window is still open; region capture aborted rather than \
+             capturing the picker itself"
+            .to_string())
+    } else {
+        Ok(())
+    }
 }
 
 /// Capture the frozen fullscreen frame for region picking. The caller must
@@ -1287,9 +1366,10 @@ fn capture_region_backdrop(monitors: &[Monitor], monitor_id: &str) -> Result<Vec
     }
 }
 
-/// True when every pixel of an RGBA frame is byte-identical. A real screen
-/// capture is never a single solid color, so this detects a dead/blank
-/// capture pipeline before a blank frame can trap the region picker.
+/// True when every pixel of an RGBA frame is byte-identical. A uniform
+/// frame usually means a dead/blank capture pipeline — but a genuinely
+/// solid-color desktop is also uniform, so this only raises the
+/// blank-frame *warning* (retry / proceed / cancel), never a hard abort.
 fn solid_frame_rgba(rgba: &[u8]) -> bool {
     if rgba.len() < 8 || rgba.len() % 4 != 0 {
         return false;
@@ -1302,12 +1382,16 @@ fn solid_frame_rgba(rgba: &[u8]) -> bool {
 /// reported back — e.g. its page failed to load), close the overlay and
 /// clear the context so the user is never trapped on a dead fullscreen
 /// window. A real region pick takes seconds; 60 s is generous.
-fn spawn_overlay_watchdog(app: tauri::AppHandle) {
+///
+/// The watchdog captures the session's generation token at spawn time and
+/// only acts when the pending context still carries that same token: an old
+/// watchdog from a cancelled session can never kill a newer session.
+fn spawn_overlay_watchdog(app: tauri::AppHandle, session_id: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(60));
-        let state: State<AppState> = app.state();
+        let state = app.state::<AppState>();
         let mut guard = state.pending_overlay.lock().unwrap();
-        if guard.is_some() {
+        if watchdog_should_clear(guard.as_ref(), session_id) {
             *guard = None;
             drop(guard);
             if let Some(w) = app.get_webview_window("overlay") {
@@ -1317,17 +1401,32 @@ fn spawn_overlay_watchdog(app: tauri::AppHandle) {
     });
 }
 
+/// Pure watchdog decision: clear/close only when the pending context is the
+/// very session this watchdog was spawned for. A stale watchdog (older
+/// session id, or no pending session at all) must leave everything alone.
+fn watchdog_should_clear(pending: Option<&OverlayContext>, watchdog_session: u64) -> bool {
+    pending.map(|ctx| ctx.session_id) == Some(watchdog_session)
+}
+
 #[tauri::command]
 fn overlay_context(state: State<AppState>) -> Result<OverlayContextDto, String> {
     let guard = state.pending_overlay.lock().unwrap();
     guard
         .as_ref()
-        .map(|o| OverlayContextDto {
-            monitor_id: o.monitor_id.clone(),
-            origin_virtual: o.origin_virtual,
-            dpr: o.dpr,
-        })
+        .map(overlay_context_dto)
         .ok_or_else(|| "no pending region overlay".to_string())
+}
+
+/// Pure context-to-DTO mapping, so the page always receives the session's
+/// stored frame metadata (including the blank-frame warning flag) and the
+/// mapping itself is unit-testable.
+fn overlay_context_dto(ctx: &OverlayContext) -> OverlayContextDto {
+    OverlayContextDto {
+        monitor_id: ctx.monitor_id.clone(),
+        origin_virtual: ctx.origin_virtual,
+        dpr: ctx.dpr,
+        backdrop_blank: ctx.backdrop_blank,
+    }
 }
 
 #[tauri::command]
@@ -1379,6 +1478,55 @@ fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
     ctx.backdrop_png
         .as_deref()
         .ok_or_else(|| "no stored backdrop for this region pick".to_string())
+}
+
+/// Retry the frozen backdrop for the in-flight region pick (the page's
+/// blank-frame warning "Retry" button). The overlay window is hidden — not
+/// closed — while the fresh frame is captured, so the retry frame cannot
+/// catch the picker itself; on any failure the window is shown again and
+/// the previous frame stays in place, so the user is never stranded on a
+/// dead overlay with no way back.
+#[tauri::command]
+fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
+    let monitor_id = {
+        let guard = state.pending_overlay.lock().unwrap();
+        let ctx = guard
+            .as_ref()
+            .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?;
+        ctx.monitor_id.clone()
+    };
+    let monitors = current_monitors()?;
+    if !monitors.iter().any(|m| m.id == monitor_id) {
+        return Err(format!("unknown monitor id: {monitor_id}"));
+    }
+    let window = app
+        .get_webview_window("overlay")
+        .ok_or_else(|| "overlay window is gone; start a new region pick".to_string())?;
+    window
+        .hide()
+        .map_err(|e| format!("cannot hide overlay for retry: {e}"))?;
+    // Let the compositor settle so the hidden window is truly gone from
+    // the next frame; without this the retry could capture the picker.
+    std::thread::sleep(Duration::from_millis(250));
+    let fresh = capture_region_backdrop(&monitors, &monitor_id);
+    // Restore the picker window before reporting anything: on failure the
+    // user keeps picking on the previous frame instead of staring at
+    // nothing.
+    let _ = window.show();
+    let _ = window.set_focus();
+    let backdrop_png = fresh.map_err(|e| format!("retry capture failed: {e}"))?;
+    let (_, _, rgba) =
+        decode_own(&backdrop_png).map_err(|e| format!("retry backdrop decode failed: {e}"))?;
+    let backdrop_blank = solid_frame_rgba(&rgba);
+    let mut guard = state.pending_overlay.lock().unwrap();
+    match guard.as_mut() {
+        Some(ctx) => {
+            ctx.backdrop_png = Some(backdrop_png);
+            ctx.backdrop_blank = backdrop_blank;
+            Ok(())
+        }
+        None => Err("region pick was cancelled during retry".to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2721,6 +2869,7 @@ fn main() {
             captures: Mutex::new(HashMap::new()),
             pending_overlay: Mutex::new(None),
             id_counter: Mutex::new(0),
+            overlay_session: Mutex::new(0),
             used_stems: Mutex::new(HashSet::new()),
             scroll_aborts: Mutex::new(HashMap::new()),
             printscreen_active: AtomicBool::new(false),
@@ -2751,6 +2900,7 @@ fn main() {
             overlay_context,
             cancel_region_pick,
             region_pick_backdrop,
+            retry_region_backdrop,
             ai_edit_submit,
             ai_edit_poll,
             ai_edit_import,
@@ -3233,9 +3383,12 @@ mod region_picker_tests {
     //! (2026-09-28, real hardware: the Region overlay opened on a blank
     //! white square with no crosshair and trapped the screen).
     //!
-    //! The overlay now opens only after a verified-good frozen backdrop has
-    //! been captured, and the page is served those stored bytes — it never
-    //! triggers a fresh capture that could catch the overlay itself.
+    //! The overlay opens on a frozen backdrop captured before its window
+    //! exists, and the page is served those stored bytes — it never
+    //! triggers a fresh capture that could catch the overlay itself. A
+    //! uniform frame raises a blank-frame warning (retry / proceed /
+    //! cancel) instead of a hard abort, because a solid-color desktop is
+    //! legitimate.
 
     use super::*;
 
@@ -3247,6 +3400,8 @@ mod region_picker_tests {
             delay_ms: 0,
             include_cursor: false,
             backdrop_png: png,
+            session_id: 7,
+            backdrop_blank: false,
         }
     }
 
@@ -3305,5 +3460,41 @@ mod region_picker_tests {
         let ctx = overlay_ctx_with_backdrop(None);
         let err = stored_backdrop_png(Some(&ctx)).unwrap_err();
         assert!(err.contains("no stored backdrop"), "got: {err}");
+    }
+
+    #[test]
+    fn stale_watchdog_never_kills_a_newer_session() {
+        // Session A opens (watchdog A spawned), the user cancels, session B
+        // opens (watchdog B spawned). When watchdog A's 60 s expire it must
+        // leave session B completely alone.
+        let mut ctx_b = overlay_ctx_with_backdrop(None);
+        ctx_b.session_id = 8;
+        assert!(
+            !watchdog_should_clear(Some(&ctx_b), 7),
+            "stale watchdog cleared a newer session"
+        );
+        assert!(watchdog_should_clear(Some(&ctx_b), 8));
+        assert!(!watchdog_should_clear(None, 8));
+    }
+
+    #[test]
+    fn capture_aborts_when_overlay_still_present() {
+        // The never-capture-with-overlay-visible contract: a stuck overlay
+        // window aborts the BitBlt loudly instead of screenshotting the
+        // picker itself.
+        let err = must_abort_capture_if_overlay_present(true).unwrap_err();
+        assert!(err.contains("aborted"), "got: {err}");
+        assert!(must_abort_capture_if_overlay_present(false).is_ok());
+    }
+
+    #[test]
+    fn blank_backdrop_surfaces_warning_flag_to_page() {
+        // A uniform frame warns instead of aborting: the DTO must carry
+        // the flag so the page can show retry / proceed / cancel.
+        let mut ctx = overlay_ctx_with_backdrop(None);
+        ctx.backdrop_blank = true;
+        assert!(overlay_context_dto(&ctx).backdrop_blank);
+        ctx.backdrop_blank = false;
+        assert!(!overlay_context_dto(&ctx).backdrop_blank);
     }
 }
