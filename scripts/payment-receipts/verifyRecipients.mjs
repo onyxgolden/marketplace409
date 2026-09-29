@@ -28,7 +28,19 @@ import {
   resolveRentalNotificationConfig,
 } from "../../src/domains/owner-notifications/ownerNotificationConfig.js";
 import { resolvePaymentReceiptConfig } from "../../src/domains/private-financing/paymentReceiptNotifications.js";
-import { resolvePropertyLabel } from "../../src/application/rental/queueOwnerPaymentNotification.js";
+
+// NOT imported from src/application/rental/queueOwnerPaymentNotification.js:
+// that file (like most of the application layer) imports its own
+// dependencies through the "@/" path alias, which only Next.js's bundler and
+// Vitest's config know how to resolve — a plain `node script.mjs` process
+// does not, and fails at startup with ERR_MODULE_NOT_FOUND before a single
+// line of this script runs. lookupPropertyLabel below is a deliberate,
+// read-only reimplementation of that file's resolvePropertyLabel, kept
+// side by side with it for review: same two tables, same fallback order,
+// same humanization. If that function's logic changes, this one needs the
+// same change — there is no automated guard against drift (unlike the
+// borrower/tenant lookups, which are original queries this script owns
+// outright, this one mirrors existing logic and could go stale silently).
 
 // Same env vars and client options as the established CLI-script pattern
 // (scripts/scheduling/verifyCpmEngineAgainstRealProjects.mjs,
@@ -54,6 +66,69 @@ export async function lookupBorrower(db, borrowerId) {
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+/**
+ * One owner's real email for a configured id. "Owner" here is a platform
+ * account, not a business-domain record: owner_id throughout
+ * private_financing/rental is the account's own Supabase auth user id
+ * (confirmed against how these routes scope every query — `.eq("owner_id",
+ * user.id)` off the authenticated session). There is no separate
+ * owners/accounts/profiles table in this codebase to join against, so this
+ * resolves through the Auth admin API (available on a service-role client,
+ * which is exactly what this script authenticates as) rather than a
+ * `.from(...)` query. Read-only: getUserById never creates, modifies, or
+ * deletes a user.
+ */
+export async function lookupOwner(db, ownerId) {
+  const { data, error } = await db.auth.admin.getUserById(ownerId);
+  if (error) {
+    // A not-found user surfaces as an error from this API, not a null data
+    // value (unlike every table lookup above) — treat it as "not found",
+    // the same outcome a dangling table id gets, rather than raising.
+    if (error.status === 404 || /not.?found/i.test(error.message || "")) return null;
+    throw error;
+  }
+  return data?.user ? { id: data.user.id, email: data.user.email ?? null } : null;
+}
+
+/**
+ * A human property label for a lease: the unit label when the lease names a
+ * unit, otherwise the property id humanized ("308-paula" -> "308 Paula").
+ * Read-only reimplementation of
+ * src/application/rental/queueOwnerPaymentNotification.js's
+ * resolvePropertyLabel — see the top-of-file note on why this isn't
+ * imported directly. Never throws; returns null when unresolvable.
+ */
+export async function lookupPropertyLabel(db, { ownerId, leaseId }) {
+  try {
+    if (!leaseId) return null;
+    let leaseQuery = db.from("rental_leases").select("property_id, unit_id").eq("id", leaseId);
+    if (ownerId) leaseQuery = leaseQuery.eq("owner_id", ownerId);
+    const { data: lease, error: leaseError } = await leaseQuery.maybeSingle();
+    if (leaseError) throw leaseError;
+    if (!lease) return null;
+    if (lease.unit_id) {
+      let unitQuery = db.from("rental_units").select("label").eq("id", lease.unit_id);
+      if (ownerId) unitQuery = unitQuery.eq("owner_id", ownerId);
+      const { data: unit, error: unitError } = await unitQuery.maybeSingle();
+      if (unitError) throw unitError;
+      if (unit?.label) return String(unit.label);
+    }
+    if (lease.property_id) {
+      return (
+        String(lease.property_id)
+          .replace(/[-_]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/\b\w/g, (c) => c.toUpperCase()) || null
+      );
+    }
+    return null;
+  } catch (error) {
+    console.error("Property label resolution failed", { leaseId, name: error?.name || "Error" });
+    return null;
+  }
 }
 
 /**
@@ -86,7 +161,7 @@ export async function lookupTenant(db, tenantId) {
       .eq("id", leaseId)
       .maybeSingle();
     if (leaseError) throw leaseError;
-    const propertyLabel = await resolvePropertyLabel(db, { ownerId: tenant.owner_id, leaseId });
+    const propertyLabel = await lookupPropertyLabel(db, { ownerId: tenant.owner_id, leaseId });
     leases.push({ leaseId, status: lease?.status ?? null, propertyLabel });
   }
   return { ...tenant, leases };
@@ -116,9 +191,15 @@ export async function buildRecipientVerificationReport(db, env = process.env) {
     tenants.push({ id, found: Boolean(tenant), ...tenant });
   }
 
+  const owners = [];
+  for (const id of ownerConfig.allowedOwnerIds) {
+    const owner = await lookupOwner(db, id);
+    owners.push({ id, found: Boolean(owner), email: owner?.email ?? null });
+  }
+
   return {
     ownerRecipientEmail: ownerConfig.recipientEmail,
-    ownerAllowlistIds: ownerConfig.allowedOwnerIds,
+    ownerAllowlist: owners,
     borrowerAllowlist: borrowers,
     tenantAllowlist: tenants,
     sendingEnabled: {
@@ -137,7 +218,13 @@ function formatReport(report) {
   lines.push("PAYMENT RECEIPT RECIPIENT VERIFICATION — READ ONLY, NOTHING SENT, NOTHING WRITTEN");
   lines.push("=".repeat(78));
   lines.push(`Owner-notification recipient (Brandy): ${report.ownerRecipientEmail}`);
-  lines.push(`Owner allowlist ids: ${report.ownerAllowlistIds.join(", ") || "(EMPTY — fails closed, nothing queues)"}`);
+  lines.push(`Owner allowlist (${report.ownerAllowlist.length} configured):`);
+  if (report.ownerAllowlist.length === 0) lines.push("  (EMPTY — fails closed, nothing queues)");
+  for (const o of report.ownerAllowlist) {
+    lines.push(o.found
+      ? `  ${o.id} -> <${o.email || "NO EMAIL ON FILE"}>`
+      : `  ${o.id} -> NOT FOUND IN auth.users — dangling id, will never queue but should be fixed`);
+  }
   lines.push("");
   lines.push(`Sending enabled — owner: ${report.sendingEnabled.ownerPaymentNotifications}, rental tenant: ${report.sendingEnabled.rentalTenantReceipts}, personal loan: ${report.sendingEnabled.personalLoanReceipts}`);
   lines.push("");
