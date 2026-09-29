@@ -226,7 +226,9 @@ describe("fetchPendingDeliveryRows", () => {
   });
 
   // Minimal mock honoring select/order/range and the exact-count head query.
-  function pagingDb(allRows, { headCountOverride } = {}) {
+  // Pass headCountOverride: null to simulate a missing count with no error.
+  const MISSING = Symbol("missing");
+  function pagingDb(allRows, { headCountOverride = MISSING } = {}) {
     return {
       from: () => {
         let rangeFrom = 0;
@@ -246,7 +248,7 @@ describe("fetchPendingDeliveryRows", () => {
           },
           then: (resolve) =>
             head
-              ? resolve({ data: [], error: null, count: headCountOverride ?? allRows.length })
+              ? resolve({ data: [], error: null, count: headCountOverride === MISSING ? allRows.length : headCountOverride })
               : resolve({ data: allRows.slice(rangeFrom, rangeTo + 1), error: null }),
         };
         return q;
@@ -281,6 +283,18 @@ describe("fetchPendingDeliveryRows", () => {
       "owner_id",
       { pageSize: 10 },
     );
+    expect(complete).toBe(false);
+  });
+
+  it("flags the census incomplete when the exact count is missing", async () => {
+    const all = ["a", "b"].map(pendingRow);
+    const { rows, complete } = await fetchPendingDeliveryRows(
+      pagingDb(all, { headCountOverride: null }),
+      "t",
+      "owner_id",
+      { pageSize: 10 },
+    );
+    expect(rows).toHaveLength(2);
     expect(complete).toBe(false);
   });
 });

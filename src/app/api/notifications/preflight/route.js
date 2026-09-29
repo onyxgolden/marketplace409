@@ -71,7 +71,10 @@ export async function fetchPendingDeliveryRows(
       break;
     }
   }
-  if (complete && count != null && rows.length !== count) complete = false; // drifted mid-flight
+  // A missing or invalid exact count means the census cannot be verified —
+  // never report complete without a trustworthy count.
+  const countValid = Number.isInteger(count) && count >= 0;
+  if (complete && (!countValid || rows.length !== count)) complete = false;
   return { rows, complete };
 }
 
