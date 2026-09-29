@@ -1,5 +1,5 @@
-import { findExistingRun } from "./syncManifestToSupabase.mjs";
-import { countRecordsForRun, countExcludedForRun } from "./readEngineeringBrainFromSupabase.mjs";
+import { findExistingRun, buildBugCatalogRecords } from "./syncManifestToSupabase.mjs";
+import { countRecordsForRun, countExcludedForRun, countBugFixesForRun } from "./readEngineeringBrainFromSupabase.mjs";
 
 export class SyncVerificationError extends Error {
   constructor(reason) {
@@ -15,7 +15,7 @@ export class SyncVerificationError extends Error {
 // the manifest's own counts -- catching e.g. a partial batch failure that got swallowed, a duplicate
 // run some other process raced in, or a schema drift silently dropping rows. Fails loudly rather
 // than letting an automated job report false success.
-export async function verifySync({ supabaseClient, manifest }) {
+export async function verifySync({ supabaseClient, manifest, repositoryRoot = process.cwd(), bugCatalogRecords = null }) {
   const runId = await findExistingRun(supabaseClient, {
     commitSha: manifest.commit_sha,
     indexContentHash: manifest.index_content_hash,
@@ -24,13 +24,15 @@ export async function verifySync({ supabaseClient, manifest }) {
     throw new SyncVerificationError(`No run found in Supabase for commit ${manifest.commit_sha} / index_content_hash ${manifest.index_content_hash}.`);
   }
 
-  const [recordCount, excludedCount] = await Promise.all([
+  const [recordCount, excludedCount, bugFixCount] = await Promise.all([
     countRecordsForRun(supabaseClient, runId),
     countExcludedForRun(supabaseClient, runId),
+    countBugFixesForRun(supabaseClient, runId),
   ]);
 
   const expectedRecordCount = manifest.records.length;
   const expectedExcludedCount = (manifest.excluded || []).length;
+  const expectedBugFixCount = (bugCatalogRecords === null ? buildBugCatalogRecords(repositoryRoot) : bugCatalogRecords).length;
 
   if (recordCount !== expectedRecordCount) {
     throw new SyncVerificationError(`record count mismatch for run ${runId}: Supabase has ${recordCount}, manifest has ${expectedRecordCount}.`);
@@ -38,8 +40,11 @@ export async function verifySync({ supabaseClient, manifest }) {
   if (excludedCount !== expectedExcludedCount) {
     throw new SyncVerificationError(`excluded count mismatch for run ${runId}: Supabase has ${excludedCount}, manifest has ${expectedExcludedCount}.`);
   }
+  if (bugFixCount !== expectedBugFixCount) {
+    throw new SyncVerificationError(`bug-fix count mismatch for run ${runId}: Supabase has ${bugFixCount}, git history has ${expectedBugFixCount}.`);
+  }
 
-  return { runId, recordCount, excludedCount };
+  return { runId, recordCount, excludedCount, bugFixCount };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -48,9 +53,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const manifestPath = process.argv[2] || path.join("engineering-brain", "index-manifest.json");
   const manifest = loadManifestFromDisk(manifestPath);
   const supabaseClient = createSupabaseServiceClient();
-  verifySync({ supabaseClient, manifest })
+  verifySync({ supabaseClient, manifest, repositoryRoot: process.cwd() })
     .then((result) => {
-      console.log(`Verified run ${result.runId}: ${result.recordCount} records, ${result.excludedCount} excluded -- matches the manifest exactly.`);
+      console.log(`Verified run ${result.runId}: ${result.recordCount} records, ${result.excludedCount} excluded, ${result.bugFixCount} bug fixes -- matches the manifest and git history exactly.`);
     })
     .catch((error) => {
       console.error(error.message);

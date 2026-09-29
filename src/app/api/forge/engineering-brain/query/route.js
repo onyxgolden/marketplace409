@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { ProgrammerAuthorizationApplication } from "@/application/developer/ProgrammerAuthorizationApplication";
 
-import { fetchLatestRun, fetchAllRecordsForRun } from "../../../../../../scripts/engineering-brain/persistence/readEngineeringBrainFromSupabase.mjs";
+import { fetchLatestRun, fetchAllRecordsForRun, fetchBugFixesForRun } from "../../../../../../scripts/engineering-brain/persistence/readEngineeringBrainFromSupabase.mjs";
 import { runQuery } from "../../../../../../scripts/engineering-brain/query/runQuery.mjs";
+import { searchBugCatalog } from "../../../../../../scripts/engineering-brain/query/searchBugCatalog.mjs";
 
 const RECORD_COLUMNS = "source_path, source_type, symbol_or_section, commit_sha, content_hash, authority_level, version, details";
 
@@ -55,6 +56,25 @@ export async function GET(request) {
 
   const result = runQuery({ manifest, queryText, filters, maxResults, resolveExcerpts: false });
 
+  // Related past fixes from the per-run bug catalog. Best-effort enrichment:
+  // if the catalog table is missing (migration not yet applied) or unreadable,
+  // the code-index answer still goes out rather than failing the whole query.
+  let relatedFixes = [];
+  try {
+    const bugRows = await fetchBugFixesForRun(supabase, latestRun.id);
+    const bugRecords = bugRows.map((row) => ({
+      sha: row.sha,
+      date: row.date,
+      subject: row.subject,
+      pr: row.pr,
+      class: row.class,
+      files: row.files || [],
+    }));
+    relatedFixes = searchBugCatalog({ records: bugRecords, queryText, maxResults: 5 });
+  } catch {
+    relatedFixes = [];
+  }
+
   return NextResponse.json({
     success: true,
     latestRun: {
@@ -63,5 +83,6 @@ export async function GET(request) {
       extractorVersion: latestRun.extractor_version,
     },
     ...result,
+    related_fixes: relatedFixes,
   });
 }
