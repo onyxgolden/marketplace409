@@ -81,6 +81,16 @@ describe("parser", () => {
     expect(hasEofMarker("0\nSECTION\n0\nENDSEC\n\n  \n")).toBe(false);
   });
 
+  it("hasEofMarker requires an actual group-code-0 line, not any digit sequence ending in 0", () => {
+    // "100" and "10" both end in the digit 0, but neither IS group code 0 —
+    // a file that (corruptly) ends right after one of those codes must not
+    // be read as having the mandatory EOF pair.
+    expect(hasEofMarker("0\nSECTION\n100\nEOF")).toBe(false);
+    expect(hasEofMarker("0\nSECTION\n10\nEOF")).toBe(false);
+    // A genuinely indented "0" (leading spaces on its own line) still counts.
+    expect(hasEofMarker("0\nSECTION\n  0\n  EOF")).toBe(true);
+  });
+
   it("surfaces a truncated file as a note readDxfDrawing reports, not silently", () => {
     const whole = dxf({ entities: [line("A-WALL", 0, 0, 10, 0)] });
     const cut = whole.slice(0, whole.lastIndexOf("EOF"));

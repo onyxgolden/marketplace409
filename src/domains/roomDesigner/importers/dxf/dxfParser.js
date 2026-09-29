@@ -95,9 +95,16 @@ export function decodeDxfInput(input) {
  * Only after trimming is the last ~64 chars checked: comfortably more than
  * "0\nEOF" needs, with no risk of matching an unrelated "0" far inside the
  * real content.
+ *
+ * The "0" must start its own line: the pattern requires an actual preceding
+ * newline (never the slice's own cut point — `^` is deliberately NOT
+ * accepted as that boundary, since it could coincide with an arbitrary mid-
+ * line position sliced out of the middle of real content, not a genuine
+ * line start) so a group code merely ENDING in 0 — "10" or "100" — can
+ * never be mistaken for the mandatory group-code-0 EOF pair.
  */
 export function hasEofMarker(text) {
-  return /0[ \t]*[\r\n]+[ \t]*EOF$/.test(text.replace(/\s+$/, "").slice(-64));
+  return /[\r\n][ \t]*0[ \t]*[\r\n]+[ \t]*EOF$/.test(text.replace(/\s+$/, "").slice(-64));
 }
 
 /** Decode commonly used fields of an entity from its group pairs. */
