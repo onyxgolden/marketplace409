@@ -105,6 +105,7 @@ describe("queuePaymentReceiptNotificationForWebhookEvent", () => {
     for (const row of rows) {
       expect(deliveries.upsert).toHaveBeenCalledWith(row, {
         onConflict: "owner_id,payment_id,recipient_type",
+        ignoreDuplicates: true,
       });
     }
   });

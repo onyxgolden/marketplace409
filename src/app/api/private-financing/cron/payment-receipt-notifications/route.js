@@ -71,7 +71,11 @@ function quietHoursNow(config) {
 }
 
 // Reconciler: succeeded borrower online payments in the lookback window that have no receipt
-// rows yet. Returns the rows it queued (or would queue in dry-run).
+// rows yet. Returns the rows it queued (or would queue in dry-run) so the dry-run plan can
+// show exactly who would receive each receipt — including deliveries whose rows do not exist
+// yet. In live mode the upsert is first-write-wins (ignoreDuplicates): a webhook insert or a
+// cron send that lands between the existence snapshot and this upsert is never reset to
+// 'queued', and only the run that actually inserted a row counts it.
 async function reconcileMissingReceipts(db, config, { dryRun }) {
   const since = new Date(Date.now() - TERMINAL_PAYMENT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const payments = await fetchAllPages((page) =>
@@ -83,7 +87,7 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
       .order("succeeded_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, skippedAtDetection: 0 };
+  if (payments.length === 0) return { reconciled: 0, skippedAtDetection: 0, plannedRows: [] };
 
   const paymentIds = payments.map((payment) => payment.id);
   const existing = await fetchAllPages((page) =>
@@ -104,6 +108,7 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
 
   let reconciled = 0;
   let skippedAtDetection = 0;
+  const plannedRows = [];
   for (const payment of payments) {
     const ownerAllowed = isOwnerNotificationAllowed(config, payment.owner_id);
     const borrowerAllowed = isBorrowerReceiptAllowed(config, payment.borrower_id);
@@ -120,17 +125,30 @@ async function reconcileMissingReceipts(db, config, { dryRun }) {
         ownerAllowed,
         borrowerAllowed,
       });
-      if (row.status === "skipped_disabled") skippedAtDetection += 1;
-      else reconciled += 1;
-      if (!dryRun) {
-        const { error } = await db.from("private_financing_payment_receipt_deliveries").upsert(row, {
-          onConflict: "owner_id,payment_id,recipient_type",
-        });
-        if (error) throw error;
+      const wouldQueue = row.status === "queued";
+      if (dryRun) {
+        if (wouldQueue) {
+          reconciled += 1;
+          plannedRows.push(row);
+        } else {
+          skippedAtDetection += 1;
+        }
+        continue;
+      }
+      const { data, error } = await db
+        .from("private_financing_payment_receipt_deliveries")
+        .upsert(row, { onConflict: "owner_id,payment_id,recipient_type", ignoreDuplicates: true })
+        .select("id");
+      if (error) throw error;
+      // Only the run that actually inserted the row counts it — a no-op upsert
+      // means another writer (webhook, overlapping run) already recorded it.
+      if ((data || []).length === 1) {
+        if (wouldQueue) reconciled += 1;
+        else skippedAtDetection += 1;
       }
     }
   }
-  return { reconciled, skippedAtDetection };
+  return { reconciled, skippedAtDetection, plannedRows };
 }
 
 async function loadDeliveryCandidates(db, config) {
@@ -273,7 +291,7 @@ export async function GET(request) {
   try {
     const db = createRentalWebhookClient();
 
-    const { reconciled, skippedAtDetection } = await reconcileMissingReceipts(db, config, { dryRun });
+    const { reconciled, skippedAtDetection, plannedRows } = await reconcileMissingReceipts(db, config, { dryRun });
 
     let sent = 0;
     let failed = 0;
@@ -285,7 +303,21 @@ export async function GET(request) {
     const inQuietHours = quietHoursNow(config);
     if (!inQuietHours) {
       const emailProvider = dryRun ? null : createResendRentalEmailProvider();
-      const candidates = await loadDeliveryCandidates(db, config);
+      const persistedCandidates = await loadDeliveryCandidates(db, config);
+      // Dry-run plan: deliveries the reconciler would create this run have no
+      // persisted row yet, so include them alongside persisted candidates.
+      // Dedup by the receipt grain — a planned row can never duplicate a
+      // persisted one, but belt-and-braces keeps the plan honest.
+      let candidates = persistedCandidates;
+      if (dryRun && plannedRows.length > 0) {
+        const persistedKeys = new Set(
+          persistedCandidates.map((row) => `${row.payment_id}:${row.recipient_type}`),
+        );
+        const fresh = plannedRows
+          .filter((row) => !persistedKeys.has(`${row.payment_id}:${row.recipient_type}`))
+          .map((row) => ({ attempt_count: 0, first_attempted_at: null, last_attempted_at: null, ...row }));
+        candidates = [...persistedCandidates, ...fresh];
+      }
       for (const row of candidates) {
         const claimToken = dryRun ? "dry-run" : await claimRow(db, row);
         if (!claimToken) continue;

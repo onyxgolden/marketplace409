@@ -9,6 +9,10 @@
 // if the flag flips on before the next cron run. The cron route makes the
 // same disposition for its own detections; the shared builder keeps the two
 // paths identical.
+//
+// options.dryRun: run the full eligibility decision and return the row that
+// WOULD be written, without any database write. Used by the no-send
+// acceptance harness.
 
 import {
   buildNotificationId,
@@ -116,6 +120,7 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
 ) {
   const config = resolveOwnerNotificationConfig();
   const sendingEnabled = options.sendingEnabled ?? config.enabled;
+  const dryRun = options.dryRun === true;
   const tenantConfig = resolveRentalNotificationConfig();
   const effectiveConfig = {
     ...config,
@@ -196,10 +201,12 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
       sendingEnabled,
     });
 
-    const { data, error: insertError } = await db
-      .from("rental_owner_notifications")
-      .upsert(row, { onConflict: "owner_id,id", ignoreDuplicates: true })
-      .select("id");
+    const { data, error: insertError } = dryRun
+      ? { data: null }
+      : await db
+          .from("rental_owner_notifications")
+          .upsert(row, { onConflict: "owner_id,id", ignoreDuplicates: true })
+          .select("id");
     if (insertError) throw insertError;
 
     if (!sendingEnabled && (data || []).length === 1) {
@@ -222,9 +229,11 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
         notificationId: row.id,
         eventType,
         status: row.status,
+        dryRun,
+        row,
       };
     }
-    return { queued: true, notificationId: row.id, eventType, status: row.status };
+    return { queued: true, notificationId: row.id, eventType, status: row.status, dryRun, row };
   } catch (error) {
     // Swallow: the webhook pipeline must succeed even when the queue write
     // fails. The cron's terminal-payment reconciler heals the gap durably —
