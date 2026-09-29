@@ -19,6 +19,7 @@ import { ORG_CHART_METRICS, departmentColor, layoutOrgChart } from "@/domains/ro
 import { furniturePlanSymbol } from "@/domains/roomDesigner/furniturePlanSymbols";
 import { PLAN_SYMBOL_PALETTES, renderPlanSymbol } from "./furniturePlanSymbolSvg";
 import { drawTemaSymbol } from "./temaDrawRoutine";
+import { drawRackSymbol } from "./rackDrawRoutine";
 import { uprightTextTransform } from "./uprightText";
 
 export { uprightTextTransform };
@@ -1227,7 +1228,8 @@ const routines = new Map([
   ["buildingElements", drawBuildingElementSymbol],
   ["siteOutdoor", drawSiteOutdoorSymbol],
   ["mepFixtures", drawMepFixtureSymbol],
-  ["processEquipment", drawProcessEquipmentSymbol],
+  // Racks are parametric steel (rackDrawRoutine); everything else draws its glyph.
+  ["processEquipment", (ctx) => (ctx.symbol.rack ? drawRackSymbol(ctx) : drawProcessEquipmentSymbol(ctx))],
 ]);
 
 /** Truncate a label so it fits a person card; SVG text never wraps. */

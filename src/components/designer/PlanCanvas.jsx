@@ -207,7 +207,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         const s = design.symbols[i];
         if (!layerVisible(s.layer)) continue;
         const symbol = findSymbol(s.domain, s.symbolId);
-        if (!symbol) continue;
+        if (!symbol || symbol.rack) continue; // racks are hit last (see below)
         if (pointInFootprint(plan, s.x, s.y, s.widthIn ?? symbol.widthIn, s.depthIn ?? symbol.depthIn, s.rotationDeg)) {
           return { kind: "symbol", id: s.id };
         }
@@ -221,6 +221,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           if (distancePointToSegment(plan, pts[k - 1], pts[k]) < tolIn + 4) {
             return { kind: "pipe", id: run.id };
           }
+        }
+      }
+      // Racks carry pipes and stand over equipment, so anything on or under
+      // a rack wins; the rack itself is hit only where nothing else is.
+      for (let i = (design.symbols || []).length - 1; i >= 0; i -= 1) {
+        const s = design.symbols[i];
+        if (!layerVisible(s.layer)) continue;
+        const symbol = findSymbol(s.domain, s.symbolId);
+        if (!symbol?.rack) continue;
+        if (pointInFootprint(plan, s.x, s.y, s.widthIn ?? symbol.widthIn, s.depthIn ?? symbol.depthIn, s.rotationDeg)) {
+          return { kind: "symbol", id: s.id };
         }
       }
       // Phase 3: org charts — hit the laid-out bounding box. The anchor is
