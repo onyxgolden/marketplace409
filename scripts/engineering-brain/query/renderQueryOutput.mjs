@@ -14,6 +14,17 @@ export function renderQueryOutputText(response) {
   lines.push(`Manifest commit: ${response.manifest_commit_sha}`);
   lines.push("");
 
+  if (response.related_fixes && response.related_fixes.length > 0) {
+    lines.push(`${response.related_fixes.length} related past fix(es):`);
+    for (const f of response.related_fixes) {
+      const when = String(f.record.date || "").slice(0, 10);
+      const pr = f.record.pr ? `, PR #${f.record.pr}` : "";
+      lines.push(`- [${f.record.class}] ${f.record.subject} (${when}${pr})`);
+      lines.push(`  matched: ${f.matched_terms.join(", ")} | files: ${(f.record.files || []).join(", ") || "—"}`);
+    }
+    lines.push("");
+  }
+
   if (response.insufficient_evidence) {
     lines.push("INSUFFICIENT EVIDENCE");
     lines.push(response.reason);
