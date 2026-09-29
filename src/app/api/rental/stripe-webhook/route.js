@@ -5,6 +5,7 @@ import { normalizeStripeConnectEvent } from "@/infrastructure/billing/normalizeS
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { isWebhookEventAlreadySettled, webhookLivemodeMatchesServerMode } from "@/application/rental/stripeWebhookLedger";
 import { queueOwnerPaymentNotificationForWebhookEvent } from "@/application/rental/queueOwnerPaymentNotification";
+import { queuePaymentReceiptNotificationForWebhookEvent } from "@/application/private-financing/queuePaymentReceiptNotification";
 import { projectStripePayment, projectStripeFeeCredit, projectStripeRefund } from "@/domains/private-financing/stripePaymentProjection";
 
 export const runtime = "nodejs";
@@ -244,6 +245,18 @@ export async function POST(request) {
       // depth.
       if (!processedPrivateFinancing) {
         await queueOwnerPaymentNotificationForWebhookEvent(supabase, normalized, provider.mode);
+      }
+      // Personal-loan payment receipts: queue AFTER the projection succeeds,
+      // only for succeeded borrower payments. Same never-throws guarantee as
+      // above — the helper logs and swallows its own failures.
+      if (processedPrivateFinancing && normalized.eventType === "payment_intent.succeeded" && normalized.paymentId?.startsWith("pf_payment_")) {
+        const { data: succeededPayment } = await supabase.from("private_financing_online_payments")
+          .select("owner_id,id,account_id,borrower_id,amount_cents")
+          .eq("provider", "stripe").eq("provider_mode", provider.mode).eq("id", normalized.paymentId)
+          .maybeSingle();
+        if (succeededPayment) {
+          await queuePaymentReceiptNotificationForWebhookEvent(supabase, succeededPayment);
+        }
       }
       if (processedPrivateFinancing) {
         const completed = await supabase.from("payment_webhook_events").update({ status: "processed", processed_at: new Date().toISOString(), failure_message: null }).eq("id", eventRowId);

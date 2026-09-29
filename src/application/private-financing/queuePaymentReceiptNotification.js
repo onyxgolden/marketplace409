@@ -1,0 +1,109 @@
+// Queues private-financing (personal loan) payment-received notifications for a succeeded
+// borrower Stripe payment. Called from the Stripe webhook route AFTER the payment projection
+// succeeds. NEVER throws: notification queueing must not break webhook processing — a failure
+// is logged and the webhook still returns 200.
+//
+// Two rows are queued per payment: an 'owner' receipt to the owner-notification recipient
+// (brandykaymorgan@gmail.com per Jason's 2026-09-29 instruction, resolved through the shared
+// owner-notification config) and a 'borrower' receipt to the borrower's own email.
+//
+// Detection-time disposition mirrors the rental owner-notification precedent: rows are written
+// as 'queued' when sending is enabled at detection time AND the owner is allowlisted, or
+// terminally as 'skipped_disabled' when it is not. A disabled-at-detection event can never be
+// delivered later. The deliveries table's unique constraint on (owner_id, payment_id,
+// recipient_type) makes every queue insertion idempotent, so webhook redeliveries can never
+// double-notify.
+import {
+  RECEIPT_RECIPIENT_TYPE,
+  buildReceiptDeliveryId,
+} from "@/domains/private-financing/paymentReceiptNotifications";
+import {
+  isOwnerNotificationAllowed,
+  resolveOwnerNotificationConfig,
+} from "@/domains/owner-notifications/ownerNotificationConfig";
+
+// Pure row builder, shared with the cron route's reconciler. The reconciler exists so a lost
+// webhook queue write (caught and swallowed here to protect webhook processing) still heals
+// within one cron run. The row is the dedup record, not the email draft: borrower name,
+// account product, and autopay sourcing are re-resolved by the sender at send time so the
+// email always reflects current data.
+export function buildReceiptDeliveryRow({
+  payment,
+  recipientType,
+  recipientEmail,
+  sendingEnabled,
+  ownerAllowed,
+}) {
+  const deliverable = sendingEnabled && ownerAllowed && Boolean(recipientEmail);
+  return {
+    owner_id: payment.owner_id,
+    id: buildReceiptDeliveryId({
+      ownerId: payment.owner_id,
+      paymentId: payment.id,
+      recipientType,
+    }),
+    account_id: payment.account_id,
+    payment_id: payment.id,
+    borrower_id: payment.borrower_id,
+    recipient_type: recipientType,
+    recipient_email: recipientEmail || "",
+    status: deliverable ? "queued" : "skipped_disabled",
+    failure_reason: deliverable
+      ? null
+      : !sendingEnabled
+        ? "Sending disabled at detection time."
+        : !ownerAllowed
+          ? "Owner not allowlisted for notifications."
+          : "Recipient email unavailable.",
+  };
+}
+
+export async function queuePaymentReceiptNotificationForWebhookEvent(db, payment, options = {}) {
+  try {
+    const config = resolveOwnerNotificationConfig();
+    const sendingEnabled = options.sendingEnabled ?? config.enabled;
+    const ownerAllowed = isOwnerNotificationAllowed(
+      { allowedOwnerIds: options.allowedOwnerIds ?? config.allowedOwnerIds },
+      payment.owner_id,
+    );
+
+    const borrowerResult = await db
+      .from("private_financing_borrowers")
+      .select("email")
+      .eq("id", payment.borrower_id)
+      .maybeSingle();
+    if (borrowerResult.error) throw borrowerResult.error;
+
+    const borrower = borrowerResult.data || {};
+    const rows = [
+      buildReceiptDeliveryRow({
+        payment,
+        recipientType: RECEIPT_RECIPIENT_TYPE.OWNER,
+        recipientEmail: config.recipientEmail,
+        sendingEnabled,
+        ownerAllowed,
+      }),
+      buildReceiptDeliveryRow({
+        payment,
+        recipientType: RECEIPT_RECIPIENT_TYPE.BORROWER,
+        recipientEmail: borrower.email,
+        sendingEnabled,
+        ownerAllowed,
+      }),
+    ];
+
+    for (const row of rows) {
+      const { error } = await db.from("private_financing_payment_receipt_deliveries").upsert(row, {
+        onConflict: "owner_id,payment_id,recipient_type",
+      });
+      if (error) throw error;
+    }
+    return { queued: rows.filter((row) => row.status === "queued").length };
+  } catch (error) {
+    console.error("Private financing payment receipt queueing failed", {
+      paymentId: payment?.id,
+      name: error?.name || "Error",
+    });
+    return { queued: 0, queueError: true };
+  }
+}
