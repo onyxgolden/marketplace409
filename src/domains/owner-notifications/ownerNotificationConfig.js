@@ -78,3 +78,36 @@ export function isOwnerNotificationAllowed(config, ownerId) {
   const list = config?.allowedOwnerIds ?? [];
   return list.length > 0 && ownerId != null && list.includes(String(ownerId));
 }
+
+// Rental tenant allow-list (recipient-level rollout restriction, Jason's
+// 2026-09-29 instruction): rental payment notifications — Brandy's owner
+// confirmations AND tenant receipts — are only ever queued or sent for
+// tenants explicitly listed in RENTAL_NOTIFICATION_TENANT_IDS
+// (comma-separated). When the list is empty or unset, NOTHING is queued or
+// sent for anyone: the system fails closed. Initial rollout: Eric Carrillo
+// (308 Paula).
+export function resolveRentalNotificationConfig(env = process.env) {
+  const base = resolveOwnerNotificationConfig(env);
+  return {
+    ...base,
+    allowedTenantIds: parseOwnerAllowlist(env.RENTAL_NOTIFICATION_TENANT_IDS),
+    // Explicit UTC timestamp (ISO string) or null when unset/unparseable.
+    activatedAt: parseActivationCutoff(env.PAYMENT_RECEIPTS_ACTIVATED_AT),
+  };
+}
+
+// Activation cutoff: an explicit UTC timestamp established when Jason authorizes
+// notification sending. Receipt reconcilers must never heal (queue receipts for)
+// payments from before the cutoff — otherwise the first post-activation run would
+// dig up old settled payments and send stale receipts. Fail-closed: an unset or
+// unparseable PAYMENT_RECEIPTS_ACTIVATED_AT means the reconciler heals nothing.
+export function parseActivationCutoff(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+export function isTenantNotificationAllowed(config, tenantId) {
+  const list = config?.allowedTenantIds ?? [];
+  return list.length > 0 && tenantId != null && list.includes(String(tenantId));
+}

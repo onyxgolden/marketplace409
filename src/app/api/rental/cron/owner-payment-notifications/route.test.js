@@ -74,6 +74,7 @@ function queuedRow() {
     owner_id: OWNER, id: `opn_${OWNER}_upcoming_autopay_enr_fixture_charge_fixture_${isoTodayPlus(3)}`,
     event_type: "upcoming_autopay", status: "queued", attempt_count: 0,
     first_attempted_at: null, last_attempted_at: null, charge_id: "charge_fixture",
+    tenant_id: "tenant_fixture",
     payload: { tenant_name: "Test Tenant", amount_cents: 160000, due_date: isoTodayPlus(3), charge_type: "rent", is_autopay: true },
   };
 }
@@ -98,6 +99,7 @@ function reconciledCandidateRow() {
     owner_id: OWNER, id: `opn_${OWNER}_manual_payment_received_rental_payment_fixture`,
     event_type: "manual_payment_received", status: "queued", attempt_count: 0,
     first_attempted_at: null, last_attempted_at: null, charge_id: "charge_fixture",
+    tenant_id: "tenant_fixture",
     payload: { tenant_name: "Test Tenant", amount_cents: 160000, is_autopay: false, failure_code: null },
   };
 }
@@ -123,6 +125,10 @@ beforeEach(() => {
   delete process.env.OWNER_PAYMENT_NOTIFICATION_EMAIL;
   // The owner allow-list fails closed: tests opt in explicitly.
   process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
+  // The tenant allow-list fails closed too: the fixtures' tenant opts in.
+  process.env.RENTAL_NOTIFICATION_TENANT_IDS = "tenant_fixture";
+  // Activation cutoff: the reconciler only heals terminal payments at/after this.
+  process.env.PAYMENT_RECEIPTS_ACTIVATED_AT = "2026-09-01T00:00:00Z";
   vi.clearAllMocks();
   // Pin the clock to noon CDT (outside quiet hours) so delivery tests are
   // deterministic no matter when the suite runs. Individual tests move the
@@ -615,6 +621,54 @@ describe("owner payment notifications cron", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("reconciler heals nothing when the activation cutoff is unset", async () => {
+    delete process.env.PAYMENT_RECEIPTS_ACTIVATED_AT;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(true);
+    expect(body.reconciled).toBe(0);
+    // Fail-closed: the reconciler bails before touching rental_payments, so
+    // no stale terminal payment can be healed.
+    expect(db.from).not.toHaveBeenCalledWith("rental_payments");
+    expect(logSpy).toHaveBeenCalledWith(
+      "Owner payment notification reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.",
+    );
+    logSpy.mockRestore();
+  });
+
+  it("reconciler scan excludes terminal payments before the activation cutoff", async () => {
+    const scanQb = qb({ data: [], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [scanQb], // reconciler scan
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(false);
+    // Both terminal-transition branches require the transition at/after the cutoff.
+    const orFilter = scanQb.or.mock.calls[0][0];
+    expect(orFilter).toContain("succeeded_at.gte.2026-09-01T00:00:00.000Z");
+    expect(orFilter).toContain("updated_at.gte.2026-09-01T00:00:00.000Z");
+  });
+
   it("reconciles a payment created days ago that settled today (delayed ACH)", async () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
     const send = vi.fn().mockResolvedValue({ messageId: "re_recon_delayed" });
@@ -822,5 +876,64 @@ describe("owner payment notifications cron", () => {
     expect(outcomeNode.update).toHaveBeenCalledWith(
       expect.objectContaining({ status: "skipped_not_allowlisted", claim_token: null }),
     );
+  });
+
+  it("delivery terminally marks rows for tenants removed from the allow-list", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    process.env.RENTAL_NOTIFICATION_TENANT_IDS = "someone_else";
+    const claimNode = qb({ data: [{ id: "opn_x" }], error: null }); // claim: won
+    const outcomeNode = qb({ data: [{ id: "opn_x" }], error: null }); // outcome: recorded
+    const row = { ...reconciledCandidateRow(), tenant_id: "tenant_fixture" };
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [row], error: null }), // candidates
+        claimNode,
+        outcomeNode,
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.skippedNotAllowlisted).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(outcomeNode.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "skipped_not_allowlisted", claim_token: null }),
+    );
+    delete process.env.RENTAL_NOTIFICATION_TENANT_IDS;
+  });
+
+  it("delivery fails closed for rows with no recorded tenant", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    process.env.RENTAL_NOTIFICATION_TENANT_IDS = "tenant_fixture";
+    const claimNode = qb({ data: [{ id: "opn_x" }], error: null }); // claim: won
+    const outcomeNode = qb({ data: [{ id: "opn_x" }], error: null }); // outcome: recorded
+    const row = { ...reconciledCandidateRow(), tenant_id: null };
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [row], error: null }), // candidates
+        claimNode,
+        outcomeNode,
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.skippedNotAllowlisted).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    delete process.env.RENTAL_NOTIFICATION_TENANT_IDS;
   });
 });

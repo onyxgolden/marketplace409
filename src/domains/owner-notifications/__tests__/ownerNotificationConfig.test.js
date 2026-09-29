@@ -4,8 +4,11 @@ import {
   UPCOMING_AUTOPAY_LEAD_DAYS,
   parseQuietHour,
   resolveOwnerNotificationConfig,
+  resolveRentalNotificationConfig,
   parseOwnerAllowlist,
+  parseActivationCutoff,
   isOwnerNotificationAllowed,
+  isTenantNotificationAllowed,
 } from "../ownerNotificationConfig";
 
 beforeEach(() => {
@@ -103,5 +106,83 @@ describe("owner notification config", () => {
     expect(parseQuietHour("22.5", 23)).toBe(23);
     expect(parseQuietHour("22", 23)).toBe(22);
     expect(parseQuietHour("0", 7)).toBe(0);
+  });
+});
+
+describe("rental tenant allowlist (recipient-level rollout restriction)", () => {
+  it("parses RENTAL_NOTIFICATION_TENANT_IDS into allowedTenantIds", () => {
+    const config = resolveRentalNotificationConfig({
+      RENTAL_NOTIFICATION_TENANT_IDS: " tenant_a ,tenant_b ",
+    });
+    expect(config.allowedTenantIds).toEqual(["tenant_a", "tenant_b"]);
+  });
+
+  it("defaults allowedTenantIds to an empty list", () => {
+    expect(resolveRentalNotificationConfig({}).allowedTenantIds).toEqual([]);
+  });
+
+  it("inherits the owner-notification config fields", () => {
+    const config = resolveRentalNotificationConfig({
+      OWNER_PAYMENT_NOTIFICATIONS_ENABLED: "true",
+      RENTAL_NOTIFICATION_TENANT_IDS: "tenant_a",
+    });
+    expect(config.enabled).toBe(true);
+    expect(config.senderName).toBe("FORGE Rental Manager");
+  });
+
+  it("allows an explicitly listed tenant", () => {
+    const config = resolveRentalNotificationConfig({ RENTAL_NOTIFICATION_TENANT_IDS: "tenant_a" });
+    expect(isTenantNotificationAllowed(config, "tenant_a")).toBe(true);
+  });
+
+  it("refuses a tenant who is not listed", () => {
+    const config = resolveRentalNotificationConfig({ RENTAL_NOTIFICATION_TENANT_IDS: "tenant_a" });
+    expect(isTenantNotificationAllowed(config, "tenant_b")).toBe(false);
+  });
+
+  it("fails closed when the list is empty or unset", () => {
+    expect(isTenantNotificationAllowed(resolveRentalNotificationConfig({}), "tenant_a")).toBe(false);
+    expect(
+      isTenantNotificationAllowed(resolveRentalNotificationConfig({ RENTAL_NOTIFICATION_TENANT_IDS: "" }), "tenant_a"),
+    ).toBe(false);
+  });
+
+  it("fails closed on a null or missing tenant id", () => {
+    const config = resolveRentalNotificationConfig({ RENTAL_NOTIFICATION_TENANT_IDS: "tenant_a" });
+    expect(isTenantNotificationAllowed(config, null)).toBe(false);
+    expect(isTenantNotificationAllowed(config, undefined)).toBe(false);
+  });
+
+  it("fails closed on a missing config", () => {
+    expect(isTenantNotificationAllowed(null, "tenant_a")).toBe(false);
+    expect(isTenantNotificationAllowed(undefined, "tenant_a")).toBe(false);
+  });
+});
+
+describe("parseActivationCutoff", () => {
+  it("parses an explicit UTC timestamp to ISO", () => {
+    expect(parseActivationCutoff("2026-09-29T20:00:00Z")).toBe("2026-09-29T20:00:00.000Z");
+  });
+
+  it("returns null when unset", () => {
+    expect(parseActivationCutoff(undefined)).toBeNull();
+    expect(parseActivationCutoff("")).toBeNull();
+  });
+
+  it("returns null for unparseable values (fail-closed)", () => {
+    expect(parseActivationCutoff("not-a-date")).toBeNull();
+  });
+});
+
+describe("resolveRentalNotificationConfig activation cutoff", () => {
+  it("carries the parsed cutoff through", () => {
+    const config = resolveRentalNotificationConfig({
+      PAYMENT_RECEIPTS_ACTIVATED_AT: "2026-09-29T20:00:00Z",
+    });
+    expect(config.activatedAt).toBe("2026-09-29T20:00:00.000Z");
+  });
+
+  it("is null when the env var is unset", () => {
+    expect(resolveRentalNotificationConfig({}).activatedAt).toBeNull();
   });
 });

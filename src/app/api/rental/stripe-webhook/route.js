@@ -6,6 +6,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { isWebhookEventAlreadySettled, webhookLivemodeMatchesServerMode } from "@/application/rental/stripeWebhookLedger";
 import { queueOwnerPaymentNotificationForWebhookEvent } from "@/application/rental/queueOwnerPaymentNotification";
 import { queuePaymentReceiptNotificationForWebhookEvent } from "@/application/private-financing/queuePaymentReceiptNotification";
+import { queueTenantPaymentReceiptForWebhookEvent } from "@/application/rental/queueTenantPaymentReceipt";
 import { projectStripePayment, projectStripeFeeCredit, projectStripeRefund } from "@/domains/private-financing/stripePaymentProjection";
 
 export const runtime = "nodejs";
@@ -255,6 +256,14 @@ export async function POST(request) {
           paymentId: normalized.paymentId,
           providerMode: provider.mode,
         });
+      }
+      // Tenant payment receipt (Eric): queue AFTER the projection succeeds,
+      // succeeded rental payments ONLY. Same never-throws guarantee as above —
+      // the helper logs and swallows its own failures. Non-tenant and
+      // non-succeeded events no-op inside the helper; the gate here is defense
+      // in depth.
+      if (!processedPrivateFinancing && normalized.eventType === "payment_intent.succeeded" && normalized.paymentId) {
+        await queueTenantPaymentReceiptForWebhookEvent(supabase, { paymentId: normalized.paymentId, providerMode: provider.mode });
       }
       if (processedPrivateFinancing) {
         const completed = await supabase.from("payment_webhook_events").update({ status: "processed", processed_at: new Date().toISOString(), failure_message: null }).eq("id", eventRowId);

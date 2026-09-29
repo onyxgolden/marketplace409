@@ -126,6 +126,9 @@ export function computeUpcomingAutopayCandidate({ charge, asOfDate, leadDays }) 
 export function buildOwnerNotificationEmail({ eventType, facts = {} }) {
   const tenant = (facts.tenantName || "").trim() || "A tenant";
   const amount = formatCentsAsUsd(facts.amountCents ?? 0);
+  const property = (facts.propertyLabel || "").trim();
+  const propertySuffix = property ? ` — ${property}` : "";
+  const propertyClause = property ? ` for ${property}` : "";
   switch (eventType) {
     case OWNER_NOTIFICATION_EVENT_TYPE.UPCOMING_AUTOPAY: {
       const when = facts.dueDate || "the upcoming due date";
@@ -139,27 +142,28 @@ export function buildOwnerNotificationEmail({ eventType, facts = {} }) {
     }
     case OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED: {
       return {
-        subject: `Tenant payment received: ${amount} from ${tenant}`,
+        subject: `Tenant payment received: ${amount} from ${tenant}${propertySuffix}`,
         bodyText:
           `${tenant} made a manual payment of ${amount} through the tenant portal` +
+          `${propertyClause}` +
           `${facts.dueDate ? ` for the charge due ${facts.dueDate}` : ""}.\n\n` +
           `This was not an autopay collection.`,
       };
     }
     case OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_COMPLETED: {
       return {
-        subject: `Autopay completed: ${amount} for ${tenant}`,
+        subject: `Autopay completed: ${amount} for ${tenant}${propertySuffix}`,
         bodyText:
-          `The automatic payment of ${amount} for ${tenant} completed successfully` +
+          `The automatic payment of ${amount} for ${tenant}${propertyClause} completed successfully` +
           `${facts.dueDate ? ` for the charge due ${facts.dueDate}` : ""}.`,
       };
     }
     case OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_FAILED: {
       const source = facts.isAutopay ? "An automatic payment" : "A tenant payment";
       return {
-        subject: `Payment failed: ${amount} for ${tenant}`,
+        subject: `Payment failed: ${amount} for ${tenant}${propertySuffix}`,
         bodyText:
-          `${source} of ${amount} for ${tenant} failed or bounced` +
+          `${source} of ${amount} for ${tenant}${propertyClause} failed or bounced` +
           `${facts.failureCode ? ` (code: ${facts.failureCode})` : ""}.\n\n` +
           `The tenant may need a nudge to retry or use another payment method.`,
       };
