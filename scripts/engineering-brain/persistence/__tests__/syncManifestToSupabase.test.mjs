@@ -5,6 +5,7 @@ import {
   manifestToRunRow,
   manifestRecordToRow,
   manifestExcludedToRow,
+  bugRecordToRow,
   syncManifestToSupabase,
 } from "../syncManifestToSupabase.mjs";
 
@@ -57,6 +58,15 @@ describe("row mapping (pure functions)", () => {
       run_id: "run_1", id: "excluded_0", source_path: "a.js", reason: "lockfile",
     });
   });
+
+  it("bugRecordToRow maps every bug-catalog field, defaulting files to []", () => {
+    const record = { sha: "abc", date: "2026-09-26T10:00:00+00:00", subject: "fix: x", pr: 448, class: "fix", files: ["src/a.js"] };
+    expect(bugRecordToRow(record, "run_1", 0)).toEqual({
+      run_id: "run_1", id: "bugfix_0", sha: "abc", date: "2026-09-26T10:00:00+00:00",
+      subject: "fix: x", pr: 448, class: "fix", files: ["src/a.js"],
+    });
+    expect(bugRecordToRow({ sha: "d", date: null, subject: "s", pr: null, class: "revert" }, "run_1", 2).files).toEqual([]);
+  });
 });
 
 describe("findExistingRun", () => {
@@ -98,7 +108,7 @@ describe("syncManifestToSupabase", () => {
 
   it("is idempotent: skips the sync entirely when this exact commit + index_content_hash was already synced", async () => {
     const runsTable = fakeTable({ maybeSingle: { data: { id: "run_existing" }, error: null } });
-    const result = await syncManifestToSupabase({ supabaseClient: fakeSupabaseClient({ engineering_brain_runs: runsTable }), manifest: sampleManifest() });
+    const result = await syncManifestToSupabase({ supabaseClient: fakeSupabaseClient({ engineering_brain_runs: runsTable }), manifest: sampleManifest(), bugCatalogRecords: [] });
     expect(result.skipped).toBe(true);
     expect(result.runId).toBe("run_existing");
     expect(runsTable.__calls.some((call) => call[0] === "insert")).toBe(false);
@@ -111,6 +121,7 @@ describe("syncManifestToSupabase", () => {
     const result = await syncManifestToSupabase({
       supabaseClient: fakeSupabaseClient({ engineering_brain_runs: runsTable, engineering_brain_records: recordsTable, engineering_brain_excluded: excludedTable }),
       manifest: sampleManifest(3),
+      bugCatalogRecords: [],
     });
 
     expect(result.skipped).toBe(false);
@@ -132,6 +143,7 @@ describe("syncManifestToSupabase", () => {
     await syncManifestToSupabase({
       supabaseClient: fakeSupabaseClient({ engineering_brain_runs: runsTable, engineering_brain_records: recordsTable, engineering_brain_excluded: excludedTable }),
       manifest: sampleManifest(1200),
+      bugCatalogRecords: [],
     });
     const insertCalls = recordsTable.__calls.filter((call) => call[0] === "insert");
     expect(insertCalls.length).toBeGreaterThan(1);
@@ -146,6 +158,49 @@ describe("syncManifestToSupabase", () => {
     await expect(syncManifestToSupabase({
       supabaseClient: fakeSupabaseClient({ engineering_brain_runs: runsTable, engineering_brain_records: recordsTable, engineering_brain_excluded: excludedTable }),
       manifest: sampleManifest(3),
+      bugCatalogRecords: [],
     })).rejects.toThrow(/insert failed/);
+  });
+
+  it("writes injected bug-catalog records to engineering_brain_bug_fixes tied to the run", async () => {
+    const runsTable = fakeTable({ maybeSingle: { data: null, error: null } });
+    const recordsTable = fakeTable({});
+    const excludedTable = fakeTable({});
+    const bugFixesTable = fakeTable({});
+    const bugCatalogRecords = [
+      { sha: "aaa", date: "2026-09-26T10:00:00+00:00", subject: "fix: ledger", pr: 100, class: "fix", files: ["src/a.js"] },
+      { sha: "bbb", date: "2026-09-27T10:00:00+00:00", subject: "Revert \"feat: x\"", pr: null, class: "revert", files: [] },
+    ];
+    const result = await syncManifestToSupabase({
+      supabaseClient: fakeSupabaseClient({
+        engineering_brain_runs: runsTable,
+        engineering_brain_records: recordsTable,
+        engineering_brain_excluded: excludedTable,
+        engineering_brain_bug_fixes: bugFixesTable,
+      }),
+      manifest: sampleManifest(1),
+      bugCatalogRecords,
+    });
+
+    expect(result.bugFixCount).toBe(2);
+    const insertCall = bugFixesTable.__calls.find((call) => call[0] === "insert");
+    expect(insertCall[1]).toHaveLength(2);
+    expect(insertCall[1][0]).toMatchObject({ run_id: result.runId, id: "bugfix_0", sha: "aaa", pr: 100, class: "fix" });
+    expect(insertCall[1][1]).toMatchObject({ run_id: result.runId, id: "bugfix_1", sha: "bbb", pr: null, class: "revert" });
+  });
+
+  it("propagates a bug-fix insert failure rather than silently reporting partial success", async () => {
+    const runsTable = fakeTable({ maybeSingle: { data: null, error: null } });
+    const bugFixesTable = fakeTable({ insert: { data: null, error: { message: "bug insert failed" } } });
+    await expect(syncManifestToSupabase({
+      supabaseClient: fakeSupabaseClient({
+        engineering_brain_runs: runsTable,
+        engineering_brain_records: fakeTable({}),
+        engineering_brain_excluded: fakeTable({}),
+        engineering_brain_bug_fixes: bugFixesTable,
+      }),
+      manifest: sampleManifest(1),
+      bugCatalogRecords: [{ sha: "aaa", date: null, subject: "fix: x", pr: null, class: "fix", files: [] }],
+    })).rejects.toThrow(/bug insert failed/);
   });
 });

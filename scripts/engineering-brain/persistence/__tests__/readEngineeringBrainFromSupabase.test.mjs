@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchLatestRun, fetchRecordsForRun, fetchAllRecordsForRun, fetchExcludedForRun, countRecordsForRun, countExcludedForRun } from "../readEngineeringBrainFromSupabase.mjs";
+import { fetchLatestRun, fetchRecordsForRun, fetchAllRecordsForRun, fetchExcludedForRun, fetchBugFixesForRun, countRecordsForRun, countExcludedForRun, countBugFixesForRun } from "../readEngineeringBrainFromSupabase.mjs";
 
 function fakeQuery(result) {
   const calls = [];
@@ -143,5 +143,30 @@ describe("countExcludedForRun", () => {
     const count = await countExcludedForRun(fakeClient(table), "run_1");
     expect(count).toBe(8);
     expect(table.__calls).toContainEqual(["eq", ["run_id", "run_1"]]);
+  });
+});
+
+describe("fetchBugFixesForRun", () => {
+  it("filters by run and orders newest first", async () => {
+    const rows = [{ sha: "b" }, { sha: "a" }];
+    const table = fakeQuery({ data: rows, error: null });
+    const result = await fetchBugFixesForRun(fakeClient(table), "run_9");
+    expect(result).toEqual(rows);
+    expect(table.__calls).toContainEqual(["eq", ["run_id", "run_9"]]);
+    expect(table.__calls).toContainEqual(["order", ["date", { ascending: false }]]);
+  });
+
+  it("propagates a query error", async () => {
+    const table = fakeQuery({ data: null, error: { message: "db down" } });
+    await expect(fetchBugFixesForRun(fakeClient(table), "run_9")).rejects.toThrow(/db down/);
+  });
+});
+
+describe("countBugFixesForRun", () => {
+  it("returns the exact bug-fix count for a run", async () => {
+    const table = fakeQuery({ count: 28, error: null });
+    const count = await countBugFixesForRun(fakeClient(table), "run_9");
+    expect(count).toBe(28);
+    expect(table.__calls).toContainEqual(["eq", ["run_id", "run_9"]]);
   });
 });

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
+import { buildCatalog } from "../buildBugCatalog.mjs";
+
 const DEFAULT_MANIFEST_PATH = path.join("engineering-brain", "index-manifest.json");
 const BATCH_SIZE = 500;
 
@@ -77,7 +79,29 @@ export function manifestExcludedToRow(excluded, runId, index) {
   };
 }
 
-export async function syncManifestToSupabase({ supabaseClient, manifest }) {
+export function bugRecordToRow(record, runId, index) {
+  return {
+    run_id: runId,
+    id: `bugfix_${index}`,
+    sha: record.sha,
+    date: record.date,
+    subject: record.subject,
+    pr: record.pr,
+    class: record.class,
+    files: record.files || [],
+  };
+}
+
+/**
+ * Build the bug catalog for a repository checkout. Throws loudly when git
+ * history is unreadable -- a sync that silently writes zero bug rows would
+ * look successful while leaving the Brain's failure memory empty.
+ */
+export function buildBugCatalogRecords(repositoryRoot) {
+  return buildCatalog({ root: repositoryRoot }).records;
+}
+
+export async function syncManifestToSupabase({ supabaseClient, manifest, repositoryRoot = process.cwd(), bugCatalogRecords = null }) {
   const existingRunId = await findExistingRun(supabaseClient, {
     commitSha: manifest.commit_sha,
     indexContentHash: manifest.index_content_hash,
@@ -103,19 +127,26 @@ export async function syncManifestToSupabase({ supabaseClient, manifest }) {
     if (error) throw new Error(`Failed to insert a batch of excluded rows: ${error.message}`);
   }
 
-  return { skipped: false, runId, recordCount: recordRows.length, excludedCount: excludedRows.length };
+  const bugRecords = bugCatalogRecords === null ? buildBugCatalogRecords(repositoryRoot) : bugCatalogRecords;
+  const bugRows = bugRecords.map((record, index) => bugRecordToRow(record, runId, index));
+  for (const batch of chunk(bugRows, BATCH_SIZE)) {
+    const { error } = await supabaseClient.from("engineering_brain_bug_fixes").insert(batch);
+    if (error) throw new Error(`Failed to insert a batch of bug-fix rows: ${error.message}`);
+  }
+
+  return { skipped: false, runId, recordCount: recordRows.length, excludedCount: excludedRows.length, bugFixCount: bugRows.length };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const manifestPath = process.argv[2] || DEFAULT_MANIFEST_PATH;
   const manifest = loadManifestFromDisk(manifestPath);
   const supabaseClient = createSupabaseServiceClient();
-  syncManifestToSupabase({ supabaseClient, manifest })
+  syncManifestToSupabase({ supabaseClient, manifest, repositoryRoot: process.cwd() })
     .then((result) => {
       if (result.skipped) {
         console.log(`Skipped: ${result.reason} (run ${result.runId})`);
       } else {
-        console.log(`Synced run ${result.runId}: ${result.recordCount} records, ${result.excludedCount} excluded.`);
+        console.log(`Synced run ${result.runId}: ${result.recordCount} records, ${result.excludedCount} excluded, ${result.bugFixCount} bug fixes.`);
       }
     })
     .catch((error) => {
