@@ -54,7 +54,7 @@ sha256, size, reason) is in `manifest.json`. License texts are in `licenses/`.
 6. Malformed files must fail **safely**: a clear refusal (error code + message), or an import
    that keeps the design valid. Never a crash, never a corrupted design.
 
-## Baseline and known gaps (2026-09-28)
+## Baseline and known gaps (2026-09-28, gap status updated 2026-09-29)
 
 Known gaps are `it.fails` tests, written as the correct behaviour. They don't block anything; when
 a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are deliberately
@@ -64,7 +64,7 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
 | --- | --- | --- |
 | forge-test-house.dxf | inches detected; 16 walls; 5 named rooms; ~474×330 in; saves/reopens clean | **G1**: only 3 of 11 doors/windows land |
 | nortier-blocks1.dxf | mm; 0 walls; annotations; "No layer is set to Walls" | none |
-| malformed-truncated.dxf | imports what is there, design stays valid | **G2**: no "file is incomplete" warning |
+| malformed-truncated.dxf | imports what is there, design stays valid | none: **G2 fixed** (warns the file is missing its EOF marker) |
 | malformed-fake.dwg | refused: export as DXF | none |
 | forge-test-house.vsdx | 19 walls; 5 named rooms; 4 furniture; 480×336 in | **G3**: 0 openings (doors/windows become annotations) |
 | generic-diagram.vsdx | annotations only; skipped shapes reported | none |
@@ -79,20 +79,24 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
   wall segments (with jamb lines). FORGE only attaches an opening to a wall it lies on, so 8 of 11
   are dropped with "no wall close enough". Fix direction: bridge collinear wall segments across a
   gap that holds a door or window symbol, then cut the opening into the bridged wall.
-- **G2: Truncated DXF isn't flagged.** A file cut mid-ENTITIES (no `EOF`) imports silently with part
-  of the drawing missing. Fix direction: warn when the section/`EOF` structure is incomplete.
+- **G2 (FIXED): Truncated DXF wasn't flagged.** A file cut mid-ENTITIES (no `EOF`) imported silently
+  with part of the drawing missing. Fix: `hasEofMarker()` checks for the mandatory end-of-file
+  marker every valid DXF ends with; `readDxfDrawing` surfaces a warning through the same
+  notes/issues path every other DXF diagnostic already uses.
 - **G3: VSDX openings.** Door/Window master shapes sitting in wall gaps become text annotations
   instead of openings. Same bridging fix as G1, fed by master names.
 - **G4: PDF vector wall classification.** Every stroke of 6 in or longer at scale becomes a wall:
   furniture, dimensions, text strokes, hatch and the sheet border. Fix direction: detect
   paired parallel strokes (wall faces) and ignore the page-border rectangle; the rest become
   annotations.
-- **G5 (FIXED): Scanned PDFs encoded as CCITT fax (and JBIG2 / JPEG 2000) rendered blank.** Fix: pdf.js's decoders are vendored to `public/pdfjs/wasm/` (with a sync test) and passed as `wasmUrl`, and a raster page that still renders pure white now raises a warning. pdf.js 5 decodes
-  these with WebAssembly and needs `wasmUrl` in `getDocument`; `openDocument` in `pdfImporter.js`
-  doesn't pass it, so pdf.js logs "JBig2 failed to initialize", skips the image, and FORGE places an
-  all-white underlay with no warning. 1-bit CCITT is the usual encoding for scanned plan sheets. Verified:
-  the same page with `wasmUrl` pointing at `pdfjs-dist/wasm/` renders 5.4% ink. Fix direction: pass a
-  bundled `wasmUrl` (resolved like the worker, no CDN), and warn when a raster page comes back empty.
+- **G5 (FIXED): Scanned PDFs encoded as CCITT fax (and JBIG2 / JPEG 2000) rendered blank.** pdf.js 5
+  decodes these with WebAssembly and needs `wasmUrl` passed to `getDocument`; `openDocument` in
+  `pdfImporter.js` didn't pass one, so pdf.js logged "JBig2 failed to initialize", skipped the
+  image, and FORGE placed an all-white underlay with no warning — 1-bit CCITT is the usual encoding
+  for scanned plan sheets. Fix: pdf.js's decoders are vendored to `public/pdfjs/wasm/` (with a sync
+  test against the installed `pdfjs-dist`) and passed as `wasmUrl`; a raster page that still renders
+  pure white now raises a warning instead of placing blank paper silently. Verified on real hardware:
+  the same page went from 0.00% to 5.44% ink (poppler shows ~5%).
 - **Units (external floorplan.dxf, below).** A DXF with a millimetre header drawn in inch-sized
   numbers imports 47"×34" instead of house-sized. The importer trusts `$INSUNITS`; a sanity check
   on the resulting extents (a "house" 4 ft wide) should prompt for the unit.
