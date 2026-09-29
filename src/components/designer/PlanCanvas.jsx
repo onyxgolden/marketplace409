@@ -1558,7 +1558,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const isEmpty = design.walls.length === 0 && design.rooms.length === 0
     && (design.furniture || []).length === 0
     && (design.pipes || []).length === 0 && (design.symbols || []).length === 0
-    && (design.orgCharts || []).length === 0 && (design.annotations || []).length === 0;
+    && (design.orgCharts || []).length === 0 && (design.annotations || []).length === 0
+    // A placed background (scan / plan image to trace) is the starting point.
+    && !design.underlay;
 
   // ---- Background underlay: drawn beneath the grid and the plan,
   // scaling/panning with the canvas transform ----
