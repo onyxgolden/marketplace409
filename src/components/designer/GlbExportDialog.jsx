@@ -27,7 +27,12 @@ export default function GlbExportDialog({ project, design, onClose }) {
     setBusy(true);
     try {
       const merged = projectWithEditedDesign(project, design) || project;
-      const result = await exportDesignToGlb(merged, { includeFloor, includeFurniture });
+      // GLB exports a single level's design; the merged object is a project,
+      // so pull the current level's design out of it. Same "print what you
+      // see" merge path as DXF (which exports the whole project).
+      const level = (merged.levels || []).find((l) => l.id === merged.currentLevelId);
+      const doc = level?.design || design;
+      const result = await exportDesignToGlb(doc, { includeFloor, includeFurniture });
       if (!result.ok) {
         setError(result.error);
         return;
