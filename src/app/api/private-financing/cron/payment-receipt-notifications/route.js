@@ -312,6 +312,18 @@ export async function GET(request) {
           continue;
         }
 
+        if (!isBorrowerReceiptAllowed(config, row.borrower_id)) {
+          // Same belt-and-braces for the borrower allow-list: a row queued for a
+          // borrower since removed from PF_RECEIPT_BORROWER_IDS (or with no recorded
+          // borrower) can never be delivered. Terminally marked, not retried.
+          if (dryRun) {
+            skippedNotAllowlisted += 1;
+          } else if (await recordOutcome(db, row, { status: "skipped_not_allowlisted" }, claimToken)) {
+            skippedNotAllowlisted += 1;
+          }
+          continue;
+        }
+
         const facts = await resolveReceiptFacts(db, row);
         if (!facts) {
           if (!dryRun)
