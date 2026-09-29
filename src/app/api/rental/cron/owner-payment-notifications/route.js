@@ -4,10 +4,11 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
-import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
+import { resolveRentalNotificationConfig, isOwnerNotificationAllowed, isTenantNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
 import {
   buildTerminalNotificationFacts,
   buildTerminalPaymentNotificationRow,
+  resolvePropertyLabel,
 } from "@/application/rental/queueOwnerPaymentNotification";
 import {
   OWNER_NOTIFICATION_EVENT_TYPE,
@@ -148,6 +149,7 @@ async function loadUpcomingAutopayPairs(db, providerMode, asOfDate, leadDays) {
   if (pairs.length === 0) return [];
 
   const tenantNameByLease = new Map();
+  const tenantIdByLease = new Map();
   const leaseIds = [...new Set(pairs.map((pair) => pair.enrollment.lease_id))];
   for (const chunk of chunkArray(leaseIds, ID_CHUNK_SIZE)) {
     const { data: leaseTenants, error: tenantError } = await db.from("rental_lease_tenants")
@@ -156,11 +158,13 @@ async function loadUpcomingAutopayPairs(db, providerMode, asOfDate, leadDays) {
     if (tenantError) throw tenantError;
     for (const row of leaseTenants || []) {
       if (!tenantNameByLease.has(row.lease_id)) tenantNameByLease.set(row.lease_id, row.rental_tenants?.display_name ?? null);
+      if (!tenantIdByLease.has(row.lease_id) && row.rental_tenants?.id) tenantIdByLease.set(row.lease_id, row.rental_tenants.id);
     }
   }
   return pairs.map((pair) => ({
     ...pair,
     tenantName: tenantNameByLease.get(pair.enrollment.lease_id) ?? null,
+    tenantId: tenantIdByLease.get(pair.enrollment.lease_id) ?? null,
   }));
 }
 
@@ -170,6 +174,12 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
     // Owner allow-list: fail closed — nothing is written for an owner who
     // is not explicitly allow-listed.
     if (!isOwnerNotificationAllowed(config, pair.enrollment.owner_id)) {
+      skippedNotAllowlisted += 1;
+      continue;
+    }
+    // Tenant allow-list (recipient-level rollout restriction): fail closed —
+    // upcoming-autopay notices go only to explicitly listed tenants.
+    if (!isTenantNotificationAllowed(config, pair.tenantId)) {
       skippedNotAllowlisted += 1;
       continue;
     }
@@ -240,7 +250,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       .order("updated_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0 };
+  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0 };
 
   // Owner allow-list: fail closed — payments for non-allow-listed owners are
   // never turned into notifications.
@@ -248,12 +258,20 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     isOwnerNotificationAllowed(config, payment.owner_id),
   );
   const skippedNotAllowlisted = payments.length - allowlisted.length;
-  if (allowlisted.length === 0) {
-    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted };
+
+  // Tenant allow-list (recipient-level rollout restriction, Jason's
+  // 2026-09-29 instruction): fail closed — only explicitly listed tenants
+  // (initial rollout: Eric Carrillo, 308 Paula) generate notifications.
+  const tenantAllowlisted = allowlisted.filter((payment) =>
+    isTenantNotificationAllowed(config, payment.tenant_id),
+  );
+  const skippedTenantNotAllowlisted = allowlisted.length - tenantAllowlisted.length;
+  if (tenantAllowlisted.length === 0) {
+    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted };
   }
 
   const attemptPaymentIds = new Set();
-  for (const chunk of chunkArray(allowlisted.map((payment) => payment.id), ID_CHUNK_SIZE)) {
+  for (const chunk of chunkArray(tenantAllowlisted.map((payment) => payment.id), ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_autopay_attempts")
       .select("payment_id").in("payment_id", chunk);
     if (error) throw error;
@@ -261,7 +279,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
   }
 
   const tenantNameById = new Map();
-  const tenantIds = [...new Set(allowlisted.map((payment) => payment.tenant_id).filter(Boolean))];
+  const tenantIds = [...new Set(tenantAllowlisted.map((payment) => payment.tenant_id).filter(Boolean))];
   for (const chunk of chunkArray(tenantIds, ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_tenants")
       .select("id, display_name").in("id", chunk);
@@ -271,7 +289,16 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     }
   }
 
-  const rows = allowlisted.map((payment) => {
+  // Property labels, resolved once per lease for the batch.
+  const propertyLabelByLease = new Map();
+  const leaseKeys = [...new Set(tenantAllowlisted.map((payment) => `${payment.owner_id}:${payment.lease_id}`).filter((key) => !key.endsWith(":null") && !key.endsWith(":undefined")))];
+  for (const key of leaseKeys) {
+    const [ownerId, leaseId] = key.split(":");
+    const label = await resolvePropertyLabel(db, { ownerId, leaseId });
+    if (label) propertyLabelByLease.set(key, label);
+  }
+
+  const rows = tenantAllowlisted.map((payment) => {
     const hasAutopayAttempt = attemptPaymentIds.has(payment.id);
     const eventType = resolvePaymentNotificationEvent({
       stripeOutcome: payment.status === "failed" ? "failed" : "succeeded",
@@ -280,6 +307,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     return buildTerminalPaymentNotificationRow({
       payment,
       tenantName: tenantNameById.get(payment.tenant_id) ?? null,
+      propertyLabel: propertyLabelByLease.get(`${payment.owner_id}:${payment.lease_id}`) ?? null,
       eventType,
       isAutopay: hasAutopayAttempt,
       stripeEventType: payment.status === "failed" ? "payment_intent.payment_failed" : "payment_intent.succeeded",
@@ -296,7 +324,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     for (const row of data || []) existingIds.add(row.id);
   }
   const missing = rows.filter((row) => !existingIds.has(row.id));
-  if (missing.length === 0) return { reconciled: 0, alreadyQueued: rows.length, skippedAtDetection: 0 };
+  if (missing.length === 0) return { reconciled: 0, alreadyQueued: rows.length, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted };
 
   let reconciled = 0, skippedAtDetection = 0;
   for (const chunk of chunkArray(missing, ID_CHUNK_SIZE)) {
@@ -314,7 +342,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       }
     }
   }
-  return { reconciled, alreadyQueued: rows.length - missing.length, skippedAtDetection };
+  return { reconciled, alreadyQueued: rows.length - missing.length, skippedAtDetection, skippedNotAllowlisted, skippedTenantNotAllowlisted };
 }
 
 // Delivery candidates: fresh queue rows, failed rows under the attempt cap,
@@ -457,7 +485,7 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
-  const config = resolveOwnerNotificationConfig();
+  const config = resolveRentalNotificationConfig();
   try {
     const db = createRentalWebhookClient();
     const provider = createStripeBillingProvider();
@@ -476,13 +504,14 @@ export async function GET(request) {
     }
 
     // 2. Reconcile terminal payments the webhook queue may have lost.
-    let reconciled = 0, alreadyReconciled = 0;
+    let reconciled = 0, alreadyReconciled = 0, skippedTenantNotAllowlistedReconciled = 0;
     if (!dryRun) {
       const healing = await reconcileTerminalPaymentNotifications(db, provider.mode, config);
       reconciled = healing.reconciled;
       alreadyReconciled = healing.alreadyQueued;
       skippedDisabled += healing.skippedAtDetection;
       skippedNotAllowlisted += healing.skippedNotAllowlisted;
+      skippedTenantNotAllowlistedReconciled = healing.skippedTenantNotAllowlisted;
       wouldSend += healing.skippedAtDetection;
     }
 
@@ -593,6 +622,7 @@ export async function GET(request) {
       sent, wouldSend, failed, skippedDisabled, superseded,
       deferredQuietHours,
       skippedNotAllowlisted: skippedNotAllowlisted + skippedNotAllowlistedDelivery,
+      skippedTenantNotAllowlisted: skippedTenantNotAllowlistedReconciled,
     });
   } catch (error) {
     console.error("Owner payment notification cron error", error);

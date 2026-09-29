@@ -16,7 +16,46 @@ import {
   classifyStripePaymentEvent,
   resolvePaymentNotificationEvent,
 } from "@/domains/owner-notifications/ownerPaymentNotifications";
-import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
+import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed, resolveRentalNotificationConfig, isTenantNotificationAllowed } from "@/domains/owner-notifications/ownerNotificationConfig";
+
+// Resolves a human property label for a lease: the unit label when the lease
+// names a unit, otherwise the property slug humanized ("308-paula" ->
+// "308 Paula"). Never throws — returns null when the lease or unit cannot be
+// resolved. Used by the owner-notification payload and the tenant receipt.
+export async function resolvePropertyLabel(db, { ownerId, leaseId }) {
+  try {
+    if (!leaseId) return null;
+    let leaseQuery = db
+      .from("rental_leases")
+      .select("property_id, unit_id")
+      .eq("id", leaseId);
+    if (ownerId) leaseQuery = leaseQuery.eq("owner_id", ownerId);
+    const { data: lease, error: leaseError } = await leaseQuery.maybeSingle();
+    if (leaseError) throw leaseError;
+    if (!lease) return null;
+    if (lease.unit_id) {
+      let unitQuery = db.from("rental_units").select("label").eq("id", lease.unit_id);
+      if (ownerId) unitQuery = unitQuery.eq("owner_id", ownerId);
+      const { data: unit, error: unitError } = await unitQuery.maybeSingle();
+      if (unitError) throw unitError;
+      if (unit?.label) return String(unit.label);
+    }
+    if (lease.property_id) {
+      return String(lease.property_id)
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, (c) => c.toUpperCase()) || null;
+    }
+    return null;
+  } catch (error) {
+    console.error("Property label resolution failed", {
+      leaseId,
+      name: error?.name || "Error",
+    });
+    return null;
+  }
+}
 
 // Pure row builder for terminal payment notifications (succeeded/failed),
 // shared with the cron route's durable reconciler. The reconciler exists so
@@ -25,6 +64,7 @@ import { resolveOwnerNotificationConfig, isOwnerNotificationAllowed } from "@/do
 export function buildTerminalPaymentNotificationRow({
   payment,
   tenantName,
+  propertyLabel,
   eventType,
   isAutopay,
   stripeEventType,
@@ -45,6 +85,7 @@ export function buildTerminalPaymentNotificationRow({
     tenant_id: payment.tenant_id,
     payload: {
       tenant_name: tenantName,
+      property_label: propertyLabel,
       amount_cents: payment.amount_cents,
       stripe_event_type: stripeEventType,
       is_autopay: isAutopay,
@@ -60,6 +101,7 @@ export function buildTerminalPaymentNotificationRow({
 export function buildTerminalNotificationFacts(payload = {}) {
   return {
     tenantName: payload.tenant_name,
+    propertyLabel: payload.property_label,
     amountCents: payload.amount_cents,
     failureCode: payload.failure_code,
     isAutopay: payload.is_autopay,
@@ -74,9 +116,11 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
 ) {
   const config = resolveOwnerNotificationConfig();
   const sendingEnabled = options.sendingEnabled ?? config.enabled;
+  const tenantConfig = resolveRentalNotificationConfig();
   const effectiveConfig = {
     ...config,
     allowedOwnerIds: options.allowedOwnerIds ?? config.allowedOwnerIds,
+    allowedTenantIds: options.allowedTenantIds ?? tenantConfig.allowedTenantIds,
   };
   try {
     const stripeOutcome = classifyStripePaymentEvent({
@@ -100,6 +144,14 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
     // tenant/payment details from being emailed to the shared recipient.
     if (!isOwnerNotificationAllowed(effectiveConfig, payment.owner_id)) {
       return { queued: false, reason: "owner_not_allowlisted" };
+    }
+
+    // Tenant allow-list (recipient-level rollout restriction, Jason's
+    // 2026-09-29 instruction): fail closed. Only explicitly listed tenants
+    // (initial rollout: Eric Carrillo, 308 Paula) generate notifications —
+    // every other tenant's payments are ignored at detection time.
+    if (!isTenantNotificationAllowed(effectiveConfig, payment.tenant_id)) {
+      return { queued: false, reason: "tenant_not_allowlisted" };
     }
 
     const { data: attempt, error: attemptError } = await db
@@ -128,9 +180,15 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
       tenantName = tenant?.display_name ?? null;
     }
 
+    const propertyLabel = await resolvePropertyLabel(db, {
+      ownerId: payment.owner_id,
+      leaseId: payment.lease_id,
+    });
+
     const row = buildTerminalPaymentNotificationRow({
       payment,
       tenantName,
+      propertyLabel,
       eventType,
       isAutopay: Boolean(attempt),
       stripeEventType: normalized.eventType,
