@@ -34,11 +34,11 @@
     },
     {
       "path": "/api/private-financing/cron/payment-receipt-notifications",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 16 * * *"
     },
     {
       "path": "/api/rental/cron/tenant-payment-receipts",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 18 * * *"
     }
   ]
 }
