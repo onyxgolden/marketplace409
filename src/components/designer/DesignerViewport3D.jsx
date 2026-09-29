@@ -487,10 +487,16 @@ export default function DesignerViewport3D({
   const moveStateRef = useRef({ forward: false, backward: false, left: false, right: false, up: false, down: false });
   const flyVelocityRef = useRef({ forward: 0, right: 0, up: 0 });
   const lastFrameTimeRef = useRef(0);
+  // { state, plane, pointerId } while an entity drag (P1-B editing) is in
+  // progress; a ref (not a plain closure var) specifically so setCameraMode
+  // — defined outside the setup effect — can force-clear a drag that's still
+  // active when the user switches into Walk/Fly mid-drag.
+  const dragRef = useRef(null);
   // Manual free-roam video capture of the live canvas.
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
+  const recordingStreamRef = useRef(null); // captureStream()'s MediaStream, so its tracks can be stopped explicitly
   // Equipment tag labels (P-101, E-102, …): hidden by default, flipped by the
   // Labels toggle beside the 360° button. Sprites are collected per scene build
   // (they're rebuilt with the scene); the ref mirror avoids rebuilding the
@@ -712,7 +718,6 @@ export default function DesignerViewport3D({
     const sameEntity = (p, q) => !!p && !!q && p.kind === q.kind && p.id === q.id;
 
     let pressAt = null; // { x, y } of the primary-button press, for click detection
-    let drag = null; // { state, plane, pointerId } while moving an entity
 
     // Capture phase on the mount element: runs before OrbitControls' own
     // listener on the canvas, so an entity drag can claim the gesture
@@ -745,7 +750,7 @@ export default function DesignerViewport3D({
       // Drag on the horizontal plane at the grab height, so the entity
       // tracks the cursor exactly instead of the floor point far behind it.
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -picked.point.y);
-      drag = { state, plane, pointerId: e.pointerId };
+      dragRef.current = { state, plane, pointerId: e.pointerId };
       controls.enabled = false;
       try {
         mount.setPointerCapture(e.pointerId);
@@ -756,10 +761,10 @@ export default function DesignerViewport3D({
     };
     const onPointerMove = (e) => {
       if (cameraModeRef.current === "walk" || cameraModeRef.current === "fly") return;
-      if (drag) {
-        if (!castFrom(e) || !raycaster.ray.intersectPlane(drag.plane, planeHit)) return;
-        const step = dragStep3D(drag.state, designRef.current, planPointFromWorld(planeHit));
-        drag.state = step.drag;
+      if (dragRef.current) {
+        if (!castFrom(e) || !raycaster.ray.intersectPlane(dragRef.current.plane, planeHit)) return;
+        const step = dragStep3D(dragRef.current.state, designRef.current, planPointFromWorld(planeHit));
+        dragRef.current.state = step.drag;
         if (step.action) dispatchRef.current?.(step.action);
         return;
       }
@@ -770,13 +775,13 @@ export default function DesignerViewport3D({
       mount.style.cursor = !target ? "" : sameEntity(target, selectionRef.current) ? "move" : "pointer";
     };
     const endEntityDrag = (e) => {
-      if (!drag) return false;
+      if (!dragRef.current) return false;
       try {
-        mount.releasePointerCapture(drag.pointerId);
+        mount.releasePointerCapture(dragRef.current.pointerId);
       } catch {
         // already released (or never captured); nothing to undo
       }
-      drag = null;
+      dragRef.current = null;
       controls.enabled = true;
       e.stopPropagation();
       return true;
@@ -836,8 +841,16 @@ export default function DesignerViewport3D({
       if (pointerLockControls.isLocked) pointerLockControls.unlock();
       pointerLockControls.dispose();
       pointerLockControlsRef.current = null;
+      // recorder.stop() (below) triggers the same onstop handler that stops
+      // the stream's tracks — but if the recorder never actually reached a
+      // running state (construction/start failed after captureStream already
+      // handed back a live stream), onstop never fires, so the tracks are
+      // also stopped directly here as a fallback.
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
+      } else if (recordingStreamRef.current) {
+        for (const track of recordingStreamRef.current.getTracks()) track.stop();
+        recordingStreamRef.current = null;
       }
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
@@ -1180,8 +1193,29 @@ export default function DesignerViewport3D({
       // The camera is centered automatically ONLY on the first non-empty
       // build; edits after that never move it out from under the user. The
       // reset-view button re-runs this same framing on demand.
+      //
+      // Which framing depends on whatever camera mode is CURRENT at the
+      // moment the first build lands — not always Orbit's. A user can pick
+      // Walk before the model finishes its first build (a fresh/empty design,
+      // or a slow initial load); without this branch, this one-time framing
+      // would always call frameCameraOnModel and silently teleport them back
+      // to the elevated Orbit view the instant real geometry arrives.
       if (!initialCameraSetRef.current) {
-        if (frameCameraOnModel(camera, controls, built)) initialCameraSetRef.current = true;
+        const mode = cameraModeRef.current;
+        let framed = false;
+        if (mode === "dollhouse") {
+          framed = frameDollhouseOnModel(camera, controls, built);
+        } else if (mode === "walk" || mode === "fly") {
+          const pose = walkStartPose(built, { heightIn: mode === "fly" ? FLY_START_HEIGHT_IN : WALK_EYE_HEIGHT_IN });
+          if (pose) {
+            camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+            camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
+            framed = true;
+          }
+        } else {
+          framed = frameCameraOnModel(camera, controls, built);
+        }
+        if (framed) initialCameraSetRef.current = true;
       }
       builtRef.current = built;
 
@@ -1240,6 +1274,30 @@ export default function DesignerViewport3D({
     camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
   };
 
+  // A camera-mode switch can land mid entity-drag (P1-B editing): the user
+  // pressed down on a wall/furniture piece, which set dragRef and disabled
+  // OrbitControls, then clicked a mode button before releasing. onPointerUp
+  // will never fire the drag's own cleanup in that case — in Walk/Fly it's
+  // guarded off entirely, and even switching straight back to Orbit doesn't
+  // reach it, since the original press/release pair is long since over.
+  // Left alone, `controls.enabled` stays false until some LATER, unrelated
+  // pointerup happens to call endEntityDrag with a stale drag object. Force
+  // it closed here instead, on every mode switch, regardless of direction.
+  const forceEndActiveDrag = () => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const mount = mountRef.current;
+    if (mount) {
+      try {
+        mount.releasePointerCapture(drag.pointerId);
+      } catch {
+        // already released (or never captured); nothing to undo
+      }
+    }
+    dragRef.current = null;
+    if (controlsRef.current) controlsRef.current.enabled = true;
+  };
+
   // Switches which controls object drives the camera. Orbit and Dollhouse
   // both use OrbitControls (Dollhouse just constrains its polar angle);
   // Walk and Fly both use PointerLockControls. Leaving Walk/Fly always
@@ -1247,6 +1305,7 @@ export default function DesignerViewport3D({
   // re-entering later (or switching to Orbit) never inherits stale motion.
   const setCameraMode = (mode) => {
     if (mode === cameraModeRef.current) return;
+    forceEndActiveDrag();
     const wasFirstPerson = cameraModeRef.current === "walk" || cameraModeRef.current === "fly";
     if (wasFirstPerson) {
       moveStateRef.current = { forward: false, backward: false, left: false, right: false, up: false, down: false };
@@ -1309,6 +1368,7 @@ export default function DesignerViewport3D({
     const canvas = rendererRef.current?.domElement;
     if (!canvas || !recordingSupported) return;
     const stream = canvas.captureStream(30);
+    recordingStreamRef.current = stream;
     const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(
       (t) => window.MediaRecorder.isTypeSupported?.(t),
     );
@@ -1320,6 +1380,18 @@ export default function DesignerViewport3D({
     recorder.onstop = () => {
       const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
       recordedChunksRef.current = [];
+      // Explicitly stop every track now that the recorder has fully flushed
+      // (stop() fires a final dataavailable before this event, so the blob
+      // above already has everything) — otherwise the canvas capture keeps
+      // running, tied only to the stream's own GC lifetime, not to the user
+      // having pressed Stop.
+      const stream = recordingStreamRef.current;
+      recordingStreamRef.current = null;
+      if (stream) for (const track of stream.getTracks()) track.stop();
+      // A recording with nothing captured (Stop pressed the instant after
+      // Start, or captureStream produced no frames) must not hand the user a
+      // broken, unplayable file.
+      if (blob.size === 0) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
