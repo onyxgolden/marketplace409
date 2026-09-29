@@ -497,6 +497,7 @@ export default function DesignerViewport3D({
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordingStreamRef = useRef(null); // captureStream()'s MediaStream, so its tracks can be stopped explicitly
+  const recordingErroredRef = useRef(false); // set by the recorder's own error event; tells a later onstop to skip the download
   // Equipment tag labels (P-101, E-102, …): hidden by default, flipped by the
   // Labels toggle beside the 360° button. Sprites are collected per scene build
   // (they're rebuilt with the scene); the ref mirror avoids rebuilding the
@@ -1364,18 +1365,52 @@ export default function DesignerViewport3D({
     typeof HTMLCanvasElement !== "undefined" &&
     typeof HTMLCanvasElement.prototype.captureStream === "function";
 
+  /** Stops every track on the live recording stream (idempotent — safe to call with nothing active). */
+  const releaseRecordingStream = () => {
+    const stream = recordingStreamRef.current;
+    recordingStreamRef.current = null;
+    if (stream) for (const track of stream.getTracks()) track.stop();
+  };
+
   const startRecording = () => {
     const canvas = rendererRef.current?.domElement;
     if (!canvas || !recordingSupported) return;
-    const stream = canvas.captureStream(30);
-    recordingStreamRef.current = stream;
-    const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(
-      (t) => window.MediaRecorder.isTypeSupported?.(t),
-    );
-    const recorder = new window.MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+    let stream;
+    let recorder;
+    try {
+      stream = canvas.captureStream(30);
+      recordingStreamRef.current = stream;
+      const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(
+        (t) => window.MediaRecorder.isTypeSupported?.(t),
+      );
+      recorder = new window.MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    } catch {
+      // Synchronous startup failure (e.g. an unsupported mimeType slipped past
+      // isTypeSupported, or captureStream itself threw). Release whatever got
+      // created and leave the UI in "not recording" — never leave a stream
+      // running with no button reflecting that it's live.
+      releaseRecordingStream();
+      return;
+    }
+
     recordedChunksRef.current = [];
+    recordingErroredRef.current = false;
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+    };
+    // An in-progress recording can fail asynchronously (the underlying track
+    // ends unexpectedly, an encoder error, etc). Whether `stop` also fires
+    // after `error` is browser/error-dependent per spec — clean up here
+    // unconditionally rather than relying on it, and mark errored so onstop
+    // (if it does still fire) skips the download instead of offering a
+    // corrupt/incomplete file.
+    recorder.onerror = () => {
+      recordingErroredRef.current = true;
+      releaseRecordingStream();
+      recordedChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
     };
     recorder.onstop = () => {
       const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
@@ -1384,14 +1419,12 @@ export default function DesignerViewport3D({
       // (stop() fires a final dataavailable before this event, so the blob
       // above already has everything) — otherwise the canvas capture keeps
       // running, tied only to the stream's own GC lifetime, not to the user
-      // having pressed Stop.
-      const stream = recordingStreamRef.current;
-      recordingStreamRef.current = null;
-      if (stream) for (const track of stream.getTracks()) track.stop();
-      // A recording with nothing captured (Stop pressed the instant after
-      // Start, or captureStream produced no frames) must not hand the user a
-      // broken, unplayable file.
-      if (blob.size === 0) return;
+      // having pressed Stop. A no-op if onerror already released it.
+      releaseRecordingStream();
+      // Skip the download if this stop followed a recording error, or if
+      // nothing was actually captured (Stop pressed the instant after Start)
+      // — either way there's nothing a user should be handed as a video file.
+      if (recordingErroredRef.current || blob.size === 0) return;
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1401,7 +1434,15 @@ export default function DesignerViewport3D({
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     };
-    recorder.start();
+
+    try {
+      recorder.start();
+    } catch {
+      // start() itself threw synchronously — same cleanup as the constructor
+      // failure above; none of the event handlers above will ever fire.
+      releaseRecordingStream();
+      return;
+    }
     mediaRecorderRef.current = recorder;
     setIsRecording(true);
   };
