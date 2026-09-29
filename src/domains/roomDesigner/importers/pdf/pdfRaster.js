@@ -114,6 +114,7 @@ export async function rasterizePdfPage(page, { dpi = DEFAULT_RENDER_DPI, scaleFa
   const viewport = page.getViewport({ scale: plan.scale });
   await page.render({ canvasContext: context, viewport, canvas }).promise;
 
+  const blank = renderedBlank(context, plan.widthPx, plan.heightPx);
   const dataUrl = canvas.toDataURL("image/png");
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
     throw new Error("The rendered page could not be read back as an image.");
@@ -127,9 +128,31 @@ export async function rasterizePdfPage(page, { dpi = DEFAULT_RENDER_DPI, scaleFa
       widthPx: plan.widthPx,
       heightPx: plan.heightPx,
       pxPerIn: plan.pxPerIn,
+      blank,
     },
     plan,
   };
+}
+
+/**
+ * True when the rendered page is pure paper white: a decoder that failed
+ * silently leaves the white fill untouched. Checks every pixel (a sampled
+ * grid could step over a scan's 1-px lines) and stops at the first ink, so
+ * a real drawing returns almost immediately. False when pixels can't be
+ * read (unknown, never a false alarm).
+ */
+export function renderedBlank(context, width, height) {
+  if (typeof context?.getImageData !== "function" || !(width > 0 && height > 0)) return false;
+  let data;
+  try {
+    data = context.getImageData(0, 0, width, height).data;
+  } catch {
+    return false;
+  }
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245) return false;
+  }
+  return true;
 }
 
 function defaultCanvas(width, height) {

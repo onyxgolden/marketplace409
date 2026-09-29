@@ -171,3 +171,20 @@ describe("rasterizePdfPage", () => {
     await expect(rasterizePdfPage(fakePage(), { createCanvas: badCanvas })).rejects.toThrow(/read back/);
   });
 });
+
+describe("renderedBlank", () => {
+  const ctxOf = (pixels) => ({ getImageData: () => ({ data: Uint8ClampedArray.from(pixels) }) });
+  const white = (n) => Array.from({ length: n }, () => [255, 255, 255, 255]).flat();
+  it("is true only for pure paper white", async () => {
+    const { renderedBlank } = await import("./pdfRaster");
+    expect(renderedBlank(ctxOf(white(9)), 3, 3)).toBe(true);
+    const oneInk = white(9);
+    oneInk.splice(4 * 7, 4, 0, 0, 0, 255); // a single dark pixel anywhere counts
+    expect(renderedBlank(ctxOf(oneInk), 3, 3)).toBe(false);
+  });
+  it("never raises a false alarm when pixels can't be read", async () => {
+    const { renderedBlank } = await import("./pdfRaster");
+    expect(renderedBlank({}, 3, 3)).toBe(false);
+    expect(renderedBlank({ getImageData: () => { throw new Error("tainted"); } }, 3, 3)).toBe(false);
+  });
+});
