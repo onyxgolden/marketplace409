@@ -28,7 +28,7 @@ Tests: `src/domains/roomDesigner/importers/importLibrary.test.js` (manifest, DXF
 | `dxf/malformed-truncated.dxf` | malformed | Original, `generators/make_malformed.py` |
 | `dxf/malformed-fake.dwg` | malformed | Original, `generators/make_malformed.py` |
 | `vsdx/forge-test-house.vsdx` | detailed | Original, `generators/make_forge_test_house_vsdx.py` |
-| `vsdx/poi-github260.vsdx` | difficult | Apache POI test data, Apache-2.0 |
+| `vsdx/generic-diagram.vsdx` | difficult | Original, `generators/make_generic_diagram_vsdx.py` |
 | `vsdx/malformed-not-a-zip.vsdx` | malformed | Original |
 | `vsdx/malformed-missing-pages.vsdx` | malformed | Original |
 | `pdf/forge-test-house-vector.pdf` | detailed (vector, true 1/4" = 1'-0") | Original |
@@ -67,7 +67,7 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
 | malformed-truncated.dxf | imports what is there, design stays valid | **G2**: no "file is incomplete" warning |
 | malformed-fake.dwg | refused: export as DXF | none |
 | forge-test-house.vsdx | 19 walls; 5 named rooms; 4 furniture; 480×336 in | **G3**: 0 openings (doors/windows become annotations) |
-| poi-github260.vsdx | annotations only; skipped shapes reported | none |
+| generic-diagram.vsdx | annotations only; skipped shapes reported | none |
 | malformed-not-a-zip / missing-pages .vsdx | refused (`bad-zip` / `missing-part`) | none |
 | forge-test-house-vector.pdf @ 1/4" | geometry imports at the right scale | **G4**: ~400 "walls", including the sheet border |
 | habs-davenport scanned PDF | vector mode: 0 paths, points to the image path; image mode places a 3499×2676 px, 150 DPI underlay | **G5**: the placed image is blank white (0% ink; poppler shows ~5%) |
@@ -106,8 +106,14 @@ license). Download them locally for manual checks; never commit them.
   Baseline: header says mm → plan lands 47"×34"; 6 walls; 1,255 annotations. Units brief above.
 - **HABS TX sheet, 1992** (named contract delineator, rights unclear). Rejected in favour of the
   1934 Davenport sheet.
-- **Other Apache POI VSDX test data** (bug/fuzz files in `apache/poi` `test-data/diagram/`).
-  Apache-2.0 like github260; add more when a VSDX bug needs one.
+- **Apache POI VSDX test-data (bug/fuzz files in `apache/poi` `test-data/diagram/`).**
+  Not usable, even the project's own license notwithstanding: these are files attached to bug
+  reports, and neither the issue nor the commit that adds one to POI's test-data records who
+  created the DIAGRAM'S CONTENT or whether they had the right to redistribute it — the reporter
+  merely had a copy that reproduced a parser bug. `vsdx/generic-diagram.vsdx` (below) replaced
+  the one fixture of this kind previously in this library (`poi-github260.vsdx`) for exactly this
+  reason. Do not add another without source-specific content provenance, not just the hosting
+  project's license.
 - **Autodesk Revit sample projects** (RVT; Autodesk terms, not redistributable). Future: RVT/IFC.
 - **SketchUp 3D Warehouse models** (SKP; per-model terms). Future: SKP.
 - **Sweet Home 3D sample homes** (SH3D; check each file's license). Future: SH3D.
