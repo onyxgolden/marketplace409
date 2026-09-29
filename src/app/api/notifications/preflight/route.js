@@ -31,29 +31,43 @@ async function resolveDisplayNames(db, table, ids, nameColumn) {
   return ids.map((id) => ({ id, displayName: byId.get(id) ?? null }));
 }
 
-async function pendingDeliveryCounts(db, table, { maxAttempts, staleClaimMinutes }) {
+async function pendingDeliveryGroups(db, table, { columns, isEligible, describeExcluded, maxAttempts, staleClaimMinutes }) {
   const { data, error } = await db
     .from(table)
-    .select("status,attempt_count,last_attempted_at")
+    .select(`status,attempt_count,last_attempted_at,${columns}`)
     .in("status", ["queued", "failed", "sending"]);
   if (error) throw error;
-  const staleCutoff = Date.now() - staleClaimMinutes * 60 * 1000;
-  let queued = 0;
-  let retryable = 0;
+  const thresholds = { maxAttempts, staleClaimMinutes };
+  const groups = {
+    eligible: { queued: 0, retryable: 0 },
+    excluded: { queued: 0, retryable: 0, recipientIds: [] },
+  };
+  const excludedIds = new Set();
   for (const row of data || []) {
-    if (row.status === "queued") {
-      queued += 1;
-    } else if (
-      row.attempt_count < maxAttempts &&
-      (row.status === "failed" ||
-        (row.status === "sending" &&
-          row.last_attempted_at &&
-          new Date(row.last_attempted_at).getTime() < staleCutoff))
-    ) {
-      retryable += 1;
+    const bucket = classifyPendingRow(row, thresholds);
+    if (!bucket) continue;
+    if (isEligible(row)) {
+      groups.eligible[bucket] += 1;
+    } else {
+      groups.excluded[bucket] += 1;
+      excludedIds.add(describeExcluded(row));
     }
   }
-  return { queued, retryable };
+  groups.excluded.recipientIds = [...excludedIds].slice(0, 25);
+  return groups;
+}
+
+function classifyPendingRow(row, config) {
+  if (row.status === "queued") return "queued";
+  if (row.attempt_count >= config.maxAttempts) return null;
+  if (row.status === "failed") return "retryable";
+  if (
+    row.status === "sending" &&
+    row.last_attempted_at &&
+    Date.now() - new Date(row.last_attempted_at).getTime() > config.staleClaimMinutes * 60 * 1000
+  )
+    return "retryable";
+  return null;
 }
 
 export async function GET(request) {
@@ -68,9 +82,31 @@ export async function GET(request) {
     const [pfBorrowers, rentalTenants, pfPending, tenantPending, ownerPending] = await Promise.all([
       resolveDisplayNames(db, "private_financing_borrowers", pfConfig.allowedBorrowerIds, "full_name"),
       resolveDisplayNames(db, "rental_tenants", rentalConfig.allowedTenantIds, "display_name"),
-      pendingDeliveryCounts(db, "private_financing_payment_receipt_deliveries", pfConfig),
-      pendingDeliveryCounts(db, "rental_tenant_receipt_deliveries", rentalConfig),
-      pendingDeliveryCounts(db, "rental_owner_notifications", rentalConfig),
+      pendingDeliveryGroups(db, "private_financing_payment_receipt_deliveries", {
+        columns: "borrower_id",
+        maxAttempts: pfConfig.maxAttempts,
+        staleClaimMinutes: pfConfig.staleClaimMinutes,
+        isEligible: (row) => pfConfig.allowedBorrowerIds.includes(row.borrower_id),
+        describeExcluded: (row) => `borrower:${row.borrower_id ?? "unknown"}`,
+      }),
+      pendingDeliveryGroups(db, "rental_tenant_receipt_deliveries", {
+        columns: "tenant_id",
+        maxAttempts: rentalConfig.maxAttempts,
+        staleClaimMinutes: rentalConfig.staleClaimMinutes,
+        isEligible: (row) => rentalConfig.allowedTenantIds.includes(row.tenant_id),
+        describeExcluded: (row) => `tenant:${row.tenant_id ?? "unknown"}`,
+      }),
+      pendingDeliveryGroups(db, "rental_owner_notifications", {
+        columns: "owner_id,tenant_id",
+        maxAttempts: rentalConfig.maxAttempts,
+        staleClaimMinutes: rentalConfig.staleClaimMinutes,
+        // The owner lane is gated on BOTH allowlists: an excluded owner or an
+        // excluded tenant keeps the notification from ever being delivered.
+        isEligible: (row) =>
+          rentalConfig.allowedOwnerIds.includes(row.owner_id) &&
+          rentalConfig.allowedTenantIds.includes(row.tenant_id),
+        describeExcluded: (row) => `owner:${row.owner_id ?? "unknown"} tenant:${row.tenant_id ?? "unknown"}`,
+      }),
     ]);
 
     return NextResponse.json({
