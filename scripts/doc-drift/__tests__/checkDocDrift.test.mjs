@@ -237,6 +237,23 @@ describe('C2 live index', () => {
   });
 });
 
+describe('fenced code blocks', () => {
+  it('reports original line numbers for links after fenced code blocks', () => {
+    const root = makeRoot();
+    const md = '# T\n\n```\n[x](ignored.md)\n```\n\nSee [ghost](ghost.md).\n';
+    const rs = checkDocLinks({ docRepoPath: 'a.md', markdown: md, docDir: root });
+    const stale = rs.filter((r) => r.check === 'C3.link');
+    expect(stale).toHaveLength(1);
+    expect(stale[0].evidence.line).toBe(7);
+    expect(stale[0].evidence.linkTarget).toBe('ghost.md');
+  });
+  it('ignores reference definitions inside fenced code blocks', () => {
+    const md = '# T\n\n```\n[id]: fenced.md\n```\n\nSee [id].\n';
+    expect(extractLinks(md)).toHaveLength(0);
+    expect(extractReferenceDefinitions(md).size).toBe(0);
+  });
+});
+
 describe('reference-style links', () => {
   it('resolves full, collapsed, and shortcut references', () => {
     const md = '# T\n\nSee [a][id1], [b][], and [c].\n\n[id1]: b.md\n[b]: b.md\n[c]: b.md\n';

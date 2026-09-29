@@ -119,8 +119,11 @@ export function slugifyHeading(text) {
     .replace(/\s+/g, '-');
 }
 
-export function stripFencedBlocks(markdown) {
-  return markdown.replace(FENCED_BLOCK_RE, '');
+export /** Blank fenced code blocks in place: every non-newline character becomes a
+ * space. Length and newlines are preserved, so indices and line numbers
+ * computed on the blanked text match the original document exactly. */
+function blankFencedBlocks(markdown) {
+  return markdown.replace(FENCED_BLOCK_RE, (block) => block.replace(/[^\n]/g, ' '));
 }
 
 /**
@@ -128,13 +131,16 @@ export function stripFencedBlocks(markdown) {
  * links with 1-based line numbers. Links inside fenced code blocks are
  * ignored. Footnote syntax ([^x]) is never treated as a link. A reference
  * like [text][missing-id] with no definition is returned with target null and
- * undefinedRef set — the definition is demonstrably absent.
+ * undefinedRef set — the definition is demonstrably absent. Fenced blocks are
+ * blanked in place (not deleted) so reported line numbers are the
+ * document's original line numbers.
  */
 export function extractReferenceDefinitions(markdown) {
+  const text = blankFencedBlocks(markdown);
   const defs = new Map();
   REF_DEF_RE.lastIndex = 0;
   let m;
-  while ((m = REF_DEF_RE.exec(markdown)) !== null) {
+  while ((m = REF_DEF_RE.exec(text)) !== null) {
     const id = m[1].toLowerCase();
     if (id.startsWith('^')) continue; // footnotes are not links
     if (!defs.has(id)) defs.set(id, m[2]);
@@ -152,7 +158,7 @@ function isAutolinkTarget(t) {
 }
 
 export function extractLinks(markdown) {
-  const text = stripFencedBlocks(markdown);
+  const text = blankFencedBlocks(markdown);
   const defs = extractReferenceDefinitions(text);
   const links = [];
   const consumed = []; // [start, end) ranges already claimed by a match
