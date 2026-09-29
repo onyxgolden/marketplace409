@@ -12,6 +12,7 @@
     "test:coverage": "vitest run --coverage",
     "forge:session": "node scripts/orchestration/runEngineeringConversationSession.mjs",
     "forge:doc-drift": "node scripts/doc-drift/checkDocDrift.mjs",
+    "forge:doc-proposals": "node scripts/doc-drift/proposeFixes.mjs",
     "rental:preflight": "node scripts/rental/validateFirstTenantReadiness.mjs",
     "rental:preflight:schema": "node scripts/rental/validateFirstTenantReadiness.mjs --schema-only"
   },
