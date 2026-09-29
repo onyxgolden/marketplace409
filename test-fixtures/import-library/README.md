@@ -70,7 +70,7 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
 | generic-diagram.vsdx | annotations only; skipped shapes reported | none |
 | malformed-not-a-zip / missing-pages .vsdx | refused (`bad-zip` / `missing-part`) | none |
 | forge-test-house-vector.pdf @ 1/4" | geometry imports at the right scale | **G4**: ~400 "walls", including the sheet border |
-| habs-davenport scanned PDF | vector mode: 0 paths, points to the image path; image mode places a 3499×2676 px, 150 DPI underlay | **G5**: the placed image is blank white (0% ink; poppler shows ~5%) |
+| habs-davenport scanned PDF | vector mode: 0 paths, points to the image path; image mode places a 3499×2676 px, 150 DPI underlay | none: **G5 fixed** (the decoders are served from `public/pdfjs/wasm/`; 5.4% ink, same as poppler) |
 | malformed-truncated.pdf | refused (`unreadable`) | none |
 
 ### Bug briefs
@@ -87,7 +87,7 @@ a fix makes one pass, vitest flags it and the fix flips it to `it`. Fixes are de
   furniture, dimensions, text strokes, hatch and the sheet border. Fix direction: detect
   paired parallel strokes (wall faces) and ignore the page-border rectangle; the rest become
   annotations.
-- **G5: Scanned PDFs encoded as CCITT fax (and JBIG2 / JPEG 2000) render blank.** pdf.js 5 decodes
+- **G5 (FIXED): Scanned PDFs encoded as CCITT fax (and JBIG2 / JPEG 2000) rendered blank.** Fix: pdf.js's decoders are vendored to `public/pdfjs/wasm/` (with a sync test) and passed as `wasmUrl`, and a raster page that still renders pure white now raises a warning. pdf.js 5 decodes
   these with WebAssembly and needs `wasmUrl` in `getDocument`; `openDocument` in `pdfImporter.js`
   doesn't pass it, so pdf.js logs "JBig2 failed to initialize", skips the image, and FORGE places an
   all-white underlay with no warning. 1-bit CCITT is the usual encoding for scanned plan sheets. Verified:

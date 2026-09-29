@@ -85,6 +85,25 @@ export async function loadPdfjs() {
   return pdfjsPromise;
 }
 
+/**
+ * Where pdf.js fetches its image decoders (JBIG2/CCITT fax, JPEG 2000, ICC
+ * colour). Without them a scanned page decodes to blank paper. Served from
+ * public/pdfjs/wasm/ (copied from pdfjs-dist; see its README) — same-origin,
+ * so nothing leaves the browser. Node has no default; tests set a path.
+ */
+export const PDF_WASM_PUBLIC_PATH = "/pdfjs/wasm/";
+let wasmUrlOverride;
+
+function pdfWasmUrl() {
+  if (wasmUrlOverride !== undefined) return wasmUrlOverride || undefined;
+  return typeof window !== "undefined" ? PDF_WASM_PUBLIC_PATH : undefined;
+}
+
+/** Test seam: point pdf.js at a decoder directory (undefined restores the default). */
+export function __setPdfWasmUrlForTests(url) {
+  wasmUrlOverride = url;
+}
+
 /** Test seam: inject a pdf.js stand-in (and reset with null). */
 export function __setPdfjsForTests(stub) {
   pdfjsPromise = stub ? Promise.resolve(stub) : null;
@@ -112,8 +131,13 @@ async function openDocument(bytes) {
     // a page from the same bytes works, whatever the caller passed.
     //
     // isEvalSupported:false keeps pdf.js from compiling font programs with
-    // eval, which the app's CSP would refuse anyway.
-    return await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false }).promise;
+    // eval. wasmUrl lets it decode scanned images (see pdfWasmUrl).
+    const wasmUrl = pdfWasmUrl();
+    return await pdfjs.getDocument({
+      data: new Uint8Array(bytes),
+      isEvalSupported: false,
+      ...(wasmUrl ? { wasmUrl } : {}),
+    }).promise;
   } catch (error) {
     const message = String((error && error.message) || error);
     if (/password/i.test(message)) {
@@ -343,6 +367,11 @@ export async function preparePdfImport(input, {
       name: `${fileName} — page ${pageNumber}`,
       createCanvas,
     });
+    if (image.blank && census.imageCount > 0) {
+      warn(
+        "This page's scanned image could not be decoded — the page rendered as blank paper. Re-save the scan as a standard PDF or PNG/JPEG and import that instead.",
+      );
+    }
     if (plan.downgraded) {
       warn(
         `Rendered at ${plan.dpi} DPI instead of ${plan.requestedDpi} — a ${plan.pageWidthIn}×${plan.pageHeightIn}″ page at the requested resolution exceeds the image budget.`,
