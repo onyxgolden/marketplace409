@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 
 import { loadManifest } from "./loadManifest.mjs";
 import { runQuery } from "./runQuery.mjs";
+import { assembleDiagnosticContext } from "./assembleDiagnosticContext.mjs";
 import { searchBugCatalog } from "./searchBugCatalog.mjs";
 import { renderQueryOutputJson, renderQueryOutputText } from "./renderQueryOutput.mjs";
+import { renderDiagnosticOutputJson, renderDiagnosticOutputText } from "./renderDiagnosticOutput.mjs";
 import { createCachedGitReader } from "./createCachedGitReader.mjs";
 import { readFileAtCommit, readMigrationsAtCommit } from "../gitRepository.mjs";
 
@@ -12,7 +14,7 @@ const DEFAULT_MANIFEST_PATH = path.join("engineering-brain", "index-manifest.jso
 const BUG_CATALOG_FILENAME = "bug-catalog.json";
 
 function parseArgs(argv) {
-  const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined, bugCatalogPath: null, noBugs: false };
+  const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined, bugCatalogPath: null, noBugs: false, diagnose: false };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -27,6 +29,7 @@ function parseArgs(argv) {
     else if (arg === "--table") args.filters.table = argv[++i];
     else if (arg === "--path") args.filters.sourcePath = argv[++i];
     else if (arg === "--max-results") args.maxResults = Number(argv[++i]);
+    else if (arg === "--diagnose") args.diagnose = true;
     else rest.push(arg);
   }
   args.queryText = rest.join(" ");
@@ -65,6 +68,25 @@ export function runCli(argv, { cwd = process.cwd() } = {}) {
 
   // Related past fixes: the bug catalog is optional — when present next to
   // the manifest it is searched with the same query and attached for review.
+  // In --diagnose mode the assembler owns the whole bundle (facets, contradictions,
+  // past fixes); the flat related_fixes attachment below is the non-diagnostic path only.
+  if (args.diagnose) {
+    const bugRecords = args.noBugs || !args.queryText.trim()
+      ? []
+      : loadBugCatalogRecords({ manifestPath, bugCatalogPath: args.bugCatalogPath });
+    const bundle = assembleDiagnosticContext({
+      manifest,
+      queryText: args.queryText,
+      filters: args.filters,
+      metadataOnly: args.metadataOnly,
+      maxResults: args.maxResults,
+      contentProvider: (commitSha, sourcePath) => cachedReader.readFileAtCommit(commitSha, sourcePath),
+      excerptReader: cachedReader,
+      bugRecords,
+    });
+    return { response: bundle, output: args.json ? renderDiagnosticOutputJson(bundle) : renderDiagnosticOutputText(bundle) };
+  }
+
   response.related_fixes = [];
   if (!args.noBugs && args.queryText.trim()) {
     const bugRecords = loadBugCatalogRecords({ manifestPath, bugCatalogPath: args.bugCatalogPath });
