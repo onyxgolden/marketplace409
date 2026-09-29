@@ -10,9 +10,17 @@
 // when sending is enabled at detection time AND the owner and tenant are
 // allowlisted (recipient-level rollout restriction — initial rollout: Eric
 // Carrillo, 308 Paula), or terminally as 'skipped_disabled' when they are
-// not. A disabled-at-detection event can never be delivered later. The
-// deliveries table's unique constraint on (owner_id, payment_id) makes every
-// queue insertion idempotent, so webhook redeliveries can never double-notify.
+// not. A disabled-at-detection event can never be delivered later.
+//
+// The insert is first-write-wins (ignoreDuplicates): a webhook redelivery or
+// a later reconciler pass can never flip a terminal row ('sent',
+// 'skipped_disabled', 'skipped_not_allowlisted') back to 'queued', so
+// double-notify and resurrection of a disabled-at-detection event are both
+// impossible.
+//
+// options.dryRun: run the full eligibility decision and return the row that
+// WOULD be written, without any database write. Used by the no-send
+// acceptance harness.
 import {
   buildTenantReceiptDeliveryId,
   buildTenantReceiptProviderIdempotencyKey,
@@ -78,6 +86,7 @@ export async function queueTenantPaymentReceiptForWebhookEvent(
   options = {},
 ) {
   try {
+    const dryRun = options.dryRun === true;
     // Not a succeeded rental tenant payment: no-op. This keeps
     // private-financing, reservation, settlement, payout, refund, and failed
     // events out on its own — the caller gates on succeeded too, defense in
@@ -131,11 +140,14 @@ export async function queueTenantPaymentReceiptForWebhookEvent(
       tenantAllowed: true,
     });
 
-    const { error } = await db.from("rental_tenant_receipt_deliveries").upsert(row, {
-      onConflict: "owner_id,payment_id",
-    });
+    const { error } = dryRun
+      ? {}
+      : await db.from("rental_tenant_receipt_deliveries").upsert(row, {
+          onConflict: "owner_id,payment_id",
+          ignoreDuplicates: true,
+        });
     if (error) throw error;
-    return { queued: row.status === "queued", receiptId: row.id, status: row.status };
+    return { queued: row.status === "queued", receiptId: row.id, status: row.status, dryRun, row };
   } catch (error) {
     console.error("Tenant payment receipt queue failed", {
       paymentId,

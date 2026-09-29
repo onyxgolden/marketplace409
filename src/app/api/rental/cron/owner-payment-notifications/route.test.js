@@ -123,6 +123,9 @@ beforeEach(() => {
   delete process.env.OWNER_PAYMENT_NOTIFICATION_EMAIL;
   // The owner allow-list fails closed: tests opt in explicitly.
   process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
+  // Same for the tenant allow-list (recipient-level rollout restriction):
+  // fixtures use tenant_fixture throughout.
+  process.env.RENTAL_NOTIFICATION_TENANT_IDS = "tenant_fixture";
   vi.clearAllMocks();
   // Pin the clock to noon CDT (outside quiet hours) so delivery tests are
   // deterministic no matter when the suite runs. Individual tests move the

@@ -12,9 +12,15 @@
 // borrower is on the PF_RECEIPT_BORROWER_IDS allowlist (recipient-level rollout restriction —
 // the owner allowlist alone would receipt every borrower), or terminally as
 // 'skipped_disabled' when they are not. A disabled-at-detection event can never be
-// delivered later. The deliveries table's unique constraint on (owner_id, payment_id,
-// recipient_type) makes every queue insertion idempotent, so webhook redeliveries can never
-// double-notify.
+// delivered later.
+//
+// The insert is first-write-wins (ignoreDuplicates): a webhook redelivery or a later
+// reconciler pass can never flip a terminal row ('sent', 'skipped_disabled',
+// 'skipped_not_allowlisted') back to 'queued', so double-notify and resurrection of a
+// disabled-at-detection event are both impossible.
+//
+// options.dryRun: run the full eligibility decision and return the rows that WOULD be
+// written, without any database write. Used by the no-send acceptance harness.
 import {
   RECEIPT_RECIPIENT_TYPE,
   buildReceiptDeliveryId,
@@ -64,6 +70,7 @@ export function buildReceiptDeliveryRow({
 
 export async function queuePaymentReceiptNotificationForWebhookEvent(db, payment, options = {}) {
   try {
+    const dryRun = options.dryRun === true;
     const config = resolvePaymentReceiptConfig();
     const sendingEnabled = options.sendingEnabled ?? config.enabled;
     const ownerAllowed = isOwnerNotificationAllowed(
@@ -103,12 +110,18 @@ export async function queuePaymentReceiptNotificationForWebhookEvent(db, payment
     ];
 
     for (const row of rows) {
+      if (dryRun) continue;
       const { error } = await db.from("private_financing_payment_receipt_deliveries").upsert(row, {
         onConflict: "owner_id,payment_id,recipient_type",
+        ignoreDuplicates: true,
       });
       if (error) throw error;
     }
-    return { queued: rows.filter((row) => row.status === "queued").length };
+    return {
+      queued: rows.filter((row) => row.status === "queued").length,
+      dryRun,
+      rows,
+    };
   } catch (error) {
     console.error("Private financing payment receipt queueing failed", {
       paymentId: payment?.id,
