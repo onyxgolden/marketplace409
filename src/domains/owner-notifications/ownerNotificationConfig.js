@@ -91,7 +91,20 @@ export function resolveRentalNotificationConfig(env = process.env) {
   return {
     ...base,
     allowedTenantIds: parseOwnerAllowlist(env.RENTAL_NOTIFICATION_TENANT_IDS),
+    // Explicit UTC timestamp (ISO string) or null when unset/unparseable.
+    activatedAt: parseActivationCutoff(env.PAYMENT_RECEIPTS_ACTIVATED_AT),
   };
+}
+
+// Activation cutoff: an explicit UTC timestamp established when Jason authorizes
+// notification sending. Receipt reconcilers must never heal (queue receipts for)
+// payments from before the cutoff — otherwise the first post-activation run would
+// dig up old settled payments and send stale receipts. Fail-closed: an unset or
+// unparseable PAYMENT_RECEIPTS_ACTIVATED_AT means the reconciler heals nothing.
+export function parseActivationCutoff(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 export function isTenantNotificationAllowed(config, tenantId) {

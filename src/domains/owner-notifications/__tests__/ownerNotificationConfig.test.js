@@ -6,6 +6,7 @@ import {
   resolveOwnerNotificationConfig,
   resolveRentalNotificationConfig,
   parseOwnerAllowlist,
+  parseActivationCutoff,
   isOwnerNotificationAllowed,
   isTenantNotificationAllowed,
 } from "../ownerNotificationConfig";
@@ -155,5 +156,33 @@ describe("rental tenant allowlist (recipient-level rollout restriction)", () => 
   it("fails closed on a missing config", () => {
     expect(isTenantNotificationAllowed(null, "tenant_a")).toBe(false);
     expect(isTenantNotificationAllowed(undefined, "tenant_a")).toBe(false);
+  });
+});
+
+describe("parseActivationCutoff", () => {
+  it("parses an explicit UTC timestamp to ISO", () => {
+    expect(parseActivationCutoff("2026-09-29T20:00:00Z")).toBe("2026-09-29T20:00:00.000Z");
+  });
+
+  it("returns null when unset", () => {
+    expect(parseActivationCutoff(undefined)).toBeNull();
+    expect(parseActivationCutoff("")).toBeNull();
+  });
+
+  it("returns null for unparseable values (fail-closed)", () => {
+    expect(parseActivationCutoff("not-a-date")).toBeNull();
+  });
+});
+
+describe("resolveRentalNotificationConfig activation cutoff", () => {
+  it("carries the parsed cutoff through", () => {
+    const config = resolveRentalNotificationConfig({
+      PAYMENT_RECEIPTS_ACTIVATED_AT: "2026-09-29T20:00:00Z",
+    });
+    expect(config.activatedAt).toBe("2026-09-29T20:00:00.000Z");
+  });
+
+  it("is null when the env var is unset", () => {
+    expect(resolveRentalNotificationConfig({}).activatedAt).toBeNull();
   });
 });

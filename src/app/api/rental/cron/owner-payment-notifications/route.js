@@ -235,7 +235,17 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
 // success/failure transition time, not creation time — and queues a
 // notification for any payment the webhook path never recorded. Does not
 // depend on the webhook path at all.
+//
+// Activation cutoff (release-safety): payments that reached terminal state
+// BEFORE the explicit PAYMENT_RECEIPTS_ACTIVATED_AT timestamp are never
+// healed — the first post-activation run must not dig up old terminal payments
+// and send stale notifications. When the cutoff is unset, the reconciler heals
+// nothing (fail-closed).
 async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
+  if (!config.activatedAt) {
+    console.log("Owner payment notification reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.");
+    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: true };
+  }
   const since = new Date(Date.now() - TERMINAL_PAYMENT_LOOKBACK_DAYS * 24 * 3600 * 1000).toISOString();
   const payments = await fetchAllPages((page) =>
     db.from("rental_payments")
@@ -246,12 +256,13 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       // days ago (e.g. delayed ACH) can succeed or fail inside the window, and
       // the reconciler exists to heal exactly those missed terminal
       // notifications. succeeded_at is always set for succeeded rows (DB check
-      // constraint); failures stamp updated_at at transition time.
-      .or(`and(status.eq.succeeded,succeeded_at.gte.${since}),and(status.eq.failed,updated_at.gte.${since})`)
+      // constraint); failures stamp updated_at at transition time. Each branch
+      // additionally requires the transition at/after the activation cutoff.
+      .or(`and(status.eq.succeeded,succeeded_at.gte.${since},succeeded_at.gte.${config.activatedAt}),and(status.eq.failed,updated_at.gte.${since},updated_at.gte.${config.activatedAt})`)
       .order("updated_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0 };
+  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: false };
 
   // Owner allow-list: fail closed — payments for non-allow-listed owners are
   // never turned into notifications.
@@ -268,7 +279,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
   );
   const skippedTenantNotAllowlisted = allowlisted.length - tenantAllowlisted.length;
   if (tenantAllowlisted.length === 0) {
-    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted };
+    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
   }
 
   const attemptPaymentIds = new Set();
@@ -325,7 +336,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     for (const row of data || []) existingIds.add(row.id);
   }
   const missing = rows.filter((row) => !existingIds.has(row.id));
-  if (missing.length === 0) return { reconciled: 0, alreadyQueued: rows.length, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted };
+  if (missing.length === 0) return { reconciled: 0, alreadyQueued: rows.length, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
 
   let reconciled = 0, skippedAtDetection = 0;
   for (const chunk of chunkArray(missing, ID_CHUNK_SIZE)) {
@@ -343,7 +354,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       }
     }
   }
-  return { reconciled, alreadyQueued: rows.length - missing.length, skippedAtDetection, skippedNotAllowlisted, skippedTenantNotAllowlisted };
+  return { reconciled, alreadyQueued: rows.length - missing.length, skippedAtDetection, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
 }
 
 // Delivery candidates: fresh queue rows, failed rows under the attempt cap,
@@ -505,11 +516,12 @@ export async function GET(request) {
     }
 
     // 2. Reconcile terminal payments the webhook queue may have lost.
-    let reconciled = 0, alreadyReconciled = 0, skippedTenantNotAllowlistedReconciled = 0;
+    let reconciled = 0, alreadyReconciled = 0, skippedTenantNotAllowlistedReconciled = 0, reconcileSkipped = false;
     if (!dryRun) {
       const healing = await reconcileTerminalPaymentNotifications(db, provider.mode, config);
       reconciled = healing.reconciled;
       alreadyReconciled = healing.alreadyQueued;
+      reconcileSkipped = Boolean(healing.reconcileSkipped);
       skippedDisabled += healing.skippedAtDetection;
       skippedNotAllowlisted += healing.skippedNotAllowlisted;
       skippedTenantNotAllowlistedReconciled = healing.skippedTenantNotAllowlisted;
@@ -630,6 +642,7 @@ export async function GET(request) {
       sendingEnabled: config.enabled,
       upcomingDetected: pairs.length, queued, alreadyQueued,
       reconciled, alreadyReconciled,
+      reconcileSkipped,
       sent, wouldSend, failed, skippedDisabled, superseded,
       deferredQuietHours,
       skippedNotAllowlisted: skippedNotAllowlisted + skippedNotAllowlistedDelivery,

@@ -127,6 +127,8 @@ beforeEach(() => {
   process.env.OWNER_PAYMENT_NOTIFICATION_OWNER_IDS = OWNER;
   // The tenant allow-list fails closed too: the fixtures' tenant opts in.
   process.env.RENTAL_NOTIFICATION_TENANT_IDS = "tenant_fixture";
+  // Activation cutoff: the reconciler only heals terminal payments at/after this.
+  process.env.PAYMENT_RECEIPTS_ACTIVATED_AT = "2026-09-01T00:00:00Z";
   vi.clearAllMocks();
   // Pin the clock to noon CDT (outside quiet hours) so delivery tests are
   // deterministic no matter when the suite runs. Individual tests move the
@@ -617,6 +619,54 @@ describe("owner payment notifications cron", () => {
     // The reconciled row is delivered by the same run.
     expect(body.sent).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciler heals nothing when the activation cutoff is unset", async () => {
+    delete process.env.PAYMENT_RECEIPTS_ACTIVATED_AT;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(true);
+    expect(body.reconciled).toBe(0);
+    // Fail-closed: the reconciler bails before touching rental_payments, so
+    // no stale terminal payment can be healed.
+    expect(db.from).not.toHaveBeenCalledWith("rental_payments");
+    expect(logSpy).toHaveBeenCalledWith(
+      "Owner payment notification reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.",
+    );
+    logSpy.mockRestore();
+  });
+
+  it("reconciler scan excludes terminal payments before the activation cutoff", async () => {
+    const scanQb = qb({ data: [], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [scanQb], // reconciler scan
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(false);
+    // Both terminal-transition branches require the transition at/after the cutoff.
+    const orFilter = scanQb.or.mock.calls[0][0];
+    expect(orFilter).toContain("succeeded_at.gte.2026-09-01T00:00:00.000Z");
+    expect(orFilter).toContain("updated_at.gte.2026-09-01T00:00:00.000Z");
   });
 
   it("reconciles a payment created days ago that settled today (delayed ACH)", async () => {
