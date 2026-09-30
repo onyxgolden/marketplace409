@@ -16,6 +16,7 @@ import {
   runIdFromUrl,
   summarizeCiEvidence,
 } from "../collectEvidence.mjs";
+import { parseRepo } from "../collectEvidenceCli.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(TEST_DIR, "..", "..", "..", "..");
@@ -374,5 +375,25 @@ describe("collectEvidenceCli — partial evidence on per-signal failure", () => 
     expect(payload.evidence["supabase:deliveries:failed:9"].failure_reason).toBe("smtp 550");
     expect(payload.evidence["github:actions:ci_failed:9"].status).toBe("error");
     expect(payload.evidence["github:actions:ci_failed:9"].error).toContain("GITHUB_TOKEN is required");
+  });
+});
+
+describe("parseRepo (CLI repo resolution)", () => {
+  it("returns { owner, repo } matching what main() destructures", () => {
+    expect(parseRepo("onyxgolden/marketplace409")).toEqual({
+      owner: "onyxgolden",
+      repo: "marketplace409",
+    });
+  });
+
+  it("never yields an undefined repo name for a valid flag", () => {
+    const { owner, repo } = parseRepo("acme/widgets");
+    expect(owner).toBe("acme");
+    expect(repo).toBe("widgets");
+    expect(`https://api.github.com/repos/${owner}/${repo}`).not.toContain("undefined");
+  });
+
+  it("throws on an unparsable repo string", () => {
+    expect(() => parseRepo("not-a-repo")).toThrow();
   });
 });
