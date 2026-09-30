@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import {
   buildThreeScene,
@@ -90,6 +91,155 @@ export function frameCameraOnModel(camera, controls, built) {
   controls.target.set(cx, Math.min(tallest, floorSize) * 0.3, cz);
   controls.update();
   return true;
+}
+
+// ---- Walk / Fly / Dollhouse camera modes ----
+//
+// Orbit (existing) and Dollhouse both drive the camera through OrbitControls;
+// Walk and Fly both drive it through PointerLockControls (mouse-look +
+// keyboard movement). Only ONE controls object is ever "live" at a time —
+// see the `cameraMode` state in the component below — but both instances
+// exist for the life of the viewport so switching modes never re-attaches
+// event listeners or reconstructs the camera.
+
+/** Eye height for Walk mode: ~5'6", the standard architectural walkthrough height. */
+export const WALK_EYE_HEIGHT_IN = 66;
+
+/** Starting height for Fly mode: high enough to see over most interior walls. */
+export const FLY_START_HEIGHT_IN = 96;
+
+/**
+ * Starting camera pose for Walk/Fly mode: centered on the model's floor
+ * footprint, at a fixed height, offset toward one edge and looking back
+ * across the floor — so the user spawns looking INTO the model instead of
+ * staring at the nearest wall. Pure (same `built` descriptor frameCameraOnModel
+ * uses); returns null when there's no floor to stand on.
+ */
+export function walkStartPose(built, { heightIn = WALK_EYE_HEIGHT_IN } = {}) {
+  if (!built?.floor) return null;
+  const cx = (built.floor.minX + built.floor.maxX) / 2;
+  const cz = (built.floor.minZ + built.floor.maxZ) / 2;
+  const fd = Math.max(built.floor.maxZ - built.floor.minZ, 24);
+  return {
+    position: { x: cx, y: heightIn, z: cz + fd * 0.3 },
+    lookAt: { x: cx, y: heightIn, z: cz - fd * 0.3 },
+  };
+}
+
+/** Orbit polar-angle range Dollhouse mode is constrained to (radians from straight up). */
+export const DOLLHOUSE_POLAR_RANGE = Object.freeze({ min: 0.35, max: 1.15 });
+
+/**
+ * Dollhouse camera framing: an elevated 3/4 angle, steeper than Orbit's
+ * default, so the room reads as an open-top overview from the first frame.
+ * The caller additionally clamps OrbitControls' min/maxPolarAngle to
+ * DOLLHOUSE_POLAR_RANGE — that's what actually keeps the user "up top"
+ * while still allowing a full spin around the model; this only sets the
+ * starting position. Pure math in, camera/controls mutation out — same
+ * shape as frameCameraOnModel.
+ */
+export function frameDollhouseOnModel(camera, controls, built) {
+  if (!camera || !controls || !built?.floor) return false;
+  const floorSize = Math.max(
+    built.floor.maxX - built.floor.minX,
+    built.floor.maxZ - built.floor.minZ,
+    240,
+  );
+  const cx = (built.floor.minX + built.floor.maxX) / 2;
+  const cz = (built.floor.minZ + built.floor.maxZ) / 2;
+  const radius = floorSize * 1.3;
+  const polar = (DOLLHOUSE_POLAR_RANGE.min + DOLLHOUSE_POLAR_RANGE.max) / 2;
+  const azimuth = Math.PI / 4;
+  camera.position.set(
+    cx + radius * Math.sin(polar) * Math.sin(azimuth),
+    radius * Math.cos(polar),
+    cz + radius * Math.sin(polar) * Math.cos(azimuth),
+  );
+  camera.far = radius * 20;
+  camera.updateProjectionMatrix();
+  controls.target.set(cx, 0, cz);
+  controls.update();
+  return true;
+}
+
+/** Brisk walking pace, in inches/second (~10 ft/s). */
+export const WALK_SPEED_IN_PER_S = 120;
+/** Fly mode is faster — covering a whole plant footprint on foot would be tedious. */
+export const FLY_SPEED_IN_PER_S = 260;
+/** Exponential velocity decay constant (1/s) applied every frame, key held or not. */
+export const MOVE_DAMPING = 8;
+
+/**
+ * One frame of first-person movement. `velocity` and the return value are
+ * plain {forward, right, up} objects in the controls' OWN local frame, not
+ * world axes — the caller applies forwardDistance/rightDistance via
+ * PointerLockControls.moveForward/moveRight (which already rotate by camera
+ * facing) and upDistance as a direct world-Y delta. Pure arithmetic, no
+ * THREE dependency, so it's testable without a renderer or a camera.
+ *
+ * `verticalLock` is Walk mode: up/down input and any residual vertical
+ * velocity are zeroed every frame, so gravity-drift never accumulates and
+ * releasing Space can never leave the camera settling mid-air.
+ */
+export function computeFlyStep(velocity, moveState, delta, options = {}) {
+  const { speed = WALK_SPEED_IN_PER_S, damping = MOVE_DAMPING, verticalLock = false } = options;
+  const decay = Math.max(0, 1 - damping * delta);
+  let forwardV = (velocity?.forward || 0) * decay;
+  let rightV = (velocity?.right || 0) * decay;
+  let upV = verticalLock ? 0 : (velocity?.up || 0) * decay;
+
+  const forwardInput = (moveState?.forward ? 1 : 0) - (moveState?.backward ? 1 : 0);
+  const rightInput = (moveState?.right ? 1 : 0) - (moveState?.left ? 1 : 0);
+  const upInput = verticalLock ? 0 : (moveState?.up ? 1 : 0) - (moveState?.down ? 1 : 0);
+  const planarLen = Math.hypot(forwardInput, rightInput) || 1;
+
+  if (forwardInput) forwardV += (forwardInput / planarLen) * speed * delta;
+  if (rightInput) rightV += (rightInput / planarLen) * speed * delta;
+  if (upInput) upV += upInput * speed * delta;
+
+  const velocityOut = { forward: forwardV, right: rightV, up: verticalLock ? 0 : upV };
+  return {
+    velocity: velocityOut,
+    forwardDistance: velocityOut.forward * delta,
+    rightDistance: velocityOut.right * delta,
+    upDistance: velocityOut.up * delta,
+  };
+}
+
+/** Seconds of continuous Space-hold to reach the sprint speed cap. */
+export const SPRINT_RAMP_SECONDS = 3;
+/** Sprint multiplier at (and beyond) the ramp cap — "at least 3x" per Jason's request. */
+export const SPRINT_MAX_MULTIPLIER = 3;
+
+/**
+ * Space-bar sprint in Walk/Fly: holding Space ramps movement speed linearly
+ * from 1x up to SPRINT_MAX_MULTIPLIER over SPRINT_RAMP_SECONDS, then holds
+ * at the cap for as long as it's held. Releasing Space (tracked by the
+ * caller resetting its own held-since timestamp) drops it back to 1x
+ * immediately — no decel ramp, so the next sprint always starts from a
+ * clean full 3 seconds, not wherever the last one left off.
+ */
+export function sprintMultiplier(heldForSeconds) {
+  if (!(heldForSeconds > 0)) return 1;
+  const t = Math.min(heldForSeconds / SPRINT_RAMP_SECONDS, 1);
+  return 1 + t * (SPRINT_MAX_MULTIPLIER - 1);
+}
+
+/**
+ * Fresh, fully-released Walk/Fly input state. Used both when leaving
+ * Walk/Fly outright (setCameraMode) and — the case this exists to make
+ * testable in isolation — when pointer lock is merely LOST while still in
+ * Walk/Fly (Escape, alt-tab, the OS stealing focus). None of those reliably
+ * deliver a matching keyup for whatever was physically held; without this,
+ * re-locking would resume movement instantly, potentially already at full
+ * sprint speed, with no key actually pressed. Mutates the three refs'
+ * `.current` in place; takes plain `{current}`-shaped objects (not real
+ * React refs) so it's testable with no React/DOM involved.
+ */
+export function resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef) {
+  moveStateRef.current = { forward: false, backward: false, left: false, right: false, up: false, down: false };
+  flyVelocityRef.current = { forward: 0, right: 0, up: 0 };
+  sprintHeldSinceMsRef.current = null;
 }
 
 /**
@@ -361,6 +511,30 @@ export default function DesignerViewport3D({
   const spinRef = useRef(false); // 360° auto-orbit; mirrored into `spin` state for the button
   const builtRef = useRef(null); // last buildThreeScene descriptor, for reset-view
   const [spin, setSpin] = useState(false);
+  // Camera mode: 'orbit' (default, existing behavior) | 'dollhouse' (OrbitControls,
+  // constrained to an elevated overview) | 'walk' | 'fly' (PointerLockControls,
+  // first-person). Only one controls object is ever active; see the setup
+  // effect and setCameraModeAndSync below.
+  const [cameraMode, setCameraModeState] = useState("orbit");
+  const cameraModeRef = useRef("orbit");
+  const pointerLockControlsRef = useRef(null);
+  const [pointerLocked, setPointerLocked] = useState(false);
+  const pointerLockedRef = useRef(false);
+  const moveStateRef = useRef({ forward: false, backward: false, left: false, right: false, up: false, down: false });
+  const flyVelocityRef = useRef({ forward: 0, right: 0, up: 0 });
+  const sprintHeldSinceMsRef = useRef(null); // performance.now() timestamp Space was last pressed, or null while released
+  const lastFrameTimeRef = useRef(0);
+  // { state, plane, pointerId } while an entity drag (P1-B editing) is in
+  // progress; a ref (not a plain closure var) specifically so setCameraMode
+  // — defined outside the setup effect — can force-clear a drag that's still
+  // active when the user switches into Walk/Fly mid-drag.
+  const dragRef = useRef(null);
+  // Manual free-roam video capture of the live canvas.
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const recordingStreamRef = useRef(null); // captureStream()'s MediaStream, so its tracks can be stopped explicitly
+  const recordingErroredRef = useRef(false); // set by the recorder's own error event; tells a later onstop to skip the download
   // Equipment tag labels (P-101, E-102, …): hidden by default, flipped by the
   // Labels toggle beside the 360° button. Sprites are collected per scene build
   // (they're rebuilt with the scene); the ref mirror avoids rebuilding the
@@ -430,6 +604,79 @@ export default function DesignerViewport3D({
     controls.update();
     controlsRef.current = controls;
 
+    // Walk/Fly's mouse-look + keyboard movement. Lives alongside OrbitControls
+    // for the whole mount; only one of the two is ever driven per frame (see
+    // animate() below), selected by cameraModeRef.
+    const pointerLockControls = new PointerLockControls(camera, renderer.domElement);
+    pointerLockControlsRef.current = pointerLockControls;
+    const onPointerLockChange = () => {
+      const locked = pointerLockControls.isLocked;
+      pointerLockedRef.current = locked;
+      setPointerLocked(locked);
+      // See resetFirstPersonInputState's own doc comment: losing lock while
+      // still in Walk/Fly can't rely on a matching keyup ever arriving for
+      // whatever was held.
+      if (!locked) resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
+    };
+    pointerLockControls.addEventListener("lock", onPointerLockChange);
+    pointerLockControls.addEventListener("unlock", onPointerLockChange);
+
+    // WASD + arrows drive Walk/Fly movement; Space/Shift move up/down in Fly.
+    // Window-level (not mount-level) so releasing a key never gets "stuck" if
+    // focus moved, but a no-op unless a camera mode is actually active AND
+    // the user isn't typing into the size popup's inputs.
+    const isTypingTarget = (el) => {
+      const tag = el?.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable;
+    };
+    const setMoveKey = (code, value) => {
+      const move = moveStateRef.current;
+      if (code === "KeyW" || code === "ArrowUp") move.forward = value;
+      else if (code === "KeyS" || code === "ArrowDown") move.backward = value;
+      else if (code === "KeyA" || code === "ArrowLeft") move.left = value;
+      else if (code === "KeyD" || code === "ArrowRight") move.right = value;
+      else if (code === "Space") {
+        move.up = value;
+        // Sprint ramp start time: only set on the true false->true edge, not
+        // on every auto-repeated keydown the browser fires while a key is
+        // held — otherwise the ramp would restart from 0 every ~30ms and
+        // never actually reach speed.
+        if (value) {
+          if (sprintHeldSinceMsRef.current == null) sprintHeldSinceMsRef.current = performance.now();
+        } else {
+          sprintHeldSinceMsRef.current = null;
+        }
+      } else if (code === "ShiftLeft" || code === "ShiftRight") move.down = value;
+      else return false;
+      return true;
+    };
+    const onKeyDown = (e) => {
+      const mode = cameraModeRef.current;
+      if ((mode !== "walk" && mode !== "fly") || !pointerLockedRef.current) return;
+      if (isTypingTarget(document.activeElement)) return;
+      if (setMoveKey(e.code, true)) {
+        e.preventDefault();
+        // Capture phase + stopPropagation: movement keys must win outright
+        // over any other page-level shortcut while Walk/Fly is active and
+        // locked — e.g. the 2D plan's own arrow-key selection-nudge handler,
+        // which otherwise sits on the same window/keydown and would
+        // otherwise get a look at (and could consume) the same event first.
+        e.stopPropagation();
+      }
+    };
+    const onKeyUp = (e) => {
+      // Always clears moveState (never gated on mode/lock) so a key that was
+      // held while switching away from Walk/Fly can't leave it stuck
+      // "pressed" if the mode is re-entered later. Only claims the event
+      // (stopPropagation) when Walk/Fly is what actually would have consumed
+      // it, so an arrow-key release in Orbit/2D never gets swallowed.
+      const claimed = setMoveKey(e.code, false);
+      const mode = cameraModeRef.current;
+      if (claimed && (mode === "walk" || mode === "fly")) e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+
     threeScene.add(new THREE.HemisphereLight(0xbdd5f2, 0x8a7f6a, 0.5));
 
     const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
@@ -470,10 +717,41 @@ export default function DesignerViewport3D({
     };
 
     const lastTarget = { x: NaN, z: NaN };
+    lastFrameTimeRef.current = performance.now();
     let raf = 0;
     const animate = () => {
       raf = requestAnimationFrame(animate);
-      controls.update();
+      const now = performance.now();
+      // Clamp delta: a backgrounded tab (or a debugger pause) resuming after
+      // seconds away must not fling the camera through the model in one step.
+      const delta = Math.min((now - lastFrameTimeRef.current) / 1000, 0.1);
+      lastFrameTimeRef.current = now;
+
+      const mode = cameraModeRef.current;
+      if (mode === "walk" || mode === "fly") {
+        if (pointerLockedRef.current) {
+          // Space-bar sprint: ramps 1x -> SPRINT_MAX_MULTIPLIER over
+          // SPRINT_RAMP_SECONDS of continuous hold, in both Walk and Fly —
+          // Space's other role (ascend in Fly; a no-op in Walk, which zeroes
+          // vertical velocity outright) is unaffected, so holding Space in
+          // Fly both lifts you and sprints your horizontal motion.
+          const heldForSeconds = sprintHeldSinceMsRef.current != null
+            ? (now - sprintHeldSinceMsRef.current) / 1000
+            : 0;
+          const speedMultiplier = sprintMultiplier(heldForSeconds);
+          const step = computeFlyStep(flyVelocityRef.current, moveStateRef.current, delta, {
+            speed: (mode === "fly" ? FLY_SPEED_IN_PER_S : WALK_SPEED_IN_PER_S) * speedMultiplier,
+            verticalLock: mode === "walk",
+          });
+          flyVelocityRef.current = step.velocity;
+          pointerLockControls.moveForward(step.forwardDistance);
+          pointerLockControls.moveRight(step.rightDistance);
+          if (mode === "walk") camera.position.y = WALK_EYE_HEIGHT_IN;
+          else camera.position.y += step.upDistance;
+        }
+      } else {
+        controls.update();
+      }
       renderer.render(threeScene, camera);
       placePopup();
       // Report the orbit target only when it actually moves (not every frame).
@@ -516,12 +794,20 @@ export default function DesignerViewport3D({
     const sameEntity = (p, q) => !!p && !!q && p.kind === q.kind && p.id === q.id;
 
     let pressAt = null; // { x, y } of the primary-button press, for click detection
-    let drag = null; // { state, plane, pointerId } while moving an entity
 
     // Capture phase on the mount element: runs before OrbitControls' own
     // listener on the canvas, so an entity drag can claim the gesture
     // (stopPropagation) before the camera starts orbiting.
     const onPointerDown = (e) => {
+      // Walk/Fly are navigation-only: no entity picking or dragging while
+      // first-person controls are active. A click either requests pointer
+      // lock (mouse-look starts) or, if already locked, does nothing — the
+      // pointer is hidden and pinned to the pane center, so a "click" no
+      // longer corresponds to a screen position a raycast should trust.
+      if (cameraModeRef.current === "walk" || cameraModeRef.current === "fly") {
+        if (!pointerLockedRef.current && e.button === 0) pointerLockControls.lock();
+        return;
+      }
       // TrueView-style: grabbing the model interrupts a 360° auto-orbit.
       // This runs before the dispatch gate on purpose — the sample viewer is
       // read-only (no dispatch) and the toggle must still stop there.
@@ -540,7 +826,7 @@ export default function DesignerViewport3D({
       // Drag on the horizontal plane at the grab height, so the entity
       // tracks the cursor exactly instead of the floor point far behind it.
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -picked.point.y);
-      drag = { state, plane, pointerId: e.pointerId };
+      dragRef.current = { state, plane, pointerId: e.pointerId };
       controls.enabled = false;
       try {
         mount.setPointerCapture(e.pointerId);
@@ -550,10 +836,11 @@ export default function DesignerViewport3D({
       e.stopPropagation();
     };
     const onPointerMove = (e) => {
-      if (drag) {
-        if (!castFrom(e) || !raycaster.ray.intersectPlane(drag.plane, planeHit)) return;
-        const step = dragStep3D(drag.state, designRef.current, planPointFromWorld(planeHit));
-        drag.state = step.drag;
+      if (cameraModeRef.current === "walk" || cameraModeRef.current === "fly") return;
+      if (dragRef.current) {
+        if (!castFrom(e) || !raycaster.ray.intersectPlane(dragRef.current.plane, planeHit)) return;
+        const step = dragStep3D(dragRef.current.state, designRef.current, planPointFromWorld(planeHit));
+        dragRef.current.state = step.drag;
         if (step.action) dispatchRef.current?.(step.action);
         return;
       }
@@ -564,18 +851,19 @@ export default function DesignerViewport3D({
       mount.style.cursor = !target ? "" : sameEntity(target, selectionRef.current) ? "move" : "pointer";
     };
     const endEntityDrag = (e) => {
-      if (!drag) return false;
+      if (!dragRef.current) return false;
       try {
-        mount.releasePointerCapture(drag.pointerId);
+        mount.releasePointerCapture(dragRef.current.pointerId);
       } catch {
         // already released (or never captured); nothing to undo
       }
-      drag = null;
+      dragRef.current = null;
       controls.enabled = true;
       e.stopPropagation();
       return true;
     };
     const onPointerUp = (e) => {
+      if (cameraModeRef.current === "walk" || cameraModeRef.current === "fly") return;
       const press = pressAt;
       pressAt = null;
       if (endEntityDrag(e)) return;
@@ -622,6 +910,24 @@ export default function DesignerViewport3D({
       mount.removeEventListener("pointermove", onPointerMove);
       mount.removeEventListener("pointerup", onPointerUp, true);
       mount.removeEventListener("pointercancel", onPointerCancel, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      pointerLockControls.removeEventListener("lock", onPointerLockChange);
+      pointerLockControls.removeEventListener("unlock", onPointerLockChange);
+      if (pointerLockControls.isLocked) pointerLockControls.unlock();
+      pointerLockControls.dispose();
+      pointerLockControlsRef.current = null;
+      // recorder.stop() (below) triggers the same onstop handler that stops
+      // the stream's tracks — but if the recorder never actually reached a
+      // running state (construction/start failed after captureStream already
+      // handed back a live stream), onstop never fires, so the tracks are
+      // also stopped directly here as a fallback.
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      } else if (recordingStreamRef.current) {
+        for (const track of recordingStreamRef.current.getTracks()) track.stop();
+        recordingStreamRef.current = null;
+      }
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
       contentGroupRef.current = swapContentGroup(threeScene, contentGroupRef.current, null);
@@ -963,8 +1269,29 @@ export default function DesignerViewport3D({
       // The camera is centered automatically ONLY on the first non-empty
       // build; edits after that never move it out from under the user. The
       // reset-view button re-runs this same framing on demand.
+      //
+      // Which framing depends on whatever camera mode is CURRENT at the
+      // moment the first build lands — not always Orbit's. A user can pick
+      // Walk before the model finishes its first build (a fresh/empty design,
+      // or a slow initial load); without this branch, this one-time framing
+      // would always call frameCameraOnModel and silently teleport them back
+      // to the elevated Orbit view the instant real geometry arrives.
       if (!initialCameraSetRef.current) {
-        if (frameCameraOnModel(camera, controls, built)) initialCameraSetRef.current = true;
+        const mode = cameraModeRef.current;
+        let framed = false;
+        if (mode === "dollhouse") {
+          framed = frameDollhouseOnModel(camera, controls, built);
+        } else if (mode === "walk" || mode === "fly") {
+          const pose = walkStartPose(built, { heightIn: mode === "fly" ? FLY_START_HEIGHT_IN : WALK_EYE_HEIGHT_IN });
+          if (pose) {
+            camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+            camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
+            framed = true;
+          }
+        } else {
+          framed = frameCameraOnModel(camera, controls, built);
+        }
+        if (framed) initialCameraSetRef.current = true;
       }
       builtRef.current = built;
 
@@ -1006,7 +1333,85 @@ export default function DesignerViewport3D({
       setSpin(false);
       if (controlsRef.current) controlsRef.current.autoRotate = false;
     }
-    frameCameraOnModel(cameraRef.current, controlsRef.current, builtRef.current);
+    const mode = cameraModeRef.current;
+    if (mode === "dollhouse") frameDollhouseOnModel(cameraRef.current, controlsRef.current, builtRef.current);
+    else if (mode === "walk" || mode === "fly") applyWalkStartPose(mode);
+    else frameCameraOnModel(cameraRef.current, controlsRef.current, builtRef.current);
+  };
+
+  /** Places the camera at the model's center at the mode's start height, facing into the room. */
+  const applyWalkStartPose = (mode) => {
+    const camera = cameraRef.current;
+    const pose = walkStartPose(builtRef.current, {
+      heightIn: mode === "fly" ? FLY_START_HEIGHT_IN : WALK_EYE_HEIGHT_IN,
+    });
+    if (!camera || !pose) return;
+    camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+    camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
+  };
+
+  // A camera-mode switch can land mid entity-drag (P1-B editing): the user
+  // pressed down on a wall/furniture piece, which set dragRef and disabled
+  // OrbitControls, then clicked a mode button before releasing. onPointerUp
+  // will never fire the drag's own cleanup in that case — in Walk/Fly it's
+  // guarded off entirely, and even switching straight back to Orbit doesn't
+  // reach it, since the original press/release pair is long since over.
+  // Left alone, `controls.enabled` stays false until some LATER, unrelated
+  // pointerup happens to call endEntityDrag with a stale drag object. Force
+  // it closed here instead, on every mode switch, regardless of direction.
+  const forceEndActiveDrag = () => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const mount = mountRef.current;
+    if (mount) {
+      try {
+        mount.releasePointerCapture(drag.pointerId);
+      } catch {
+        // already released (or never captured); nothing to undo
+      }
+    }
+    dragRef.current = null;
+    if (controlsRef.current) controlsRef.current.enabled = true;
+  };
+
+  // Switches which controls object drives the camera. Orbit and Dollhouse
+  // both use OrbitControls (Dollhouse just constrains its polar angle);
+  // Walk and Fly both use PointerLockControls. Leaving Walk/Fly always
+  // releases the pointer lock and zeroes any residual movement velocity, so
+  // re-entering later (or switching to Orbit) never inherits stale motion.
+  const setCameraMode = (mode) => {
+    if (mode === cameraModeRef.current) return;
+    forceEndActiveDrag();
+    const wasFirstPerson = cameraModeRef.current === "walk" || cameraModeRef.current === "fly";
+    if (wasFirstPerson) {
+      resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
+      const plc = pointerLockControlsRef.current;
+      if (plc?.isLocked) plc.unlock();
+    }
+    if (spinRef.current) {
+      spinRef.current = false;
+      setSpin(false);
+      if (controlsRef.current) controlsRef.current.autoRotate = false;
+    }
+    cameraModeRef.current = mode;
+    setCameraModeState(mode);
+
+    const controls = controlsRef.current;
+    if (mode === "dollhouse") {
+      if (controls) {
+        controls.minPolarAngle = DOLLHOUSE_POLAR_RANGE.min;
+        controls.maxPolarAngle = DOLLHOUSE_POLAR_RANGE.max;
+      }
+      frameDollhouseOnModel(cameraRef.current, controls, builtRef.current);
+    } else if (mode === "orbit") {
+      if (controls) {
+        controls.minPolarAngle = 0;
+        controls.maxPolarAngle = Math.PI / 2 - 0.02;
+      }
+      if (wasFirstPerson) frameCameraOnModel(cameraRef.current, controls, builtRef.current);
+    } else if (mode === "walk" || mode === "fly") {
+      applyWalkStartPose(mode);
+    }
   };
 
   // Equipment tag labels: hidden by default, toggled beside the 360° button.
@@ -1019,30 +1424,171 @@ export default function DesignerViewport3D({
     if (group) group.traverse((o) => { if (o.isSprite && o.userData.isTagLabel) o.visible = next; });
   };
 
+  // Manual free-roam walkthrough recording: captures exactly what's on
+  // screen (any camera mode) to a downloadable video. Requires
+  // HTMLCanvasElement.captureStream + MediaRecorder — both are Chrome/
+  // Firefox/Edge baseline but not guaranteed everywhere, so the button
+  // disables itself rather than throwing when either is missing.
+  // Feature-detected once from globals (not from rendererRef, which is only
+  // populated after the setup effect runs — checking the ref here would show
+  // the Record button as unsupported on every first render, in every browser,
+  // until something unrelated happened to trigger a re-render).
+  const recordingSupported =
+    typeof window !== "undefined" &&
+    typeof window.MediaRecorder !== "undefined" &&
+    typeof HTMLCanvasElement !== "undefined" &&
+    typeof HTMLCanvasElement.prototype.captureStream === "function";
+
+  /** Stops every track on the live recording stream (idempotent — safe to call with nothing active). */
+  const releaseRecordingStream = () => {
+    const stream = recordingStreamRef.current;
+    recordingStreamRef.current = null;
+    if (stream) for (const track of stream.getTracks()) track.stop();
+  };
+
+  const startRecording = () => {
+    const canvas = rendererRef.current?.domElement;
+    if (!canvas || !recordingSupported) return;
+
+    let stream;
+    let recorder;
+    try {
+      stream = canvas.captureStream(30);
+      recordingStreamRef.current = stream;
+      const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(
+        (t) => window.MediaRecorder.isTypeSupported?.(t),
+      );
+      recorder = new window.MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    } catch {
+      // Synchronous startup failure (e.g. an unsupported mimeType slipped past
+      // isTypeSupported, or captureStream itself threw). Release whatever got
+      // created and leave the UI in "not recording" — never leave a stream
+      // running with no button reflecting that it's live.
+      releaseRecordingStream();
+      return;
+    }
+
+    recordedChunksRef.current = [];
+    recordingErroredRef.current = false;
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+    };
+    // An in-progress recording can fail asynchronously (the underlying track
+    // ends unexpectedly, an encoder error, etc). Whether `stop` also fires
+    // after `error` is browser/error-dependent per spec — clean up here
+    // unconditionally rather than relying on it, and mark errored so onstop
+    // (if it does still fire) skips the download instead of offering a
+    // corrupt/incomplete file.
+    recorder.onerror = () => {
+      recordingErroredRef.current = true;
+      releaseRecordingStream();
+      recordedChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+      recordedChunksRef.current = [];
+      // Explicitly stop every track now that the recorder has fully flushed
+      // (stop() fires a final dataavailable before this event, so the blob
+      // above already has everything) — otherwise the canvas capture keeps
+      // running, tied only to the stream's own GC lifetime, not to the user
+      // having pressed Stop. A no-op if onerror already released it.
+      releaseRecordingStream();
+      // Skip the download if this stop followed a recording error, or if
+      // nothing was actually captured (Stop pressed the instant after Start)
+      // — either way there's nothing a user should be handed as a video file.
+      if (recordingErroredRef.current || blob.size === 0) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `forge-walkthrough-${Date.now()}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    };
+
+    try {
+      recorder.start();
+    } catch {
+      // start() itself threw synchronously — same cleanup as the constructor
+      // failure above; none of the event handlers above will ever fire.
+      releaseRecordingStream();
+      return;
+    }
+    mediaRecorderRef.current = recorder;
+    setIsRecording(true);
+  };
+
+  const stopRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) stopRecording();
+    else startRecording();
+  };
+
+  const showPointerLockPrompt = (cameraMode === "walk" || cameraMode === "fly") && !pointerLocked;
+
   return (
     <div className="relative h-full w-full overflow-hidden">
       <div ref={mountRef} className="h-full w-full" />
+      {/* Camera-mode switcher (TrueView-style: Orbit / Walk / Fly / Dollhouse).
+          Same pill-group pattern as the 2D/Split/3D toggle elsewhere in the
+          designer toolbar. */}
+      <div className="pointer-events-none absolute left-3 top-3 z-10">
+        <div className="pointer-events-auto flex overflow-hidden rounded-lg border border-slate-700 shadow-lg">
+          {[
+            { mode: "orbit", label: "Orbit" },
+            { mode: "walk", label: "Walk" },
+            { mode: "fly", label: "Fly" },
+            { mode: "dollhouse", label: "Dollhouse" },
+          ].map(({ mode, label }) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setCameraMode(mode)}
+              aria-pressed={cameraMode === mode}
+              className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                cameraMode === mode
+                  ? "bg-emerald-500 text-white"
+                  : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       {/* On-screen navigation cluster (TrueView / Google Earth pattern):
-          360° auto-orbit toggle + reset view. pointer-events-none on the
-          wrapper so drags pass through everywhere except the buttons. */}
+          360° auto-orbit toggle, labels, record, reset view. pointer-events-none
+          on the wrapper so drags pass through everywhere except the buttons. */}
       <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={toggleSpin}
-          title={spin ? "Stop the 360° orbit" : "Start a 360° orbit"}
-          aria-label={spin ? "Stop 360 degree orbit" : "Start 360 degree orbit"}
-          aria-pressed={spin}
-          className={`pointer-events-auto rounded-lg p-2.5 shadow-lg transition-colors ${
-            spin
-              ? "bg-emerald-500 text-white"
-              : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
-          }`}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-            <path d="M21 3v6h-6" />
-          </svg>
-        </button>
+        {cameraMode === "orbit" && (
+          <button
+            type="button"
+            onClick={toggleSpin}
+            title={spin ? "Stop the 360° orbit" : "Start a 360° orbit"}
+            aria-label={spin ? "Stop 360 degree orbit" : "Start 360 degree orbit"}
+            aria-pressed={spin}
+            className={`pointer-events-auto rounded-lg p-2.5 shadow-lg transition-colors ${
+              spin
+                ? "bg-emerald-500 text-white"
+                : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
+            }`}
+          >
+            {/* A planet + orbit ring, not a refresh arrow — reads as "spin the model" at a glance. */}
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(-18 12 12)" />
+              <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           onClick={toggleLabels}
@@ -1060,6 +1606,31 @@ export default function DesignerViewport3D({
             <circle cx="7" cy="7" r="1.5" />
           </svg>
         </button>
+        {recordingSupported && (
+          <button
+            type="button"
+            onClick={toggleRecording}
+            title={isRecording ? "Stop recording" : "Record this walkthrough as a video"}
+            aria-label={isRecording ? "Stop recording walkthrough" : "Start recording walkthrough"}
+            aria-pressed={isRecording}
+            className={`pointer-events-auto rounded-lg p-2.5 shadow-lg transition-colors ${
+              isRecording
+                ? "bg-red-600 text-white"
+                : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
+            }`}
+          >
+            {isRecording ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <circle cx="12" cy="12" r="8" />
+                <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+              </svg>
+            )}
+          </button>
+        )}
         <button
           type="button"
           onClick={resetView}
@@ -1073,6 +1644,24 @@ export default function DesignerViewport3D({
           </svg>
         </button>
       </div>
+      {isRecording && (
+        <div className="pointer-events-none absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-red-600/90 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
+          Recording walkthrough
+        </div>
+      )}
+      {showPointerLockPrompt && (
+        <button
+          type="button"
+          onClick={() => pointerLockControlsRef.current?.lock()}
+          className="pointer-events-auto absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 bg-slate-950/60 text-center text-slate-100"
+        >
+          <span className="text-sm font-semibold">Click to look around</span>
+          <span className="text-xs text-slate-300">
+            WASD or arrow keys to move{cameraMode === "fly" ? " · Space / Shift for up / down" : ""} · Esc to release the pointer
+          </span>
+        </button>
+      )}
       {dispatch && selection && (
         <div
           ref={popupRef}
