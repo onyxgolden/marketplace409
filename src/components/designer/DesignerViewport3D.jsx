@@ -649,7 +649,6 @@ export default function DesignerViewport3D({
   const gizmoCameraRef = useRef(null);
   const gizmoHitObjectsRef = useRef([]); // meshes/sprites raycast against, each carrying userData.gizmoAction
   const gizmoDragRef = useRef(null); // { x, y, moved, action } while a gizmo press is down
-  const mountSizeRef = useRef({ width: 0, height: 0 }); // CSS-pixel mount size, for placing the gizmo's viewport each frame
   // Equipment tag labels (P-101, E-102, …): hidden by default, flipped by the
   // Labels toggle in the button cluster. Sprites are collected per scene
   // build (they're rebuilt with the scene); the ref mirror avoids rebuilding
@@ -684,7 +683,6 @@ export default function DesignerViewport3D({
 
     const width = mount.clientWidth || 800;
     const height = mount.clientHeight || 600;
-    mountSizeRef.current = { width, height };
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -876,11 +874,19 @@ export default function DesignerViewport3D({
 
     const gizmoRaycaster = new THREE.Raycaster();
     const gizmoNdc = new THREE.Vector2();
+    // Reused every call — renderer.getSize() returns "logical pixels" (its
+    // own documented term for CSS pixels, independent of pixel ratio), the
+    // SAME unit setViewport/setScissor take (they multiply by pixelRatio
+    // internally). Reading size from the renderer itself, rather than a
+    // second value tracked in a ref alongside it, means there is only ever
+    // one number for "how big is this canvas" to go stale.
+    const rendererSizeVec = new THREE.Vector2();
 
     /** Screen-space (canvas-relative CSS px) box the gizmo currently renders into, or null before the first resize. */
     const gizmoScreenRect = () => {
-      const w = mountSizeRef.current.width;
-      const h = mountSizeRef.current.height;
+      renderer.getSize(rendererSizeVec);
+      const w = rendererSizeVec.x;
+      const h = rendererSizeVec.y;
       if (!(w > 0) || !(h > 0)) return null;
       return { left: w - VIEWCUBE_SIZE_PX - VIEWCUBE_MARGIN_PX, top: VIEWCUBE_MARGIN_PX, size: VIEWCUBE_SIZE_PX };
     };
@@ -987,7 +993,9 @@ export default function DesignerViewport3D({
       // of the SAME renderer/canvas rather than a second WebGL context; the
       // gizmo camera mirrors the main camera's VIEWING DIRECTION (not its
       // position) from a fixed distance, so the cube shows current facing.
-      const { width: mw, height: mh } = mountSizeRef.current;
+      renderer.getSize(rendererSizeVec);
+      const mw = rendererSizeVec.x;
+      const mh = rendererSizeVec.y;
       if ((mode === "orbit" || mode === "dollhouse") && mw > 0 && mh > 0) {
         const gizmoCamera = gizmoCameraRef.current;
         const gizmoScene = gizmoSceneRef.current;
@@ -1188,7 +1196,6 @@ export default function DesignerViewport3D({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-      mountSizeRef.current = { width: w, height: h };
     };
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
