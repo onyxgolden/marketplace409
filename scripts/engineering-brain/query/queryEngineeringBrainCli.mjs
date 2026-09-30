@@ -14,6 +14,14 @@ import { readFileAtCommit, readMigrationsAtCommit } from "../gitRepository.mjs";
 const DEFAULT_MANIFEST_PATH = path.join("engineering-brain", "index-manifest.json");
 const BUG_CATALOG_FILENAME = "bug-catalog.json";
 
+function takeFlagValue(argv, i, flag) {
+  const value = argv[i + 1];
+  if (value === undefined || value === "" || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
 function parseArgs(argv) {
   const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined, bugCatalogPath: null, noBugs: false, diagnose: false, evidencePath: null, evidenceSignalId: null };
   const rest = [];
@@ -31,8 +39,8 @@ function parseArgs(argv) {
     else if (arg === "--path") args.filters.sourcePath = argv[++i];
     else if (arg === "--max-results") args.maxResults = Number(argv[++i]);
     else if (arg === "--diagnose") args.diagnose = true;
-    else if (arg === "--evidence") args.evidencePath = argv[++i];
-    else if (arg === "--signal") args.evidenceSignalId = argv[++i];
+    else if (arg === "--evidence") { args.evidencePath = takeFlagValue(argv, i, arg); i += 1; }
+    else if (arg === "--signal") { args.evidenceSignalId = takeFlagValue(argv, i, arg); i += 1; }
     else rest.push(arg);
   }
   args.queryText = rest.join(" ");

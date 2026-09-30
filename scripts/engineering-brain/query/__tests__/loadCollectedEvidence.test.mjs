@@ -221,4 +221,20 @@ describe("diagnose CLI evidence wiring", () => {
     );
     expect(response.evidence_signal_id).toBe("s2");
   });
+
+  it("fails closed when --evidence or --signal has no value", () => {
+    const { dir, manifestPath } = setup();
+    expect(() => runCli(["--diagnose", "--manifest", manifestPath, "--evidence"], { cwd: dir }))
+      .toThrow(/--evidence requires a value/);
+    expect(() => runCli(["--diagnose", "--manifest", manifestPath, "--signal"], { cwd: dir }))
+      .toThrow(/--signal requires a value/);
+  });
+
+  it("does not swallow the next flag as an evidence value", () => {
+    const { dir, manifestPath } = setup();
+    expect(() => runCli(
+      ["--diagnose", "--manifest", manifestPath, "--evidence", "--json", "billing"],
+      { cwd: dir },
+    )).toThrow(/--evidence requires a value/);
+  });
 });
