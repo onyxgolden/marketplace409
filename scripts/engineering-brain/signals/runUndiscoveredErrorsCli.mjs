@@ -9,6 +9,8 @@
  *   2. Merge the signal files if you use both fetchers (concatenate the `signals` arrays).
  *   3. Detect + report (pure, deterministic, no credentials):
  *        node scripts/engineering-brain/signals/runUndiscoveredErrorsCli.mjs --signals <signals.json> [--json]
+ *   4. Gather root-cause evidence for the signals (needs GITHUB_TOKEN for CI logs):
+ *        node scripts/engineering-brain/signals/collectEvidenceCli.mjs --signals <signals.json> --out /tmp/evidence.json
  *
  * Usage:
  *   node scripts/engineering-brain/signals/runUndiscoveredErrorsCli.mjs \
