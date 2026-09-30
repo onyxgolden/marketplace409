@@ -9,6 +9,7 @@ import {
   Download,
   Eraser,
   Hand,
+  HelpCircle,
   Home,
   Lock,
   LockOpen,
@@ -147,6 +148,7 @@ import ElevationSvg from "./ElevationSvg";
 import ElevationPrintOverlay from "./ElevationPrintOverlay";
 import DxfExportDialog from "./DxfExportDialog";
 import GlbExportDialog from "./GlbExportDialog";
+import DesignerHelpModal from "./DesignerHelpModal";
 import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
@@ -331,6 +333,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   // HOME DESIGNER slice 6: DXF export dialog state.
   const [dxfOpen, setDxfOpen] = useState(false);
   const [glbOpen, setGlbOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -864,6 +867,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           >
             <Save size={15} /> {saving ? "Saving…" : "Save"}
           </button>
+          <button
+            onClick={() => setHelpOpen(true)}
+            title="Designer help & keyboard shortcuts"
+            aria-haspopup="dialog"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"
+          >
+            <HelpCircle size={15} />
+          </button>
         </div>
       </header>
 
@@ -1096,6 +1107,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           onClose={() => setGlbOpen(false)}
         />
       )}
+      {helpOpen && <DesignerHelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }
