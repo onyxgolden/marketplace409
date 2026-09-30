@@ -69,8 +69,9 @@ async function main() {
   const { owner, repo } = parseRepo(args.repo);
   const token = process.env.GITHUB_TOKEN || null;
   const evidence = {};
-  try {
-    for (const signal of signals) {
+  const failedSignals = [];
+  for (const signal of signals) {
+    try {
       if (signal.kind === "ci_failed") {
         if (!token) {
           throw new Error(
@@ -84,10 +85,15 @@ async function main() {
       } else {
         evidence[signal.signal_id] = buildSignalEvidence(signal, null);
       }
+    } catch (error) {
+      // Fail-closed but not empty-handed: record the failure loudly in the
+      // evidence file and keep going, so one flaky signal cannot erase the
+      // evidence gathered for the others. Any per-signal failure still exits
+      // nonzero below -- partial evidence is never an all-clear.
+      failedSignals.push(signal.signal_id);
+      evidence[signal.signal_id] = { status: "error", error: String((error && error.message) || error) };
+      console.error(`error: signal ${signal.signal_id}: ${(error && error.message) || error}`);
     }
-  } catch (error) {
-    console.error(`error: ${error.message}`);
-    process.exit(1);
   }
 
   const payload = {
@@ -97,6 +103,12 @@ async function main() {
     evidence,
   };
   writeFileSync(args.outPath, JSON.stringify(payload, null, 2));
+  if (failedSignals.length > 0) {
+    console.error(
+      `error: evidence collection failed for ${failedSignals.length}/${signals.length} signals: ${failedSignals.join(", ")}`,
+    );
+    process.exit(1);
+  }
   console.log(`Wrote evidence for ${Object.keys(evidence).length} signals to ${args.outPath}.`);
 }
 

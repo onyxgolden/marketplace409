@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ import {
   cleanLogLine,
   extractErrorLines,
   extractMentionedPaths,
+  fetchFailedJobLog,
   runIdFromUrl,
   summarizeCiEvidence,
 } from "../collectEvidence.mjs";
@@ -201,5 +203,126 @@ describe("collectEvidenceCli — delivery signals need no credentials", () => {
     const res = runCli(["--signals", path, "--out", out], { GITHUB_TOKEN: "fake" });
     expect(res.exitCode).toBe(1);
     expect(res.stderr).toContain("no parsable run_url");
+  });
+});
+
+describe("fetchFailedJobLog — retry on transient failures", () => {
+  function startServer(handler) {
+    const server = createServer(handler);
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
+  }
+
+  it("retries a transient 404 on the jobs API then succeeds", async () => {
+    let jobsHits = 0;
+    const server = await startServer((req, res) => {
+      if (req.url.includes("/actions/runs/123/jobs")) {
+        jobsHits += 1;
+        if (jobsHits === 1) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ message: "Not Found" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jobs: [{ id: 7, name: "build", conclusion: "failure" }] }));
+        return;
+      }
+      if (req.url.includes("/actions/jobs/7/logs")) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("##[group]Run build\n##[error]boom\n");
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    try {
+      const apiBase = `http://127.0.0.1:${server.address().port}`;
+      const result = await fetchFailedJobLog({
+        owner: "o",
+        repo: "r",
+        runId: "123",
+        token: "t",
+        apiBase,
+        retryDelaysMs: [0, 0],
+      });
+      expect(result.jobName).toBe("build");
+      expect(result.logText).toContain("##[error]boom");
+      expect(jobsHits).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("gives up after retries are exhausted", async () => {
+    let jobsHits = 0;
+    const server = await startServer((req, res) => {
+      jobsHits += 1;
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ message: "Not Found" }));
+    });
+    try {
+      const apiBase = `http://127.0.0.1:${server.address().port}`;
+      await expect(
+        fetchFailedJobLog({
+          owner: "o",
+          repo: "r",
+          runId: "123",
+          token: "t",
+          apiBase,
+          retryDelaysMs: [],
+        }),
+      ).rejects.toThrow(/HTTP 404/);
+      expect(jobsHits).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("does not retry a permanent client error", async () => {
+    let jobsHits = 0;
+    const server = await startServer((req, res) => {
+      jobsHits += 1;
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end("{}");
+    });
+    try {
+      const apiBase = `http://127.0.0.1:${server.address().port}`;
+      await expect(
+        fetchFailedJobLog({
+          owner: "o",
+          repo: "r",
+          runId: "123",
+          token: "t",
+          apiBase,
+          retryDelaysMs: [0, 0],
+        }),
+      ).rejects.toThrow(/HTTP 400/);
+      expect(jobsHits).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("collectEvidenceCli — partial evidence on per-signal failure", () => {
+  it("writes partial evidence and still exits 1 when one signal fails", () => {
+    const { path, out } = writeSignals([
+      {
+        signal_id: "supabase:deliveries:failed:9",
+        kind: "delivery_failed",
+        evidence: { status: "failed", failure_reason: "smtp 550", row_id: "9" },
+      },
+      {
+        signal_id: "github:actions:ci_failed:9",
+        kind: "ci_failed",
+        evidence: { run_url: "https://github.com/o/r/actions/runs/999" },
+      },
+    ]);
+    const res = runCli(["--signals", path, "--out", out], { GITHUB_TOKEN: "" });
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toContain("GITHUB_TOKEN is required");
+    const payload = JSON.parse(readFileSync(out, "utf8"));
+    expect(payload.evidence["supabase:deliveries:failed:9"].failure_reason).toBe("smtp 550");
+    expect(payload.evidence["github:actions:ci_failed:9"].status).toBe("error");
+    expect(payload.evidence["github:actions:ci_failed:9"].error).toContain("GITHUB_TOKEN is required");
   });
 });

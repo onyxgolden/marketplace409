@@ -123,24 +123,52 @@ function authHeaders(token) {
 }
 
 /**
+ * GitHub's Actions API occasionally answers a nested resource (jobs, logs)
+ * with a spurious 404 while the run itself is readable -- observed live when
+ * the runs endpoint returned 200 for the same token minutes earlier. GETs are
+ * safe to retry, so transient statuses (404/408/429/5xx) are retried with
+ * backoff before giving up. retryDelaysMs sets the pauses between attempts;
+ * pass [] to disable retries (unit tests).
+ */
+const RETRYABLE_STATUS = new Set([404, 408, 429, 500, 502, 503, 504]);
+export const DEFAULT_RETRY_DELAYS_MS = [2000, 10000];
+
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchWithRetry(url, { headers, redirect, label, retryDelaysMs = DEFAULT_RETRY_DELAYS_MS }) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    const res = await fetch(url, { headers, redirect });
+    if (res.ok) return res;
+    lastError = new Error(`${label} failed: HTTP ${res.status}`);
+    if (!RETRYABLE_STATUS.has(res.status) || attempt === retryDelaysMs.length) break;
+    await sleepMs(retryDelaysMs[attempt]);
+  }
+  throw lastError;
+}
+
+/**
  * Fetch the failed job's log for a workflow run. Follows the API's redirect
  * to the pre-signed log URL (the pre-signed URL carries its own auth; the
  * bearer token is only sent to api.github.com). Throws on any failure —
  * callers must treat that as a collection failure, never an all-clear.
  */
-export async function fetchFailedJobLog({ owner, repo, runId, token, apiBase = "https://api.github.com" }) {
+export async function fetchFailedJobLog({ owner, repo, runId, token, apiBase = "https://api.github.com", retryDelaysMs } = {}) {
   if (!token) throw new Error("GITHUB_TOKEN is required to fetch CI failure evidence");
   const headers = authHeaders(token);
-  const jobsRes = await fetch(`${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`, { headers });
-  if (!jobsRes.ok) throw new Error(`GitHub jobs API failed for run ${runId}: HTTP ${jobsRes.status}`);
+  const jobsRes = await fetchWithRetry(
+    `${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`,
+    { headers, label: `GitHub jobs API for run ${runId}`, retryDelaysMs },
+  );
   const jobs = ((await jobsRes.json()).jobs) || [];
   const failed = jobs.find((j) => j.conclusion === "failure") || null;
   if (!failed) throw new Error(`no failed job found for run ${runId}`);
-  const logRes = await fetch(`${apiBase}/repos/${owner}/${repo}/actions/jobs/${failed.id}/logs`, {
+  const logRes = await fetchWithRetry(`${apiBase}/repos/${owner}/${repo}/actions/jobs/${failed.id}/logs`, {
     headers,
     redirect: "follow",
+    label: `GitHub log download for job ${failed.id}`,
+    retryDelaysMs,
   });
-  if (!logRes.ok) throw new Error(`GitHub log download failed for job ${failed.id}: HTTP ${logRes.status}`);
   return { jobName: failed.name, logText: await logRes.text() };
 }
 
