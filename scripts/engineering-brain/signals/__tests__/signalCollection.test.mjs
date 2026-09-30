@@ -46,6 +46,22 @@ describe("loadSignals — missing/malformed input must fail, never fake an all-c
     expect(() => loadSignals(bad)).toThrow(/malformed signals file/);
   });
 
+  it("throws a controlled error on a JSON null signal file (no uncaught exception)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "signals-"));
+    const nul = join(dir, "null.json");
+    writeFileSync(nul, "null");
+    expect(() => loadSignals(nul)).toThrow(/malformed signals file/);
+  });
+
+  it("CLI exits 2 on a JSON null signal file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "signals-"));
+    const nul = join(dir, "null.json");
+    writeFileSync(nul, "null");
+    const result = runCli(["--signals", nul]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/malformed signals file/);
+  });
+
   it("accepts an explicit valid empty signals file", () => {
     const dir = mkdtempSync(join(tmpdir(), "signals-"));
     const empty = join(dir, "empty.json");

@@ -57,7 +57,7 @@ export function loadSignals(signalsPath) {
     throw new Error(`malformed signals JSON: ${signalsPath}`);
   }
   if (Array.isArray(parsed)) return parsed;
-  if (Array.isArray(parsed.signals)) return parsed.signals;
+  if (parsed !== null && typeof parsed === "object" && Array.isArray(parsed.signals)) return parsed.signals;
   throw new Error(`malformed signals file: ${signalsPath} (expected an array or { signals: [...] })`);
 }
 
