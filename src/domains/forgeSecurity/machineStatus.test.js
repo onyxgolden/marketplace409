@@ -65,6 +65,28 @@ describe("normalizeFirewallStatus", () => {
     expect(result.profiles.Private).toBe(false);
   });
 
+  it("fails closed to unknown on a partial read of one profile, never protected (ChatGPT review of PR #498, finding 1)", () => {
+    const result = normalizeFirewallStatus([{ Name: "Domain", Enabled: 1 }], null);
+    expect(result.state).toBe(UNKNOWN);
+    expect(result.profiles).toEqual({ Domain: true });
+  });
+
+  it("fails closed to unknown on a partial read of two of three profiles, never protected", () => {
+    const result = normalizeFirewallStatus(
+      [
+        { Name: "Domain", Enabled: 1 },
+        { Name: "Private", Enabled: 1 },
+      ],
+      null,
+    );
+    expect(result.state).toBe(UNKNOWN);
+  });
+
+  it("still reports unprotected from a partial read if the observed profile is disabled", () => {
+    const result = normalizeFirewallStatus([{ Name: "Private", Enabled: 0 }], null);
+    expect(result.state).toBe("unprotected");
+  });
+
   it("fails closed to unknown on a collection error", () => {
     const result = normalizeFirewallStatus(null, new Error("access denied"));
     expect(result.state).toBe(UNKNOWN);

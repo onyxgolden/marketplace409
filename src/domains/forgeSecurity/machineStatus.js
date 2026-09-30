@@ -89,7 +89,15 @@ export function normalizeDefenderStatus(raw, error) {
 /**
  * `rawProfiles` is the parsed JSON array from `Get-NetFirewallProfile`
  * (Domain/Private/Public), or null/non-array on failure.
+ * Windows always has exactly these three profiles; a `protected` verdict
+ * requires all three to have been observed with a parseable Enabled value —
+ * a partial read (e.g. only Domain came back) must not be reported as fully
+ * protected just because the profiles it did see were all enabled. An
+ * explicitly-disabled profile is sufficient evidence of `unprotected` even
+ * if another expected profile is missing from the same read.
  */
+const EXPECTED_FIREWALL_PROFILES = Object.freeze(["Domain", "Private", "Public"]);
+
 export function normalizeFirewallStatus(rawProfiles, error) {
   if (error || !Array.isArray(rawProfiles) || rawProfiles.length === 0) {
     return Object.freeze({
@@ -105,8 +113,11 @@ export function normalizeFirewallStatus(rawProfiles, error) {
     profiles[name] = toTriBool(profile.Enabled);
   }
   const values = Object.values(profiles);
-  const allKnown = values.length > 0 && values.every((v) => v === true || v === false);
-  const state = !allKnown ? UNKNOWN : values.some((v) => v === false) ? "unprotected" : "protected";
+  const anyDisabled = values.some((v) => v === false);
+  const allExpectedKnown = EXPECTED_FIREWALL_PROFILES.every(
+    (name) => profiles[name] === true || profiles[name] === false,
+  );
+  const state = anyDisabled ? "unprotected" : allExpectedKnown ? "protected" : UNKNOWN;
   return Object.freeze({
     state,
     profiles: Object.freeze(profiles),
