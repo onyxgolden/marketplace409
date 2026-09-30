@@ -123,17 +123,19 @@ function authHeaders(token) {
 }
 
 /**
- * GitHub's Actions API inconsistently answers the jobs endpoint with a 404
- * for the automatic GITHUB_TOKEN (an installation token) while the same
- * token reads the runs endpoint fine and every other credential reads the
- * jobs endpoint fine -- observed live 2026-09-30 (unauthenticated and
- * PAT-authenticated calls returned 200 for the same runs). Installation
- * tokens get 404-masking instead of 403, so a 404 here may mean "quirked
- * token" rather than "missing run". GETs are safe to retry, so transient
- * statuses (408/429/5xx) are retried with backoff; on 401/403/404 with a
- * token, the request is retried once WITHOUT credentials before giving up
- * (the jobs list is public data on public repos). retryDelaysMs sets the
- * pauses between attempts; pass [] to disable retries (unit tests).
+ * Fetch policy for the jobs/log endpoints. GETs are safe to retry, so
+ * transient statuses (408/429/5xx) are retried with backoff. On 401/403/404
+ * with a token, the request is retried once WITHOUT credentials before
+ * giving up (the jobs list is public data on public repos) -- this keeps
+ * collection working if a token ever loses scope, and the combined error
+ * reports both statuses. retryDelaysMs sets the pauses between attempts;
+ * pass [] to disable retries (unit tests).
+ *
+ * NOTE (2026-09-30): a run of live 404s on this endpoint was first blamed
+ * on an installation-token quirk, but the debug matrix proved the token
+ * fine -- the URL had repo=undefined from a parseRepo/cli property-name
+ * mismatch (fixed; regression-tested). When this endpoint 404s, check the
+ * request URL before blaming auth.
  */
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const AUTH_FAILURE_STATUS = new Set([401, 403, 404]);
@@ -186,7 +188,6 @@ async function fetchWithAuthFallback(url, opts) {
 export async function fetchFailedJobLog({ owner, repo, runId, token, apiBase = "https://api.github.com", retryDelaysMs } = {}) {
   if (!token) throw new Error("GITHUB_TOKEN is required to fetch CI failure evidence");
   const headers = authHeaders(token);
-  console.log(`debug-auth: collector url=${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100 owner=${owner} repo=${repo} runId=${runId}`);
   const jobsRes = await fetchWithAuthFallback(
     `${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`,
     { headers, label: `GitHub jobs API for run ${runId}`, retryDelaysMs },

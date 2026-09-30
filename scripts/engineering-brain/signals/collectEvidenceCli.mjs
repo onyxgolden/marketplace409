@@ -29,26 +29,24 @@ import {
 } from "./collectEvidence.mjs";
 
 function parseArgs(argv) {
-  const args = { signalsPath: null, outPath: null, repo: null, debugAuth: false };
+  const args = { signalsPath: null, outPath: null, repo: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--signals") args.signalsPath = argv[++i];
     else if (arg === "--out") args.outPath = argv[++i];
     else if (arg === "--repo") args.repo = argv[++i];
-    else if (arg === "--debug-auth") args.debugAuth = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (args.debugAuth) return args;
   if (!args.signalsPath) throw new Error("--signals <path> is required");
   if (!args.outPath) throw new Error("--out <path> is required");
   return args;
 }
 
-function parseRepo(repoFlag) {
+export function parseRepo(repoFlag) {
   const repo = repoFlag || process.env.GITHUB_REPOSITORY || "onyxgolden/marketplace409";
   const [owner, name] = repo.split("/");
   if (!owner || !name) throw new Error(`cannot parse repo from --repo / GITHUB_REPOSITORY: ${repo}`);
-  return { owner, name };
+  return { owner, repo: name };
 }
 
 async function main() {
@@ -59,11 +57,6 @@ async function main() {
     console.error(`error: ${error.message}`);
     process.exit(2);
   }
-
-  // TEMPORARY diagnostic (remove after the jobs-API 404 is diagnosed):
-  // tries the jobs endpoint with every auth variant and prints what GitHub
-  // answers from the runner's network. Never prints the token itself.
-  await debugAuthMatrix();
 
   let signals;
   try {
@@ -117,48 +110,6 @@ async function main() {
     process.exit(1);
   }
   console.log(`Wrote evidence for ${Object.keys(evidence).length} signals to ${args.outPath}.`);
-}
-
-/**
- * TEMPORARY diagnostic for the jobs-API 404. Tries the jobs endpoint with
- * every auth variant from the runner's network and prints status codes plus
- * rate-limit headers. Never prints the token. Delete after diagnosis.
- */
-async function debugAuthMatrix() {
-  const token = process.env.GITHUB_TOKEN || null;
-  const probeRunId = "36669075487";
-  const base = `https://api.github.com/repos/onyxgolden/marketplace409/actions/runs/${probeRunId}`;
-  const variants = [
-    ["jobs Bearer pp=1", `${base}/jobs?per_page=1`, { Authorization: `Bearer ${token}` }],
-    ["jobs Bearer pp=30", `${base}/jobs?per_page=30`, { Authorization: `Bearer ${token}` }],
-    ["jobs Bearer pp=100", `${base}/jobs?per_page=100`, { Authorization: `Bearer ${token}` }],
-    ["jobs Bearer pp=100 retry", `${base}/jobs?per_page=100`, { Authorization: `Bearer ${token}` }],
-    ["jobs Bearer no-pp", base, { Authorization: `Bearer ${token}` }],
-    ["jobs unauth pp=100", `${base}/jobs?per_page=100`, {}],
-    ["jobs token-scheme pp=100", `${base}/jobs?per_page=100`, { Authorization: `token ${token}` }],
-  ];
-  for (const [label, target, auth] of variants) {
-    try {
-      const res = await fetch(target, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "engineering-brain-evidence",
-          ...auth,
-        },
-      });
-      const remaining = res.headers.get("x-ratelimit-remaining");
-      const usedBy = res.headers.get("x-ratelimit-used");
-      console.log(
-        `debug-auth: ${label} -> HTTP ${res.status} ` +
-          `(ratelimit remaining=${remaining} used=${usedBy})`,
-      );
-      await res.arrayBuffer();
-    } catch (error) {
-      console.log(`debug-auth: ${label} -> FETCH ERROR ${error.message}`);
-    }
-  }
-  if (!token) console.log("debug-auth: WARNING GITHUB_TOKEN was empty");
-  else console.log(`debug-auth: GITHUB_TOKEN present, length=${token.length}`);
 }
 
 const invokedAsScript =
