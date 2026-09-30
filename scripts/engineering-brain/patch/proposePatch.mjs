@@ -590,13 +590,21 @@ export function applyWholeWord(content, bad, good) {
 /**
  * Regex literal vs division, previous-token heuristic.
  * A `/` starts a regex literal unless the previous significant token ends an
- * expression (identifier, number, string/template/regex, `)`, `]`, `++`/`--`,
- * or an expression-ending keyword like `this`/`true`). `}` is ambiguous
- * (block vs object literal) and is treated conservatively as regex-possible:
- * genuine division after `}` almost always fails the regex-shape check below
- * and falls back to division anyway.
+ * expression (identifier, number, string/template/regex, `]`, `++`/`--`, a
+ * non-control `)`, or an expression-ending keyword like `this`/`true`).
+ * `}` is ambiguous (block vs object literal) and is treated conservatively
+ * as regex-possible: genuine division after `}` almost always fails the
+ * regex-shape check below and falls back to division anyway.
+ * A `)` that closed a control-statement header (`if`/`for`/`while`/`switch`/
+ * `with`/`catch`) is also regex-possible: `if (x) /re/.test(y);` is valid.
+ * Any `/` that fails the shape check still falls back to division.
  */
 const DIVISION_END_WORDS = new Set(["this", "super", "true", "false", "null"]);
+
+// Keywords whose parenthesized header can be followed by a regex-literal
+// expression statement, e.g. `if (enabled) /re/.test(x);`. A `/` right after
+// the header's closing `)` starts a regex; after any other `)` it is division.
+const CONTROL_PAREN_WORDS = new Set(["if", "for", "while", "switch", "with", "catch"]);
 const JS_KEYWORDS = new Set([
   "break", "case", "catch", "class", "const", "continue", "debugger", "default",
   "delete", "do", "else", "enum", "export", "extends", "finally", "for",
@@ -620,7 +628,9 @@ function isDigit(c) {
  * Classify the previous significant token for the regex/division decision.
  * prev is { t, v? } with t one of: "other" (operators/openers/start),
  * "ident", "word" (non-expression-ending keyword), "endword", "num", "str",
- * "close" (`)`/`]`), "rbrace" (`}`), "incdec".
+ * "close" (`]` or a `)` that did not close a control header),
+ * "closeparen" (a `)` that closed an if/for/while/switch/with/catch header),
+ * "rbrace" (`}`), "incdec". v carries the word text for word/ident tokens.
  */
 function slashStartsRegex(prev) {
   if (!prev) return true;
@@ -628,6 +638,7 @@ function slashStartsRegex(prev) {
     case "other": return true;
     case "word": return true;
     case "rbrace": return true;
+    case "closeparen": return true;
     default: return false; // ident, endword, num, str, close, incdec -> division
   }
 }
@@ -731,8 +742,9 @@ function computeCodeMask(source) {
       if (isWordStart(c)) {
         let j = i + 1;
         while (j < n && isWordChar(source[j])) j += 1;
+        const word = source.slice(i, j);
         for (let k = i; k < j; k++) mask[k] = 1;
-        st.prev = classifyWord(source.slice(i, j));
+        st.prev = { ...classifyWord(word), v: word };
         i = j; continue;
       }
       if (isDigit(c) || (c === "." && isDigit(nx))) {
@@ -742,7 +754,23 @@ function computeCodeMask(source) {
         st.prev = { t: "num" };
         i = j; continue;
       }
-      if (c === ")" || c === "]") { mask[i] = 1; st.prev = { t: "close" }; i += 1; continue; }
+      if (c === "(") {
+        // Remember the word before this paren so the matching `)` knows
+        // whether it closed a control-statement header (regex-possible after)
+        // or an ordinary expression/call (division after).
+        mask[i] = 1;
+        if (!st.parens) st.parens = [];
+        st.parens.push(st.prev ? st.prev.v : undefined);
+        st.prev = { t: "other" };
+        i += 1; continue;
+      }
+      if (c === ")") {
+        mask[i] = 1;
+        const opener = st.parens && st.parens.length ? st.parens.pop() : undefined;
+        st.prev = { t: CONTROL_PAREN_WORDS.has(opener) ? "closeparen" : "close" };
+        i += 1; continue;
+      }
+      if (c === "]") { mask[i] = 1; st.prev = { t: "close" }; i += 1; continue; }
       if (c === "}") { mask[i] = 1; st.prev = { t: "rbrace" }; i += 1; continue; }
       if ((c === "+" && nx === "+") || (c === "-" && nx === "-")) {
         mask[i] = 1; mask[i + 1] = 1; st.prev = { t: "incdec" }; i += 2; continue;

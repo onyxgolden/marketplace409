@@ -216,6 +216,31 @@ describe("replaceIdentifierReferences", () => {
     expect(out).toContain("const t = width / getElementById / scale;");
   });
 
+  it("leaves regex literals after control headers alone (round-3 finding)", () => {
+    const src = [
+      "import { getElementById } from \"./dom.mjs\";",
+      "if (enabled) /getElementByID/.test(input);",
+      "while (ready) /getElementByID/.test(next());",
+      "for (let i = 0; i < n; i++) /getElementByID/;",
+      "const el = getElementByID(\"main\");",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("if (enabled) /getElementByID/.test(input);");
+    expect(out).toContain("while (ready) /getElementByID/.test(next());");
+    expect(out).toContain("for (let i = 0; i < n; i++) /getElementByID/;");
+    expect(out).toContain("const el = getElementById(\"main\");");
+  });
+
+  it("still treats division after call/result parens as code", () => {
+    const src = [
+      "const half = compute(x) / getElementByID;",
+      "const avg = (sum(values)) / getElementByID;",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("const half = compute(x) / getElementById;");
+    expect(out).toContain("const avg = (sum(values)) / getElementById;");
+  });
+
   it("returns null when the only occurrences are inside regex literals", () => {
     const src = [
       "const legacy = /getElementByID/;",
@@ -245,6 +270,23 @@ const side = getElementByID("side");
     expect(r.patch.patched).toContain('getElementById("side")');
     expect(r.patch.patched).not.toContain("getElementByID");
     expect(r.patch.application).toBe("direct");
+  });
+
+  it("leaves a regex after a control header untouched end to end", () => {
+    const app = `import { getElementById } from "./dom.mjs";
+if (enabled) /getElementByID/.test(input);
+const side = getElementByID("side");
+`;
+    const dir = mkrepo({ "src/app.js": app });
+    const r = tryWrongIdentifier({
+      bundle: bundleFor("src/app.js"),
+      evidence: { failed_step: "eslint", error_lines: ["'getElementByID' is not defined."] },
+      repoRoot: dir,
+      deps: { grepLiteral: noGrep },
+    });
+    expect(r.noPatch).toBeFalsy();
+    expect(r.patch.patched).toContain("if (enabled) /getElementByID/.test(input);");
+    expect(r.patch.patched).toContain('getElementById("side")');
   });
 
   it("refuses when the bad identifier is already declared", () => {
