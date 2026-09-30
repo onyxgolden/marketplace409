@@ -97,6 +97,63 @@ describe("designerFurnitureParts — signature compositions", () => {
   });
 });
 
+describe("designerFurnitureParts — L-shaped corner cabinets", () => {
+  // Regression for the Phase 2 known limitation: corner-shaped cabinets
+  // (matching furniturePlanSymbols.js's cornerBase/easyReachBase/
+  // wallCornerCabinet, which draw a real L-shaped 2D footprint plus a lazy
+  // Susan circle) used to render as a plain rectangular box in 3D, filling
+  // the whole w x d bounding box well past where the actual cabinet
+  // carcass ends in the 2D plan.
+  for (const id of ["cabinet-base-corner", "cabinet-base-easy-reach", "cabinet-wall-corner"]) {
+    it(`${id}: body is two arms (an L-shape), not one full-footprint box`, () => {
+      const { widthIn: w, depthIn: d } = dimsOf(id);
+      const parts = furnitureParts(id, dimsOf(id));
+      const bodyBoxes = parts.filter((p) => p.shape === "box" && p.color === undefined);
+      expect(bodyBoxes.length, id).toBe(2);
+      // One arm spans (most of) the full width, hugging the back; the other
+      // spans (most of) the full depth, hugging the left side — neither arm
+      // is a single box covering the whole w x d bounding box.
+      const backArm = bodyBoxes.find((p) => p.w > p.d);
+      const sideArm = bodyBoxes.find((p) => p.d > p.w);
+      expect(backArm, id).toBeDefined();
+      expect(sideArm, id).toBeDefined();
+      expect(backArm.w).toBeGreaterThan(w * 0.9);
+      expect(sideArm.d).toBeGreaterThan(d * 0.9);
+      expect(backArm.d).toBeLessThan(d * 0.75); // the "arm" depth, not the full depth
+      expect(sideArm.w).toBeLessThan(w * 0.75); // the "arm" width, not the full width
+    });
+  }
+
+  it("cabinet-base-corner and cabinet-base-easy-reach both get a counter; cabinet-wall-corner does not", () => {
+    const paleCounterColor = "#e9e7e1";
+    expect(furnitureParts("cabinet-base-corner", dimsOf("cabinet-base-corner")).some((p) => p.color === paleCounterColor)).toBe(true);
+    expect(furnitureParts("cabinet-base-easy-reach", dimsOf("cabinet-base-easy-reach")).some((p) => p.color === paleCounterColor)).toBe(true);
+    expect(furnitureParts("cabinet-wall-corner", dimsOf("cabinet-wall-corner")).some((p) => p.color === paleCounterColor)).toBe(false);
+  });
+
+  it("cabinet-base-easy-reach's door is rotated across the corner (bi-fold style); cabinet-base-corner's is flush", () => {
+    const easyReach = furnitureParts("cabinet-base-easy-reach", dimsOf("cabinet-base-easy-reach"));
+    const cornerBase = furnitureParts("cabinet-base-corner", dimsOf("cabinet-base-corner"));
+    const easyReachDoor = easyReach.find((p) => p.color !== undefined && p.color !== "#e9e7e1");
+    const cornerBaseDoor = cornerBase.find((p) => p.color !== undefined && p.color !== "#e9e7e1");
+    expect(easyReachDoor.rotY, "easy-reach door should carry a rotY").toBeTruthy();
+    expect(cornerBaseDoor.rotY, "corner-base door should NOT be rotated").toBeFalsy();
+  });
+
+  it("the two arms' 3D footprint matches the 2D symbol's arm formula (min(24, min(w,d)*0.66))", () => {
+    for (const id of ["cabinet-base-corner", "cabinet-wall-corner"]) {
+      const { widthIn: w, depthIn: d } = dimsOf(id);
+      const expectedArm = Math.min(24, Math.min(w, d) * 0.66);
+      const parts = furnitureParts(id, dimsOf(id));
+      const bodyBoxes = parts.filter((p) => p.shape === "box" && p.color === undefined);
+      const backArm = bodyBoxes.find((p) => p.w > p.d);
+      const sideArm = bodyBoxes.find((p) => p.d > p.w);
+      expect(backArm.d, id).toBeCloseTo(expectedArm - 1, 1); // -1 for the same 1" gap kitchenBox's own body uses
+      expect(sideArm.w, id).toBeCloseTo(expectedArm - 1, 1);
+    }
+  });
+});
+
 describe("designerFurnitureParts — recognizable procedural fixtures (Phase 1)", () => {
   const within = (id) => {
     const d = dimsOf(id);

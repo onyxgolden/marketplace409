@@ -15,6 +15,10 @@
 //   color: optional per-part color override (defaults to the piece color)
 //   glow:  part is a light source shade (warm emissive in the renderer)
 //   rotX:  optional extra X rotation in radians (e.g. front-facing discs)
+//   rotY:  optional extra Y rotation in radians (e.g. an angled cabinet
+//          door swung across a corner) — NOT the placed item's own
+//          plan-rotation (that's item.rotY, applied to the whole piece);
+//          this rotates just the one part, in addition to it.
 //   wTop:  "cyl" only — top diameter for a tapered cylinder (w = bottom)
 //   role:  optional semantic tag ("tank", "bowl", ...) for tests/debugging
 //   For "cyl", d is the front-to-back (z) diameter at the widest end, so
@@ -103,6 +107,54 @@ function drawerStack(w, d, h, c, n, { counter = false } = {}) {
   return parts;
 }
 
+/**
+ * L-shaped cabinet body (corner base, easy-reach corner base, wall corner)
+ * composed from two overlapping boxes — a full-width "back arm" (depth =
+ * `arm`, hugging the back wall) and a full-depth "side arm" (width = `arm`,
+ * hugging the left wall) — the exact same two-rectangle union the matching
+ * 2D symbol's lShape() draws, so the 3D body and the 2D plan footprint agree
+ * for the first time (previously every corner-shaped cabinet rendered as a
+ * plain rectangular box filling its whole w x d bounding box, well past
+ * where the actual cabinet carcass ends). `arm` uses the identical formula
+ * furniturePlanSymbols.js's cornerBase/easyReachBase/wallCornerCabinet use,
+ * so the 3D silhouette matches the 2D one at every size.
+ *
+ * `doorAngled` draws the door panel rotated 45 degrees across the corner
+ * (a bi-fold/lazy-susan-style door) instead of flush against the side arm's
+ * inner face — matching easyReachBase's angled door-face line in 2D, and
+ * visually distinguishing it from a standard corner-base cabinet in 3D.
+ *
+ * Deliberately NOT modeled: the lazy Susan turntable itself. It's an
+ * interior mechanism behind a closed door — invisible in an exterior render
+ * regardless — so 2D is the only place it needs to show at all.
+ */
+function lCabinetParts(w, d, h, c, { counter = false, door = false, doorAngled = false } = {}) {
+  const arm = Math.min(24, Math.min(w, d) * 0.66);
+  const bodyH = counter ? h - 2 : h;
+  const parts = [
+    box(0, bodyH / 2, -d / 2 + arm / 2, w - 1, bodyH, arm - 1), // back arm: full width, hugs the back wall
+    box(-w / 2 + arm / 2, bodyH / 2, 0, arm - 1, bodyH, d - 1), // side arm: full depth, hugs the left wall
+  ];
+  if (counter) {
+    parts.push(box(0, h - 1, -d / 2 + arm / 2, w, 2, arm, { color: "#e9e7e1" }));
+    parts.push(box(-w / 2 + arm / 2, h - 1, 0, arm, 2, d, { color: "#e9e7e1" }));
+  }
+  if (door) {
+    const doorH = bodyH - 8;
+    if (doorAngled) {
+      // A single bi-fold-style panel spanning the open corner diagonally,
+      // matching easyReachBase's angled door-face line.
+      const span = Math.hypot(arm, arm) * 0.72;
+      parts.push(box(-w / 2 + arm * 0.75, bodyH / 2, -d / 2 + arm * 0.25, span, doorH, 0.5, { color: shade(c, 1.08), rotY: -Math.PI / 4 }));
+    } else {
+      // Flush against the side arm's inner (room-facing) edge — the
+      // exposed face of the corner nook, matching cornerBase's door-face line.
+      parts.push(box(-w / 2 + arm + 0.25, bodyH / 2, arm / 2, 0.5, doorH, Math.max(1, d - arm), { color: shade(c, 1.08) }));
+    }
+  }
+  return parts;
+}
+
 const COMPOSERS = {
   // seating
   "sofa-3seat": upholsteredSeat,
@@ -184,11 +236,11 @@ const COMPOSERS = {
     box(0, h - 5, (d - 1) / 2 - 8, w - 2, 9, 16, { color: "#f2f2ef" }),
   ],
   "cabinet-base-blind-rh": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
-  "cabinet-base-easy-reach": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
-  "cabinet-base-corner": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-base-easy-reach": (w, d, h, c) => lCabinetParts(w, d, h, c, { counter: true, door: true, doorAngled: true }),
+  "cabinet-base-corner": (w, d, h, c) => lCabinetParts(w, d, h, c, { counter: true, door: true }),
   "cabinet-base-blind": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
   "cabinet-island-base": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
-  "cabinet-wall-corner": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  "cabinet-wall-corner": (w, d, h, c) => lCabinetParts(w, d, h, c, { door: true }),
   "cabinet-wall-bridge": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
   "cabinet-wall-microwave": (w, d, h, c) => [
     box(0, h / 2, -d * 0.1, w - 1, h, d * 0.8),
