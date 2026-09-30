@@ -42,11 +42,11 @@ function parseArgs(argv) {
   return args;
 }
 
-function parseRepo(repoFlag) {
+export function parseRepo(repoFlag) {
   const repo = repoFlag || process.env.GITHUB_REPOSITORY || "onyxgolden/marketplace409";
   const [owner, name] = repo.split("/");
   if (!owner || !name) throw new Error(`cannot parse repo from --repo / GITHUB_REPOSITORY: ${repo}`);
-  return { owner, name };
+  return { owner, repo: name };
 }
 
 async function main() {

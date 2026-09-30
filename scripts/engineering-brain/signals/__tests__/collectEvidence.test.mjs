@@ -16,6 +16,7 @@ import {
   runIdFromUrl,
   summarizeCiEvidence,
 } from "../collectEvidence.mjs";
+import { parseRepo } from "../collectEvidenceCli.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(TEST_DIR, "..", "..", "..", "..");
@@ -206,34 +207,47 @@ describe("collectEvidenceCli — delivery signals need no credentials", () => {
   });
 });
 
-describe("fetchFailedJobLog — retry on transient failures", () => {
+describe("fetchFailedJobLog — retry and auth fallback", () => {
   function startServer(handler) {
     const server = createServer(handler);
     return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
   }
 
-  it("retries a transient 404 on the jobs API then succeeds", async () => {
-    let jobsHits = 0;
+  const JOBS_PAYLOAD = { jobs: [{ id: 7, name: "build", conclusion: "failure" }] };
+  const LOG_TEXT = "##[group]Run build\n##[error]boom\n";
+
+  async function quirkedServer() {
+    // Models the live 2026-09-30 quirk: the installation token gets 404 on
+    // the jobs endpoint while unauthenticated calls succeed (public repo).
+    const seen = { authedJobs: 0, anonJobs: 0, logAuthHeader: null };
     const server = await startServer((req, res) => {
+      const authed = Boolean(req.headers.authorization);
       if (req.url.includes("/actions/runs/123/jobs")) {
-        jobsHits += 1;
-        if (jobsHits === 1) {
+        if (authed) {
+          seen.authedJobs += 1;
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ message: "Not Found" }));
           return;
         }
+        seen.anonJobs += 1;
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ jobs: [{ id: 7, name: "build", conclusion: "failure" }] }));
+        res.end(JSON.stringify(JOBS_PAYLOAD));
         return;
       }
       if (req.url.includes("/actions/jobs/7/logs")) {
+        seen.logAuthHeader = req.headers.authorization || null;
         res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("##[group]Run build\n##[error]boom\n");
+        res.end(LOG_TEXT);
         return;
       }
       res.writeHead(404);
       res.end();
     });
+    return { server, seen };
+  }
+
+  it("falls back to an unauthenticated jobs call when the token gets a quirked 404", async () => {
+    const { server, seen } = await quirkedServer();
     try {
       const apiBase = `http://127.0.0.1:${server.address().port}`;
       const result = await fetchFailedJobLog({
@@ -242,20 +256,23 @@ describe("fetchFailedJobLog — retry on transient failures", () => {
         runId: "123",
         token: "t",
         apiBase,
-        retryDelaysMs: [0, 0],
+        retryDelaysMs: [],
       });
       expect(result.jobName).toBe("build");
       expect(result.logText).toContain("##[error]boom");
-      expect(jobsHits).toBe(2);
+      expect(seen.authedJobs).toBe(1);
+      expect(seen.anonJobs).toBe(1);
+      // The log download keeps working with the token (no quirk there).
+      expect(seen.logAuthHeader).toBe("Bearer t");
     } finally {
       server.close();
     }
   });
 
-  it("gives up after retries are exhausted", async () => {
-    let jobsHits = 0;
+  it("reports both attempts when the fallback also fails", async () => {
+    let hits = 0;
     const server = await startServer((req, res) => {
-      jobsHits += 1;
+      hits += 1;
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ message: "Not Found" }));
     });
@@ -270,8 +287,42 @@ describe("fetchFailedJobLog — retry on transient failures", () => {
           apiBase,
           retryDelaysMs: [],
         }),
-      ).rejects.toThrow(/HTTP 404/);
-      expect(jobsHits).toBe(1);
+      ).rejects.toThrow(/HTTP 404 with token, HTTP 404 without/);
+      expect(hits).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("retries a transient 503 with the token then succeeds", async () => {
+    let jobsHits = 0;
+    const server = await startServer((req, res) => {
+      if (req.url.includes("/actions/runs/123/jobs")) {
+        jobsHits += 1;
+        if (jobsHits === 1) {
+          res.writeHead(503, { "Content-Type": "application/json" });
+          res.end("{}");
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(JOBS_PAYLOAD));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(LOG_TEXT);
+    });
+    try {
+      const apiBase = `http://127.0.0.1:${server.address().port}`;
+      const result = await fetchFailedJobLog({
+        owner: "o",
+        repo: "r",
+        runId: "123",
+        token: "t",
+        apiBase,
+        retryDelaysMs: [0, 0],
+      });
+      expect(result.jobName).toBe("build");
+      expect(jobsHits).toBe(2);
     } finally {
       server.close();
     }
@@ -324,5 +375,25 @@ describe("collectEvidenceCli — partial evidence on per-signal failure", () => 
     expect(payload.evidence["supabase:deliveries:failed:9"].failure_reason).toBe("smtp 550");
     expect(payload.evidence["github:actions:ci_failed:9"].status).toBe("error");
     expect(payload.evidence["github:actions:ci_failed:9"].error).toContain("GITHUB_TOKEN is required");
+  });
+});
+
+describe("parseRepo (CLI repo resolution)", () => {
+  it("returns { owner, repo } matching what main() destructures", () => {
+    expect(parseRepo("onyxgolden/marketplace409")).toEqual({
+      owner: "onyxgolden",
+      repo: "marketplace409",
+    });
+  });
+
+  it("never yields an undefined repo name for a valid flag", () => {
+    const { owner, repo } = parseRepo("acme/widgets");
+    expect(owner).toBe("acme");
+    expect(repo).toBe("widgets");
+    expect(`https://api.github.com/repos/${owner}/${repo}`).not.toContain("undefined");
+  });
+
+  it("throws on an unparsable repo string", () => {
+    expect(() => parseRepo("not-a-repo")).toThrow();
   });
 });
