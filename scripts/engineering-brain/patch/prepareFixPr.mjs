@@ -105,9 +105,10 @@ export function makePrBody(patch, context = {}, verification = {}) {
     `- Failed step: \`${context.failedStep || "unknown"}\``,
     `- Evidence collected: \`${context.collectedAt || "unknown"}\``,
   ];
-  if (context.summary) {
-    lines.push("", "### Diagnosis", "", context.summary);
-  }
+  // NOTE: context.summary is intentionally NOT emitted. A caller-supplied
+  // summary is free text and could carry raw logs, stack traces, or
+  // token-bearing content into the published PR. The PR body carries
+  // evidence provenance plus the diff — never caller text.
   lines.push(
     "",
     "### Repair",

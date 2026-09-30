@@ -263,13 +263,30 @@ describe("makePrBody", () => {
     const patch = makePatch();
     const body = makePrBody(
       patch,
-      { ...CONTEXT, summary: "one-line diagnosis", rawLog: "Error: leaked secret stuff\n".repeat(50) },
+      { ...CONTEXT, rawLog: "Error: leaked secret stuff\n".repeat(50) },
       { pairedTest: "passed" },
     );
     expect(body).toContain("```diff");
     expect(body).toContain("-hello");
     expect(body).toContain("+hello world");
-    expect(body).toContain("one-line diagnosis");
     expect(body).not.toContain("leaked secret stuff");
+  });
+
+  it("never emits a caller-supplied summary — log-like text can't reach the PR body", () => {
+    const patch = makePatch();
+    const hostile = [
+      "one-line diagnosis",
+      "Error: ENOENT build failed at C:\\runner\\_work",
+      "at loadExportData (src/app/api/forge/scheduling/scheduleProjectAssembly.js:42:9)",
+      "token=hsurr:abcdef123456",
+      "ghp_FAKESECRETNOTREAL0000000000000000000000",
+    ].join("\n");
+    const body = makePrBody(patch, { ...CONTEXT, summary: hostile }, { pairedTest: "passed" });
+    for (const line of hostile.split("\n")) {
+      expect(body).not.toContain(line);
+    }
+    expect(body).not.toContain("### Diagnosis");
+    // Provenance still lands.
+    expect(body).toContain("undiscovered-errors/nsis-upload");
   });
 });

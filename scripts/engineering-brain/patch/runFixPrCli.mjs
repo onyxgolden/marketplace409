@@ -6,7 +6,7 @@
  *   node scripts/engineering-brain/patch/runFixPrCli.mjs \
  *     --patch <patch.json> --repo <repoRoot> --base <commit> \
  *     [--signal <id>] [--failed-step <step>] [--collected-at <ts>] \
- *     [--summary <one-line>] [--json]
+ *     [--json]
  *
  * <patch.json> is the patch object returned by the narrow-rules proposer
  * (either the bare object or { patch, explanation }).
@@ -37,7 +37,6 @@ function parseArgs(argv) {
     else if (a === "--signal") out.signalId = takeFlagValue(argv, i++, a);
     else if (a === "--failed-step") out.failedStep = takeFlagValue(argv, i++, a);
     else if (a === "--collected-at") out.collectedAt = takeFlagValue(argv, i++, a);
-    else if (a === "--summary") out.summary = takeFlagValue(argv, i++, a);
     else if (a === "--json") out.json = true;
     else {
       console.error(`error: unknown argument ${a}`);
@@ -73,7 +72,6 @@ function main() {
       signalId: args.signalId,
       failedStep: args.failedStep,
       collectedAt: args.collectedAt,
-      summary: args.summary,
     },
   });
 
