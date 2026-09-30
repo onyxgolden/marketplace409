@@ -217,6 +217,14 @@ describe("verifyTriggerGone", () => {
     const missing = { ...patch, evidenceRef: { badPath: "./rela.mjs", matchedPath: "./nope.mjs" } };
     expect(verifyTriggerGone({ patched: `import "./nope.mjs";`, patch: missing, worktreeRoot: repo }))
       .toMatchObject({ ok: false, reason: "replacement-path-missing-on-disk" });
+    // Containment: an escaping or absolute matchedPath fails closed instead
+    // of letting the verifier stat outside the worktree.
+    const escape = { ...patch, evidenceRef: { badPath: "./rela.mjs", matchedPath: "../outside.mjs" } };
+    expect(verifyTriggerGone({ patched: `import "../outside.mjs";`, patch: escape, worktreeRoot: repo }))
+      .toMatchObject({ ok: false, reason: "replacement-path-escapes-worktree" });
+    const absolute = { ...patch, evidenceRef: { badPath: "./rela.mjs", matchedPath: "/etc/passwd" } };
+    expect(verifyTriggerGone({ patched: `import "/etc/passwd";`, patch: absolute, worktreeRoot: repo }))
+      .toMatchObject({ ok: false, reason: "replacement-path-escapes-worktree" });
   });
 
   it("wrong-identifier: whole-word semantics", () => {

@@ -45,8 +45,12 @@ export function verifyTriggerGone({ patched, patch, worktreeRoot }) {
       if (!ref.badPath || !ref.matchedPath) return no("missing-evidence-ref");
       if (text.includes(ref.badPath)) return no("bad-path-literal-still-present");
       if (!text.includes(ref.matchedPath)) return no("replacement-path-missing");
+      // Contain the on-disk check to the worktree: a patch object with an
+      // absolute or ..-escaping matchedPath must not make the verifier
+      // read/stat outside the fresh worktree.
+      const abs = resolveInWorktree(worktreeRoot, ref.matchedPath);
+      if (!abs) return no("replacement-path-escapes-worktree");
       try {
-        const abs = path.resolve(worktreeRoot, ref.matchedPath);
         if (!fs.statSync(abs).isFile()) return no("replacement-path-missing-on-disk");
       } catch {
         return no("replacement-path-missing-on-disk");
