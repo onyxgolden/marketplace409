@@ -587,6 +587,145 @@ export function applyWholeWord(content, bad, good) {
   return text.replace(wholeWordRegExp(bad), good);
 }
 
+/**
+ * Code mask for identifier-reference classification. Returns a Uint8Array the
+ * length of the source: 1 for characters that are real code, 0 for characters
+ * inside string literals, template-literal raw text, or comments. Template
+ * `${...}` interpolations are treated as code (brace-depth tracked). Regex
+ * literals are NOT distinguished from division -- a documented gap; the
+ * property-name and member-access rails below still apply inside them.
+ */
+function computeCodeMask(source) {
+  const n = source.length;
+  const mask = new Uint8Array(n);
+  const stack = [{ k: "code" }];
+  let i = 0;
+  while (i < n) {
+    const st = stack[stack.length - 1];
+    const c = source[i];
+    const nx = i + 1 < n ? source[i + 1] : "";
+    const inCode = st.k === "code" || st.k === "expr";
+    if (inCode) {
+      if (c === "/" && nx === "/") { mask[i] = 0; mask[i + 1] = 0; i += 2; stack.push({ k: "line" }); continue; }
+      if (c === "/" && nx === "*") { mask[i] = 0; mask[i + 1] = 0; i += 2; stack.push({ k: "block" }); continue; }
+      if (c === "'") { mask[i] = 0; i += 1; stack.push({ k: "sq" }); continue; }
+      if (c === '"') { mask[i] = 0; i += 1; stack.push({ k: "dq" }); continue; }
+      if (c === "`" && st.k === "code") { mask[i] = 0; i += 1; stack.push({ k: "tpl" }); continue; }
+      if (st.k === "expr") {
+        if (c === "{") st.depth += 1;
+        if (c === "}") {
+          if (st.depth === 0) { mask[i] = 0; i += 1; stack.pop(); continue; }
+          st.depth -= 1;
+        }
+      }
+      mask[i] = 1; i += 1; continue;
+    }
+    if (st.k === "line") {
+      mask[i] = 0;
+      if (c === "\n") stack.pop();
+      i += 1; continue;
+    }
+    if (st.k === "block") {
+      mask[i] = 0;
+      if (c === "*" && nx === "/") { mask[i + 1] = 0; i += 2; stack.pop(); continue; }
+      i += 1; continue;
+    }
+    if (st.k === "sq" || st.k === "dq") {
+      const q = st.k === "sq" ? "'" : '"';
+      mask[i] = 0;
+      if (c === "\\") { if (i + 1 < n) mask[i + 1] = 0; i += 2; continue; }
+      if (c === q || c === "\n") stack.pop(); // newline: unterminated literal, bail to code
+      i += 1; continue;
+    }
+    if (st.k === "tpl") {
+      mask[i] = 0;
+      if (c === "\\") { if (i + 1 < n) mask[i + 1] = 0; i += 2; continue; }
+      if (c === "`") { i += 1; stack.pop(); continue; }
+      if (c === "$" && nx === "{") { mask[i + 1] = 0; i += 2; stack.push({ k: "expr", depth: 0 }); continue; }
+      i += 1; continue;
+    }
+  }
+  return mask;
+}
+
+function prevCodeChar(source, mask, idx) {
+  for (let j = idx - 1; j >= 0; j--) {
+    if (!mask[j]) continue;
+    const c = source[j];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") continue;
+    return c;
+  }
+  return "";
+}
+
+function nextCodeChar(source, mask, idx) {
+  for (let j = idx; j < source.length; j++) {
+    if (!mask[j]) continue;
+    const c = source[j];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") continue;
+    return c;
+  }
+  return "";
+}
+
+/**
+ * Identifier-reference substitution. Replaces ONLY occurrences that are real
+ * JS identifier references in code. Skips, conservatively (fail closed):
+ * - occurrences inside string literals, template raw text, or comments;
+ * - member access (`obj.name`, `obj?.name`) -- but not spread (`...name`);
+ * - object-literal keys (`{ name: 1 }`) -- but not shorthand or ternaries.
+ * Returns null when no safe occurrence exists. Over-skipping yields noPatch
+ * (a missed proposal); under-skipping would yield a wrong patch, so the
+ * rails err toward skipping.
+ */
+export function replaceIdentifierReferences(content, bad, good) {
+  const text = String(content);
+  const re = wholeWordRegExp(bad);
+  const mask = computeCodeMask(text);
+  const spans = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    let allCode = true;
+    for (let k = start; k < end; k++) {
+      if (!mask[k]) { allCode = false; break; }
+    }
+    if (!allCode) continue;
+    spans.push([start, end]);
+  }
+  // Neighbor rules that need lookaround context.
+  const kept = [];
+  for (const [start, end] of spans) {
+    const prev = prevCodeChar(text, mask, start);
+    if (prev === ".") {
+      const dotIdx = prevCodeIndex(text, mask, start);
+      const before = prevCodeChar(text, mask, dotIdx);
+      if (before !== ".") continue; // member access like obj.name / obj?.name
+      // `...name` spread: a real reference, keep it.
+    }
+    const next = nextCodeChar(text, mask, end);
+    if ((prev === "{" || prev === ",") && next === ":") continue; // object key
+    kept.push([start, end]);
+  }
+  if (kept.length === 0) return null;
+  let out = "";
+  let cur = 0;
+  for (const [s, e] of kept) { out += text.slice(cur, s) + good; cur = e; }
+  out += text.slice(cur);
+  return out;
+}
+
+function prevCodeIndex(source, mask, idx) {
+  for (let j = idx - 1; j >= 0; j--) {
+    if (!mask[j]) continue;
+    const c = source[j];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") continue;
+    return j;
+  }
+  return -1;
+}
+
 export function tryWrongIdentifier({ bundle, evidence, repoRoot, deps = {} }) {
   const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
   const readFile = deps.readFile || ((abs) => fs.readFileSync(abs, "utf8"));
@@ -614,7 +753,7 @@ export function tryWrongIdentifier({ bundle, evidence, repoRoot, deps = {} }) {
   const { matched, reason, detail } = uniqueCloseMatch(bad, declared);
   if (!matched) return no(reason === "ambiguous-match" ? "ambiguous-identifier-match" : reason, detail);
 
-  const patched = applyWholeWord(original, bad, matched);
+  const patched = replaceIdentifierReferences(original, bad, matched);
   if (patched === null) return no("bad-identifier-not-found");
 
   const manual = isWorkflowPath(relPath);

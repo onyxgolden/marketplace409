@@ -10,6 +10,7 @@ import {
   extractBadIdentifier,
   extractDeclaredIdentifiers,
   applyWholeWord,
+  replaceIdentifierReferences,
   extractBadConfigKey,
   applyQuotedKey,
   extractBadVersionPin,
@@ -130,6 +131,53 @@ describe("applyWholeWord", () => {
   });
 });
 
+describe("replaceIdentifierReferences", () => {
+  const BAD = "getElementByID";
+  const GOOD = "getElementById";
+
+  it("leaves strings, comments, member access, and object keys alone", () => {
+    const src = [
+      "// getElementByID legacy spelling",
+      "const note = \"getElementByID\";",
+      "const tpl2 = 'getElementByID';",
+      "obj.getElementByID();",
+      "other?.getElementByID();",
+      "const cfg = { getElementByID: 1 };",
+      "/* block getElementByID */",
+      "console.log(getElementByID);",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("// getElementByID legacy spelling");
+    expect(out).toContain("const note = \"getElementByID\";");
+    expect(out).toContain("const tpl2 = 'getElementByID';");
+    expect(out).toContain("obj.getElementByID();");
+    expect(out).toContain("other?.getElementByID();");
+    expect(out).toContain("const cfg = { getElementByID: 1 };");
+    expect(out).toContain("/* block getElementByID */");
+    expect(out).toContain("console.log(getElementById);");
+  });
+
+  it("still fixes real references: template interpolation, spread, shorthand, ternary", () => {
+    const src = [
+      "const a = `x ${getElementByID} y`;",
+      "foo(...getElementByID);",
+      "const s = { getElementByID };",
+      "const t = cond ? getElementByID : other;",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("const a = `x ${getElementById} y`;");
+    expect(out).toContain("foo(...getElementById);");
+    expect(out).toContain("const s = { getElementById };");
+    expect(out).toContain("const t = cond ? getElementById : other;");
+  });
+
+  it("returns null when every occurrence is a string, comment, or member", () => {
+    expect(replaceIdentifierReferences("// getElementByID\n", BAD, GOOD)).toBeNull();
+    expect(replaceIdentifierReferences("obj.getElementByID();\n", BAD, GOOD)).toBeNull();
+    expect(replaceIdentifierReferences("const s = \"getElementByID\";\n", BAD, GOOD)).toBeNull();
+  });
+});
+
 describe("tryWrongIdentifier end to end", () => {
   const APP = `import { getElementById } from "./dom.mjs";
 const el = getElementById("main");
@@ -201,6 +249,28 @@ const side = getElementByID("side");
     });
     expect(r.noPatch).toBe(true);
     expect(r.reason).toBe("trigger-absent");
+  });
+
+  it("only rewrites the identifier reference, not strings/comments/members", () => {
+    const src = [
+      "import { getElementById } from \"./dom.mjs\";",
+      "// getElementByID is the legacy spelling",
+      "const label = \"getElementByID\";",
+      "widget.getElementByID();",
+      "const el = getElementByID(\"main\");",
+    ].join("\n") + "\n";
+    const dir = mkrepo({ "src/app.js": src });
+    const r = tryWrongIdentifier({
+      bundle: bundleFor("src/app.js"),
+      evidence: { failed_step: "eslint", error_lines: ["'getElementByID' is not defined."] },
+      repoRoot: dir,
+      deps: { grepLiteral: noGrep },
+    });
+    expect(r.noPatch).toBeFalsy();
+    expect(r.patch.patched).toContain("// getElementByID is the legacy spelling");
+    expect(r.patch.patched).toContain("const label = \"getElementByID\";");
+    expect(r.patch.patched).toContain("widget.getElementByID();");
+    expect(r.patch.patched).toContain("const el = getElementById(\"main\");");
   });
 });
 
