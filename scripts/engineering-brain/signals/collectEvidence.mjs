@@ -123,28 +123,58 @@ function authHeaders(token) {
 }
 
 /**
- * GitHub's Actions API occasionally answers a nested resource (jobs, logs)
- * with a spurious 404 while the run itself is readable -- observed live when
- * the runs endpoint returned 200 for the same token minutes earlier. GETs are
- * safe to retry, so transient statuses (404/408/429/5xx) are retried with
- * backoff before giving up. retryDelaysMs sets the pauses between attempts;
- * pass [] to disable retries (unit tests).
+ * GitHub's Actions API inconsistently answers the jobs endpoint with a 404
+ * for the automatic GITHUB_TOKEN (an installation token) while the same
+ * token reads the runs endpoint fine and every other credential reads the
+ * jobs endpoint fine -- observed live 2026-09-30 (unauthenticated and
+ * PAT-authenticated calls returned 200 for the same runs). Installation
+ * tokens get 404-masking instead of 403, so a 404 here may mean "quirked
+ * token" rather than "missing run". GETs are safe to retry, so transient
+ * statuses (408/429/5xx) are retried with backoff; on 401/403/404 with a
+ * token, the request is retried once WITHOUT credentials before giving up
+ * (the jobs list is public data on public repos). retryDelaysMs sets the
+ * pauses between attempts; pass [] to disable retries (unit tests).
  */
-const RETRYABLE_STATUS = new Set([404, 408, 429, 500, 502, 503, 504]);
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const AUTH_FAILURE_STATUS = new Set([401, 403, 404]);
 export const DEFAULT_RETRY_DELAYS_MS = [2000, 10000];
 
 const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fetchWithRetry(url, { headers, redirect, label, retryDelaysMs = DEFAULT_RETRY_DELAYS_MS }) {
-  let lastError = null;
+  let lastStatus = null;
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     const res = await fetch(url, { headers, redirect });
     if (res.ok) return res;
-    lastError = new Error(`${label} failed: HTTP ${res.status}`);
+    lastStatus = res.status;
     if (!RETRYABLE_STATUS.has(res.status) || attempt === retryDelaysMs.length) break;
     await sleepMs(retryDelaysMs[attempt]);
   }
-  throw lastError;
+  const error = new Error(`${label} failed: HTTP ${lastStatus}`);
+  error.status = lastStatus;
+  throw error;
+}
+
+async function fetchWithAuthFallback(url, opts) {
+  try {
+    return await fetchWithRetry(url, opts);
+  } catch (error) {
+    const headers = opts.headers || {};
+    if (!headers.Authorization || !AUTH_FAILURE_STATUS.has(error.status)) throw error;
+    const anonHeaders = { ...headers };
+    delete anonHeaders.Authorization;
+    try {
+      return await fetchWithRetry(url, {
+        ...opts,
+        headers: anonHeaders,
+        label: `${opts.label} (without credentials)`,
+      });
+    } catch (fallbackError) {
+      throw new Error(
+        `${opts.label} failed: HTTP ${error.status} with token, HTTP ${fallbackError.status} without`,
+      );
+    }
+  }
 }
 
 /**
@@ -156,14 +186,14 @@ async function fetchWithRetry(url, { headers, redirect, label, retryDelaysMs = D
 export async function fetchFailedJobLog({ owner, repo, runId, token, apiBase = "https://api.github.com", retryDelaysMs } = {}) {
   if (!token) throw new Error("GITHUB_TOKEN is required to fetch CI failure evidence");
   const headers = authHeaders(token);
-  const jobsRes = await fetchWithRetry(
+  const jobsRes = await fetchWithAuthFallback(
     `${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`,
     { headers, label: `GitHub jobs API for run ${runId}`, retryDelaysMs },
   );
   const jobs = ((await jobsRes.json()).jobs) || [];
   const failed = jobs.find((j) => j.conclusion === "failure") || null;
   if (!failed) throw new Error(`no failed job found for run ${runId}`);
-  const logRes = await fetchWithRetry(`${apiBase}/repos/${owner}/${repo}/actions/jobs/${failed.id}/logs`, {
+  const logRes = await fetchWithAuthFallback(`${apiBase}/repos/${owner}/${repo}/actions/jobs/${failed.id}/logs`, {
     headers,
     redirect: "follow",
     label: `GitHub log download for job ${failed.id}`,
