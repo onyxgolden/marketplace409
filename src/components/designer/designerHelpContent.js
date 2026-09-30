@@ -27,7 +27,8 @@ export const HELP_SECTIONS = [
   },
   {
     label: "Symbols (outlets, equipment, etc.)",
-    description: "Double-click a symbol on the plan to rotate it.",
+    description:
+      "Drag the round handle above a selected symbol to rotate it (15° steps, hold Shift for 45°), or double-click it to rotate.",
   },
   {
     label: "Floors and walls: photos and colors",
