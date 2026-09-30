@@ -94,10 +94,10 @@ function renderText(evaluations, summary) {
   }
   lines.push(`  mean past_fix recall: ${fmtRecall(summary.past_fix_mean_recall)}`);
   lines.push("");
-  lines.push("Known gap (measured 2026-09-29): natural symptom phrasing misses 2/3 real");
-  lines.push("cases on implicated_code. Cause: pass-1 retrieval gates on metadata");
-  lines.push("(path/symbol) overlap; content search only re-ranks metadata matches, never");
-  lines.push("retrieves. Fixing it needs content tokens in the manifest index -- future slice.");
+  lines.push("Retrieval (fixed 2026-09-29): content tokens are indexed per record and score in");
+  lines.push("pass 1, so content-relevant files are retrieved even when their path/symbol never");
+  lines.push("mentions the query terms; the content re-rank scores filtered tokens (stopwords and");
+  lines.push("noise dropped) so long files can't outrank the file that answers the query.");
   return lines.join("\n");
 }
 

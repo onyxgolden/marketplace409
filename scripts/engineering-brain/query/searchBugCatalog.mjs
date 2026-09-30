@@ -8,11 +8,9 @@
  * identical rankings.
  */
 
-const STOPWORDS = new Set(
-  'a,an,the,and,or,of,to,in,on,for,with,from,by,at,as,is,are,was,were,be,been,it,its,this,that,these,those,i,you,we,they,he,she,my,our,your,how,what,why,when,where,which,who,do,does,did,not,no,yes,if,then,than,so,such,can,could,should,would,will,just,about,into,over,after,before,between,fix,fixing,fixed,bug,error,issue,broken,breaks'.split(
-    ',',
-  ),
-);
+import { CONTENT_TOKEN_STOPWORDS } from "../extractContentTokens.mjs";
+
+const STOPWORDS = CONTENT_TOKEN_STOPWORDS;
 
 export function tokenize(text) {
   return String(text || '')

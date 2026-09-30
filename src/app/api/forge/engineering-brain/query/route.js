@@ -7,7 +7,7 @@ import { fetchLatestRun, fetchAllRecordsForRun, fetchBugFixesForRun } from "../.
 import { runQuery } from "../../../../../../scripts/engineering-brain/query/runQuery.mjs";
 import { searchBugCatalog } from "../../../../../../scripts/engineering-brain/query/searchBugCatalog.mjs";
 
-const RECORD_COLUMNS = "source_path, source_type, symbol_or_section, commit_sha, content_hash, authority_level, version, details";
+const RECORD_COLUMNS = "source_path, source_type, symbol_or_section, commit_sha, content_hash, content_tokens, authority_level, version, details";
 
 // Uses the caller's own cookie-based session (not a service-role key) -- RLS's is_forge_programmer()
 // check does the real enforcement here, the same predicate Postgres itself trusts, so this route

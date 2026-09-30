@@ -1,7 +1,10 @@
 import fs from "node:fs";
+import path from "node:path";
 
 const REQUIRED_TOP_LEVEL_FIELDS = Object.freeze(["schema_version", "commit_sha", "records", "index_content_hash"]);
 const REQUIRED_RECORD_FIELDS = Object.freeze(["source_path", "source_type", "symbol_or_section", "commit_sha", "content_hash", "authority_level"]);
+
+const SIDECAR_FILENAME = "content-tokens.json";
 
 export class MalformedManifestError extends Error {
   constructor(reason) {
@@ -47,5 +50,30 @@ export function loadManifest(manifestPath) {
     throw new MalformedManifestError(`"${manifestPath}" is not valid JSON: ${error.message}`);
   }
 
-  return validateManifestShape(parsed);
+  const manifest = validateManifestShape(parsed);
+  mergeContentTokenSidecar(manifest, manifestPath);
+  return manifest;
+}
+
+// Attach content tokens from the sidecar (engineering-brain/content-tokens.json) when it exists
+// and was mined from this manifest's own commit. The sidecar keeps the committed 3.1MB manifest
+// untouched: fresh indexer runs and the nightly Supabase sync carry content_tokens on the records
+// themselves and never need this file. A missing or commit-mismatched sidecar is ignored --
+// those records simply behave as before (metadata-only pass 1).
+function mergeContentTokenSidecar(manifest, manifestPath) {
+  const sidecarPath = path.join(path.dirname(manifestPath), SIDECAR_FILENAME);
+  let sidecar;
+  try {
+    sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+  } catch {
+    return;
+  }
+  if (!sidecar || sidecar.commit_sha !== manifest.commit_sha) return;
+  const tokensByPath = sidecar.tokens || {};
+  for (const record of manifest.records) {
+    if (!Array.isArray(record.content_tokens)) {
+      const tokens = tokensByPath[record.source_path];
+      if (Array.isArray(tokens)) record.content_tokens = tokens;
+    }
+  }
 }

@@ -8,6 +8,7 @@ import { extractSqlObjects } from "./extractSqlObjects.mjs";
 import { extractSyncDocSections } from "./extractSyncDocSections.mjs";
 import { deriveAssociatedSourcePaths } from "./pairTestWithSource.mjs";
 import { extractPackageVersions } from "./extractPackageVersions.mjs";
+import { extractContentTokens } from "./extractContentTokens.mjs";
 import { hashContent } from "./hashContent.mjs";
 import { AUTHORITY_LEVELS } from "./authorityLevels.mjs";
 
@@ -20,6 +21,11 @@ function makeRecord({ sourcePath, sourceType, symbolOrSection, commitSha, conten
     symbol_or_section: symbolOrSection,
     commit_sha: commitSha,
     content_hash: hashContent(content),
+    // Bounded retrieval tokens mined from the record's own content (see extractContentTokens.mjs).
+    // Stored on the record so content terms participate in pass-1 retrieval with zero I/O --
+    // on Vercel there is no git checkout, so this is the ONLY content signal the deployed
+    // query path gets (the bounded content re-rank pass never runs there).
+    content_tokens: extractContentTokens(content),
     authority_level: authorityLevel.id,
     version,
     details,
