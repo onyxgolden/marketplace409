@@ -176,4 +176,32 @@ describe("assembleDiagnosticContext", () => {
     expect(ranked.facets.intended_behavior.map((e) => e.source_path))
       .toEqual(natural.facets.intended_behavior.map((e) => e.source_path));
   });
+
+  it("empty/malformed evidenceSignal leaves evidence_signal_applied false and entries unannotated", () => {
+    const aContent = "export function calculateLateFee(balance) { return balance * 0.05; }";
+    const manifest = {
+      schema_version: "1.0",
+      commit_sha: "sha1",
+      index_content_hash: "manifest-hash",
+      records: [
+        record("src/lib/billing.js", "application_source_symbol", "calculateLateFee", aContent),
+      ],
+    };
+    const byPath = { "src/lib/billing.js": aContent };
+    const cp = (sha, p) => byPath[p] || null;
+    const rdr = { readFileAtCommit: cp, readMigrationsAtCommit: () => [] };
+    const base = { manifest, queryText: "calculateLateFee", excerptReader: rdr, contentProvider: cp };
+
+    const natural = assembleDiagnosticContext(base);
+    for (const empty of [{}, { mentioned_paths: [], error_lines: [] }, { failed_step: "   " }, null, undefined]) {
+      const bundle = assembleDiagnosticContext({ ...base, evidenceSignal: empty });
+      expect(bundle.evidence_signal_applied).toBe(false);
+      // Same implicated_code as the no-signal run, in the same order, no annotations.
+      expect(bundle.facets.implicated_code.map((e) => e.source_path))
+        .toEqual(natural.facets.implicated_code.map((e) => e.source_path));
+      for (const entry of bundle.facets.implicated_code) {
+        expect(entry.evidence_match).toBeUndefined();
+      }
+    }
+  });
 });

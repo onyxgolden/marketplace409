@@ -2,7 +2,7 @@ import { runQuery } from "./runQuery.mjs";
 import { resolveExcerpt } from "./resolveExcerpt.mjs";
 import { computeFreshness, computeConfidence } from "./computeFreshnessAndConfidence.mjs";
 import { searchBugCatalog } from "./searchBugCatalog.mjs";
-import { rerankImplicatedCode } from "./rerankImplicatedCode.mjs";
+import { rerankImplicatedCode, hasUsableEvidence } from "./rerankImplicatedCode.mjs";
 import { hashContent } from "../hashContent.mjs";
 
 // Source types that describe what the code IS (implementation), grouped for diagnosis.
@@ -121,7 +121,9 @@ export function assembleDiagnosticContext({
   const facets = partitionResults(results);
 
   // Evidence-based re-rank: the failure log's named paths/tokens promote implicated code.
-  const evidenceApplied = evidenceSignal != null
+  // The gate uses the same substantive-evidence predicate as the reranker, so an
+  // empty/malformed signal can never report evidence_signal_applied: true.
+  const evidenceApplied = hasUsableEvidence(evidenceSignal)
     && facets.implicated_code.length > 0;
   if (evidenceApplied) {
     facets.implicated_code = rerankImplicatedCode(facets.implicated_code, evidenceSignal);

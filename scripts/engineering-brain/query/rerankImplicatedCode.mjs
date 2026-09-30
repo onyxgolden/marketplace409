@@ -111,6 +111,19 @@ export function matchEvidenceTier(entry, evidence) {
 }
 
 /**
+ * Substantive-evidence predicate shared by the reranker and the assembly gate.
+ * True only when the signal carries at least one usable fact: a mentioned path,
+ * an error line, or a nonblank failed step. An empty/malformed signal is treated
+ * as absent so the two definitions can never drift apart. Pure.
+ */
+export function hasUsableEvidence(evidenceSignal) {
+  return Boolean(evidenceSignal
+    && ((Array.isArray(evidenceSignal.mentioned_paths) && evidenceSignal.mentioned_paths.length > 0)
+      || (Array.isArray(evidenceSignal.error_lines) && evidenceSignal.error_lines.length > 0)
+      || (evidenceSignal.failed_step && String(evidenceSignal.failed_step).trim().length > 0)));
+}
+
+/**
  * Re-rank implicated-code facet entries using one deterministic evidence signal.
  * Pure: returns a new array, original order preserved within a tier (stable).
  * Each returned entry carries an `evidence_match` annotation for auditability.
@@ -118,11 +131,7 @@ export function matchEvidenceTier(entry, evidence) {
  */
 export function rerankImplicatedCode(entries, evidenceSignal) {
   const list = Array.isArray(entries) ? entries : [];
-  const hasEvidence = evidenceSignal
-    && ((Array.isArray(evidenceSignal.mentioned_paths) && evidenceSignal.mentioned_paths.length > 0)
-      || (Array.isArray(evidenceSignal.error_lines) && evidenceSignal.error_lines.length > 0)
-      || (evidenceSignal.failed_step && String(evidenceSignal.failed_step).trim().length > 0));
-  if (!hasEvidence) return [...list];
+  if (!hasUsableEvidence(evidenceSignal)) return [...list];
 
   const decorated = list.map((entry, index) => ({
     entry,

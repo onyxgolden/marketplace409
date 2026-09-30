@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   rerankImplicatedCode,
+  hasUsableEvidence,
   matchEvidenceTier,
   normalizeEvidencePath,
   TIER_EXACT_PATH,
@@ -126,5 +127,22 @@ describe("rerankImplicatedCode", () => {
     expect(ranked[0].evidence_match).toMatchObject({ tier: expect.any(Number) });
     expect(ranked[0].evidence_match).toHaveProperty("matched_path");
     expect(ranked[0].evidence_match).toHaveProperty("matched_tokens");
+  });
+});
+
+describe("hasUsableEvidence — shared substantive-evidence predicate", () => {
+  it("is true when any usable fact is present", () => {
+    expect(hasUsableEvidence({ mentioned_paths: ["a/b.js"] })).toBe(true);
+    expect(hasUsableEvidence({ error_lines: ["##[error] boom"] })).toBe(true);
+    expect(hasUsableEvidence({ failed_step: "build" })).toBe(true);
+  });
+
+  it("is false for absent, empty, or malformed signals", () => {
+    expect(hasUsableEvidence(null)).toBe(false);
+    expect(hasUsableEvidence(undefined)).toBe(false);
+    expect(hasUsableEvidence({})).toBe(false);
+    expect(hasUsableEvidence({ mentioned_paths: [], error_lines: [] })).toBe(false);
+    expect(hasUsableEvidence({ failed_step: "   " })).toBe(false);
+    expect(hasUsableEvidence({ mentioned_paths: "not-an-array" })).toBe(false);
   });
 });
