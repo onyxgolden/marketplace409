@@ -127,15 +127,15 @@ async function main() {
 async function debugAuthMatrix() {
   const token = process.env.GITHUB_TOKEN || null;
   const probeRunId = "36669075487";
-  const url = `https://api.github.com/repos/onyxgolden/marketplace409/actions/runs/${probeRunId}/jobs?per_page=1`;
-  const runsUrl = `https://api.github.com/repos/onyxgolden/marketplace409/actions/runs?per_page=1`;
+  const base = `https://api.github.com/repos/onyxgolden/marketplace409/actions/runs/${probeRunId}`;
   const variants = [
-    ["jobs Bearer standard", url, { Authorization: `Bearer ${token}` }],
-    ["jobs token-scheme", url, { Authorization: `token ${token}` }],
-    ["jobs Bearer curl-UA", url, { Authorization: `Bearer ${token}`, "User-Agent": "curl/8.0" }],
-    ["jobs unauthenticated", url, {}],
-    ["runs Bearer standard", runsUrl, { Authorization: `Bearer ${token}` }],
-    ["runs unauthenticated", runsUrl, {}],
+    ["jobs Bearer pp=1", `${base}/jobs?per_page=1`, { Authorization: `Bearer ${token}` }],
+    ["jobs Bearer pp=30", `${base}/jobs?per_page=30`, { Authorization: `Bearer ${token}` }],
+    ["jobs Bearer pp=100", `${base}/jobs?per_page=100`, { Authorization: `Bearer ${token}` }],
+    ["jobs Bearer pp=100 retry", `${base}/jobs?per_page=100`, { Authorization: `Bearer ${token}` }],
+    ["jobs Bearer no-pp", base, { Authorization: `Bearer ${token}` }],
+    ["jobs unauth pp=100", `${base}/jobs?per_page=100`, {}],
+    ["jobs token-scheme pp=100", `${base}/jobs?per_page=100`, { Authorization: `token ${token}` }],
   ];
   for (const [label, target, auth] of variants) {
     try {
