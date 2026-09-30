@@ -20,6 +20,11 @@
 #      and the full JSON report is kept as an artifact either way.
 #   5. A collection failure (fetcher exits nonzero, missing/malformed signals file) also fails
 #      the run: a missing signals file is a collection failure, never an all-clear.
+#   6. After the scan, the evidence collector pulls the failed job's log for each ci_failed
+#      signal (failing step, ##[error] lines, mentioned file paths) and records the failure
+#      record for delivery signals -- deterministic root-cause evidence for the fixer stage.
+#      Evidence collection is fail-closed too: a nonzero exit fails the run, and evidence.json
+#      is uploaded with the report artifact either way.
 #
 # Requires two repository configuration values, neither committed here:
 #   - secret SUPABASE_SERVICE_ROLE_KEY -- read-only use here (SELECTs on delivery/outbox tables);
@@ -27,7 +32,8 @@
 #   - NEXT_PUBLIC_SUPABASE_URL is hardcoded below as a literal, not a secret -- it is a
 #     NEXT_PUBLIC_ variable by Next.js's own convention, meaning it is already public in every
 #     client bundle this app ships; treating it as sensitive would be a false sense of security.
-# GitHub API access uses the automatic GITHUB_TOKEN (actions: read covers listing workflow runs).
+# GitHub API access uses the automatic GITHUB_TOKEN (actions: read covers listing workflow runs
+# and downloading failed job logs).
 
 name: FORGE Engineering Brain — Undiscovered Errors
 
@@ -91,6 +97,14 @@ jobs:
           ERROR_COUNT=$(node -p "JSON.parse(require('fs').readFileSync('undiscovered-errors-report.json', 'utf8')).error_count")
           echo "error_count=$ERROR_COUNT" >> "$GITHUB_OUTPUT"
 
+      - name: Collect root-cause evidence
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/engineering-brain/signals/collectEvidenceCli.mjs \
+            --signals signals.json \
+            --out evidence.json
+
       - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,6 +113,7 @@ jobs:
           path: |
             undiscovered-errors-report.json
             undiscovered-errors-report.txt
+            evidence.json
           if-no-files-found: warn
 
       - name: Fail loudly on undiscovered errors
