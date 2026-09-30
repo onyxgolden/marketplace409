@@ -1400,7 +1400,7 @@ export default function DesignerViewport3D({
       for (const item of built.furniture) {
         const fGroup = new THREE.Group();
         const rep = resolveFurnitureRepresentation(item.catalogId, item);
-        const model = rep.kind === "model" ? modelCacheRef.current?.instantiate(rep.asset, rep.fit) : null;
+        const model = rep.kind === "model" ? modelCacheRef.current?.instantiate(rep.asset, rep.fit, item.color) : null;
         if (model) {
           fGroup.add(model);
         } else {
@@ -2057,7 +2057,15 @@ export function disposeContentGroup(group) {
     // model cache, disposed at unmount); everything else is per-rebuild.
     if (obj.geometry && !obj.userData?.sharedAsset) obj.geometry.dispose();
     // Materials are cache-owned and disposed once at unmount, EXCEPT a
-    // highlight clone, which belongs to no cache and must go here.
-    if (obj.material && obj.material.userData?.__isHighlightClone) obj.material.dispose();
+    // highlight clone or a per-instance furniture color tint (see
+    // cloneWithHighlight below and furnitureModelCache.js's
+    // tintedMaterialClone) — both belong to no cache and must go here, or
+    // they leak GPU resources on every rebuild. A multi-material mesh
+    // (Kenney's models can have several) carries an ARRAY here, which has
+    // no `.userData` of its own — check each material individually rather
+    // than the array itself.
+    for (const mat of Array.isArray(obj.material) ? obj.material : obj.material ? [obj.material] : []) {
+      if (mat.userData?.__isHighlightClone || mat.userData?.__isFurnitureColorClone) mat.dispose();
+    }
   });
 }

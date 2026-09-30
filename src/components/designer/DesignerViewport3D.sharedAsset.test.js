@@ -44,3 +44,37 @@ describe("disposeContentGroup with furniture models AND TrueView tag sprites (in
     expect(spriteMatDispose).not.toHaveBeenCalled();
   });
 });
+
+describe("disposeContentGroup with per-instance furniture color tints", () => {
+  it("disposes a __isFurnitureColorClone material (single-material mesh) but keeps its shared geometry", () => {
+    const group = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+    mesh.userData.sharedAsset = true; // geometry always stays shared, independent of the color clone
+    mesh.material.userData.__isFurnitureColorClone = true;
+    group.add(mesh);
+    const geoDispose = vi.spyOn(mesh.geometry, "dispose");
+    const matDispose = vi.spyOn(mesh.material, "dispose");
+    disposeContentGroup(group);
+    expect(geoDispose).not.toHaveBeenCalled();
+    expect(matDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes each tinted material in a multi-material mesh's array, not just a leftover untinted one", () => {
+    // Regression: obj.material is an ARRAY on a multi-material mesh (Kenney's
+    // kit uses these), which has no .userData of its own — checking the
+    // array itself for __isFurnitureColorClone/__isHighlightClone silently
+    // finds nothing and leaks every material inside it.
+    const group = new THREE.Group();
+    const tinted = new THREE.MeshStandardMaterial();
+    tinted.userData.__isFurnitureColorClone = true;
+    const untouched = new THREE.MeshStandardMaterial(); // e.g. a material this instance didn't need to tint
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [tinted, untouched]);
+    mesh.userData.sharedAsset = true;
+    group.add(mesh);
+    const tintedDispose = vi.spyOn(tinted, "dispose");
+    const untouchedDispose = vi.spyOn(untouched, "dispose");
+    disposeContentGroup(group);
+    expect(tintedDispose).toHaveBeenCalledTimes(1);
+    expect(untouchedDispose).not.toHaveBeenCalled(); // not a clone — still owned by the shared template
+  });
+});

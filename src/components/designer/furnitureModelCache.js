@@ -15,6 +15,25 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+/**
+ * A per-instance clone of `material` tinted to `color`, memoized by source
+ * material within one `instantiate()` call (via `cache`) — a model with
+ * several meshes sharing one source material (Kenney's kit reuses materials
+ * across parts) gets one tinted clone, not one per mesh. Flagged so
+ * disposeContentGroup (DesignerViewport3D.jsx) knows to dispose it on
+ * rebuild; unlike the shared template material, nothing else owns it.
+ */
+function tintedMaterialClone(material, color, cache) {
+  if (!material) return material;
+  const existing = cache.get(material);
+  if (existing) return existing;
+  const clone = material.clone();
+  clone.color = new THREE.Color(color);
+  clone.userData.__isFurnitureColorClone = true;
+  cache.set(material, clone);
+  return clone;
+}
+
 export function createFurnitureModelCache({ loader = new GLTFLoader(), onChange = () => {}, warn = (...a) => console.warn(...a) } = {}) {
   const entries = new Map(); // url -> { status, template?, offset? }
   let disposed = false;
@@ -68,16 +87,35 @@ export function createFurnitureModelCache({ loader = new GLTFLoader(), onChange 
   /**
    * A placed model for `asset` scaled by `fit` (see fitFurnitureModel), or
    * null while loading / after a failure (starts loading on first call).
+   *
+   * `color`, when given, recolors every material in the clone to the
+   * catalog/item color — the same uniform recolor the procedural-parts
+   * fallback already applies via `stdMaterial({ color: part.color ||
+   * item.color })`, so switching between a loaded model and its procedural
+   * fallback (e.g. while the model is still downloading) never changes the
+   * piece's color. This tints legs/trim/frame the same as the main body —
+   * a disclosed simplification, since nothing in the asset manifest
+   * distinguishes which of a model's several materials is its "primary"
+   * one. Recoloring means these meshes get their OWN material instances
+   * (flagged __isFurnitureColorClone) rather than sharing the template's —
+   * see disposeContentGroup, which must dispose these on every rebuild or
+   * they leak GPU resources the way a highlight clone would.
    */
-  function instantiate(asset, fit) {
+  function instantiate(asset, fit, color) {
     request(asset.url);
     const entry = entries.get(asset.url);
     if (!entry || entry.status !== "ready") return null;
     const inner = entry.template.clone(true); // shares geometry + materials
     inner.position.add(entry.offset);
+    const tinted = new Map(); // one clone per source material, not per mesh
     inner.traverse((o) => {
       if (!o.isMesh) return;
-      o.userData.sharedAsset = true;
+      o.userData.sharedAsset = true; // geometry always stays shared with the template
+      if (color) {
+        o.material = Array.isArray(o.material)
+          ? o.material.map((m) => tintedMaterialClone(m, color, tinted))
+          : tintedMaterialClone(o.material, color, tinted);
+      }
       o.castShadow = true;
       o.receiveShadow = true;
     });

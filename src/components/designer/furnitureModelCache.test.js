@@ -63,6 +63,46 @@ describe("createFurnitureModelCache", () => {
     expect(meshA[0].castShadow).toBe(true);
   });
 
+  it("recolors every material to the catalog/item color when one is given, cloning rather than mutating the shared template", () => {
+    const loader = fakeLoader();
+    const cache = createFurnitureModelCache({ loader, onChange: () => {} });
+    cache.request(asset.url);
+    loader.calls[0].onLoad({ scene: fakeScene() });
+    const uncolored = cache.instantiate(asset, fitFurnitureModel(asset, { widthIn: 20, depthIn: 40 }));
+    const colored = cache.instantiate(asset, fitFurnitureModel(asset, { widthIn: 20, depthIn: 40 }), "#ff0000");
+    const meshUncolored = [];
+    const meshColored = [];
+    uncolored.traverse((o) => o.isMesh && meshUncolored.push(o));
+    colored.traverse((o) => o.isMesh && meshColored.push(o));
+    // The uncolored instance is untouched: still sharing the template's own material.
+    expect(meshUncolored[0].material.userData.__isFurnitureColorClone).toBeUndefined();
+    // The colored instance gets its OWN material, tinted, and flagged for
+    // disposeContentGroup to clean up (it belongs to no cache).
+    expect(meshColored[0].material).not.toBe(meshUncolored[0].material);
+    expect(meshColored[0].material.userData.__isFurnitureColorClone).toBe(true);
+    expect(meshColored[0].material.color.getHexString()).toBe("ff0000");
+    // Geometry is still shared regardless of the color clone.
+    expect(meshColored[0].geometry).toBe(meshUncolored[0].geometry);
+    expect(meshColored[0].userData.sharedAsset).toBe(true);
+  });
+
+  it("memoizes the tinted clone per source material within one instantiate() call — a model whose meshes share one material gets one clone, not one per mesh", () => {
+    const loader = fakeLoader();
+    const cache = createFurnitureModelCache({ loader, onChange: () => {} });
+    cache.request(asset.url);
+    const sharedMat = new THREE.MeshStandardMaterial();
+    const scene = new THREE.Group();
+    const meshA = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), sharedMat);
+    const meshB = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), sharedMat);
+    scene.add(meshA, meshB);
+    loader.calls[0].onLoad({ scene });
+    const placed = cache.instantiate(asset, fitFurnitureModel(asset, { widthIn: 20, depthIn: 40 }), "#00ff00");
+    const meshes = [];
+    placed.traverse((o) => o.isMesh && meshes.push(o));
+    expect(meshes).toHaveLength(2);
+    expect(meshes[0].material).toBe(meshes[1].material); // same tinted clone, not two separate ones
+  });
+
   it("marks a missing or corrupt asset failed, warns once, and never retries", () => {
     const loader = fakeLoader();
     const onChange = vi.fn();
