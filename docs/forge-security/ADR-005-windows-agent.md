@@ -1,7 +1,7 @@
 # ADR-SEC-005 — Windows-first collector technology choice
 
 Date: 2026-09-30
-Status: Proposed (Rung 0) — accepted only after architecture review of the Rung 0 PR. **Contains one open question for the review gate; see "Known unknown" below.**
+Status: Proposed (Rung 0) — accepted only after architecture review of the Rung 0 PR. The UI-locality question below was resolved 2026-09-30 by ChatGPT's review of PR #493: local-only, per option (a).
 
 ## Context
 
@@ -63,48 +63,47 @@ not just harder to reach from a browser tab.
   polling interval). That decision belongs to Rung 3's own proposal, not this
   one — Rung 1 should not over-build for a need it hasn't confirmed yet.
 
-## Known unknown — surfaced for the review gate, not decided here
+## UI locality — resolved 2026-09-30 (was an open question; see git history for the original framing)
 
 The assignment's Rung 4 says "Build the authenticated FORGE UI/read path" for
 the dashboard, which reads naturally as *the existing marketplace409 web app*
 gaining a Security section. But ADR-002 commits to local-first, no
 third-party telemetry — and marketplace409's web app is Vercel-hosted, not
-local. Those two statements are in tension for exactly one thing: **how does
-Jason view the dashboard?**
+local. Those two statements were in tension for exactly one thing: **how
+does Jason view the dashboard?**
 
-Two honest resolutions exist, and this Rung 0 package deliberately does not
-pick one, because it is a product decision, not an implementation detail:
+Two resolutions were considered:
 
-- **(a) Local-only UI (recommended default):** the local agent itself serves
-  a small UI bound to `127.0.0.1` (or a lightweight local desktop shell,
-  reusing the FORGE Capture precedent of a standalone local utility).
-  Fully consistent with ADR-002. Costs: a second, separate UI surface outside
-  the main FORGE app; no remote viewing until Rung 8 deliberately
-  threat-models a sync/remote-access channel.
+- **(a) Local-only UI:** the local agent itself serves a small UI bound to
+  `127.0.0.1` (or a lightweight local desktop shell, reusing the FORGE
+  Capture precedent of a standalone local utility). Fully consistent with
+  ADR-002. Cost: a second, separate UI surface outside the main FORGE app; no
+  remote viewing until Rung 8 deliberately threat-models a sync/remote-access
+  channel.
 - **(b) Integrated into the existing FORGE web app:** the local agent
   periodically pushes evidence metadata to marketplace409's existing backend
   so it renders in the same app Jason already uses for Rental/Scheduling/
-  Designer. Benefit: one FORGE, one login, one design system, remote viewing
-  for free. Cost: this is exactly the cross-machine data movement ADR-002
-  says should wait for Rung 8's own threat-modeled channel — doing it at
-  Rung 4 would mean quietly reopening that boundary four rungs early.
+  Designer. This would have meant reopening the cross-machine data-movement
+  boundary ADR-002 defers to Rung 8, four rungs early.
 
-**Recommendation for the review gate:** proceed with (a) for Rung 4 — a
-local-only dashboard — and treat (b) as something Rung 8 (multi-machine
-console) can properly threat-model and decide, rather than backing into it
-implicitly at Rung 4. Flagging this explicitly rather than resolving it
-unilaterally, per the instruction not to assume an architecture decision that
-belongs at a review gate.
+**Decision (ChatGPT review of PR #493, finding 1):** option **(a)**. For
+Rungs 1–7, the FORGE Security dashboard is local-only, bound to loopback or
+presented as a local desktop shell — never a module of the hosted
+marketplace409 app, never sharing its auth session, never sending evidence to
+it. It may reuse FORGE's visual design conventions. Remote/integrated viewing
+inside the main FORGE app is a Rung 8 decision only, made after that rung's
+own dedicated sync/control-channel threat model. [`architecture.md`](./architecture.md#the-rung-4-ui-is-local-only-not-the-hosted-forge-app),
+[`ux-specification.md`](./ux-specification.md), and
+[`product-ladder.md`](./product-ladder.md#rung-4--forge-security-dashboard)
+all reflect this same corrected boundary.
 
 ## Consequences
 
 - Rung 1 has a concrete, low-commitment starting technology (scheduled-task
   PowerShell collector) that doesn't foreclose a later compiled-service
   rewrite if Rung 3 needs it.
-- The local-UI-vs-integrated-UI question above must be resolved (explicitly,
-  by Jason/ChatGPT at this review gate or explicitly deferred to Rung 4's own
-  proposal) before Rung 4 is designed in detail — it changes what Rung 4
-  actually builds.
+- Rung 4 is scoped as a local-only UI from the start — no design work should
+  assume hosted-app integration, auth reuse, or remote access before Rung 8.
 - No signing/distribution decision is made here; that only matters once a
   compiled agent exists (post-Rung-1), matching FORGE Capture's own
   precedent of deferring the code-signing decision until its Tauri shell

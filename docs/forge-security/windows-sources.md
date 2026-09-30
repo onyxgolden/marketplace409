@@ -100,8 +100,8 @@ Nothing here is implemented in Rung 0. This is the map Rung 1–3 build from.
 | Aspect | Detail |
 | --- | --- |
 | Mechanism | `Get-LocalUser`, `Get-LocalGroupMember -Group Administrators` (`Microsoft.PowerShell.LocalAccounts` module, built-in). |
-| Privilege | `standard` to enumerate; membership changes themselves require `admin` to perform (not to observe). |
-| Reliability | stable-documented. |
+| Privilege | `admin`, corrected 2026-09-30 per ChatGPT review of PR #493 (finding 2). `Get-LocalUser` (the local account list itself) is standard-readable, but complete `Get-LocalGroupMember -Group Administrators` enumeration can return access-denied depending on local policy/context, so the collector must not promise a standard-user read for full Administrators-membership collection — treat it as a privileged read, matching [`architecture.md`](./architecture.md#privilege-boundaries)'s "narrow, explicit admin reads where unavoidable" list. If Rung 1/3 later proves a narrower standard-user-readable subset is reliable, that subset must be tested and documented explicitly here — never inferred. |
+| Reliability | stable-documented for `Get-LocalUser`; the Administrators-membership read must fail to **unknown** (never "no admin change") on access-denied, per the [privacy contract](./privacy-data-contract.md#unknown-is-not-healthy--a-data-contract-not-just-a-ux-rule). |
 | Mode | poll, baseline-then-diff. |
 | Sensitive? | Usernames only, no credentials. |
 

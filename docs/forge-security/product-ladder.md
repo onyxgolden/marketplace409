@@ -32,12 +32,13 @@ change, per the rule established in [`severity-rules.md`](./severity-rules.md#ru
 
 ## Rung 4 — FORGE Security dashboard
 
-The authenticated read UI: machine status, recent alerts/events, evidence
-details, filters, provenance, collector health — specified in
+A **local-only** read UI (resolved decision, see
+[ADR-005](./ADR-005-windows-agent.md#ui-locality--resolved-2026-09-30-was-an-open-question-see-git-history-for-the-original-framing) —
+bound to loopback or a local desktop shell, never the hosted marketplace409
+app): machine status, recent alerts/events, evidence details, filters,
+provenance, collector health — specified in
 [`ux-specification.md`](./ux-specification.md). Never claim "safe" when
-evidence is missing; use unknown/stale states. **Resolve the local-vs-
-integrated UI question from [ADR-005](./ADR-005-windows-agent.md#known-unknown--surfaced-for-the-review-gate-not-decided-here)
-before detailed design.**
+evidence is missing; use unknown/stale states.
 
 ## Rung 5 — FORGE Brain security explanations
 

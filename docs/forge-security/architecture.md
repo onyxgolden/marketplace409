@@ -18,9 +18,10 @@ Deterministic rules                    severity-rules.md; produces
 Append-only local evidence/event store  Rung 2; local disk/DB, no cloud
         |
         v
-FORGE Security UI                      Rung 4; read path only, authenticated
-        |                               within the existing FORGE app
-        v
+FORGE Security UI                      Rung 4; read path only, LOCAL-ONLY —
+        |                               bound to loopback / a local desktop
+        v                               shell, NOT the hosted marketplace409
+                                        app (see ADR-005)
 FORGE Brain explanation layer          Rung 5; read-only queries over
                                         normalized evidence, never a write
                                         path into the store
@@ -58,9 +59,32 @@ the only component whose privilege matters:
   SYSTEM because it's simpler."
 - **No inbound network control surface.** The collector does not listen for
   commands from the network in Rungs 0–5 (product boundary #11). It only
-  writes to the local evidence store and is read by the local FORGE Security
-  UI process. This removes an entire class of "attacker controls the security
-  monitor remotely" risk before it can exist.
+  writes to the local evidence store and is read by the local, loopback-bound
+  FORGE Security UI process — never by the hosted marketplace409 app (see
+  the UI boundary correction below). This removes an entire class of
+  "attacker controls the security monitor remotely" risk before it can exist.
+
+## The Rung 4 UI is local-only, not the hosted FORGE app
+
+**Corrected 2026-09-30, per ChatGPT review of PR #493 (finding 1):** an
+earlier draft of this document said the Rung 4 dashboard would be
+"authenticated within the existing FORGE app" and could "reuse existing
+FORGE app infrastructure." That was inconsistent with [ADR-002](./ADR-002-local-first.md)'s
+local-first commitment — marketplace409's production deployment is
+Vercel-hosted and has no path to read a local evidence store on Jason's
+workstation, so "read path only, authenticated within the existing FORGE
+app" was not actually achievable without violating ADR-002.
+
+The corrected, accepted decision (finalizing [ADR-005](./ADR-005-windows-agent.md)'s
+previously-open question): **for Rungs 1–7, the FORGE Security dashboard is
+local-only** — served by the local agent itself, bound to loopback
+(`127.0.0.1`) or presented as a local desktop shell, the same shape FORGE
+Capture already uses for capabilities a hosted web app can't provide. It may
+reuse FORGE's visual design conventions, but it is not a module of the
+hosted marketplace409 app, does not share its auth session, and does not
+send evidence to it. Remote/integrated viewing inside the main FORGE app is
+a **Rung 8** decision only, after that rung's own dedicated sync/control-
+channel threat model.
 
 ## Where FORGE Security sits relative to the rest of marketplace409
 
@@ -84,9 +108,10 @@ where they genuinely fit":
   as thin as possible and isolated behind an interface the domain logic can
   be tested against with fakes.
 
-Everything else — the UI shell, auth, deployment — can reuse existing FORGE
-app infrastructure (Rung 4) once there's evidence to show. Rung 0–3 need none
-of that.
+The Rung 4 UI shell is its own small local surface (see the correction
+above), not a reuse of the hosted FORGE app's deployment/auth — but it can
+still borrow FORGE's visual/design conventions for consistency. Rung 0–3
+need none of that.
 
 ## What this diagram deliberately does not show yet
 

@@ -6,8 +6,13 @@ not built as components yet.
 
 ## Overall layout
 
-A single FORGE Security home screen, reachable like any other FORGE module
-(alongside Rental/Scheduling/Designer), with these regions:
+**Corrected 2026-09-30, per ChatGPT review of PR #493 (finding 1):** this is
+a single FORGE Security home screen served **locally** by the agent itself
+(bound to loopback, or a local desktop shell) — not a page inside the hosted
+marketplace409 app alongside Rental/Scheduling/Designer. See
+[`architecture.md`](./architecture.md#the-rung-4-ui-is-local-only-not-the-hosted-forge-app)
+for the corrected trust boundary. It may reuse FORGE's visual design
+conventions for consistency, with these regions:
 
 ### 1. Overall machine protection status (top banner)
 
