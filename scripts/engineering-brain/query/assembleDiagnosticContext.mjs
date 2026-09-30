@@ -2,6 +2,7 @@ import { runQuery } from "./runQuery.mjs";
 import { resolveExcerpt } from "./resolveExcerpt.mjs";
 import { computeFreshness, computeConfidence } from "./computeFreshnessAndConfidence.mjs";
 import { searchBugCatalog } from "./searchBugCatalog.mjs";
+import { rerankImplicatedCode, hasUsableEvidence } from "./rerankImplicatedCode.mjs";
 import { hashContent } from "../hashContent.mjs";
 
 // Source types that describe what the code IS (implementation), grouped for diagnosis.
@@ -87,6 +88,12 @@ function partitionResults(results) {
  * bug catalog. Deterministic: facet order follows the query's own ranking; paired tests sort by
  * path. Never invents: empty facets are [] and the bundle admits insufficient evidence when
  * nothing matched anywhere.
+ *
+ * Optional evidenceSignal ({ failed_step, error_lines[], mentioned_paths[] } from a real CI
+ * failure) deterministically re-ranks facets.implicated_code so code the failure log actually
+ * names floats to the top; entries carry an evidence_match annotation naming the tier. Only the
+ * implicated_code facet is reordered -- every other facet and the query's own ranking are
+ * untouched. No signal (or an empty one) leaves the order exactly as the query ranked it.
  */
 export function assembleDiagnosticContext({
   manifest,
@@ -97,6 +104,7 @@ export function assembleDiagnosticContext({
   metadataOnly = false,
   maxResults,
   bugRecords = [],
+  evidenceSignal = null,
 }) {
   const base = runQuery({
     manifest,
@@ -111,6 +119,15 @@ export function assembleDiagnosticContext({
 
   const results = base.insufficient_evidence ? [] : base.results;
   const facets = partitionResults(results);
+
+  // Evidence-based re-rank: the failure log's named paths/tokens promote implicated code.
+  // The gate uses the same substantive-evidence predicate as the reranker, so an
+  // empty/malformed signal can never report evidence_signal_applied: true.
+  const evidenceApplied = hasUsableEvidence(evidenceSignal)
+    && facets.implicated_code.length > 0;
+  if (evidenceApplied) {
+    facets.implicated_code = rerankImplicatedCode(facets.implicated_code, evidenceSignal);
+  }
 
   // Pair tests to implicated code by naming convention, even when the query didn't surface them.
   // Only test_file records from the same manifest commit are eligible; each pair is explicitly
@@ -154,6 +171,9 @@ export function assembleDiagnosticContext({
       reason: "No indexed record, paired test, or past fix matched this query. This means the answer isn't in what was indexed, or the query needs narrowing/rephrasing -- not that the answer is confirmed absent.",
     }),
     facets,
+    // True when a caller-supplied failure signal re-ranked facets.implicated_code; the
+    // per-entry evidence_match annotations name the tier that promoted each entry.
+    evidence_signal_applied: evidenceApplied,
     // Contradictions are promoted to top level: code disagreeing with docs/decisions is the
     // single most diagnostic signal this bundle can surface.
     contradictions: base.insufficient_evidence ? [] : base.conflicts,
