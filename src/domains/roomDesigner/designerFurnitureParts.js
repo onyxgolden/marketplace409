@@ -1,5 +1,11 @@
 // Pure 3D furniture composition for the FORGE room/layout designer.
 //
+// cornerCabinetArmIn/wallCornerCabinetArmIn/easyReachDoorFaceEndpoints come
+// from furniturePlanSymbols.js (the 2D domain) so the L-shaped corner
+// cabinets' 3D bodies use the SAME arm-size formulas and angled-door
+// geometry as their 2D symbols — not a second, separately-maintained copy
+// that can (and once did) drift out of sync. Both files are pure/framework-
+// free, so this is a plain one-way domain-to-domain import, no cycle.
 // furnitureParts(catalogId, dims) answers ONE question: "given this object,
 // what simple visual primitives compose it?" It returns plain JSON part
 // descriptors — no THREE, no DOM, no WebGL — so it stays unit-testable and
@@ -15,6 +21,10 @@
 //   color: optional per-part color override (defaults to the piece color)
 //   glow:  part is a light source shade (warm emissive in the renderer)
 //   rotX:  optional extra X rotation in radians (e.g. front-facing discs)
+//   rotY:  optional extra Y rotation in radians (e.g. an angled cabinet
+//          door swung across a corner) — NOT the placed item's own
+//          plan-rotation (that's item.rotY, applied to the whole piece);
+//          this rotates just the one part, in addition to it.
 //   wTop:  "cyl" only — top diameter for a tapered cylinder (w = bottom)
 //   role:  optional semantic tag ("tank", "bowl", ...) for tests/debugging
 //   For "cyl", d is the front-to-back (z) diameter at the widest end, so
@@ -23,6 +33,8 @@
 // Unknown catalog ids fall back to a single box so nothing ever fails to
 // render. Compositions are camera-agnostic (no baked view assumptions) so a
 // future walkthrough mode can reuse them unchanged.
+
+import { cornerCabinetArmIn, easyReachDoorFaceEndpoints, wallCornerCabinetArmIn } from "./furniturePlanSymbols";
 
 /** Multiply a #rrggbb color by a factor (0..1 darkens, >1 lightens). Pure. */
 export function shade(hex, factor) {
@@ -99,6 +111,70 @@ function drawerStack(w, d, h, c, n, { counter = false } = {}) {
   for (let i = 0; i < n; i += 1) {
     const y = 2 + frontH / 2 + i * (frontH + gap);
     parts.push(box(0, y, (d - 1) / 2 + 0.25, w - 3, frontH, 0.5, { color: shade(c, 1.08) }));
+  }
+  return parts;
+}
+
+/**
+ * L-shaped cabinet body (corner base, easy-reach corner base, wall corner)
+ * composed from two overlapping boxes — a full-width "back arm" (depth =
+ * `arm`, hugging the back wall) and a full-depth "side arm" (width = `arm`,
+ * hugging the left wall) — the exact same two-rectangle union the matching
+ * 2D symbol's lShape() draws, so the 3D body and the 2D plan footprint agree
+ * for the first time (previously every corner-shaped cabinet rendered as a
+ * plain rectangular box filling its whole w x d bounding box, well past
+ * where the actual cabinet carcass ends).
+ *
+ * `arm` is REQUIRED, passed in by the caller from furniturePlanSymbols.js's
+ * own exported arm-size function for that specific cabinet
+ * (cornerCabinetArmIn or wallCornerCabinetArmIn — they're different
+ * formulas for different cabinets, not interchangeable). Computing it again
+ * here, separately, is exactly how an earlier version of this function drew
+ * cabinet-wall-corner's body at the wrong size: it reused
+ * cornerCabinetArmIn's formula for every caller instead of each cabinet's
+ * own. Requiring the caller to pass it keeps this function unable to drift
+ * from 2D again, for any current or future caller.
+ *
+ * `doorAngled` draws the door panel rotated across the corner (a bi-fold-
+ * style door), its position, span and rotation all derived from
+ * `doorFaceEndpoints` — the SAME two 2D points easyReachBase's own angled
+ * door-face line uses (2D y mapped to 3D z) — rather than a separately
+ * eyeballed placement, which is exactly what put an earlier version of this
+ * panel in the wrong part of the cabinet at the wrong length.
+ *
+ * Deliberately NOT modeled: the lazy Susan turntable itself. It's an
+ * interior mechanism behind a closed door — invisible in an exterior render
+ * regardless — so 2D is the only place it needs to show at all.
+ */
+function lCabinetParts(w, d, h, c, { arm, counter = false, door = false, doorAngled = false, doorFaceEndpoints } = {}) {
+  const bodyH = counter ? h - 2 : h;
+  const parts = [
+    box(0, bodyH / 2, -d / 2 + arm / 2, w - 1, bodyH, arm - 1), // back arm: full width, hugs the back wall
+    box(-w / 2 + arm / 2, bodyH / 2, 0, arm - 1, bodyH, d - 1), // side arm: full depth, hugs the left wall
+  ];
+  if (counter) {
+    parts.push(box(0, h - 1, -d / 2 + arm / 2, w, 2, arm, { color: "#e9e7e1" }));
+    parts.push(box(-w / 2 + arm / 2, h - 1, 0, arm, 2, d, { color: "#e9e7e1" }));
+  }
+  if (door) {
+    const doorH = bodyH - 8;
+    if (doorAngled && doorFaceEndpoints) {
+      const { p1, p2 } = doorFaceEndpoints;
+      const dx = p2.x - p1.x;
+      const dz = p2.y - p1.y; // 2D's y axis is this domain's z (depth)
+      const span = Math.hypot(dx, dz);
+      const cx = (p1.x + p2.x) / 2;
+      const cz = (p1.y + p2.y) / 2;
+      // Rotates local +X to point along (dx, dz): THREE's rotation.y sends
+      // local +X to world (cos, -sin) in the XZ plane, so solving
+      // cos(rotY) = dx/span, -sin(rotY) = dz/span gives this.
+      const rotY = Math.atan2(-dz, dx);
+      if (span > 0) parts.push(box(cx, bodyH / 2, cz, span, doorH, 0.5, { color: shade(c, 1.08), rotY }));
+    } else {
+      // Flush against the side arm's inner (room-facing) edge — the
+      // exposed face of the corner nook, matching cornerBase's door-face line.
+      parts.push(box(-w / 2 + arm + 0.25, bodyH / 2, arm / 2, 0.5, doorH, Math.max(1, d - arm), { color: shade(c, 1.08) }));
+    }
   }
   return parts;
 }
@@ -184,11 +260,17 @@ const COMPOSERS = {
     box(0, h - 5, (d - 1) / 2 - 8, w - 2, 9, 16, { color: "#f2f2ef" }),
   ],
   "cabinet-base-blind-rh": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
-  "cabinet-base-easy-reach": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
-  "cabinet-base-corner": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
+  "cabinet-base-easy-reach": (w, d, h, c) => lCabinetParts(w, d, h, c, {
+    arm: cornerCabinetArmIn(w, d),
+    counter: true,
+    door: true,
+    doorAngled: true,
+    doorFaceEndpoints: easyReachDoorFaceEndpoints(w, d),
+  }),
+  "cabinet-base-corner": (w, d, h, c) => lCabinetParts(w, d, h, c, { arm: cornerCabinetArmIn(w, d), counter: true, door: true }),
   "cabinet-base-blind": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
   "cabinet-island-base": (w, d, h, c) => kitchenBox(w, d, h, c, { counter: true, door: true }),
-  "cabinet-wall-corner": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
+  "cabinet-wall-corner": (w, d, h, c) => lCabinetParts(w, d, h, c, { arm: wallCornerCabinetArmIn(w, d), door: true }),
   "cabinet-wall-bridge": (w, d, h, c) => kitchenBox(w, d, h, c, { door: true }),
   "cabinet-wall-microwave": (w, d, h, c) => [
     box(0, h / 2, -d * 0.1, w - 1, h, d * 0.8),

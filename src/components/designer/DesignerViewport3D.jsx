@@ -1412,6 +1412,7 @@ export default function DesignerViewport3D({
             const mesh = shadowed(new THREE.Mesh(furniturePartGeometry(part), mat));
             mesh.position.set(part.dx, part.dy, part.dz);
             if (part.rotX) mesh.rotation.x = part.rotX;
+            if (part.rotY) mesh.rotation.y = part.rotY;
             fGroup.add(mesh);
           }
         }
