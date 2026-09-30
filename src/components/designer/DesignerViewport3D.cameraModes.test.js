@@ -10,6 +10,7 @@ import {
   computeFlyStep,
   DOLLHOUSE_POLAR_RANGE,
   frameDollhouseOnModel,
+  resetFirstPersonInputState,
   SPRINT_MAX_MULTIPLIER,
   SPRINT_RAMP_SECONDS,
   sprintMultiplier,
@@ -154,5 +155,50 @@ describe("sprintMultiplier", () => {
 
   it("caps at the max multiplier — holding longer never exceeds it", () => {
     expect(sprintMultiplier(SPRINT_RAMP_SECONDS * 10)).toBeCloseTo(SPRINT_MAX_MULTIPLIER);
+  });
+});
+
+describe("resetFirstPersonInputState", () => {
+  // Regression for: hold a movement key (Space, mid-sprint) -> pointer lock
+  // is lost (Escape, alt-tab, the OS stealing focus) without ever delivering
+  // a matching keyup -> the key's "held" state and the sprint ramp would
+  // otherwise stay latched -> re-locking resumes movement instantly,
+  // potentially already at full sprint speed, with nothing actually pressed.
+  it("clears every held movement key, zeroes velocity, and clears the sprint timestamp", () => {
+    const moveStateRef = {
+      current: { forward: true, backward: false, left: false, right: true, up: true, down: false },
+    };
+    const flyVelocityRef = { current: { forward: 220, right: 40, up: 96 } };
+    const sprintHeldSinceMsRef = { current: 12345 }; // mid-sprint when the lock was lost
+
+    resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
+
+    expect(moveStateRef.current).toEqual({
+      forward: false, backward: false, left: false, right: false, up: false, down: false,
+    });
+    expect(flyVelocityRef.current).toEqual({ forward: 0, right: 0, up: 0 });
+    expect(sprintHeldSinceMsRef.current).toBeNull();
+  });
+
+  it("simulates hold -> unlock -> missed keyup -> relock: the next frame after relock starts from a clean, unsprinted stop", () => {
+    // "Held" state exactly as it would be mid-sprint, forward key still down.
+    const moveStateRef = { current: { forward: true, backward: false, left: false, right: false, up: true, down: false } };
+    const flyVelocityRef = { current: { forward: 180, right: 0, up: 60 } };
+    const sprintHeldSinceMsRef = { current: 1000 };
+
+    // The keyup that would normally clear this never arrives — pointer lock
+    // is simply lost (this is the exact call the component's own
+    // onPointerLockChange makes when `locked` becomes false).
+    resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
+
+    // Re-locking (a real relock wouldn't call this again by itself — nothing
+    // re-presses the key) and computing what the very next frame would do:
+    // no keys held, no sprint in progress.
+    const heldForSeconds = sprintHeldSinceMsRef.current != null ? 999 : 0; // would only be non-zero if the timestamp survived
+    expect(heldForSeconds).toBe(0);
+    expect(sprintMultiplier(heldForSeconds)).toBe(1);
+    const step = computeFlyStep(flyVelocityRef.current, moveStateRef.current, 0.1, { speed: 100 });
+    expect(step.forwardDistance).toBe(0);
+    expect(step.upDistance).toBe(0);
   });
 });

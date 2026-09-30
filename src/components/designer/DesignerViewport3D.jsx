@@ -226,6 +226,23 @@ export function sprintMultiplier(heldForSeconds) {
 }
 
 /**
+ * Fresh, fully-released Walk/Fly input state. Used both when leaving
+ * Walk/Fly outright (setCameraMode) and — the case this exists to make
+ * testable in isolation — when pointer lock is merely LOST while still in
+ * Walk/Fly (Escape, alt-tab, the OS stealing focus). None of those reliably
+ * deliver a matching keyup for whatever was physically held; without this,
+ * re-locking would resume movement instantly, potentially already at full
+ * sprint speed, with no key actually pressed. Mutates the three refs'
+ * `.current` in place; takes plain `{current}`-shaped objects (not real
+ * React refs) so it's testable with no React/DOM involved.
+ */
+export function resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef) {
+  moveStateRef.current = { forward: false, backward: false, left: false, right: false, up: false, down: false };
+  flyVelocityRef.current = { forward: 0, right: 0, up: 0 };
+  sprintHeldSinceMsRef.current = null;
+}
+
+/**
  * Floating tag labels (P-101, E-102, …) above equipment so the 3D reads like
  * a plot plan. Canvas textures are cached per unique tag at module scope and
  * shared by every sprite; the cache is reference-counted (see
@@ -596,6 +613,10 @@ export default function DesignerViewport3D({
       const locked = pointerLockControls.isLocked;
       pointerLockedRef.current = locked;
       setPointerLocked(locked);
+      // See resetFirstPersonInputState's own doc comment: losing lock while
+      // still in Walk/Fly can't rely on a matching keyup ever arriving for
+      // whatever was held.
+      if (!locked) resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
     };
     pointerLockControls.addEventListener("lock", onPointerLockChange);
     pointerLockControls.addEventListener("unlock", onPointerLockChange);
@@ -1363,9 +1384,7 @@ export default function DesignerViewport3D({
     forceEndActiveDrag();
     const wasFirstPerson = cameraModeRef.current === "walk" || cameraModeRef.current === "fly";
     if (wasFirstPerson) {
-      moveStateRef.current = { forward: false, backward: false, left: false, right: false, up: false, down: false };
-      flyVelocityRef.current = { forward: 0, right: 0, up: 0 };
-      sprintHeldSinceMsRef.current = null;
+      resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
       const plc = pointerLockControlsRef.current;
       if (plc?.isLocked) plc.unlock();
     }
