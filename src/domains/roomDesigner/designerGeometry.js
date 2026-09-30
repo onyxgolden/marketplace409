@@ -488,10 +488,46 @@ export function roomAreaSqFt(room) {
   return polygonArea(room.polygon) / 144;
 }
 
-/** Format inches as a dimension label, e.g. 150 -> `12' 6"`. */
+// Measurement display preference: "ft-in" (default, e.g. 12' 6") or "in"
+// (e.g. 150″). A global, per-browser preference — not project data — so it
+// lives in localStorage, read fresh on every call rather than cached in a
+// module variable (this file has 100+ existing pure-function unit tests;
+// caching it here would leak state between them). Same defensive try/catch
+// pattern as DesignerViewport3D.jsx's quality-tier override, so a plain-Node
+// test environment with no `window` at all still gets the default behavior
+// unchanged rather than throwing.
+export const DISPLAY_UNITS_STORAGE_KEY = "forge-designer-display-units";
+
+export function getDisplayUnits() {
+  try {
+    return typeof window !== "undefined" && window.localStorage?.getItem(DISPLAY_UNITS_STORAGE_KEY) === "in"
+      ? "in"
+      : "ft-in";
+  } catch {
+    return "ft-in";
+  }
+}
+
+/** Sets the measurement display preference and persists it. Pass "ft-in" to restore the default. */
+export function setDisplayUnits(units) {
+  try {
+    window.localStorage?.setItem(DISPLAY_UNITS_STORAGE_KEY, units === "in" ? "in" : "ft-in");
+  } catch {
+    // storage unavailable (private browsing, SSR) — the preference just won't persist across reloads
+  }
+}
+
+/**
+ * Format inches as a dimension label, honoring the current display-units
+ * preference: `12' 6"` by default, or `150″` when the user has switched to
+ * inches-only. Every existing call site across the Designer UI reads this
+ * preference automatically — nothing else needed to change to support the
+ * toggle.
+ */
 export function feetInchesLabel(inches) {
   if (!isFiniteNumber(inches)) return "—";
   const rounded = Math.round(inches);
+  if (getDisplayUnits() === "in") return `${rounded}″`;
   const sign = rounded < 0 ? "-" : "";
   const abs = Math.abs(rounded);
   const feet = Math.floor(abs / 12);

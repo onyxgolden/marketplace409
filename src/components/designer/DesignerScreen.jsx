@@ -103,7 +103,13 @@ import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
-import { feetInchesLabel, parseDimensionInput, wallLength } from "@/domains/roomDesigner/designerGeometry";
+import {
+  feetInchesLabel,
+  getDisplayUnits,
+  parseDimensionInput,
+  setDisplayUnits,
+  wallLength,
+} from "@/domains/roomDesigner/designerGeometry";
 import {
   PIPE_DIAMETERS_IN,
   PIPE_LAYERS,
@@ -288,6 +294,19 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [saving, setSaving] = useState(false);
   // HOUSE PLANS (HP-L0): docked reference panel, gated behind the feature flag.
   const [housePlansOpen, setHousePlansOpen] = useState(false);
+  // Measurement display preference (ft-in default, or inches-only). Lives in
+  // localStorage via getDisplayUnits/setDisplayUnits (designerGeometry.js) —
+  // this state exists ONLY to force a re-render when it changes; every
+  // feetInchesLabel(...) call across the Designer UI reads the preference
+  // fresh from storage on its own, so nothing else needs to change to honor
+  // a flip. Lazy-initialized so the very first render already reflects
+  // whatever was saved from a prior session.
+  const [displayUnits, setDisplayUnitsState] = useState(() => getDisplayUnits());
+  const toggleDisplayUnits = () => {
+    const next = displayUnits === "in" ? "ft-in" : "in";
+    setDisplayUnits(next);
+    setDisplayUnitsState(next);
+  };
   // Phone layout: below md the docked panels leave the dock and become
   // slide-over drawers. Exactly one drawer is open at a time (null | "panel"
   // | "tools"); the House Plans drawer shares the housePlansOpen flag, which
@@ -788,6 +807,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               </button>
             ))}
           </div>
+          <button
+            onClick={toggleDisplayUnits}
+            title={displayUnits === "in" ? "Switch to feet and inches" : "Switch to inches only"}
+            aria-pressed={displayUnits === "in"}
+            className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
+          >
+            {displayUnits === "in" ? "in" : "ft-in"}
+          </button>
           <button
             onClick={() => dispatch({ type: "UNDO" })}
             disabled={(past || []).length === 0}
