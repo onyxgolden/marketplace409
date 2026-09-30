@@ -196,3 +196,106 @@ except SystemExit as e:
     expect(out).not.toContain("hatch-adapter-blocked-for-test");
   });
 });
+
+describe("fetchGithubSignals — scanner never reports on itself (self-flagging loop fix)", () => {
+  // A loud scan failure is visible by design; if the next night's scan
+  // re-reports it as an undiscovered error, the scan fails forever.
+  const pureHarness = `
+ns = {"__name__": "harness"}
+with open(${JSON.stringify(GITHUB_FETCHER)}) as fh:
+    exec(compile(fh.read(), "fetchGithubSignals.py", "exec"), ns)
+is_self = ns["is_self_scan_run"]
+
+SELF_NAME = "FORGE Engineering Brain \\u2014 Undiscovered Errors"
+SELF_PATH = ".github/workflows/engineering-brain-undiscovered-errors.yml"
+cases = [
+    # (run dict, expected) -- path match is the primary rule
+    ({"path": SELF_PATH, "name": "whatever"}, True),
+    # no path -> fall back to the workflow name
+    ({"name": SELF_NAME}, True),
+    # path wins over name: same name, different workflow file -> kept
+    ({"path": ".github/workflows/other.yml", "name": SELF_NAME}, False),
+    # other workflows are kept (the brain sync going red IS a wanted signal)
+    ({"path": ".github/workflows/engineering-brain-sync.yml", "name": "FORGE Engineering Brain Sync"}, False),
+    # unknown runs are never silently dropped
+    ({"path": "", "name": ""}, False),
+    ({}, False),
+    (None, False),
+]
+failed = 0
+for run, expected in cases:
+    got = is_self(run)
+    if got != expected:
+        failed += 1
+        print(f"MISMATCH: run={run!r} expected={expected} got={got}")
+print("PURE_ALL_OK" if failed == 0 else f"PURE_FAILURES:{failed}")
+`;
+
+  it("is_self_scan_run matches the scanner workflow and keeps everything else", () => {
+    const out = execFileSync("python3", ["-c", pureHarness], { encoding: "utf8" });
+    expect(out).not.toContain("MISMATCH");
+    expect(out).toContain("PURE_ALL_OK");
+  });
+
+  it("main() drops self-scan failed runs but keeps other failed runs", () => {
+    const e2eHarness = `
+import sys, json, urllib.error
+
+class _Blocker:
+    def find_module(self, name, path=None):
+        if name == "dynamic_credentials":
+            return self
+        return None
+    def load_module(self, name):
+        raise ModuleNotFoundError("hatch-adapter-blocked-for-test")
+sys.meta_path.insert(0, _Blocker())
+
+import os
+os.environ["GITHUB_TOKEN"] = "dummy-token-for-e2e-test"
+
+ns = {"__name__": "harness"}
+with open(${JSON.stringify(GITHUB_FETCHER)}) as fh:
+    exec(compile(fh.read(), "fetchGithubSignals.py", "exec"), ns)
+
+SELF_NAME = "FORGE Engineering Brain \\u2014 Undiscovered Errors"
+payload = {"workflow_runs": [
+    {"id": 111, "name": SELF_NAME,
+     "path": ".github/workflows/engineering-brain-undiscovered-errors.yml",
+     "conclusion": "failure", "html_url": "https://github.com/o/r/actions/runs/111",
+     "head_sha": "abc123def456", "head_branch": "main", "created_at": "2026-09-30T10:00:00Z"},
+    {"id": 222, "name": "Vercel",
+     "path": ".github/workflows/vercel.yml",
+     "conclusion": "failure", "html_url": "https://github.com/o/r/actions/runs/222",
+     "head_sha": "abc123def456", "head_branch": "main", "created_at": "2026-09-30T10:05:00Z"},
+    {"id": 333, "name": "CI",
+     "path": ".github/workflows/ci.yml",
+     "conclusion": "success", "html_url": "https://github.com/o/r/actions/runs/333",
+     "head_sha": "abc123def456", "head_branch": "main", "created_at": "2026-09-30T10:10:00Z"},
+]}
+
+class FakeResp:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def read(self): return json.dumps(payload).encode("utf8")
+
+def fake_urlopen(req, timeout=None):
+    class Ctx(FakeResp): pass
+    return Ctx()
+
+ns["urllib"].request.urlopen = fake_urlopen
+ns["time"].sleep = lambda s: None
+
+out_path = ${JSON.stringify(join(tmpdir(), "gh-signals-selfscan-test.json"))}
+sys.argv = ["fetchGithubSignals.py", "--out", out_path, "--days", "7"]
+rc = ns["main"]()
+print(f"RETURN:{rc}")
+with open(out_path, encoding="utf8") as fh:
+    written = json.load(fh)
+print(f"SIGNALS:{json.dumps([s['signal_id'] for s in written['signals']])}")
+`;
+    const out = execFileSync("python3", ["-c", e2eHarness], { encoding: "utf8" });
+    expect(out).toContain("RETURN:0");
+    expect(out).toContain('SIGNALS:["github:actions:ci_failed:222"]');
+    expect(out).toContain("skipped 1 self-scan run");
+  });
+});

@@ -32,6 +32,28 @@ OWNER, REPO = "onyxgolden", "marketplace409"
 BASE = f"https://api.github.com/repos/{OWNER}/{REPO}"
 MAX_RUNS = 50
 
+# The scanner must never report on itself. A loud scan failure is visible by
+# design -- it is not an "undiscovered error nobody asked about". Without this
+# exclusion every red scan becomes a new self-signal the next night, so the
+# scan can never go green again (self-flagging loop, first seen 2026-09-30:
+# the scan kept re-flagging its own prior loud failures on main).
+SELF_SCAN_WORKFLOW_PATH = ".github/workflows/engineering-brain-undiscovered-errors.yml"
+SELF_SCAN_WORKFLOW_NAME = "FORGE Engineering Brain \u2014 Undiscovered Errors"
+
+
+def is_self_scan_run(run):
+    """True when the run belongs to this scanner workflow itself. Pure.
+
+    Matched on the workflow file path (stable); falls back to the workflow
+    name if the API ever stops sending `path`. A run with neither is never
+    treated as self -- unknown runs stay reported, never silently dropped.
+    """
+    run = run or {}
+    path = (run.get("path") or "").strip()
+    if path:
+        return path == SELF_SCAN_WORKFLOW_PATH
+    return (run.get("name") or "").strip() == SELF_SCAN_WORKFLOW_NAME
+
 
 def api_get(path, params=None, attempts=4):
     url = BASE + path
@@ -118,7 +140,11 @@ def main():
 
     runs = data.get("workflow_runs") or []
     # Keep only runs that actually concluded as failure (API status filter is coarse).
-    signals = [to_signal(r) for r in runs if r.get("conclusion") == "failure"]
+    # Never report this scanner's own runs: a loud scan failure is visible by
+    # design, and re-reporting it the next night is a self-flagging loop.
+    failed = [r for r in runs if r.get("conclusion") == "failure"]
+    skipped_self = sum(1 for r in failed if is_self_scan_run(r))
+    signals = [to_signal(r) for r in failed if not is_self_scan_run(r)]
     truncated = len(runs) >= MAX_RUNS
 
     payload = {
@@ -131,6 +157,7 @@ def main():
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
     print(f"Wrote {len(signals)} signals to {args.out}."
+          + (f" (skipped {skipped_self} self-scan runs)" if skipped_self else "")
           + (" (truncated: hit the run cap)" if truncated else ""))
     return 0
 
