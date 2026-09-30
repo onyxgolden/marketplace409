@@ -225,6 +225,114 @@ export function sprintMultiplier(heldForSeconds) {
   return 1 + t * (SPRINT_MAX_MULTIPLIER - 1);
 }
 
+// ---- ViewCube gizmo ----
+//
+// The actual control Jason meant by "the TrueView 360 toggle": a persistent
+// compass-and-cube widget (Autodesk's ViewCube, seen in DWG TrueView) fixed
+// in the viewport's corner — not a button, not an auto-spinning turntable.
+// Drag it to orbit, click a compass letter to snap to a cardinal facing,
+// click a cube face for a preset view, click Home to reset. Only meaningful
+// alongside OrbitControls, so it's active in Orbit/Dollhouse only — Walk/Fly
+// have their own fixed first-person camera and a hidden, pointer-locked
+// cursor, neither of which a clickable on-screen widget fits.
+//
+// v1 scope, disclosed rather than silently dropped: 6 face-click preset
+// views (not the full 26 faces/edges/corners a real ViewCube offers), no
+// roll arrows, no per-region hover highlight, no screen-reader semantics
+// (it's drawn into the WebGL canvas, not a real DOM control).
+
+/** On-screen size (CSS px) of the square the gizmo renders into, and its margin from the viewport's edges. */
+export const VIEWCUBE_SIZE_PX = 90;
+export const VIEWCUBE_MARGIN_PX = 12;
+
+/** This cube's own render distance from the origin — arbitrary; only its direction (not position) is used against the main camera. */
+export const VIEWCUBE_CAMERA_DISTANCE = 4.2;
+
+/** The camera's offset from `target` as {radius, azimuth, polar} — polar measured from +Y, azimuth from +Z toward +X. */
+export function sphericalFromCamera(camera, target) {
+  const dx = camera.position.x - target.x;
+  const dy = camera.position.y - target.y;
+  const dz = camera.position.z - target.z;
+  const radius = Math.hypot(dx, dy, dz) || 1;
+  const polar = Math.acos(clamp(dy / radius, -1, 1));
+  const azimuth = Math.atan2(dx, dz);
+  return { radius, azimuth, polar };
+}
+
+/** Places `camera` at the given spherical offset from `target`, looking at it, and re-targets `controls` to match. */
+export function applySphericalToCamera(camera, controls, target, { radius, azimuth, polar }) {
+  const sinPolar = Math.sin(polar);
+  camera.position.set(
+    target.x + radius * sinPolar * Math.sin(azimuth),
+    target.y + radius * Math.cos(polar),
+    target.z + radius * sinPolar * Math.cos(azimuth),
+  );
+  camera.lookAt(target.x, target.y, target.z);
+  if (controls?.target) controls.target.set(target.x, target.y, target.z);
+  controls?.update?.();
+}
+
+/**
+ * The compass ring's four snap directions: azimuth only (radians). These are
+ * viewport-relative — around the model's own world-Y axis — not tied to true
+ * site/building north, since nothing in this codebase's geometry carries a
+ * real-world heading.
+ */
+export const COMPASS_AZIMUTH = Object.freeze({ N: 0, E: Math.PI / 2, S: Math.PI, W: -Math.PI / 2 });
+
+const MIN_POLAR = 0.05;
+const MAX_POLAR = Math.PI - 0.05;
+
+/**
+ * The polar-angle band to clamp into: `controls.minPolarAngle`/`maxPolarAngle`
+ * when the controls object actually sets them (Dollhouse constrains these to
+ * DOLLHOUSE_POLAR_RANGE — see setCameraMode), otherwise the plain MIN_POLAR/
+ * MAX_POLAR default. Reading it off `controls` itself, rather than requiring
+ * every caller to know which mode is active, keeps this in one place: it's
+ * the same clamp OrbitControls.update() would already apply on the next
+ * orbit drag, so the gizmo can never push the camera somewhere a normal
+ * mouse-drag orbit couldn't also reach.
+ */
+function polarBounds(controls) {
+  const min = Number.isFinite(controls?.minPolarAngle) ? controls.minPolarAngle : MIN_POLAR;
+  const max = Number.isFinite(controls?.maxPolarAngle) ? controls.maxPolarAngle : MAX_POLAR;
+  return { min, max };
+}
+
+/** Snap to a compass direction: same radius and tilt (polar angle) as now, azimuth only changes. */
+export function snapToCompassDirection(camera, controls, target, direction) {
+  const azimuth = COMPASS_AZIMUTH[direction];
+  if (azimuth === undefined) return false;
+  const { radius, polar } = sphericalFromCamera(camera, target);
+  const { min, max } = polarBounds(controls);
+  applySphericalToCamera(camera, controls, target, { radius, azimuth, polar: clamp(polar, min, max) });
+  return true;
+}
+
+/** Snap to look squarely along a face normal (the ViewCube's face-click preset views), at the current distance from target. */
+export function snapToFaceNormal(camera, controls, target, normal) {
+  const { radius } = sphericalFromCamera(camera, target);
+  const polar = Math.acos(clamp(normal.y, -1, 1));
+  const azimuth = Math.atan2(normal.x, normal.z);
+  const { min, max } = polarBounds(controls);
+  applySphericalToCamera(camera, controls, target, { radius, azimuth, polar: clamp(polar, min, max) });
+  return true;
+}
+
+/** Radians of orbit per pixel of drag on the gizmo. */
+export const GIZMO_DRAG_SENSITIVITY = 0.012;
+
+/** One incremental drag step on the gizmo: orbits the camera by a pixel delta, same math OrbitControls itself uses. */
+export function orbitCameraByDrag(camera, controls, target, dxPx, dyPx, sensitivity = GIZMO_DRAG_SENSITIVITY) {
+  const { radius, azimuth, polar } = sphericalFromCamera(camera, target);
+  const { min, max } = polarBounds(controls);
+  applySphericalToCamera(camera, controls, target, {
+    radius,
+    azimuth: azimuth - dxPx * sensitivity,
+    polar: clamp(polar - dyPx * sensitivity, min, max),
+  });
+}
+
 /**
  * Fresh, fully-released Walk/Fly input state. Used both when leaving
  * Walk/Fly outright (setCameraMode) and — the case this exists to make
@@ -508,9 +616,7 @@ export default function DesignerViewport3D({
   const tierNameRef = useRef("balanced");
   const initialCameraSetRef = useRef(false);
   const rebuildTimerRef = useRef(null);
-  const spinRef = useRef(false); // 360° auto-orbit; mirrored into `spin` state for the button
   const builtRef = useRef(null); // last buildThreeScene descriptor, for reset-view
-  const [spin, setSpin] = useState(false);
   // Camera mode: 'orbit' (default, existing behavior) | 'dollhouse' (OrbitControls,
   // constrained to an elevated overview) | 'walk' | 'fly' (PointerLockControls,
   // first-person). Only one controls object is ever active; see the setup
@@ -535,10 +641,18 @@ export default function DesignerViewport3D({
   const recordedChunksRef = useRef([]);
   const recordingStreamRef = useRef(null); // captureStream()'s MediaStream, so its tracks can be stopped explicitly
   const recordingErroredRef = useRef(false); // set by the recorder's own error event; tells a later onstop to skip the download
+  // ViewCube gizmo: its own tiny scene/camera, rendered into a scissored
+  // corner of the SAME canvas/renderer every frame (no second WebGL
+  // context). See the pure helpers above for the math; these refs hold the
+  // live Three.js objects and interaction state.
+  const gizmoSceneRef = useRef(null);
+  const gizmoCameraRef = useRef(null);
+  const gizmoHitObjectsRef = useRef([]); // meshes/sprites raycast against, each carrying userData.gizmoAction
+  const gizmoDragRef = useRef(null); // { x, y, moved, action } while a gizmo press is down
   // Equipment tag labels (P-101, E-102, …): hidden by default, flipped by the
-  // Labels toggle beside the 360° button. Sprites are collected per scene build
-  // (they're rebuilt with the scene); the ref mirror avoids rebuilding the
-  // whole scene just to flip visibility.
+  // Labels toggle in the button cluster. Sprites are collected per scene
+  // build (they're rebuilt with the scene); the ref mirror avoids rebuilding
+  // the whole scene just to flip visibility.
   const [showLabels, setShowLabels] = useState(false);
   const showLabelsRef = useRef(false);
   const selectionRef = useRef(selection);
@@ -694,6 +808,127 @@ export default function DesignerViewport3D({
     materialCacheRef.current = new Map();
     modelCacheRef.current = createFurnitureModelCache({ onChange: () => setModelEpoch((n) => n + 1) });
 
+    // ---- ViewCube gizmo: its own tiny scene, rendered into a scissored
+    // corner of this SAME renderer every frame (see animate() below) ----
+    const gizmoScene = new THREE.Scene();
+    gizmoScene.background = new THREE.Color(0x0f172a); // slate-900, matches the button cluster's dark chrome
+    const gizmoHitObjects = [];
+
+    const makeGizmoLabelSprite = (text) => {
+      const size = 64;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "rgba(30, 41, 59, 0.95)"; // slate-800
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#e2e8f0"; // slate-200
+      ctx.font = "600 30px system-ui, -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, size / 2, size / 2 + 1);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false }));
+    };
+
+    const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const cubeMaterial = new THREE.MeshBasicMaterial({ color: 0x334155 }); // slate-700
+    const cubeMesh = new THREE.Mesh(cubeGeometry, cubeMaterial);
+    // Which face was hit is resolved from the raycast's own face normal at
+    // click time (buildGizmoActionFromHit below) — one mesh, six faces,
+    // rather than six separately-tagged meshes.
+    cubeMesh.userData.gizmoAction = { type: "cube" };
+    gizmoScene.add(cubeMesh);
+    gizmoHitObjects.push(cubeMesh);
+
+    const cubeEdges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(cubeGeometry),
+      new THREE.LineBasicMaterial({ color: 0x94a3b8 }), // slate-400
+    );
+    gizmoScene.add(cubeEdges);
+
+    // Compass ring: fixed in the gizmo's own world space (NOT screen space),
+    // same as a real ViewCube — as the gizmo camera orbits to track the main
+    // camera's facing, different letters rotate into view, exactly like
+    // standing in the model and watching which compass direction faces you.
+    const COMPASS_RING_RADIUS = 1.55;
+    for (const [direction, azimuth] of Object.entries(COMPASS_AZIMUTH)) {
+      const sprite = makeGizmoLabelSprite(direction);
+      sprite.scale.set(0.5, 0.5, 1);
+      sprite.position.set(Math.sin(azimuth) * COMPASS_RING_RADIUS, 0, Math.cos(azimuth) * COMPASS_RING_RADIUS);
+      sprite.userData.gizmoAction = { type: "compass", direction };
+      gizmoScene.add(sprite);
+      gizmoHitObjects.push(sprite);
+    }
+
+    gizmoScene.add(new THREE.AmbientLight(0xffffff, 1));
+
+    gizmoSceneRef.current = gizmoScene;
+    gizmoHitObjectsRef.current = gizmoHitObjects;
+
+    const gizmoCamera = new THREE.OrthographicCamera(-1.9, 1.9, 1.9, -1.9, 0.1, 20);
+    gizmoCameraRef.current = gizmoCamera;
+
+    const gizmoRaycaster = new THREE.Raycaster();
+    const gizmoNdc = new THREE.Vector2();
+    // Reused every call — renderer.getSize() returns "logical pixels" (its
+    // own documented term for CSS pixels, independent of pixel ratio), the
+    // SAME unit setViewport/setScissor take (they multiply by pixelRatio
+    // internally). Reading size from the renderer itself, rather than a
+    // second value tracked in a ref alongside it, means there is only ever
+    // one number for "how big is this canvas" to go stale.
+    const rendererSizeVec = new THREE.Vector2();
+
+    /** Screen-space (canvas-relative CSS px) box the gizmo currently renders into, or null before the first resize. */
+    const gizmoScreenRect = () => {
+      renderer.getSize(rendererSizeVec);
+      const w = rendererSizeVec.x;
+      const h = rendererSizeVec.y;
+      if (!(w > 0) || !(h > 0)) return null;
+      return { left: w - VIEWCUBE_SIZE_PX - VIEWCUBE_MARGIN_PX, top: VIEWCUBE_MARGIN_PX, size: VIEWCUBE_SIZE_PX };
+    };
+
+    /**
+     * Resolves a pointer event to a gizmo action, or null if the event
+     * didn't land inside the gizmo's on-screen box at all (the caller should
+     * then fall through to normal entity-pick/orbit handling). A hit inside
+     * the box with nothing under the cursor (its dark background) resolves
+     * to `{ action: null }` — truthy, so the caller still claims the event
+     * instead of letting it orbit the model behind the widget, but there's
+     * nothing to actually do on release.
+     */
+    const hitTestGizmo = (e) => {
+      if (cameraModeRef.current !== "orbit" && cameraModeRef.current !== "dollhouse") return null;
+      const rect = gizmoScreenRect();
+      if (!rect) return null;
+      const canvasRect = renderer.domElement.getBoundingClientRect();
+      const px = e.clientX - canvasRect.left;
+      const py = e.clientY - canvasRect.top;
+      if (px < rect.left || px > rect.left + rect.size || py < rect.top || py > rect.top + rect.size) return null;
+      gizmoNdc.set(((px - rect.left) / rect.size) * 2 - 1, -((py - rect.top) / rect.size) * 2 + 1);
+      gizmoRaycaster.setFromCamera(gizmoNdc, gizmoCamera);
+      const hits = gizmoRaycaster.intersectObjects(gizmoHitObjectsRef.current, false);
+      if (hits.length === 0) return { action: null };
+      const hit = hits[0];
+      const tag = hit.object.userData.gizmoAction;
+      if (tag?.type === "cube") {
+        const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round();
+        return { action: { type: "face", normal } };
+      }
+      return { action: tag ?? null };
+    };
+
+    /** Applies a resolved gizmo action (a clean click, not a drag) to the main camera. */
+    const applyGizmoAction = (action) => {
+      if (!action) return;
+      const target = controls.target;
+      if (action.type === "compass") snapToCompassDirection(camera, controls, target, action.direction);
+      else if (action.type === "face") snapToFaceNormal(camera, controls, target, action.normal);
+    };
+
     // Pin the size popup above the selection: project its world anchor to
     // pane pixels every frame and move the element directly — orbiting must
     // not re-render React.
@@ -753,6 +988,32 @@ export default function DesignerViewport3D({
         controls.update();
       }
       renderer.render(threeScene, camera);
+      // ViewCube gizmo, Orbit/Dollhouse only — Walk/Fly have no on-screen
+      // widget to click while the pointer is locked. Scissored into a corner
+      // of the SAME renderer/canvas rather than a second WebGL context; the
+      // gizmo camera mirrors the main camera's VIEWING DIRECTION (not its
+      // position) from a fixed distance, so the cube shows current facing.
+      renderer.getSize(rendererSizeVec);
+      const mw = rendererSizeVec.x;
+      const mh = rendererSizeVec.y;
+      if ((mode === "orbit" || mode === "dollhouse") && mw > 0 && mh > 0) {
+        const gizmoCamera = gizmoCameraRef.current;
+        const gizmoScene = gizmoSceneRef.current;
+        if (gizmoCamera && gizmoScene) {
+          const dir = camera.position.clone().sub(controls.target).normalize();
+          gizmoCamera.position.copy(dir.multiplyScalar(VIEWCUBE_CAMERA_DISTANCE));
+          gizmoCamera.up.copy(camera.up);
+          gizmoCamera.lookAt(0, 0, 0);
+          const vx = mw - VIEWCUBE_SIZE_PX - VIEWCUBE_MARGIN_PX;
+          const vy = mh - VIEWCUBE_SIZE_PX - VIEWCUBE_MARGIN_PX; // Three.js viewport/scissor Y is measured from the BOTTOM
+          renderer.setScissorTest(true);
+          renderer.setScissor(vx, vy, VIEWCUBE_SIZE_PX, VIEWCUBE_SIZE_PX);
+          renderer.setViewport(vx, vy, VIEWCUBE_SIZE_PX, VIEWCUBE_SIZE_PX);
+          renderer.render(gizmoScene, gizmoCamera); // autoClear wipes color+depth within the scissor rect only
+          renderer.setScissorTest(false);
+          renderer.setViewport(0, 0, mw, mh);
+        }
+      }
       placePopup();
       // Report the orbit target only when it actually moves (not every frame).
       const t = controls.target;
@@ -808,13 +1069,23 @@ export default function DesignerViewport3D({
         if (!pointerLockedRef.current && e.button === 0) pointerLockControls.lock();
         return;
       }
-      // TrueView-style: grabbing the model interrupts a 360° auto-orbit.
-      // This runs before the dispatch gate on purpose — the sample viewer is
-      // read-only (no dispatch) and the toggle must still stop there.
-      if (spinRef.current) {
-        spinRef.current = false;
-        setSpin(false);
-        if (controlsRef.current) controlsRef.current.autoRotate = false;
+      // ViewCube gizmo claims any press inside its on-screen box before
+      // entity-pick/orbit ever sees it — including a miss on its background,
+      // so a click meant for the widget can never fall through and orbit the
+      // model underneath it.
+      if (e.button === 0) {
+        const gizmoHit = hitTestGizmo(e);
+        if (gizmoHit) {
+          gizmoDragRef.current = { x: e.clientX, y: e.clientY, moved: false, action: gizmoHit.action };
+          controls.enabled = false;
+          try {
+            mount.setPointerCapture(e.pointerId);
+          } catch {
+            // capture is a nicety; never fatal
+          }
+          e.stopPropagation();
+          return;
+        }
       }
       if (e.button !== 0 || !dispatchRef.current) return;
       pressAt = { x: e.clientX, y: e.clientY };
@@ -837,6 +1108,20 @@ export default function DesignerViewport3D({
     };
     const onPointerMove = (e) => {
       if (cameraModeRef.current === "walk" || cameraModeRef.current === "fly") return;
+      if (gizmoDragRef.current) {
+        const gd = gizmoDragRef.current;
+        const dx = e.clientX - gd.x;
+        const dy = e.clientY - gd.y;
+        // A small dead zone before a press counts as a drag rather than a
+        // click — a real click always jitters a pixel or two.
+        if (!gd.moved && Math.hypot(dx, dy) > 3) gd.moved = true;
+        if (gd.moved) {
+          orbitCameraByDrag(camera, controls, controls.target, dx, dy);
+          gd.x = e.clientX;
+          gd.y = e.clientY;
+        }
+        return;
+      }
       if (dragRef.current) {
         if (!castFrom(e) || !raycaster.ray.intersectPlane(dragRef.current.plane, planeHit)) return;
         const step = dragStep3D(dragRef.current.state, designRef.current, planPointFromWorld(planeHit));
@@ -864,6 +1149,19 @@ export default function DesignerViewport3D({
     };
     const onPointerUp = (e) => {
       if (cameraModeRef.current === "walk" || cameraModeRef.current === "fly") return;
+      if (gizmoDragRef.current) {
+        const gd = gizmoDragRef.current;
+        gizmoDragRef.current = null;
+        try {
+          mount.releasePointerCapture(e.pointerId);
+        } catch {
+          // already released (or never captured); nothing to undo
+        }
+        controls.enabled = true;
+        if (!gd.moved) applyGizmoAction(gd.action);
+        e.stopPropagation();
+        return;
+      }
       const press = pressAt;
       pressAt = null;
       if (endEntityDrag(e)) return;
@@ -878,6 +1176,10 @@ export default function DesignerViewport3D({
     };
     const onPointerCancel = (e) => {
       pressAt = null;
+      if (gizmoDragRef.current) {
+        gizmoDragRef.current = null;
+        controls.enabled = true;
+      }
       endEntityDrag(e);
     };
     mount.addEventListener("pointerdown", onPointerDown, true);
@@ -930,6 +1232,22 @@ export default function DesignerViewport3D({
       }
       if (rebuildTimerRef.current) clearTimeout(rebuildTimerRef.current);
       controls.dispose();
+      // ViewCube gizmo: dispose the cube's geometry/material, its edge lines,
+      // and every compass sprite's canvas texture + material — nothing here
+      // is shared with the material cache above, so it's all this scene's own.
+      gizmoScene.traverse((obj) => {
+        if (obj.isSprite) {
+          obj.material.map?.dispose();
+          obj.material.dispose();
+        } else if (obj.isLineSegments || obj.isMesh) {
+          obj.geometry?.dispose();
+          obj.material?.dispose();
+        }
+      });
+      gizmoSceneRef.current = null;
+      gizmoCameraRef.current = null;
+      gizmoHitObjectsRef.current = [];
+      gizmoDragRef.current = null;
       contentGroupRef.current = swapContentGroup(threeScene, contentGroupRef.current, null);
       // The swap released every tag sprite's cache reference; reap the now-
       // unreferenced entries so module-scoped GPU resources don't outlive the
@@ -1313,26 +1631,7 @@ export default function DesignerViewport3D({
     applyHighlight(selection, design, registryRef, highlightedRef, multiSelection);
   }, [selection, multiSelection, design]);
 
-  // TrueView-style continuous 360° orbit: tap to spin, tap again (or grab
-  // the model) to stop. OrbitControls applies autoRotate inside its update(),
-  // which the render loop already calls every frame.
-  const toggleSpin = () => {
-    const next = !spinRef.current;
-    spinRef.current = next;
-    setSpin(next);
-    const controls = controlsRef.current;
-    if (controls) {
-      controls.autoRotate = next;
-      controls.autoRotateSpeed = 1.8;
-    }
-  };
-
   const resetView = () => {
-    if (spinRef.current) {
-      spinRef.current = false;
-      setSpin(false);
-      if (controlsRef.current) controlsRef.current.autoRotate = false;
-    }
     const mode = cameraModeRef.current;
     if (mode === "dollhouse") frameDollhouseOnModel(cameraRef.current, controlsRef.current, builtRef.current);
     else if (mode === "walk" || mode === "fly") applyWalkStartPose(mode);
@@ -1350,27 +1649,33 @@ export default function DesignerViewport3D({
     camera.lookAt(pose.lookAt.x, pose.lookAt.y, pose.lookAt.z);
   };
 
-  // A camera-mode switch can land mid entity-drag (P1-B editing): the user
-  // pressed down on a wall/furniture piece, which set dragRef and disabled
-  // OrbitControls, then clicked a mode button before releasing. onPointerUp
-  // will never fire the drag's own cleanup in that case — in Walk/Fly it's
-  // guarded off entirely, and even switching straight back to Orbit doesn't
-  // reach it, since the original press/release pair is long since over.
-  // Left alone, `controls.enabled` stays false until some LATER, unrelated
-  // pointerup happens to call endEntityDrag with a stale drag object. Force
-  // it closed here instead, on every mode switch, regardless of direction.
+  // A camera-mode switch can land mid entity-drag (P1-B editing) or mid
+  // gizmo-drag (dragging the ViewCube): the user pressed down, which set
+  // dragRef/gizmoDragRef and disabled OrbitControls, then clicked a mode
+  // button (a separate DOM element the pointer capture doesn't block) before
+  // releasing. onPointerUp will never fire either drag's own cleanup in that
+  // case — in Walk/Fly it's guarded off entirely, and even switching straight
+  // back to Orbit doesn't reach it, since the original press/release pair is
+  // long since over. Left alone, `controls.enabled` stays false until some
+  // LATER, unrelated pointerup happens to call the stale drag's cleanup.
+  // Force both closed here instead, on every mode switch, regardless of
+  // direction.
   const forceEndActiveDrag = () => {
-    const drag = dragRef.current;
-    if (!drag) return;
     const mount = mountRef.current;
-    if (mount) {
-      try {
-        mount.releasePointerCapture(drag.pointerId);
-      } catch {
-        // already released (or never captured); nothing to undo
+    const drag = dragRef.current;
+    if (drag) {
+      if (mount) {
+        try {
+          mount.releasePointerCapture(drag.pointerId);
+        } catch {
+          // already released (or never captured); nothing to undo
+        }
       }
+      dragRef.current = null;
     }
-    dragRef.current = null;
+    gizmoDragRef.current = null;
+    // Idempotent either way (a no-op if nothing was dragging): always restore
+    // it, rather than only when one of the two drag refs was actually set.
     if (controlsRef.current) controlsRef.current.enabled = true;
   };
 
@@ -1387,11 +1692,6 @@ export default function DesignerViewport3D({
       resetFirstPersonInputState(moveStateRef, flyVelocityRef, sprintHeldSinceMsRef);
       const plc = pointerLockControlsRef.current;
       if (plc?.isLocked) plc.unlock();
-    }
-    if (spinRef.current) {
-      spinRef.current = false;
-      setSpin(false);
-      if (controlsRef.current) controlsRef.current.autoRotate = false;
     }
     cameraModeRef.current = mode;
     setCameraModeState(mode);
@@ -1414,7 +1714,7 @@ export default function DesignerViewport3D({
     }
   };
 
-  // Equipment tag labels: hidden by default, toggled beside the 360° button.
+  // Equipment tag labels: hidden by default, toggled from the button cluster.
   // Flips sprite visibility in place -- no scene rebuild.
   const toggleLabels = () => {
     const next = !showLabelsRef.current;
@@ -1565,30 +1865,11 @@ export default function DesignerViewport3D({
           ))}
         </div>
       </div>
-      {/* On-screen navigation cluster (TrueView / Google Earth pattern):
-          360° auto-orbit toggle, labels, record, reset view. pointer-events-none
-          on the wrapper so drags pass through everywhere except the buttons. */}
-      <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col gap-2">
-        {cameraMode === "orbit" && (
-          <button
-            type="button"
-            onClick={toggleSpin}
-            title={spin ? "Stop the 360° orbit" : "Start a 360° orbit"}
-            aria-label={spin ? "Stop 360 degree orbit" : "Start 360 degree orbit"}
-            aria-pressed={spin}
-            className={`pointer-events-auto rounded-lg p-2.5 shadow-lg transition-colors ${
-              spin
-                ? "bg-emerald-500 text-white"
-                : "bg-slate-900/80 text-slate-200 hover:bg-slate-800/90"
-            }`}
-          >
-            {/* A planet + orbit ring, not a refresh arrow — reads as "spin the model" at a glance. */}
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(-18 12 12)" />
-              <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
-            </svg>
-          </button>
-        )}
+      {/* On-screen navigation cluster: labels, record, reset view. Sits BELOW
+          the ViewCube gizmo (rendered into the canvas itself, top-right
+          corner) so the two never overlap. pointer-events-none on the
+          wrapper so drags pass through everywhere except the buttons. */}
+      <div className="pointer-events-none absolute right-3 top-[112px] z-10 flex flex-col gap-2">
         <button
           type="button"
           onClick={toggleLabels}
