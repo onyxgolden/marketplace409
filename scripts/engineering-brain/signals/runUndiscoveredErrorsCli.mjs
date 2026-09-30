@@ -38,15 +38,27 @@ function parseArgs(argv) {
   return args;
 }
 
-function loadSignals(signalsPath) {
+// A missing or malformed signals file is a collection failure, not an all-clear:
+// it must fail nonzero, never print "no undiscovered errors". Only a well-formed
+// file with zero signals is a genuine clean report.
+export function loadSignals(signalsPath) {
+  let raw;
+  try {
+    raw = readFileSync(signalsPath, "utf8");
+  } catch {
+    throw new Error(
+      `cannot read signals file: ${signalsPath} (run fetchSupabaseSignals / fetchGithubSignals first)`,
+    );
+  }
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(signalsPath, "utf8"));
+    parsed = JSON.parse(raw);
   } catch {
-    return [];
+    throw new Error(`malformed signals JSON: ${signalsPath}`);
   }
   if (Array.isArray(parsed)) return parsed;
-  return Array.isArray(parsed.signals) ? parsed.signals : [];
+  if (Array.isArray(parsed.signals)) return parsed.signals;
+  throw new Error(`malformed signals file: ${signalsPath} (expected an array or { signals: [...] })`);
 }
 
 function renderText(report) {
@@ -94,7 +106,13 @@ function main() {
     process.exit(2);
   }
 
-  const signals = loadSignals(args.signalsPath);
+  let signals;
+  try {
+    signals = loadSignals(args.signalsPath);
+  } catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exit(2);
+  }
   const report = detectUndiscoveredErrors({ signals, manifestRecords: manifest.records });
 
   if (args.json) {
@@ -104,4 +122,6 @@ function main() {
   }
 }
 
-main();
+const invokedAsScript =
+  process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`, "file://").href;
+if (invokedAsScript) main();

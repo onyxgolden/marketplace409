@@ -30,6 +30,7 @@ const WATCHED_TABLES = [
     statusColumn: "status",
     reasonColumn: "failure_reason",
     attemptedAtColumn: "last_attempted_at",
+    createdAtColumn: "created_at",
     label: "Payment receipt",
     correlationQuery: "payment receipt delivery failed",
     attemptCountColumn: "attempt_count",
@@ -40,6 +41,7 @@ const WATCHED_TABLES = [
     statusColumn: "status",
     reasonColumn: "failure_reason",
     attemptedAtColumn: "last_attempted_at",
+    createdAtColumn: "created_at",
     label: "Rent receipt",
     correlationQuery: "rent receipt delivery failed",
     attemptCountColumn: "attempt_count",
@@ -50,6 +52,7 @@ const WATCHED_TABLES = [
     statusColumn: "status",
     reasonColumn: "failure_message",
     attemptedAtColumn: "created_at",
+    createdAtColumn: "created_at",
     label: "Rental notification",
     correlationQuery: "rental notification delivery failed",
     attemptCountColumn: null,
@@ -105,6 +108,7 @@ async function fetchTableSignals(supabase, watched, stuckCutoffIso) {
     .concat(watched.attemptCountColumn ? [watched.attemptCountColumn] : [])
     .join(",");
   const signals = [];
+  let truncated = false;
 
   const { data: failed, error: failedError } = await supabase
     .from(watched.table)
@@ -113,19 +117,33 @@ async function fetchTableSignals(supabase, watched, stuckCutoffIso) {
     .order(watched.attemptedAtColumn, { ascending: false })
     .limit(MAX_ROWS_PER_TABLE);
   if (failedError) throw new Error(`${watched.table} (failed): ${failedError.message}`);
+  truncated = truncated || (failed || []).length >= MAX_ROWS_PER_TABLE;
   for (const row of failed || []) signals.push(toSignal({ watched, row, kind: "delivery_failed", severity: "error" }));
 
+  // Stuck = attempted long ago OR never attempted and queued long ago. The NULL branch
+  // matters: a row queued but never attempted has last_attempted_at NULL, and
+  // `NULL < cutoff` is never true in PostgREST — without the fallback it escapes forever.
+  const stuckFilter = buildStuckFilter(watched, stuckCutoffIso);
   const { data: stuck, error: stuckError } = await supabase
     .from(watched.table)
     .select(columns)
     .in(watched.statusColumn, STUCK_STATUSES)
-    .lt(watched.attemptedAtColumn, stuckCutoffIso)
-    .order(watched.attemptedAtColumn, { ascending: true })
+    .or(stuckFilter)
+    .order(watched.attemptedAtColumn, { ascending: true, nullsFirst: true })
     .limit(MAX_ROWS_PER_TABLE);
   if (stuckError) throw new Error(`${watched.table} (stuck): ${stuckError.message}`);
+  truncated = truncated || (stuck || []).length >= MAX_ROWS_PER_TABLE;
   for (const row of stuck || []) signals.push(toSignal({ watched, row, kind: "delivery_stuck", severity: "warning" }));
 
-  return signals;
+  return { signals, truncated };
+}
+
+// Pure: PostgREST filter matching rows stuck past the cutoff, including rows that were
+// never attempted (attemptedAt NULL) but have been queued since before the cutoff.
+export function buildStuckFilter(watched, stuckCutoffIso) {
+  const attempted = watched.attemptedAtColumn;
+  const created = watched.createdAtColumn;
+  return `${attempted}.lt.${stuckCutoffIso},and(${attempted}.is.null,${created}.lt.${stuckCutoffIso})`;
 }
 
 async function main() {
@@ -147,9 +165,12 @@ async function main() {
 
   const stuckCutoffIso = new Date(Date.now() - args.stuckAfterHours * 3600 * 1000).toISOString();
   const signals = [];
+  let truncated = false;
   try {
     for (const watched of WATCHED_TABLES) {
-      signals.push(...(await fetchTableSignals(supabase, watched, stuckCutoffIso)));
+      const result = await fetchTableSignals(supabase, watched, stuckCutoffIso);
+      signals.push(...result.signals);
+      truncated = truncated || result.truncated;
     }
   } catch (error) {
     console.error(`error: ${error.message}`);
@@ -160,10 +181,13 @@ async function main() {
     schema_version: "1.0",
     collected_at: new Date().toISOString(),
     source: "supabase",
+    truncated,
     signals,
   };
   writeFileSync(args.out, JSON.stringify(payload, null, 2));
-  console.log(`Wrote ${signals.length} signals to ${args.out}.`);
+  console.log(`Wrote ${signals.length} signals to ${args.out}${truncated ? " (truncated: a table hit the row cap)" : ""}.`);
 }
 
-main();
+const invokedAsScript =
+  process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`, "file://").href;
+if (invokedAsScript) main();
