@@ -176,6 +176,53 @@ describe("replaceIdentifierReferences", () => {
     expect(replaceIdentifierReferences("obj.getElementByID();\n", BAD, GOOD)).toBeNull();
     expect(replaceIdentifierReferences("const s = \"getElementByID\";\n", BAD, GOOD)).toBeNull();
   });
+
+  it("leaves regex literals alone but fixes the real reference (reviewer example)", () => {
+    const src = [
+      "import { getElementById } from \"./dom.mjs\";",
+      "const legacy = /getElementByID/;",
+      "const el = getElementByID(\"main\");",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("const legacy = /getElementByID/;");
+    expect(out).toContain("const el = getElementById(\"main\");");
+  });
+
+  it("skips regex bodies in expression positions: if-test, flags, escapes, classes, return", () => {
+    const src = [
+      "if (/getElementByID/.test(s)) { touch(getElementByID); }",
+      "const hit = str.replace(/getElementByID/gi, \"x\");",
+      "const re = /a\\/b[getElementByID]/;",
+      "function f() { return /getElementByID/; }",
+      "const el = getElementByID(\"x\");",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("if (/getElementByID/.test(s)) { touch(getElementById); }");
+    expect(out).toContain("const hit = str.replace(/getElementByID/gi, \"x\");");
+    expect(out).toContain("const re = /a\\/b[getElementByID]/;");
+    expect(out).toContain("function f() { return /getElementByID/; }");
+    expect(out).toContain("const el = getElementById(\"x\");");
+  });
+
+  it("still treats division as code, including chained division", () => {
+    const src = [
+      "const q = getElementByID(8) / 2;",
+      "const r = (a + b) / getElementByID;",
+      "const t = width / getElementByID / scale;",
+    ].join("\n");
+    const out = replaceIdentifierReferences(src, BAD, GOOD);
+    expect(out).toContain("const q = getElementById(8) / 2;");
+    expect(out).toContain("const r = (a + b) / getElementById;");
+    expect(out).toContain("const t = width / getElementById / scale;");
+  });
+
+  it("returns null when the only occurrences are inside regex literals", () => {
+    const src = [
+      "const legacy = /getElementByID/;",
+      "const hit = str.replace(/getElementByID/gi, \"x\");",
+    ].join("\n") + "\n";
+    expect(replaceIdentifierReferences(src, BAD, GOOD)).toBeNull();
+  });
 });
 
 describe("tryWrongIdentifier end to end", () => {
@@ -271,6 +318,26 @@ const side = getElementByID("side");
     expect(r.patch.patched).toContain("const label = \"getElementByID\";");
     expect(r.patch.patched).toContain("widget.getElementByID();");
     expect(r.patch.patched).toContain("const el = getElementById(\"main\");");
+  });
+
+  it("leaves regex literals alone end to end", () => {
+    const src = [
+      "import { getElementById } from \"./dom.mjs\";",
+      "const legacy = /getElementByID/;",
+      "const el = getElementByID(\"main\");",
+    ].join("\n") + "\n";
+    const dir = mkrepo({ "src/app.js": src });
+    const r = tryWrongIdentifier({
+      bundle: bundleFor("src/app.js"),
+      evidence: { failed_step: "eslint", error_lines: ["'getElementByID' is not defined."] },
+      repoRoot: dir,
+      deps: { grepLiteral: noGrep },
+    });
+    expect(r.noPatch).toBeFalsy();
+    expect(r.patch.repairClass).toBe(REPAIR_CLASS_WRONG_IDENTIFIER);
+    expect(r.patch.patched).toContain("const legacy = /getElementByID/;");
+    expect(r.patch.patched).toContain("const el = getElementById(\"main\");");
+    expect(r.patch.patched).not.toContain("/getElementById/;");
   });
 });
 

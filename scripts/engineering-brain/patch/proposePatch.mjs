@@ -588,17 +588,113 @@ export function applyWholeWord(content, bad, good) {
 }
 
 /**
+ * Regex literal vs division, previous-token heuristic.
+ * A `/` starts a regex literal unless the previous significant token ends an
+ * expression (identifier, number, string/template/regex, `)`, `]`, `++`/`--`,
+ * or an expression-ending keyword like `this`/`true`). `}` is ambiguous
+ * (block vs object literal) and is treated conservatively as regex-possible:
+ * genuine division after `}` almost always fails the regex-shape check below
+ * and falls back to division anyway.
+ */
+const DIVISION_END_WORDS = new Set(["this", "super", "true", "false", "null"]);
+const JS_KEYWORDS = new Set([
+  "break", "case", "catch", "class", "const", "continue", "debugger", "default",
+  "delete", "do", "else", "enum", "export", "extends", "finally", "for",
+  "function", "if", "implements", "import", "in", "instanceof", "interface",
+  "let", "new", "of", "package", "private", "protected", "public", "return",
+  "static", "switch", "throw", "try", "typeof", "var", "void", "while",
+  "with", "yield", "await", ...DIVISION_END_WORDS,
+]);
+
+function isWordStart(c) {
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === "$";
+}
+function isWordChar(c) {
+  return isWordStart(c) || (c >= "0" && c <= "9");
+}
+function isDigit(c) {
+  return c >= "0" && c <= "9";
+}
+
+/**
+ * Classify the previous significant token for the regex/division decision.
+ * prev is { t, v? } with t one of: "other" (operators/openers/start),
+ * "ident", "word" (non-expression-ending keyword), "endword", "num", "str",
+ * "close" (`)`/`]`), "rbrace" (`}`), "incdec".
+ */
+function slashStartsRegex(prev) {
+  if (!prev) return true;
+  switch (prev.t) {
+    case "other": return true;
+    case "word": return true;
+    case "rbrace": return true;
+    default: return false; // ident, endword, num, str, close, incdec -> division
+  }
+}
+
+function classifyWord(word) {
+  if (DIVISION_END_WORDS.has(word)) return { t: "endword" };
+  if (JS_KEYWORDS.has(word)) return { t: "word" };
+  return { t: "ident" };
+}
+
+/**
+ * Extent of the regex literal starting at `start` (which points at `/`),
+ * or -1 when the slash-delimited span is not a valid regex shape. Honors
+ * backslash escapes and `[...]` character classes; a newline before the
+ * closing `/` means this is not a regex (division or invalid code).
+ * Includes trailing flag characters in the extent.
+ */
+function regexLiteralExtent(source, start) {
+  const n = source.length;
+  let j = start + 1;
+  while (j < n) {
+    const c = source[j];
+    if (c === "\\") { j += 2; continue; }
+    if (c === "[") {
+      j += 1;
+      while (j < n) {
+        const d = source[j];
+        if (d === "\\") { j += 2; continue; }
+        if (d === "]") { j += 1; break; }
+        if (d === "\n" || d === "\r") return -1;
+        j += 1;
+      }
+      continue;
+    }
+    if (c === "/") {
+      j += 1;
+      while (j < n && source[j] >= "a" && source[j] <= "z") j += 1;
+      return j;
+    }
+    if (c === "\n" || c === "\r") return -1;
+    j += 1;
+  }
+  return -1;
+}
+
+/** Set the previous-token marker on the enclosing code/expr frame, if any. */
+function markPrev(stack, t) {
+  const top = stack[stack.length - 1];
+  if (top && (top.k === "code" || top.k === "expr")) top.prev = { t };
+}
+
+/**
  * Code mask for identifier-reference classification. Returns a Uint8Array the
  * length of the source: 1 for characters that are real code, 0 for characters
- * inside string literals, template-literal raw text, or comments. Template
- * `${...}` interpolations are treated as code (brace-depth tracked). Regex
- * literals are NOT distinguished from division -- a documented gap; the
- * property-name and member-access rails below still apply inside them.
+ * inside string literals, template-literal raw text, comments, or regex
+ * literals. Template `${...}` interpolations are treated as code
+ * (brace-depth tracked).
+ *
+ * Regex literals use the previous-token heuristic (see slashStartsRegex) plus
+ * a regex-shape validity check; a `/` that fails the shape check is treated
+ * as division. Residual heuristic risk errs toward skipping (fail closed: a
+ * missed proposal, never a mutated pattern).
  */
 function computeCodeMask(source) {
   const n = source.length;
   const mask = new Uint8Array(n);
-  const stack = [{ k: "code" }];
+  const stack = [{ k: "code", prev: { t: "other" } }];
   let i = 0;
   while (i < n) {
     const st = stack[stack.length - 1];
@@ -611,14 +707,50 @@ function computeCodeMask(source) {
       if (c === "'") { mask[i] = 0; i += 1; stack.push({ k: "sq" }); continue; }
       if (c === '"') { mask[i] = 0; i += 1; stack.push({ k: "dq" }); continue; }
       if (c === "`" && st.k === "code") { mask[i] = 0; i += 1; stack.push({ k: "tpl" }); continue; }
-      if (st.k === "expr") {
-        if (c === "{") st.depth += 1;
-        if (c === "}") {
-          if (st.depth === 0) { mask[i] = 0; i += 1; stack.pop(); continue; }
-          st.depth -= 1;
+      if (c === "/") {
+        // Regex literal or division. Conservative: when the previous token
+        // cannot end an expression AND the span has valid regex shape, mask
+        // the whole literal out so its body can never be mutated.
+        if (slashStartsRegex(st.prev)) {
+          const ext = regexLiteralExtent(source, i);
+          if (ext !== -1) {
+            for (let k = i; k < ext; k++) mask[k] = 0;
+            st.prev = { t: "str" };
+            i = ext;
+            continue;
+          }
         }
+        mask[i] = 1; st.prev = { t: "other" }; i += 1; continue;
       }
-      mask[i] = 1; i += 1; continue;
+      if (st.k === "expr" && (c === "{" || c === "}")) {
+        if (c === "{") { st.depth += 1; mask[i] = 1; st.prev = { t: "other" }; i += 1; continue; }
+        if (st.depth === 0) { mask[i] = 0; i += 1; stack.pop(); continue; }
+        st.depth -= 1;
+        mask[i] = 1; st.prev = { t: "rbrace" }; i += 1; continue;
+      }
+      if (isWordStart(c)) {
+        let j = i + 1;
+        while (j < n && isWordChar(source[j])) j += 1;
+        for (let k = i; k < j; k++) mask[k] = 1;
+        st.prev = classifyWord(source.slice(i, j));
+        i = j; continue;
+      }
+      if (isDigit(c) || (c === "." && isDigit(nx))) {
+        let j = i + 1;
+        while (j < n && (isWordChar(source[j]) || source[j] === ".")) j += 1;
+        for (let k = i; k < j; k++) mask[k] = 1;
+        st.prev = { t: "num" };
+        i = j; continue;
+      }
+      if (c === ")" || c === "]") { mask[i] = 1; st.prev = { t: "close" }; i += 1; continue; }
+      if (c === "}") { mask[i] = 1; st.prev = { t: "rbrace" }; i += 1; continue; }
+      if ((c === "+" && nx === "+") || (c === "-" && nx === "-")) {
+        mask[i] = 1; mask[i + 1] = 1; st.prev = { t: "incdec" }; i += 2; continue;
+      }
+      if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") {
+        mask[i] = 1; i += 1; continue; // whitespace: previous token unchanged
+      }
+      mask[i] = 1; st.prev = { t: "other" }; i += 1; continue;
     }
     if (st.k === "line") {
       mask[i] = 0;
@@ -634,14 +766,15 @@ function computeCodeMask(source) {
       const q = st.k === "sq" ? "'" : '"';
       mask[i] = 0;
       if (c === "\\") { if (i + 1 < n) mask[i + 1] = 0; i += 2; continue; }
-      if (c === q || c === "\n") stack.pop(); // newline: unterminated literal, bail to code
+      if (c === q) { i += 1; stack.pop(); markPrev(stack, "str"); continue; }
+      if (c === "\n") { i += 1; stack.pop(); markPrev(stack, "other"); continue; } // unterminated: bail
       i += 1; continue;
     }
     if (st.k === "tpl") {
       mask[i] = 0;
       if (c === "\\") { if (i + 1 < n) mask[i + 1] = 0; i += 2; continue; }
-      if (c === "`") { i += 1; stack.pop(); continue; }
-      if (c === "$" && nx === "{") { mask[i + 1] = 0; i += 2; stack.push({ k: "expr", depth: 0 }); continue; }
+      if (c === "`") { i += 1; stack.pop(); markPrev(stack, "str"); continue; }
+      if (c === "$" && nx === "{") { mask[i + 1] = 0; i += 2; stack.push({ k: "expr", depth: 0, prev: { t: "other" } }); continue; }
       i += 1; continue;
     }
   }
@@ -671,7 +804,8 @@ function nextCodeChar(source, mask, idx) {
 /**
  * Identifier-reference substitution. Replaces ONLY occurrences that are real
  * JS identifier references in code. Skips, conservatively (fail closed):
- * - occurrences inside string literals, template raw text, or comments;
+ * - occurrences inside string literals, template raw text, comments, or
+ *   regex literals;
  * - member access (`obj.name`, `obj?.name`) -- but not spread (`...name`);
  * - object-literal keys (`{ name: 1 }`) -- but not shorthand or ternaries.
  * Returns null when no safe occurrence exists. Over-skipping yields noPatch
