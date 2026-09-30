@@ -186,6 +186,7 @@ async function fetchWithAuthFallback(url, opts) {
 export async function fetchFailedJobLog({ owner, repo, runId, token, apiBase = "https://api.github.com", retryDelaysMs } = {}) {
   if (!token) throw new Error("GITHUB_TOKEN is required to fetch CI failure evidence");
   const headers = authHeaders(token);
+  console.log(`debug-auth: collector url=${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100 owner=${owner} repo=${repo} runId=${runId}`);
   const jobsRes = await fetchWithAuthFallback(
     `${apiBase}/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`,
     { headers, label: `GitHub jobs API for run ${runId}`, retryDelaysMs },
