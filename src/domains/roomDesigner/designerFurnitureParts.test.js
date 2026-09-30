@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FURNITURE_CATALOG } from "./furnitureCatalog";
 import { composedCatalogIds, furnitureParts, shade } from "./designerFurnitureParts";
+import { cornerCabinetArmIn, easyReachDoorFaceEndpoints, wallCornerCabinetArmIn } from "./furniturePlanSymbols";
 
 const dimsOf = (id) => {
   const e = FURNITURE_CATALOG.find((c) => c.id === id);
@@ -140,10 +141,23 @@ describe("designerFurnitureParts — L-shaped corner cabinets", () => {
     expect(cornerBaseDoor.rotY, "corner-base door should NOT be rotated").toBeFalsy();
   });
 
-  it("the two arms' 3D footprint matches the 2D symbol's arm formula (min(24, min(w,d)*0.66))", () => {
-    for (const id of ["cabinet-base-corner", "cabinet-wall-corner"]) {
+  // Regression for a review finding: cabinet-base-corner/cabinet-base-easy-
+  // reach and cabinet-wall-corner use DIFFERENT 2D arm formulas
+  // (cornerCabinetArmIn vs. wallCornerCabinetArmIn) — an earlier version of
+  // the 3D composer, and this very test, both used ONE formula for all
+  // three, so the wall-corner cabinet's 3D body silently didn't match its
+  // own 2D symbol. This imports the REAL production formulas rather than
+  // re-deriving them, so a future formula change can't silently desync the
+  // test the same way.
+  it("the two arms' 3D footprint matches each cabinet's OWN 2D arm formula", () => {
+    const arm = {
+      "cabinet-base-corner": cornerCabinetArmIn,
+      "cabinet-base-easy-reach": cornerCabinetArmIn,
+      "cabinet-wall-corner": wallCornerCabinetArmIn,
+    };
+    for (const [id, armFormula] of Object.entries(arm)) {
       const { widthIn: w, depthIn: d } = dimsOf(id);
-      const expectedArm = Math.min(24, Math.min(w, d) * 0.66);
+      const expectedArm = armFormula(w, d);
       const parts = furnitureParts(id, dimsOf(id));
       const bodyBoxes = parts.filter((p) => p.shape === "box" && p.color === undefined);
       const backArm = bodyBoxes.find((p) => p.w > p.d);
@@ -151,6 +165,38 @@ describe("designerFurnitureParts — L-shaped corner cabinets", () => {
       expect(backArm.d, id).toBeCloseTo(expectedArm - 1, 1); // -1 for the same 1" gap kitchenBox's own body uses
       expect(sideArm.w, id).toBeCloseTo(expectedArm - 1, 1);
     }
+  });
+
+  // Confirms cabinet-wall-corner's arm is genuinely its OWN, smaller value —
+  // not accidentally equal to the corner-base formula, which would let the
+  // test above pass for the wrong reason.
+  it("cabinet-wall-corner's arm formula actually differs from cabinet-base-corner's for the same catalog dims", () => {
+    const wallCorner = dimsOf("cabinet-wall-corner");
+    expect(wallCornerCabinetArmIn(wallCorner.widthIn, wallCorner.depthIn))
+      .not.toBeCloseTo(cornerCabinetArmIn(wallCorner.widthIn, wallCorner.depthIn), 1);
+  });
+
+  // Regression for a review finding: the angled door's 3D center/span/
+  // rotation must come from the SAME two 2D door-face endpoints
+  // easyReachBase itself draws (2D y mapped to 3D z) — an earlier version
+  // placed a plausible-looking but geometrically wrong panel (right region
+  // of the cabinet, wrong length) that this test would not have caught
+  // because it only asserted `rotY` was truthy.
+  it("cabinet-base-easy-reach's angled door matches the 2D door-face line's actual center, span and direction", () => {
+    const { widthIn: w, depthIn: d } = dimsOf("cabinet-base-easy-reach");
+    const { p1, p2 } = easyReachDoorFaceEndpoints(w, d);
+    const expectedCx = (p1.x + p2.x) / 2;
+    const expectedCz = (p1.y + p2.y) / 2; // 2D y -> 3D z
+    const expectedSpan = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const parts = furnitureParts("cabinet-base-easy-reach", dimsOf("cabinet-base-easy-reach"));
+    const door = parts.find((p) => p.color !== undefined && p.color !== "#e9e7e1");
+    expect(door.dx).toBeCloseTo(expectedCx, 5);
+    expect(door.dz).toBeCloseTo(expectedCz, 5);
+    expect(door.w).toBeCloseTo(expectedSpan, 5);
+    // A door spanning the full corner nook, not a token sliver or something
+    // wildly oversized — sanity bound, not the primary assertion above.
+    expect(door.w).toBeGreaterThan(10);
+    expect(door.w).toBeLessThan(Math.max(w, d));
   });
 });
 

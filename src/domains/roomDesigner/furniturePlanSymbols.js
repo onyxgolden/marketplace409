@@ -424,8 +424,21 @@ function lShape(w, d, arm) {
   return [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, -d / 2 + arm], [-w / 2 + arm, -d / 2 + arm], [-w / 2 + arm, d / 2], [-w / 2, d / 2]];
 }
 
+/**
+ * Arm size for cornerBase/easyReachBase's L-shape — exported so
+ * designerFurnitureParts.js's 3D composer for the same two catalog ids
+ * (cabinet-base-corner, cabinet-base-easy-reach) uses the IDENTICAL
+ * formula, not a second copy that can drift out of sync with this one.
+ * wallCornerCabinet uses a different formula (below) — the two are not
+ * interchangeable, which is exactly the mismatch a prior version of the 3D
+ * composer got wrong by assuming they were.
+ */
+export function cornerCabinetArmIn(w, d) {
+  return Math.min(24, Math.min(w, d) * 0.66);
+}
+
 function cornerBase(w, d) {
-  const arm = Math.min(24, Math.min(w, d) * 0.66);
+  const arm = cornerCabinetArmIn(w, d);
   return [
     poly(lShape(w, d, arm), "cabinet"),
     circle(-w / 2 + arm * 0.6, -d / 2 + arm * 0.6, arm * 0.45, "susan"),
@@ -433,11 +446,26 @@ function cornerBase(w, d) {
   ];
 }
 
+/**
+ * The two endpoints of easyReachBase's angled door-face line, in the same
+ * (x, y) plan coordinates the 2D symbol itself uses — exported so
+ * designerFurnitureParts.js's 3D angled door panel can derive its position,
+ * span and rotation from these SAME two points (mapping 2D y to 3D z)
+ * instead of a separately-guessed placement that can (and did) end up
+ * matching neither the correct region of the cabinet nor the correct
+ * length.
+ */
+export function easyReachDoorFaceEndpoints(w, d) {
+  const arm = cornerCabinetArmIn(w, d);
+  return { p1: { x: w / 2, y: -d / 2 + arm }, p2: { x: -w / 2 + arm, y: d / 2 } };
+}
+
 function easyReachBase(w, d) {
-  const arm = Math.min(24, Math.min(w, d) * 0.66);
+  const arm = cornerCabinetArmIn(w, d);
+  const { p1, p2 } = easyReachDoorFaceEndpoints(w, d);
   return [
     poly(lShape(w, d, arm), "cabinet"),
-    line(w / 2, -d / 2 + arm, -w / 2 + arm, d / 2, "door-face"), // angled easy-reach door
+    line(p1.x, p1.y, p2.x, p2.y, "door-face"), // angled easy-reach door
   ];
 }
 
@@ -461,8 +489,19 @@ function wallCabinet(w, d, extra = []) {
   ];
 }
 
+/**
+ * Arm size for wallCornerCabinet's L-shape — a DIFFERENT formula from
+ * cornerCabinetArmIn above (smaller cabinet, smaller arm). Exported for the
+ * same reason: designerFurnitureParts.js's 3D composer for
+ * cabinet-wall-corner must use this exact function, not accidentally reuse
+ * cornerCabinetArmIn.
+ */
+export function wallCornerCabinetArmIn(w, d) {
+  return Math.min(12, Math.min(w, d) * 0.5);
+}
+
 function wallCornerCabinet(w, d) {
-  const arm = Math.min(12, Math.min(w, d) * 0.5);
+  const arm = wallCornerCabinetArmIn(w, d);
   return [poly(lShape(w, d, arm), "wall-cabinet"), line(-w / 2 + arm, -d / 2 + arm, w / 2, -d / 2 + arm, "door-face")];
 }
 
