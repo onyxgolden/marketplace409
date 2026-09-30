@@ -316,6 +316,50 @@ export function renameRoom(design, roomId, label) {
   };
 }
 
+/**
+ * A room's custom flooring PHOTO: a user-uploaded image, tiled across the
+ * room's floor at `tileIn` inches per repeat. `floorImage` is
+ * `{ dataUrl, tileIn }` to set it, or `null`/`undefined` to clear it back
+ * to the default floor. Unknown room id is a silent no-op, matching
+ * renameRoom.
+ *
+ * Deliberately a DIFFERENT field from the existing `room.finish` (set via
+ * setRoomFinish): that one is a plain text material label ("hardwood") for
+ * construction cost estimating, unrelated to this — a visual photo-based
+ * flooring pattern for the 2D/3D display. Both can be set independently on
+ * the same room.
+ */
+export function setRoomFloorImage(design, roomId, floorImage) {
+  assertDesign(design);
+  if (!findRoom(design, roomId)) return design;
+  return {
+    ...design,
+    rooms: design.rooms.map((r) => (r.id === roomId ? { ...r, floorImage: floorImage || undefined } : r)),
+  };
+}
+
+/**
+ * A wall's custom covering, from a user-uploaded PHOTO — either tiled as a
+ * wallpaper pattern (`{ kind: "pattern", dataUrl, tileIn }`) or reduced to
+ * its own average color for a flat paint finish (`{ kind: "color", color }`,
+ * a #rrggbb hex string). `null`/`undefined` clears it back to the default
+ * wall appearance. Unknown wall id is a silent no-op, matching renameRoom.
+ *
+ * Deliberately a DIFFERENT field from the existing `wall.material` (set via
+ * setWallMaterial): that one is a plain text construction-material label
+ * ("2x4 stud") for cost estimating, unrelated to this — a visual, photo-
+ * derived covering for the 2D/3D display. Both can be set independently on
+ * the same wall.
+ */
+export function setWallCovering(design, wallId, wallCovering) {
+  assertDesign(design);
+  if (!findWall(design, wallId)) return design;
+  return {
+    ...design,
+    walls: design.walls.map((w) => (w.id === wallId ? { ...w, wallCovering: wallCovering || undefined } : w)),
+  };
+}
+
 export function deleteRoom(design, roomId) {
   assertDesign(design);
   const room = (design.rooms || []).find((r) => r.id === roomId);

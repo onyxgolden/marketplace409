@@ -31,7 +31,9 @@ import {
   serializeDesign,
   setFurnitureUnitCost,
   setRoomFinish,
+  setRoomFloorImage,
   setUnderlay,
+  setWallCovering,
   setWallMaterial,
   totalRoomAreaSqFt,
   totalWallLengthIn,
@@ -632,6 +634,81 @@ describe("designerDocument — background underlay", () => {
     d = updateUnderlay(d, { locked: true, opacity: 0.7 });
     const restored = parseDesign(serializeDesign(d));
     expect(restored.underlay).toEqual(d.underlay);
+  });
+});
+
+describe("designerDocument — room floor images and wall coverings", () => {
+  function designWithRoomAndWall() {
+    let d = createEmptyDesign("Test");
+    d = addRoomFromTemplate(d, "bedroom", { x: 0, y: 0 });
+    return d;
+  }
+  const floorImage = { dataUrl: "data:image/png;base64,Zmxvb3I=", tileIn: 24 };
+  const patternCovering = { kind: "pattern", dataUrl: "data:image/png;base64,d2FsbA==", tileIn: 12 };
+  const colorCovering = { kind: "color", color: "#8a6f4d" };
+
+  it("sets a room's floor image, independent of the existing text-label finish", () => {
+    let d = designWithRoomAndWall();
+    const roomId = d.rooms[0].id;
+    d = setRoomFinish(d, roomId, "hardwood"); // the pre-existing estimating label
+    d = setRoomFloorImage(d, roomId, floorImage);
+    const room = d.rooms.find((r) => r.id === roomId);
+    expect(room.finish).toBe("hardwood"); // unchanged by the new field
+    expect(room.floorImage).toEqual(floorImage);
+  });
+
+  it("clears a room's floor image back to the default when given null/undefined", () => {
+    let d = designWithRoomAndWall();
+    const roomId = d.rooms[0].id;
+    d = setRoomFloorImage(d, roomId, floorImage);
+    d = setRoomFloorImage(d, roomId, null);
+    expect(d.rooms.find((r) => r.id === roomId).floorImage).toBeUndefined();
+  });
+
+  it("is a silent no-op for an unknown room id", () => {
+    const d = designWithRoomAndWall();
+    expect(setRoomFloorImage(d, "not-a-real-room", floorImage)).toBe(d);
+  });
+
+  it("sets a wall's pattern covering, independent of the existing text-label material", () => {
+    let d = designWithRoomAndWall();
+    const wallId = d.walls[0].id;
+    d = setWallMaterial(d, wallId, "2x4 stud"); // the pre-existing estimating label
+    d = setWallCovering(d, wallId, patternCovering);
+    const wall = d.walls.find((w) => w.id === wallId);
+    expect(wall.material).toBe("2x4 stud"); // unchanged by the new field
+    expect(wall.wallCovering).toEqual(patternCovering);
+  });
+
+  it("sets a wall's covering as an extracted solid color instead of a pattern", () => {
+    let d = designWithRoomAndWall();
+    const wallId = d.walls[0].id;
+    d = setWallCovering(d, wallId, colorCovering);
+    expect(d.walls.find((w) => w.id === wallId).wallCovering).toEqual(colorCovering);
+  });
+
+  it("clears a wall's covering back to the default when given null/undefined", () => {
+    let d = designWithRoomAndWall();
+    const wallId = d.walls[0].id;
+    d = setWallCovering(d, wallId, patternCovering);
+    d = setWallCovering(d, wallId, null);
+    expect(d.walls.find((w) => w.id === wallId).wallCovering).toBeUndefined();
+  });
+
+  it("is a silent no-op for an unknown wall id", () => {
+    const d = designWithRoomAndWall();
+    expect(setWallCovering(d, "not-a-real-wall", patternCovering)).toBe(d);
+  });
+
+  it("both survive serialization", () => {
+    let d = designWithRoomAndWall();
+    const roomId = d.rooms[0].id;
+    const wallId = d.walls[0].id;
+    d = setRoomFloorImage(d, roomId, floorImage);
+    d = setWallCovering(d, wallId, colorCovering);
+    const restored = parseDesign(serializeDesign(d));
+    expect(restored.rooms.find((r) => r.id === roomId).floorImage).toEqual(floorImage);
+    expect(restored.walls.find((w) => w.id === wallId).wallCovering).toEqual(colorCovering);
   });
 });
 

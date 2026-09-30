@@ -93,25 +93,55 @@ export function drawFurnitureSymbol({ symbol, instance, toScreen, scale, highlig
  * Room symbol: dashed polygon + label + area.
  * ctx: { instance: {id,label,polygon}, toScreen, highlighted }
  */
-export function drawRoomSymbol({ instance, toScreen, highlighted }) {
+/**
+ * A room's uploaded flooring photo, tiled at `floorImage.tileIn` inches per
+ * repeat — an SVG <pattern> sized in SCREEN pixels (tileIn * scale), so it
+ * actually re-tiles as the user zooms, the same way the underlying plan
+ * geometry does. Returns null when there's no floor image or nothing to
+ * scale it by (never renders a zero/negative-size pattern, which SVG treats
+ * as an error and can make the whole polygon vanish).
+ */
+function roomFloorPattern(instance, scale) {
+  const floorImage = instance.floorImage;
+  if (!floorImage?.dataUrl || !(scale > 0)) return null;
+  const tilePx = (floorImage.tileIn || 24) * scale;
+  if (!(tilePx > 0)) return null;
+  return { id: `room-floor-${instance.id}`, dataUrl: floorImage.dataUrl, tilePx };
+}
+
+export function drawRoomSymbol({ instance, toScreen, scale, highlighted }) {
   const pts = instance.polygon.map(toScreen).map((p) => `${p.x},${p.y}`).join(" ");
   const c = toScreen(centroid(instance.polygon));
   const area = instance.polygon.length >= 3 ? polygonArea(instance.polygon) / 144 : 0;
+  const pattern = roomFloorPattern(instance, scale);
   return (
     <g key={instance.id}>
+      {pattern && (
+        <defs>
+          <pattern id={pattern.id} patternUnits="userSpaceOnUse" width={pattern.tilePx} height={pattern.tilePx}>
+            <image href={pattern.dataUrl} x={0} y={0} width={pattern.tilePx} height={pattern.tilePx} preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+        </defs>
+      )}
       <polygon
         points={pts}
-        fill="#3b82f6"
-        fillOpacity={0.08}
+        fill={pattern ? `url(#${pattern.id})` : "#3b82f6"}
+        fillOpacity={pattern ? 1 : 0.08}
         stroke={selectionStroke(highlighted, "#3b82f6")}
         strokeOpacity={0.6}
         strokeWidth={highlighted ? 2.5 : 1.5}
         strokeDasharray="8 5"
       />
-      <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill="#93c5fd">
+      {/* A photo's own colors make the label unreadable at a glance; give it
+          a small dark backing pill, same convention a map legend would use
+          over imagery — the plain tint background never needed this. */}
+      {pattern && (
+        <rect x={c.x - 60} y={c.y - 16} width={120} height={30} rx={6} fill="#0f172a" fillOpacity={0.72} />
+      )}
+      <text x={c.x} y={c.y} textAnchor="middle" fontSize={13} fontWeight={600} fill={pattern ? "#f1f5f9" : "#93c5fd"}>
         {instance.label}
       </text>
-      <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill="#6b7280">
+      <text x={c.x} y={c.y + 16} textAnchor="middle" fontSize={11} fill={pattern ? "#cbd5e1" : "#6b7280"}>
         {area.toFixed(0)} sq ft
       </text>
     </g>
