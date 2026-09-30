@@ -173,7 +173,11 @@ export function assembleDiagnosticContext({
     facets,
     // True when a caller-supplied failure signal re-ranked facets.implicated_code; the
     // per-entry evidence_match annotations name the tier that promoted each entry.
+    // evidence_signal_id/failed_step name WHICH collected failure did the ranking,
+    // so a later reader can trace the promotion back to its source.
     evidence_signal_applied: evidenceApplied,
+    evidence_signal_id: evidenceApplied ? evidenceSignal.signal_id || null : null,
+    evidence_failed_step: evidenceApplied ? evidenceSignal.failed_step || null : null,
     // Contradictions are promoted to top level: code disagreeing with docs/decisions is the
     // single most diagnostic signal this bundle can surface.
     contradictions: base.insufficient_evidence ? [] : base.conflicts,
