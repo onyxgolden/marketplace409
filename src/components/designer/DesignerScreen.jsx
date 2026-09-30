@@ -111,6 +111,7 @@ import {
   setDisplayUnits,
   wallLength,
 } from "@/domains/roomDesigner/designerGeometry";
+import { DOOR_HINGES, DOOR_SWINGS } from "@/domains/roomDesigner/designerHandles";
 import {
   PIPE_DIAMETERS_IN,
   PIPE_LAYERS,
@@ -2855,6 +2856,63 @@ export function RoomNameField({ room, dispatch }) {
   );
 }
 
+/**
+ * Plain-language companion to the ⇄/⇅ on-canvas door handles, for anyone
+ * who wouldn't recognize those icons. Deliberately neutral geometric
+ * wording ("Start edge" / "End edge", "Side A" / "Side B") rather than
+ * LH/RH or in/out: both values are relative to the WALL's own arbitrary
+ * drawn direction (see designerHandles.js's doorSwingOf), and reversing
+ * that drawn direction swaps start/end and the wall's normal without the
+ * physical door changing at all. This data model has no room-side/
+ * interior-side datum, so there is no true "left/right hand" or "in/out"
+ * to report — labeling it that way would assert a physical meaning the
+ * model doesn't contain.
+ *
+ * Clicking a button that's already active is a no-op; only a genuine
+ * change dispatches FLIP_DOOR — the only mutation this data model offers,
+ * always toggling between exactly the two values, so "set to X" here is
+ * "flip, only if not already X".
+ */
+export function DoorHandednessFields({ opening, dispatch }) {
+  const hinge = DOOR_HINGES.includes(opening.hinge) ? opening.hinge : "start";
+  const swing = DOOR_SWINGS.includes(opening.swing) ? opening.swing : "positive";
+  const flipIfNeeded = (part, current, target) => {
+    if (current !== target) dispatch({ type: "FLIP_DOOR", openingId: opening.id, part });
+  };
+  const toggleClass = (active) =>
+    `flex-1 px-2 py-1 text-xs ${active ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`;
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="text-xs text-gray-400">
+        Hinge edge
+        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Hinge edge">
+          <button type="button" aria-pressed={hinge === "start"} className={toggleClass(hinge === "start")}
+            onClick={() => flipIfNeeded("hinge", hinge, "start")}>
+            Start edge
+          </button>
+          <button type="button" aria-pressed={hinge === "end"} className={toggleClass(hinge === "end")}
+            onClick={() => flipIfNeeded("hinge", hinge, "end")}>
+            End edge
+          </button>
+        </div>
+      </div>
+      <div className="text-xs text-gray-400">
+        Swing side
+        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Swing side">
+          <button type="button" aria-pressed={swing === "positive"} className={toggleClass(swing === "positive")}
+            onClick={() => flipIfNeeded("swing", swing, "positive")}>
+            Side A
+          </button>
+          <button type="button" aria-pressed={swing === "negative"} className={toggleClass(swing === "negative")}
+            onClick={() => flipIfNeeded("swing", swing, "negative")}>
+            Side B
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
   const { design, selection } = state;
   if (selection.kind === "sheet") {
@@ -2946,6 +3004,10 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="w-full"
           />
         </label>
+        {opening.type === "door" && <DoorHandednessFields opening={opening} dispatch={dispatch} />}
+        {opening.type === "door" && (
+          <p className="mt-2 text-[11px] text-gray-500">Tip: or click the ⇄ / ⇅ handles next to the door on the plan. A door follows its wall&apos;s angle — draw the wall at 45° to angle the door.</p>
+        )}
       </PanelShell>
     );
   }
@@ -2977,7 +3039,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
           rotationDeg={piece.rotationDeg}
           onRotate={(rotationDeg) => dispatch({ type: "ROTATE_FURNITURE", furnitureId: piece.id, rotationDeg })}
         />
-        <p className="mt-2 text-[11px] text-gray-500">Tip: double-click the piece on the plan to rotate it too, or drag its corner handles to resize.</p>
+        <p className="mt-2 text-[11px] text-gray-500">Tip: drag the round handle above the piece to rotate it (15° steps, hold Shift for 45°), double-click to turn it, or drag its corner handles to resize.</p>
       </PanelShell>
     );
   }

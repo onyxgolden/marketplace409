@@ -45,6 +45,13 @@ import {
   sheetPlanBounds,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
+import {
+  ROTATION_SNAP_DEG,
+  angleFromPointer,
+  doorHandlePoints,
+  doorSwingFrame,
+  rotationHandlePoint,
+} from "@/domains/roomDesigner/designerHandles";
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
@@ -525,6 +532,27 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         }
       }
     }
+    // Visio-style rotation handle on the selected piece or symbol
+    const rotatable = rotatableSelection();
+    if (rotatable) {
+      const h = rotationHandlePoint(rotatable, view.scale);
+      if (Math.hypot(plan.x - h.x, plan.y - h.y) < HIT_TOLERANCE_PX / view.scale) {
+        setDrag({ kind: "rotate", target: rotatable.kind, id: rotatable.id, center: { x: rotatable.x, y: rotatable.y } });
+        return;
+      }
+    }
+    // door flip handles (checked before the opening's end resize handles)
+    const doorSel = selectedDoorFrame();
+    if (doorSel) {
+      const pts = doorHandlePoints(doorSel.frame, view.scale);
+      const tolIn = 9 / view.scale;
+      for (const [part, p] of [["swing", pts.flipSwing], ["hinge", pts.flipHinge]]) {
+        if (Math.hypot(plan.x - p.x, plan.y - p.y) < tolIn) {
+          dispatch({ type: "FLIP_DOOR", openingId: doorSel.door.id, part });
+          return;
+        }
+      }
+    }
     // corner resize handles on the selected furniture piece (centered resize)
     if (selection?.kind === "furniture") {
       const piece = design.furniture.find((f) => f.id === selection.id);
@@ -722,6 +750,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         snapRadiusIn: 9,
       });
       dispatch({ type: "MOVE_WALL_ENDPOINT", wallId: drag.wallId, end: drag.end, point, coalesce: `move-wall-endpoint:${drag.wallId}:${drag.end}` });
+      return;
+    }
+    if (drag.kind === "rotate") {
+      const rotationDeg = angleFromPointer(drag.center, plan, { snapDeg: e.shiftKey ? 45 : ROTATION_SNAP_DEG });
+      if (rotationDeg == null) return;
+      dispatch(drag.target === "furniture"
+        ? { type: "ROTATE_FURNITURE", furnitureId: drag.id, rotationDeg, coalesce: `rotate:${drag.id}` }
+        : { type: "ROTATE_SYMBOL", symbolId: drag.id, rotationDeg, coalesce: `rotate:${drag.id}` });
       return;
     }
     if (drag.kind === "move-furniture") {
@@ -1080,12 +1116,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         const s2 = toScreen(g2);
         const color = isSelected ? "#f59e0b" : o.type === "door" ? "#34d399" : "#60a5fa";
         if (o.type === "door") {
-          // swing arc: hinge at s1, quarter circle of radius = gap width,
-          // swept from the open leaf position to the closed position.
-          const hinge = s1;
-          const r = Math.max(8, Math.hypot(s2.x - s1.x, s2.y - s1.y));
-          const aOpen = Math.atan2(normal.y, normal.x);
-          const aClosed = Math.atan2(s2.y - s1.y, s2.x - s1.x);
+          // swing arc: quarter circle of radius = gap width around the
+          // stored hinge, from the open leaf to the closed position.
+          const frame = doorSwingFrame(wall, o);
+          const hinge = toScreen(frame.hinge);
+          const latch = toScreen(frame.latch);
+          const r = Math.max(8, Math.hypot(latch.x - hinge.x, latch.y - hinge.y));
+          const aOpen = Math.atan2(frame.openDir.y, frame.openDir.x);
+          const aClosed = Math.atan2(latch.y - hinge.y, latch.x - hinge.x);
           let sweep = aClosed - aOpen;
           while (sweep > Math.PI) sweep -= 2 * Math.PI;
           while (sweep < -Math.PI) sweep += 2 * Math.PI;
@@ -1095,7 +1133,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             const a = aOpen + (sweep * i) / steps;
             arc += ` L ${hinge.x + r * Math.cos(a)} ${hinge.y + r * Math.sin(a)}`;
           }
-          const leafEnd = { x: hinge.x + normal.x * r, y: hinge.y + normal.y * r };
+          const leafEnd = { x: hinge.x + frame.openDir.x * r, y: hinge.y + frame.openDir.y * r };
           return (
             <g key={o.id}>
               <line x1={s1.x} y1={s1.y} x2={s2.x} y2={s2.y} stroke="#111827" strokeWidth={thicknessPx + 2} />
@@ -1300,6 +1338,82 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <text x={end.x} y={end.y - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#38bdf8">
           {feetInchesLabel(pipeRunLengthIn(all))} · double-click or Enter to finish
         </text>
+      </g>
+    );
+  };
+
+  // Visio-style rotation handle: the selected furniture piece or symbol, as
+  // { kind, id, x, y, widthIn, depthIn, rotationDeg }, or null.
+  const rotatableSelection = () => {
+    if (selection?.kind === "furniture") {
+      const piece = design.furniture.find((f) => f.id === selection.id);
+      if (!piece) return null;
+      return { kind: "furniture", id: piece.id, x: piece.x, y: piece.y, rotationDeg: piece.rotationDeg || 0, ...pieceSize(piece) };
+    }
+    if (selection?.kind === "symbol") {
+      const inst = (design.symbols || []).find((s) => s.id === selection.id);
+      const symbol = inst && layerVisible(inst.layer) && findSymbol(inst.domain, inst.symbolId);
+      if (!symbol) return null;
+      return {
+        kind: "symbol", id: inst.id, x: inst.x, y: inst.y, rotationDeg: inst.rotationDeg || 0,
+        widthIn: inst.widthIn ?? symbol.widthIn, depthIn: inst.depthIn ?? symbol.depthIn,
+      };
+    }
+    return null;
+  };
+
+  const renderRotationHandle = () => {
+    const target = rotatableSelection();
+    if (!target) return null;
+    const h = toScreen(rotationHandlePoint(target, view.scale));
+    const rad = (target.rotationDeg * Math.PI) / 180;
+    const edge = toScreen({ x: target.x + Math.sin(rad) * (target.depthIn / 2), y: target.y - Math.cos(rad) * (target.depthIn / 2) });
+    const turning = drag?.kind === "rotate";
+    return (
+      <g key={`rotate-${target.id}`} pointerEvents="none" data-testid="rotation-handle">
+        <line x1={edge.x} y1={edge.y} x2={h.x} y2={h.y} stroke="#f59e0b" strokeWidth={1.5} />
+        <circle cx={h.x} cy={h.y} r={7} fill={turning ? "#f59e0b" : "#111827"} stroke="#f59e0b" strokeWidth={2} />
+        <path
+          d={`M ${h.x - 3.2} ${h.y - 1.5} A 3.5 3.5 0 1 0 ${h.x + 1.5} ${h.y - 3.2}`}
+          fill="none" stroke={turning ? "#111827" : "#f59e0b"} strokeWidth={1.4}
+        />
+        {turning && (
+          <text x={h.x} y={h.y - 14} textAnchor="middle" fontSize={11} fontWeight={600} fill="#fbbf24">
+            {Math.round(target.rotationDeg)}°
+          </text>
+        )}
+      </g>
+    );
+  };
+
+  // Door flip handles on the selected door: ⇅ on the other face flips the
+  // swing, ⇄ past the latch moves the hinge ("click where you want it").
+  const selectedDoorFrame = () => {
+    if (selection?.kind !== "opening") return null;
+    const door = design.openings.find((o) => o.id === selection.id && o.type === "door");
+    const wall = door && design.walls.find((w) => w.id === door.wallId);
+    const frame = wall && doorSwingFrame(wall, door);
+    return frame ? { door, frame } : null;
+  };
+
+  const renderDoorFlipHandles = () => {
+    const sel = selectedDoorFrame();
+    if (!sel) return null;
+    const pts = doorHandlePoints(sel.frame, view.scale);
+    const handle = (p, glyph, label) => {
+      const c = toScreen(p);
+      return (
+        <g key={label}>
+          <title>{label}</title>
+          <circle cx={c.x} cy={c.y} r={8} fill="#111827" stroke="#34d399" strokeWidth={1.5} />
+          <text x={c.x} y={c.y + 4} textAnchor="middle" fontSize={11} fontWeight={700} fill="#34d399">{glyph}</text>
+        </g>
+      );
+    };
+    return (
+      <g key={`door-flip-${sel.door.id}`} pointerEvents="none" data-testid="door-flip-handles">
+        {handle(pts.flipSwing, "⇅", "Flip swing (open to the other side)")}
+        {handle(pts.flipHinge, "⇄", "Flip hinge side")}
       </g>
     );
   };
@@ -1650,6 +1764,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {renderGhost()}
         {renderResizeHandles()}
         {renderOpeningResizeHandles()}
+        {renderDoorFlipHandles()}
+        {renderRotationHandle()}
         {renderCalibrationMarkers()}
         {drawPreview && (() => {
           const a = toScreen(drawPreview.a);

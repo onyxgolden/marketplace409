@@ -31,11 +31,11 @@ import { temaPrimitiveToSvg } from "./temaDrawRoutine";
 import {
   dimensionGeometry,
   feetInchesLabel,
-  offsetAlongWall,
   rotatedFootprintCorners,
   wallLength,
 } from "@/domains/roomDesigner/designerGeometry";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
+import { doorSwingFrame } from "@/domains/roomDesigner/designerHandles";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 
 const INK = "#1a1a1a";
@@ -144,11 +144,12 @@ function PrintOpenings({ design }) {
       {(design.openings || []).map((o) => {
         const wall = (design.walls || []).find((w) => w.id === o.wallId);
         if (!wall || wallLength(wall) <= 0) return null;
-        const gp1 = offsetAlongWall(wall, o.offsetIn);
-        const gp2 = offsetAlongWall(wall, o.offsetIn + o.widthIn);
-        const len = Math.hypot(gp2.x - gp1.x, gp2.y - gp1.y);
-        if (len <= 0) return null;
-        const dir = { x: (gp2.x - gp1.x) / len, y: (gp2.y - gp1.y) / len };
+        // Gap ends along the wall (plan inches).
+        const wl = wallLength(wall);
+        const dir = { x: (wall.b.x - wall.a.x) / wl, y: (wall.b.y - wall.a.y) / wl };
+        const along = (s) => ({ x: wall.a.x + dir.x * s, y: wall.a.y + dir.y * s });
+        const gp1 = along(o.offsetIn);
+        const gp2 = along(o.offsetIn + o.widthIn);
         const n = { x: -dir.y, y: dir.x };
         if (o.type === "window") {
           const off = thickness / 4;
@@ -159,12 +160,15 @@ function PrintOpenings({ design }) {
             </g>
           );
         }
-        // Door: leaf line across the gap + 90° swing arc from the hinge.
-        const arcEnd = { x: gp1.x + n.x * o.widthIn, y: gp1.y + n.y * o.widthIn };
+        // Door, same geometry as the screen (stored hinge side / swing face):
+        // closed leaf across the gap + 90° arc from the latch to the open leaf.
+        const f = doorSwingFrame(wall, o);
+        const tip = { x: f.hinge.x + f.openDir.x * o.widthIn, y: f.hinge.y + f.openDir.y * o.widthIn };
+        const sweep = f.closedDir.x * f.openDir.y - f.closedDir.y * f.openDir.x > 0 ? 1 : 0;
         return (
           <g key={o.id} stroke={INK} strokeWidth={1} fill="none">
-            <line x1={gp1.x} y1={gp1.y} x2={gp2.x} y2={gp2.y} />
-            <path d={`M ${gp2.x} ${gp2.y} A ${o.widthIn} ${o.widthIn} 0 0 1 ${arcEnd.x} ${arcEnd.y}`}
+            <line x1={f.hinge.x} y1={f.hinge.y} x2={f.latch.x} y2={f.latch.y} />
+            <path d={`M ${f.latch.x} ${f.latch.y} A ${o.widthIn} ${o.widthIn} 0 0 ${sweep} ${tip.x} ${tip.y}`}
               strokeDasharray="4 2" stroke={HAIRLINE} />
           </g>
         );
