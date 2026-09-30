@@ -1,12 +1,12 @@
 /**
- * proposePatch.mjs — Slice 3: narrow deterministic patch writer.
+ * proposePatch.mjs — Slice 3/4: narrow deterministic patch writer.
  *
  * Closes the loop evidence -> implicated code -> PROPOSED patch. The writer
  * never applies, commits, pushes, merges, or deploys; it returns a patch
  * object (or an honest noPatch) and the existing branch/PR/review machinery
  * moves it from there. No model calls, fully deterministic.
  *
- * Repair classes are tightly defined; this slice implements exactly one:
+ * Repair classes are tightly defined:
  *
  *   Class 1 "wrong-path-literal": a failure log names a path that does not
  *   exist in the repo, and exactly one brain-known path is a unique tier-1
@@ -16,6 +16,21 @@
  *   Historical case: the Capture NSIS upload path
  *   forge-capture-app/app/target/release/bundle/nsis/*.exe ->
  *   forge-capture-app/target/release/bundle/nsis/*.exe (PR #433).
+ *
+ *   Class 2 "wrong-identifier": the failure names an identifier that is not
+ *   declared (ReferenceError / no-undef / "Cannot find name"), and exactly
+ *   one declared identifier in the file is a unique close match
+ *   (levenshtein 1..2, same first character). Whole-identifier replacement.
+ *
+ *   Class 3 "wrong-config-key": the failure names an unknown key
+ *   ("Unknown compiler option 'X'", AJV "additional properties") in a
+ *   well-known JSON config (tsconfig.json, package.json), and exactly one
+ *   known key is a unique close match. Quoted-key replacement only.
+ *
+ *   Class 4 "version-pin-drift": npm reports no matching version for
+ *   pkg@bad while the committed package-lock.json resolved pkg to a
+ *   different version. The writer aligns package.json with the lockfile
+ *   (preserving the range operator), never the reverse.
  *
  * Safety rails (all enforced, noPatch when any fails):
  * - one file, one hunk, one repair class, max 20 changed lines
@@ -37,6 +52,9 @@ import { matchEvidenceTier, TIER_BASENAME_OR_SUFFIX, normalizeEvidencePath } fro
 import { extractMentionedPaths } from "../signals/collectEvidence.mjs";
 
 export const REPAIR_CLASS_WRONG_PATH_LITERAL = "wrong-path-literal";
+export const REPAIR_CLASS_WRONG_IDENTIFIER = "wrong-identifier";
+export const REPAIR_CLASS_WRONG_CONFIG_KEY = "wrong-config-key";
+export const REPAIR_CLASS_VERSION_PIN_DRIFT = "version-pin-drift";
 export const MAX_PATCH_LINES = 20;
 const HUNK_CONTEXT = 3;
 const HUNK_SPLIT_GAP = HUNK_CONTEXT * 2;
@@ -269,10 +287,10 @@ export function buildPathIndex({ repoRoot, bundle }) {
   return [...paths];
 }
 
-/** git grep for the literal; null when git is unavailable. */
-export function grepLiteralInRepo(repoRoot, literal) {
+/** git grep for the literal; extraArgs e.g. ["-w"] for whole-word. Null when git is unavailable. */
+export function grepLiteralInRepo(repoRoot, literal, extraArgs = []) {
   try {
-    const out = execFileSync("git", ["grep", "-l", "--fixed-strings", "--", literal, "--", "."], {
+    const out = execFileSync("git", ["grep", "-l", ...extraArgs, "--fixed-strings", "--", literal, "--", "."], {
       cwd: repoRoot,
       encoding: "utf8",
     });
@@ -280,6 +298,57 @@ export function grepLiteralInRepo(repoRoot, literal) {
   } catch {
     return null;
   }
+}
+
+/** Escape a literal for use inside a RegExp. */
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Classic Levenshtein edit distance (no dependency). */
+export function levenshtein(a, b) {
+  const s = String(a);
+  const t = String(b);
+  const m = s.length;
+  const n = t.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= n; j += 1) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (s[i - 1] === t[j - 1] ? 0 : 1),
+      );
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * Exactly one candidate at edit distance 1..2 with the same first character.
+ * Distance 0 is excluded (identical strings are not corrections). Zero or
+ * several -> noPatch, never a guess.
+ */
+export function uniqueCloseMatch(bad, candidates) {
+  const hits = new Set();
+  for (const c of candidates || []) {
+    if (!c || c === bad) continue;
+    const d = levenshtein(bad, c);
+    if (d >= 1 && d <= 2 && c[0] === bad[0]) hits.add(c);
+  }
+  const uniq = [...hits];
+  if (uniq.length === 0) return { matched: null, reason: "no-close-match" };
+  if (uniq.length > 1) return { matched: null, reason: "ambiguous-match", detail: uniq.sort().join(", ") };
+  return { matched: uniq[0] };
+}
+
+/** Whole-identifier RegExp: never matches inside a longer identifier. */
+export function wholeWordRegExp(name) {
+  return new RegExp(`(?<![A-Za-z0-9_$])${escapeRegExp(name)}(?![A-Za-z0-9_$])`, "g");
 }
 
 function resolveRepoPath(repoRoot, relPath) {
@@ -290,15 +359,16 @@ function resolveRepoPath(repoRoot, relPath) {
 }
 
 /**
- * proposePatch({ bundle, evidence, repoRoot, pathIndex?, deps? }) ->
+ * tryWrongPathLiteral({ bundle, evidence, repoRoot, pathIndex?, deps? }) ->
  *   { patch, explanation } | { noPatch: true, reason }
  *
- * bundle: diagnostic bundle (facets.implicated_code[].source_path, past_fixes).
+ * Class 1 attempt. bundle: diagnostic bundle
+ * (facets.implicated_code[].source_path, past_fixes).
  * evidence: { failed_step, error_lines[], mentioned_paths[] }.
  * pathIndex: override for the known-path pool (built via buildPathIndex when omitted).
- * deps: { readFile, grepLiteral } seams for hermetic tests.
+ * deps: { readFile, grepLiteral, pathExists } seams for hermetic tests.
  */
-export function proposePatch({ bundle, evidence, repoRoot, pathIndex, deps = {} }) {
+export function tryWrongPathLiteral({ bundle, evidence, repoRoot, pathIndex, deps = {} }) {
   const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
   const readFile = deps.readFile || ((abs) => fs.readFileSync(abs, "utf8"));
   const grepLiteral = deps.grepLiteral || grepLiteralInRepo;
@@ -314,7 +384,65 @@ export function proposePatch({ bundle, evidence, repoRoot, pathIndex, deps = {} 
   const evidenceText = [...mentioned, ...((evidence && evidence.error_lines) || [])].join("\n");
   if (!evidenceText.includes(badPath)) return no("bad-path-not-in-evidence");
 
-  // Candidate files: implicated code first, repo-wide literal search as fallback.
+  const loc = locateSingleHolder({
+    repoRoot,
+    bundle,
+    readFile,
+    grepLiteral,
+    contains: (content) => String(content).includes(badPath),
+    grepTerm: badPath,
+    notFoundReason: "bad-path-literal-not-found",
+    ambiguousReason: "ambiguous-literal",
+  });
+  if (loc.noPatch) return loc;
+  const { relPath, original } = loc;
+
+  const index = Array.isArray(pathIndex) ? pathIndex : buildPathIndex({ repoRoot, bundle });
+  const { matched, reason: matchReason } = findUniqueMatch(badPath, index);
+  if (!matched) return no(matchReason);
+
+  const replacement = buildReplacement(badPath, matched);
+  if (!replacement || normalizeEvidencePath(replacement) === normalizeEvidencePath(badPath)) {
+    return no("empty-replacement");
+  }
+
+  const patched = applyWrongPathLiteral(original, badPath, replacement);
+  if (patched === null) return no("bad-path-literal-not-found");
+
+  const manual = isWorkflowPath(relPath);
+  const explanation = `Replace wrong path literal '${badPath}' with '${replacement}' `
+    + `(unique tier-1 close match: ${matched}) in ${relPath}. `
+    + `Evidence: ${(evidence && evidence.failed_step) || "CI failure"} named the bad path. `
+    + (manual
+      ? "Application: manual -- apply via the GitHub web UI."
+      : "Application: direct -- safe to move through branch/PR/review.");
+  return finalizePatch({
+    relPath,
+    original,
+    patched,
+    repairClass: REPAIR_CLASS_WRONG_PATH_LITERAL,
+    evidenceRef: {
+      failed_step: (evidence && evidence.failed_step) || null,
+      badPath,
+      matchedPath: matched,
+    },
+    manual,
+    explanation,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Shared attempt machinery (Slice 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Locate the single repo file holding the bad literal. Implicated files first,
+ * repo-wide git grep as fallback. contains(content) is class-specific (plain
+ * substring for paths, whole-word for identifiers, quoted-key for config).
+ * Returns { relPath, absPath, original } or { noPatch: true, reason }.
+ */
+function locateSingleHolder({ repoRoot, bundle, readFile, grepLiteral, contains, grepTerm, notFoundReason, ambiguousReason }) {
+  const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
   const implicated = ((bundle && bundle.facets && bundle.facets.implicated_code) || [])
     .map((e) => e && e.source_path)
     .filter(Boolean);
@@ -328,77 +456,446 @@ export function proposePatch({ bundle, evidence, repoRoot, pathIndex, deps = {} 
       // Missing implicated file: skip.
     }
   }
-  let holders = [...resolved].filter(([, abs]) => {
+  const holders = [];
+  for (const [rel, abs] of resolved) {
     try {
-      return readFile(abs).includes(badPath);
+      if (contains(readFile(abs))) holders.push({ rel, abs });
     } catch {
-      return false;
+      // Unreadable implicated file: skip.
     }
-  }).map(([rel]) => rel);
-
+  }
   if (holders.length === 0) {
-    const found = grepLiteral(repoRoot, badPath);
+    const found = grepLiteral(repoRoot, grepTerm);
     if (Array.isArray(found)) {
-      holders = found
-        .map((f) => f.replace(/^\.\//, ""))
-        .filter((f) => !isExcludedPath(f));
+      for (const f of found) {
+        const rel = String(f).replace(/^\.\//, "");
+        if (isExcludedPath(rel)) continue;
+        const r = resolveRepoPath(repoRoot, rel);
+        if (r) holders.push({ rel: r.rel, abs: r.abs });
+      }
     }
   }
-  if (holders.length === 0) return no("bad-path-literal-not-found");
-  if (holders.length > 1) return no("ambiguous-literal", holders.slice().sort().join(", "));
-
-  const relPath = holders[0];
-  const absPath = resolveRepoPath(repoRoot, relPath).abs;
-
-  const index = Array.isArray(pathIndex) ? pathIndex : buildPathIndex({ repoRoot, bundle });
-  const { matched, reason: matchReason } = findUniqueMatch(badPath, index);
-  if (!matched) return no(matchReason);
-
-  const replacement = buildReplacement(badPath, matched);
-  if (!replacement || normalizeEvidencePath(replacement) === normalizeEvidencePath(badPath)) {
-    return no("empty-replacement");
-  }
-
+  if (holders.length === 0) return no(notFoundReason);
+  if (holders.length > 1) return no(ambiguousReason, holders.map((h) => h.rel).sort().join(", "));
   let original;
   try {
-    original = readFile(absPath);
+    original = readFile(holders[0].abs);
   } catch {
     return no("cannot-read-file");
   }
-  const patched = applyWrongPathLiteral(original, badPath, replacement);
-  if (patched === null) return no("bad-path-literal-not-found");
+  if (!contains(original)) return no(notFoundReason);
+  return { relPath: holders[0].rel, absPath: holders[0].abs, original };
+}
 
+/**
+ * Shared closing rails: exactly one hunk, <= MAX_PATCH_LINES changed lines,
+ * patched content must parse per extension. Builds the patch object.
+ */
+function finalizePatch({ relPath, original, patched, repairClass, evidenceRef, manual, explanation }) {
+  const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
+  if (patched === null || patched === undefined || patched === original) return no("empty-replacement");
   const hunks = diffHunks(original, patched);
   if (hunks.length !== 1) return no("multi-hunk");
   const changedLines = hunks.reduce((n, h) => n + h.changedLines, 0);
   if (changedLines > MAX_PATCH_LINES) return no("patch-too-large");
-
   const check = syntaxCheck(relPath, patched);
   if (!check.ok) return no("unparseable-patch", check.reason);
-
-  const manual = isWorkflowPath(relPath);
   const patch = {
     path: relPath,
     original,
     patched,
     hunks,
     unifiedDiff: renderUnifiedDiff(relPath, original, hunks),
-    repairClass: REPAIR_CLASS_WRONG_PATH_LITERAL,
-    evidenceRef: {
-      failed_step: (evidence && evidence.failed_step) || null,
-      badPath,
-      matchedPath: matched,
-    },
+    repairClass,
+    evidenceRef,
     application: manual ? "manual" : "direct",
     applicationReason: manual
       ? "workflow files are applied via the GitHub web UI (API token lacks workflow scope)"
       : null,
   };
-  const explanation = `Replace wrong path literal '${badPath}' with '${replacement}' `
-    + `(unique tier-1 close match: ${matched}) in ${relPath}. `
-    + `Evidence: ${patch.evidenceRef.failed_step || "CI failure"} named the bad path. `
+  return { patch, explanation };
+}
+
+/** Collapse values to a single distinct entry: { value } | { value: null, ambiguous }. */
+function singleDistinct(values) {
+  const uniq = [...new Set(values)];
+  if (uniq.length === 0) return { value: null };
+  if (uniq.length > 1) return { value: null, ambiguous: true };
+  return { value: uniq[0] };
+}
+
+// ---------------------------------------------------------------------------
+// Class 2: wrong-identifier — a typo'd identifier with one obvious correction
+// ---------------------------------------------------------------------------
+
+const BAD_IDENTIFIER_PATTERNS = [
+  /ReferenceError:\s*([A-Za-z_$][A-Za-z0-9_$]*)\s+is not defined/,
+  /Cannot find name\s+'([A-Za-z_$][A-Za-z0-9_$]*)'/,
+  /'([A-Za-z_$][A-Za-z0-9_$]*)'\s+is not defined/,
+];
+
+/** Exactly one distinct bad identifier named by the failure, else trigger absent. */
+export function extractBadIdentifier(errorLines) {
+  const found = [];
+  for (const line of errorLines || []) {
+    for (const re of BAD_IDENTIFIER_PATTERNS) {
+      const m = String(line).match(re);
+      if (m) found.push(m[1]);
+    }
+  }
+  const { value, ambiguous } = singleDistinct(found);
+  if (ambiguous) return { bad: null, ambiguous: true };
+  return { bad: value };
+}
+
+/**
+ * Declaration names visible in a JS file, via regex (not a parser — no new
+ * dependencies). Covers imports, functions, const/let/var, classes.
+ * Documented gaps: destructured names, function params, object properties.
+ */
+export function extractDeclaredIdentifiers(content) {
+  const names = new Set();
+  const add = (n) => {
+    if (n && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(n)) names.add(n);
+  };
+  const text = String(content);
+  const grab = (re) => {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text))) add(m[1]);
+  };
+  grab(/import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from/g);
+  grab(/import\s*\*\s*as\s+([A-Za-z_$][A-Za-z0-9_$]*)/g);
+  grab(/(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g);
+  grab(/(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=/g);
+  grab(/class\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s|{|$)/g);
+  let bm;
+  const braceRe = /import\s*\{([^}]*)\}/g;
+  while ((bm = braceRe.exec(text))) {
+    for (const part of bm[1].split(",")) {
+      const bits = part.trim().split(/\s+as\s+/);
+      add(bits[bits.length - 1].trim());
+    }
+  }
+  return [...names];
+}
+
+/** Whole-identifier substitution; null when the bad name never occurs standalone. */
+export function applyWholeWord(content, bad, good) {
+  const text = String(content);
+  if (!wholeWordRegExp(bad).test(text)) return null;
+  return text.replace(wholeWordRegExp(bad), good);
+}
+
+export function tryWrongIdentifier({ bundle, evidence, repoRoot, deps = {} }) {
+  const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
+  const readFile = deps.readFile || ((abs) => fs.readFileSync(abs, "utf8"));
+  const grepLiteral = deps.grepLiteral || ((root, lit) => grepLiteralInRepo(root, lit, ["-w"]));
+
+  const { bad, ambiguous } = extractBadIdentifier((evidence && evidence.error_lines) || []);
+  if (ambiguous) return no("ambiguous-identifier-trigger");
+  if (!bad) return no("trigger-absent");
+
+  const loc = locateSingleHolder({
+    repoRoot,
+    bundle,
+    readFile,
+    grepLiteral,
+    contains: (content) => wholeWordRegExp(bad).test(String(content)),
+    grepTerm: bad,
+    notFoundReason: "bad-identifier-not-found",
+    ambiguousReason: "ambiguous-identifier",
+  });
+  if (loc.noPatch) return loc;
+  const { relPath, original } = loc;
+
+  const declared = extractDeclaredIdentifiers(original);
+  if (declared.includes(bad)) return no("identifier-already-declared");
+  const { matched, reason, detail } = uniqueCloseMatch(bad, declared);
+  if (!matched) return no(reason === "ambiguous-match" ? "ambiguous-identifier-match" : reason, detail);
+
+  const patched = applyWholeWord(original, bad, matched);
+  if (patched === null) return no("bad-identifier-not-found");
+
+  const manual = isWorkflowPath(relPath);
+  const explanation = `Replace wrong identifier '${bad}' with '${matched}' `
+    + `(unique close declaration in ${relPath}). `
+    + `Evidence: ${(evidence && evidence.failed_step) || "CI failure"} reported '${bad}' as not defined. `
     + (manual
       ? "Application: manual -- apply via the GitHub web UI."
       : "Application: direct -- safe to move through branch/PR/review.");
-  return { patch, explanation };
+  return finalizePatch({
+    relPath,
+    original,
+    patched,
+    repairClass: REPAIR_CLASS_WRONG_IDENTIFIER,
+    evidenceRef: {
+      failed_step: (evidence && evidence.failed_step) || null,
+      badIdentifier: bad,
+      matchedIdentifier: matched,
+    },
+    manual,
+    explanation,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Class 3: wrong-config-key — a misspelled key in a well-known JSON config
+// ---------------------------------------------------------------------------
+
+/**
+ * Known keys per well-known config basename. Only these files are eligible;
+ * anything else -> trigger absent for this class. scripts.* keys and other
+ * user-defined maps are intentionally not listed (never guess those).
+ */
+export const KNOWN_CONFIG_KEYS = {
+  "tsconfig.json": [
+    // top-level
+    "compilerOptions", "files", "include", "exclude", "extends", "references",
+    "typeAcquisition", "watchOptions",
+    // compilerOptions (curated common set)
+    "target", "module", "moduleResolution", "lib", "outDir", "rootDir",
+    "strict", "strictNullChecks", "strictFunctionTypes",
+    "strictBindCallApply", "strictPropertyInitialization",
+    "noImplicitAny", "noImplicitThis", "alwaysStrict",
+    "esModuleInterop", "allowSyntheticDefaultImports", "skipLibCheck",
+    "forceConsistentCasingInFileNames", "resolveJsonModule",
+    "declaration", "declarationMap", "sourceMap", "inlineSourceMap",
+    "noEmit", "emitDeclarationOnly", "downlevelIteration",
+    "experimentalDecorators", "emitDecoratorMetadata",
+    "jsx", "allowJs", "checkJs", "types", "typeRoots",
+    "baseUrl", "paths", "incremental", "composite",
+    "noUnusedLocals", "noUnusedParameters", "noFallthroughCasesInSwitch",
+    "isolatedModules", "verbatimModuleSyntax", "erasableSyntaxOnly",
+  ],
+  "package.json": [
+    "name", "version", "description", "keywords", "homepage", "bugs",
+    "license", "author", "contributors", "funding", "files", "main",
+    "browser", "bin", "man", "directories", "repository", "scripts",
+    "config", "dependencies", "devDependencies", "peerDependencies",
+    "bundleDependencies", "optionalDependencies", "engines", "os", "cpu",
+    "private", "publishConfig", "type", "exports", "imports", "workspaces",
+  ],
+};
+
+const BAD_CONFIG_KEY_PATTERNS = [
+  /Unknown compiler option\s+'([^']+)'/,
+  /unknown option\s+'([^']+)'/i,
+  /must NOT have additional propert(?:y|ies)\s+'([^']+)'/,
+];
+
+/** Exactly one distinct bad config key named by the failure, else trigger absent. */
+export function extractBadConfigKey(errorLines) {
+  const found = [];
+  for (const line of errorLines || []) {
+    for (const re of BAD_CONFIG_KEY_PATTERNS) {
+      const m = String(line).match(re);
+      if (m) found.push(m[1]);
+    }
+  }
+  const { value, ambiguous } = singleDistinct(found);
+  if (ambiguous) return { bad: null, ambiguous: true };
+  return { bad: value };
+}
+
+/** Replace the double-quoted key only; values are untouched. Null when absent. */
+export function applyQuotedKey(content, badKey, goodKey) {
+  const text = String(content);
+  const probe = new RegExp(`"${escapeRegExp(badKey)}"(\\s*:)`, "g");
+  if (!probe.test(text)) return null;
+  return text.replace(new RegExp(`"${escapeRegExp(badKey)}"(\\s*:)`, "g"), `"${goodKey}"$1`);
+}
+
+export function tryWrongConfigKey({ bundle, evidence, repoRoot, deps = {} }) {
+  const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
+  const readFile = deps.readFile || ((abs) => fs.readFileSync(abs, "utf8"));
+  const grepLiteral = deps.grepLiteral || ((root, lit) => grepLiteralInRepo(root, lit));
+
+  const { bad, ambiguous } = extractBadConfigKey((evidence && evidence.error_lines) || []);
+  if (ambiguous) return no("ambiguous-config-key-trigger");
+  if (!bad) return no("trigger-absent");
+
+  const loc = locateSingleHolder({
+    repoRoot,
+    bundle,
+    readFile,
+    grepLiteral,
+    contains: (content) => new RegExp(`"${escapeRegExp(bad)}"(\\s*:)`).test(String(content)),
+    grepTerm: `"${bad}"`,
+    notFoundReason: "bad-config-key-not-found",
+    ambiguousReason: "ambiguous-config-key",
+  });
+  if (loc.noPatch) return loc;
+  const { relPath, original } = loc;
+
+  const base = String(relPath).split("/").pop();
+  const known = KNOWN_CONFIG_KEYS[base];
+  if (!known) return no("unknown-config-file");
+  const { matched, reason, detail } = uniqueCloseMatch(bad, known);
+  if (!matched) return no(reason === "ambiguous-match" ? "ambiguous-config-key-match" : reason, detail);
+
+  const patched = applyQuotedKey(original, bad, matched);
+  if (patched === null) return no("bad-config-key-not-found");
+
+  const manual = isWorkflowPath(relPath);
+  const explanation = `Replace wrong config key '${bad}' with '${matched}' in ${relPath}. `
+    + `Evidence: ${(evidence && evidence.failed_step) || "CI failure"} reported the key as unknown. `
+    + (manual
+      ? "Application: manual -- apply via the GitHub web UI."
+      : "Application: direct -- safe to move through branch/PR/review.");
+  return finalizePatch({
+    relPath,
+    original,
+    patched,
+    repairClass: REPAIR_CLASS_WRONG_CONFIG_KEY,
+    evidenceRef: {
+      failed_step: (evidence && evidence.failed_step) || null,
+      badKey: bad,
+      matchedKey: matched,
+    },
+    manual,
+    explanation,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Class 4: version-pin-drift — package.json pins an unresolvable version while
+// the committed package-lock.json already resolved the package elsewhere.
+// Conservative direction: align the manifest with the lockfile, never reverse.
+// ---------------------------------------------------------------------------
+
+const BAD_VERSION_PIN_PATTERNS = [
+  /No matching version found for\s+([A-Za-z0-9_@./-]+?)@([A-Za-z0-9_.-]*[A-Za-z0-9_])/,
+];
+
+/** Exactly one distinct (package, version) pair, else trigger absent. */
+export function extractBadVersionPin(errorLines) {
+  const found = [];
+  for (const line of errorLines || []) {
+    for (const re of BAD_VERSION_PIN_PATTERNS) {
+      const m = String(line).match(re);
+      if (m) found.push({ pkg: m[1], version: m[2] });
+    }
+  }
+  const keys = found.map((f) => `${f.pkg}@${f.version}`);
+  const { value, ambiguous } = singleDistinct(keys);
+  if (ambiguous) return { bad: null, ambiguous: true };
+  if (!value) return { bad: null };
+  return { bad: found[keys.indexOf(value)] };
+}
+
+/**
+ * The committed lockfile's resolved version for a package. Checks the modern
+ * `packages["node_modules/pkg"]` map and the legacy `dependencies` map.
+ * Null when the lockfile is missing/unparseable or the package is absent.
+ */
+export function readLockfileVersion(repoRoot, pkg, readText) {
+  const read = readText || ((abs) => fs.readFileSync(abs, "utf8"));
+  let lock;
+  try {
+    lock = JSON.parse(read(path.join(path.resolve(repoRoot), "package-lock.json")));
+  } catch {
+    return null;
+  }
+  const modern = lock && lock.packages && lock.packages[`node_modules/${pkg}`];
+  if (modern && modern.version) return String(modern.version);
+  const legacy = lock && lock.dependencies && lock.dependencies[pkg];
+  if (legacy && legacy.version) return String(legacy.version);
+  return null;
+}
+
+/** Split "^1.2.3" into { operator: "^", version: "1.2.3" }; null when unparseable. */
+export function splitVersionSpec(spec) {
+  const m = String(spec).trim().match(/^([\^~<>=]+)?\s*([A-Za-z0-9_.-]+)$/);
+  if (!m) return null;
+  return { operator: m[1] || "", version: m[2] };
+}
+
+/**
+ * Replace pkg's version value in package.json, preserving the original range
+ * operator ("^9.9.9" -> "^1.3.0"). Null unless exactly one declaration exists
+ * and its version part equals badVersion (evidence must describe the live file).
+ */
+export function applyVersionPin(content, pkg, badVersion, lockedVersion) {
+  const text = String(content);
+  const re = new RegExp(`"${escapeRegExp(pkg)}"\\s*:\\s*"([^"]*)"`, "g");
+  const hits = [];
+  let m;
+  while ((m = re.exec(text))) hits.push({ index: m.index, raw: m[0], spec: m[1] });
+  if (hits.length !== 1) return null;
+  const split = splitVersionSpec(hits[0].spec);
+  if (!split || split.version !== badVersion) return null;
+  const next = `${split.operator}${lockedVersion}`;
+  if (next === hits[0].spec) return null;
+  const rebuilt = hits[0].raw.replace(`"${hits[0].spec}"`, `"${next}"`);
+  return text.slice(0, hits[0].index) + rebuilt + text.slice(hits[0].index + hits[0].raw.length);
+}
+
+export function tryVersionPinDrift({ evidence, repoRoot, deps = {} }) {
+  const no = (reason, detail) => ({ noPatch: true, reason, ...(detail ? { detail } : {}) });
+  const readFile = deps.readFile || ((abs) => fs.readFileSync(abs, "utf8"));
+
+  const { bad, ambiguous } = extractBadVersionPin((evidence && evidence.error_lines) || []);
+  if (ambiguous) return no("ambiguous-version-pin-trigger");
+  if (!bad) return no("trigger-absent");
+
+  const manifestRel = "package.json";
+  const manifestAbs = path.join(path.resolve(repoRoot), manifestRel);
+  let original;
+  try {
+    original = readFile(manifestAbs);
+  } catch {
+    return no("no-package-manifest");
+  }
+
+  const locked = readLockfileVersion(repoRoot, bad.pkg, readFile);
+  if (!locked) return no("package-not-in-lockfile");
+  if (locked === bad.version) return no("lockfile-agrees-with-pin");
+
+  const patched = applyVersionPin(original, bad.pkg, bad.version, locked);
+  if (patched === null) return no("pin-not-found-or-ambiguous");
+
+  const manual = isWorkflowPath(manifestRel);
+  const explanation = `Align ${bad.pkg} pin from '${bad.version}' to '${locked}' in package.json `
+    + "(committed package-lock.json resolved version). "
+    + `Evidence: ${(evidence && evidence.failed_step) || "CI failure"} reported no matching version `
+    + `for ${bad.pkg}@${bad.version}. `
+    + "Application: direct -- safe to move through branch/PR/review.";
+  return finalizePatch({
+    relPath: manifestRel,
+    original,
+    patched,
+    repairClass: REPAIR_CLASS_VERSION_PIN_DRIFT,
+    evidenceRef: {
+      failed_step: (evidence && evidence.failed_step) || null,
+      package: bad.pkg,
+      badVersion: bad.version,
+      lockedVersion: locked,
+    },
+    manual,
+    explanation,
+  });
+}
+
+/**
+ * proposePatch({ bundle, evidence, repoRoot, pathIndex?, deps? }) ->
+ *   { patch, explanation } | { noPatch: true, reason }
+ *
+ * Tries each repair class in order; the first class that yields a patch wins.
+ * Classes are independent and fail-closed: a noPatch from one class never
+ * blocks another class whose own trigger fired. When nothing fires, the first
+ * non-trigger reason is returned (else "no-repair-trigger").
+ */
+export function proposePatch({ bundle, evidence, repoRoot, pathIndex, deps = {} }) {
+  const args = { bundle, evidence, repoRoot, pathIndex, deps };
+  const attempts = [tryWrongPathLiteral, tryWrongIdentifier, tryWrongConfigKey, tryVersionPinDrift];
+  // Every class names its own "my trigger did not fire" reason.
+  const TRIGGER_ABSENT_REASONS = new Set(["trigger-absent", "no-mentioned-paths"]);
+  let firstReal = null;
+  for (const attempt of attempts) {
+    const r = attempt(args);
+    if (!r.noPatch) return r;
+    if (!firstReal && !TRIGGER_ABSENT_REASONS.has(r.reason)) firstReal = r;
+  }
+  return firstReal || { noPatch: true, reason: "no-repair-trigger" };
 }
