@@ -111,6 +111,7 @@ import {
   setDisplayUnits,
   wallLength,
 } from "@/domains/roomDesigner/designerGeometry";
+import { DOOR_HINGES, DOOR_SWINGS } from "@/domains/roomDesigner/designerHandles";
 import {
   PIPE_DIAMETERS_IN,
   PIPE_LAYERS,
@@ -2855,6 +2856,61 @@ export function RoomNameField({ room, dispatch }) {
   );
 }
 
+/**
+ * Plain-language companion to the ⇄/⇅ on-canvas door handles, for anyone
+ * who wouldn't recognize those icons: "Left-handed" / "Right-handed" for
+ * which edge the hinge is on, "Opens in" / "Opens out" for which face it
+ * swings to. Both are relative to the WALL's own drawn direction (see
+ * designerHandles.js's doorSwingOf) — not a claim of matching the door-
+ * hardware industry's own LH/RH convention, which additionally depends on
+ * which side of the wall is "inside" a room, something this data model
+ * doesn't track.
+ *
+ * Clicking a button that's already active is a no-op; only a genuine
+ * change dispatches FLIP_DOOR — the only mutation this data model offers,
+ * always toggling between exactly the two values, so "set to X" here is
+ * "flip, only if not already X".
+ */
+export function DoorHandednessFields({ opening, dispatch }) {
+  const hinge = DOOR_HINGES.includes(opening.hinge) ? opening.hinge : "start";
+  const swing = DOOR_SWINGS.includes(opening.swing) ? opening.swing : "positive";
+  const flipIfNeeded = (part, current, target) => {
+    if (current !== target) dispatch({ type: "FLIP_DOOR", openingId: opening.id, part });
+  };
+  const toggleClass = (active) =>
+    `flex-1 px-2 py-1 text-xs ${active ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`;
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="text-xs text-gray-400">
+        Hinge side
+        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Hinge side">
+          <button type="button" aria-pressed={hinge === "start"} className={toggleClass(hinge === "start")}
+            onClick={() => flipIfNeeded("hinge", hinge, "start")}>
+            Left-handed
+          </button>
+          <button type="button" aria-pressed={hinge === "end"} className={toggleClass(hinge === "end")}
+            onClick={() => flipIfNeeded("hinge", hinge, "end")}>
+            Right-handed
+          </button>
+        </div>
+      </div>
+      <div className="text-xs text-gray-400">
+        Swing direction
+        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Swing direction">
+          <button type="button" aria-pressed={swing === "positive"} className={toggleClass(swing === "positive")}
+            onClick={() => flipIfNeeded("swing", swing, "positive")}>
+            Opens in
+          </button>
+          <button type="button" aria-pressed={swing === "negative"} className={toggleClass(swing === "negative")}
+            onClick={() => flipIfNeeded("swing", swing, "negative")}>
+            Opens out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
   const { design, selection } = state;
   if (selection.kind === "sheet") {
@@ -2946,18 +3002,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="w-full"
           />
         </label>
-        {opening.type === "door" && (
-          <div className="mt-2 flex gap-2">
-            <button type="button" onClick={() => dispatch({ type: "FLIP_DOOR", openingId: opening.id, part: "hinge" })}
-              className="rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700">
-              ⇄ Flip hinge
-            </button>
-            <button type="button" onClick={() => dispatch({ type: "FLIP_DOOR", openingId: opening.id, part: "swing" })}
-              className="rounded bg-gray-800 px-2 py-1 text-xs text-white hover:bg-gray-700">
-              ⇅ Flip swing
-            </button>
-          </div>
-        )}
+        {opening.type === "door" && <DoorHandednessFields opening={opening} dispatch={dispatch} />}
         {opening.type === "door" && (
           <p className="mt-2 text-[11px] text-gray-500">Tip: or click the ⇄ / ⇅ handles next to the door on the plan. A door follows its wall&apos;s angle — draw the wall at 45° to angle the door.</p>
         )}
