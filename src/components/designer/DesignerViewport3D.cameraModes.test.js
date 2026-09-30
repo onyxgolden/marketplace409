@@ -10,6 +10,9 @@ import {
   computeFlyStep,
   DOLLHOUSE_POLAR_RANGE,
   frameDollhouseOnModel,
+  SPRINT_MAX_MULTIPLIER,
+  SPRINT_RAMP_SECONDS,
+  sprintMultiplier,
   walkStartPose,
   WALK_EYE_HEIGHT_IN,
 } from "./DesignerViewport3D";
@@ -129,5 +132,27 @@ describe("computeFlyStep", () => {
     expect(() => computeFlyStep(undefined, undefined, 0.1)).not.toThrow();
     const step = computeFlyStep(null, null, 0.1);
     expect(step.velocity).toEqual({ forward: 0, right: 0, up: 0 });
+  });
+});
+
+describe("sprintMultiplier", () => {
+  it("is 1x (no sprint) with no Space hold", () => {
+    expect(sprintMultiplier(0)).toBe(1);
+    expect(sprintMultiplier(-1)).toBe(1);
+  });
+
+  it("ramps linearly partway through the ramp window", () => {
+    const half = sprintMultiplier(SPRINT_RAMP_SECONDS / 2);
+    expect(half).toBeGreaterThan(1);
+    expect(half).toBeLessThan(SPRINT_MAX_MULTIPLIER);
+    expect(half).toBeCloseTo(1 + (SPRINT_MAX_MULTIPLIER - 1) / 2);
+  });
+
+  it("reaches at least the max multiplier at exactly the ramp window", () => {
+    expect(sprintMultiplier(SPRINT_RAMP_SECONDS)).toBeCloseTo(SPRINT_MAX_MULTIPLIER);
+  });
+
+  it("caps at the max multiplier — holding longer never exceeds it", () => {
+    expect(sprintMultiplier(SPRINT_RAMP_SECONDS * 10)).toBeCloseTo(SPRINT_MAX_MULTIPLIER);
   });
 });

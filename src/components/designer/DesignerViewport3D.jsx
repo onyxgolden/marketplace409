@@ -206,6 +206,25 @@ export function computeFlyStep(velocity, moveState, delta, options = {}) {
   };
 }
 
+/** Seconds of continuous Space-hold to reach the sprint speed cap. */
+export const SPRINT_RAMP_SECONDS = 3;
+/** Sprint multiplier at (and beyond) the ramp cap — "at least 3x" per Jason's request. */
+export const SPRINT_MAX_MULTIPLIER = 3;
+
+/**
+ * Space-bar sprint in Walk/Fly: holding Space ramps movement speed linearly
+ * from 1x up to SPRINT_MAX_MULTIPLIER over SPRINT_RAMP_SECONDS, then holds
+ * at the cap for as long as it's held. Releasing Space (tracked by the
+ * caller resetting its own held-since timestamp) drops it back to 1x
+ * immediately — no decel ramp, so the next sprint always starts from a
+ * clean full 3 seconds, not wherever the last one left off.
+ */
+export function sprintMultiplier(heldForSeconds) {
+  if (!(heldForSeconds > 0)) return 1;
+  const t = Math.min(heldForSeconds / SPRINT_RAMP_SECONDS, 1);
+  return 1 + t * (SPRINT_MAX_MULTIPLIER - 1);
+}
+
 /**
  * Floating tag labels (P-101, E-102, …) above equipment so the 3D reads like
  * a plot plan. Canvas textures are cached per unique tag at module scope and
@@ -486,6 +505,7 @@ export default function DesignerViewport3D({
   const pointerLockedRef = useRef(false);
   const moveStateRef = useRef({ forward: false, backward: false, left: false, right: false, up: false, down: false });
   const flyVelocityRef = useRef({ forward: 0, right: 0, up: 0 });
+  const sprintHeldSinceMsRef = useRef(null); // performance.now() timestamp Space was last pressed, or null while released
   const lastFrameTimeRef = useRef(0);
   // { state, plane, pointerId } while an entity drag (P1-B editing) is in
   // progress; a ref (not a plain closure var) specifically so setCameraMode
@@ -594,8 +614,18 @@ export default function DesignerViewport3D({
       else if (code === "KeyS" || code === "ArrowDown") move.backward = value;
       else if (code === "KeyA" || code === "ArrowLeft") move.left = value;
       else if (code === "KeyD" || code === "ArrowRight") move.right = value;
-      else if (code === "Space") move.up = value;
-      else if (code === "ShiftLeft" || code === "ShiftRight") move.down = value;
+      else if (code === "Space") {
+        move.up = value;
+        // Sprint ramp start time: only set on the true false->true edge, not
+        // on every auto-repeated keydown the browser fires while a key is
+        // held — otherwise the ramp would restart from 0 every ~30ms and
+        // never actually reach speed.
+        if (value) {
+          if (sprintHeldSinceMsRef.current == null) sprintHeldSinceMsRef.current = performance.now();
+        } else {
+          sprintHeldSinceMsRef.current = null;
+        }
+      } else if (code === "ShiftLeft" || code === "ShiftRight") move.down = value;
       else return false;
       return true;
     };
@@ -603,13 +633,28 @@ export default function DesignerViewport3D({
       const mode = cameraModeRef.current;
       if ((mode !== "walk" && mode !== "fly") || !pointerLockedRef.current) return;
       if (isTypingTarget(document.activeElement)) return;
-      if (setMoveKey(e.code, true)) e.preventDefault();
+      if (setMoveKey(e.code, true)) {
+        e.preventDefault();
+        // Capture phase + stopPropagation: movement keys must win outright
+        // over any other page-level shortcut while Walk/Fly is active and
+        // locked — e.g. the 2D plan's own arrow-key selection-nudge handler,
+        // which otherwise sits on the same window/keydown and would
+        // otherwise get a look at (and could consume) the same event first.
+        e.stopPropagation();
+      }
     };
     const onKeyUp = (e) => {
-      setMoveKey(e.code, false);
+      // Always clears moveState (never gated on mode/lock) so a key that was
+      // held while switching away from Walk/Fly can't leave it stuck
+      // "pressed" if the mode is re-entered later. Only claims the event
+      // (stopPropagation) when Walk/Fly is what actually would have consumed
+      // it, so an arrow-key release in Orbit/2D never gets swallowed.
+      const claimed = setMoveKey(e.code, false);
+      const mode = cameraModeRef.current;
+      if (claimed && (mode === "walk" || mode === "fly")) e.stopPropagation();
     };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
 
     threeScene.add(new THREE.HemisphereLight(0xbdd5f2, 0x8a7f6a, 0.5));
 
@@ -664,8 +709,17 @@ export default function DesignerViewport3D({
       const mode = cameraModeRef.current;
       if (mode === "walk" || mode === "fly") {
         if (pointerLockedRef.current) {
+          // Space-bar sprint: ramps 1x -> SPRINT_MAX_MULTIPLIER over
+          // SPRINT_RAMP_SECONDS of continuous hold, in both Walk and Fly —
+          // Space's other role (ascend in Fly; a no-op in Walk, which zeroes
+          // vertical velocity outright) is unaffected, so holding Space in
+          // Fly both lifts you and sprints your horizontal motion.
+          const heldForSeconds = sprintHeldSinceMsRef.current != null
+            ? (now - sprintHeldSinceMsRef.current) / 1000
+            : 0;
+          const speedMultiplier = sprintMultiplier(heldForSeconds);
           const step = computeFlyStep(flyVelocityRef.current, moveStateRef.current, delta, {
-            speed: mode === "fly" ? FLY_SPEED_IN_PER_S : WALK_SPEED_IN_PER_S,
+            speed: (mode === "fly" ? FLY_SPEED_IN_PER_S : WALK_SPEED_IN_PER_S) * speedMultiplier,
             verticalLock: mode === "walk",
           });
           flyVelocityRef.current = step.velocity;
@@ -835,8 +889,8 @@ export default function DesignerViewport3D({
       mount.removeEventListener("pointermove", onPointerMove);
       mount.removeEventListener("pointerup", onPointerUp, true);
       mount.removeEventListener("pointercancel", onPointerCancel, true);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
       pointerLockControls.removeEventListener("lock", onPointerLockChange);
       pointerLockControls.removeEventListener("unlock", onPointerLockChange);
       if (pointerLockControls.isLocked) pointerLockControls.unlock();
@@ -1311,6 +1365,7 @@ export default function DesignerViewport3D({
     if (wasFirstPerson) {
       moveStateRef.current = { forward: false, backward: false, left: false, right: false, up: false, down: false };
       flyVelocityRef.current = { forward: 0, right: 0, up: 0 };
+      sprintHeldSinceMsRef.current = null;
       const plc = pointerLockControlsRef.current;
       if (plc?.isLocked) plc.unlock();
     }
