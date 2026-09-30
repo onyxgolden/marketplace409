@@ -57,9 +57,11 @@ import {
   setPersonManager,
   setPipeFields,
   setRoomFinish,
+  setRoomFloorImage,
   setSymbolLayer,
   setSymbolTag,
   setUnderlay,
+  setWallCovering,
   setWallMaterial,
   updateDesignSettings,
   updatePerson,
@@ -680,6 +682,16 @@ export function designerReducer(state, action) {
     }
     case "SET_ROOM_FINISH":
       return touch(state, setRoomFinish(state.design, action.roomId, action.finish));
+    // A user-uploaded flooring PHOTO (tiled pattern) — distinct from
+    // SET_ROOM_FINISH's plain text estimating label above; see
+    // setRoomFloorImage's own doc comment.
+    case "SET_ROOM_FLOOR_IMAGE":
+      return touch(state, setRoomFloorImage(state.design, action.roomId, action.floorImage));
+    // A user-uploaded wall covering PHOTO (pattern or extracted color) —
+    // distinct from SET_WALL_MATERIAL's plain text estimating label above;
+    // see setWallCovering's own doc comment.
+    case "SET_WALL_COVERING":
+      return touch(state, setWallCovering(state.design, action.wallId, action.wallCovering));
     case "SET_FURNITURE_COST":
       return touch(state, setFurnitureUnitCost(state.design, action.furnitureId, action.costPerUnit));
     case "SET_UNDERLAY":

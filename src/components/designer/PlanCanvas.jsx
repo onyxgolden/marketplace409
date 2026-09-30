@@ -1001,8 +1001,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // Architectural dimension line (Visio-style): offset past the wall face,
     // with 45° slash ticks and the measurement. Updates as the wall resizes.
     const dim = dimensionGeometry(wall, design.settings.wallThicknessIn / 2 + 10);
+    const { stroke: wallStroke, pattern: coveringPattern } = wallCoveringStroke(wall, { isSelected, scale: view.scale });
     return (
       <g key={wall.id}>
+        {coveringPattern && (
+          <defs>
+            <pattern id={coveringPattern.id} patternUnits="userSpaceOnUse" width={coveringPattern.tilePx} height={coveringPattern.tilePx}>
+              <image href={coveringPattern.dataUrl} x={0} y={0} width={coveringPattern.tilePx} height={coveringPattern.tilePx} preserveAspectRatio="xMidYMid slice" />
+            </pattern>
+          </defs>
+        )}
         {solids.map((s, i) => {
           const a = toScreen(s.a);
           const b = toScreen(s.b);
@@ -1010,7 +1018,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             <line
               key={i}
               x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-              stroke={isSelected ? "#f59e0b" : "#e5e7eb"}
+              stroke={wallStroke}
               strokeWidth={thicknessPx}
               strokeLinecap="round"
             />
@@ -1727,6 +1735,34 @@ function distancePointToPolygonEdge(plan, polygon) {
     best = Math.min(best, distancePointToSegment(plan, a, q));
   }
   return best;
+}
+
+/**
+ * A wall's stroke — the selection amber, an extracted flat color, a
+ * wallpaper pattern tiled in SCREEN pixels (tileIn * scale, so it re-tiles
+ * as the user zooms, matching the plan geometry itself), or the plain
+ * default gray. Selection amber always wins, regardless of covering — you
+ * need to see what's selected no matter what it's covered in. Exported as
+ * a pure function (no JSX) specifically so this logic is unit-testable
+ * without mounting the whole PlanCanvas component.
+ *
+ * Returns `{ stroke, pattern }`: `pattern` is `{ id, dataUrl, tilePx }` when
+ * a `<defs><pattern>` needs to be rendered for this wall, or `null`
+ * otherwise (a color, the default, or a missing/invalid scale — never a
+ * zero-size pattern, which SVG treats as an error).
+ */
+export function wallCoveringStroke(wall, { isSelected, scale }) {
+  if (isSelected) return { stroke: "#f59e0b", pattern: null };
+  const covering = wall.wallCovering;
+  if (covering?.kind === "color") return { stroke: covering.color, pattern: null };
+  if (covering?.kind === "pattern" && covering.dataUrl && scale > 0) {
+    const tilePx = (covering.tileIn || 24) * scale;
+    if (tilePx > 0) {
+      const pattern = { id: `wall-covering-${wall.id}`, dataUrl: covering.dataUrl, tilePx };
+      return { stroke: `url(#${pattern.id})`, pattern };
+    }
+  }
+  return { stroke: "#e5e7eb", pattern: null };
 }
 
 /** Top-left (min x, min y) corner of a room polygon — the drag anchor. */

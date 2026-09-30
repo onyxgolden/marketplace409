@@ -53,6 +53,7 @@ import {
 } from "./designerDraft";
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
+import PhotoFinishField from "./PhotoFinishField";
 import RotateButtons from "./RotateButtons";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
@@ -2911,6 +2912,15 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white placeholder:text-gray-600"
           />
         </label>
+        <div className="mt-3 border-t border-gray-800 pt-3">
+          <PhotoFinishField
+            label="Wallpaper or color"
+            value={wall.wallCovering}
+            allowColorChoice
+            onChange={(wallCovering) => dispatch({ type: "SET_WALL_COVERING", wallId: wall.id, wallCovering })}
+            onClear={() => dispatch({ type: "SET_WALL_COVERING", wallId: wall.id, wallCovering: null })}
+          />
+        </div>
         <p className="text-[11px] text-gray-500">Drag the orange endpoints on the plan to resize.</p>
       </PanelShell>
     );
@@ -2990,6 +3000,14 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white placeholder:text-gray-600"
           />
         </label>
+        <div className="mt-3 border-t border-gray-800 pt-3">
+          <PhotoFinishField
+            label="Flooring photo"
+            value={room.floorImage}
+            onChange={(floorImage) => dispatch({ type: "SET_ROOM_FLOOR_IMAGE", roomId: room.id, floorImage })}
+            onClear={() => dispatch({ type: "SET_ROOM_FLOOR_IMAGE", roomId: room.id, floorImage: null })}
+          />
+        </div>
         <p className="text-[11px] text-gray-500">Deleting a room also removes its four walls.</p>
       </PanelShell>
     );

@@ -406,6 +406,31 @@ describe("designerReducer", () => {
     state = designerReducer(state, { type: "SET_FURNITURE_COST", furnitureId: fid, costPerUnit: 249.99 });
     expect(state.design.furniture[0].costPerUnit).toBe(249.99);
   });
+
+  it("sets a room floor image and a wall covering, independent of the existing text-label fields", () => {
+    let state = stateWithWall();
+    const wallId = state.design.walls[0].id;
+    state = designerReducer(state, { type: "SET_WALL_MATERIAL", wallId, material: "2x4 stud" });
+    state = designerReducer(state, {
+      type: "SET_WALL_COVERING",
+      wallId,
+      wallCovering: { kind: "color", color: "#8a6f4d" },
+    });
+    expect(state.design.walls[0].material).toBe("2x4 stud");
+    expect(state.design.walls[0].wallCovering).toEqual({ kind: "color", color: "#8a6f4d" });
+    expect(state.dirty).toBe(true);
+
+    state = designerReducer(state, { type: "ADD_ROOM", templateId: "kitchen", at: { x: 200, y: 0 } });
+    const roomId = state.design.rooms[0].id;
+    state = designerReducer(state, { type: "SET_ROOM_FINISH", roomId, finish: "tile" });
+    state = designerReducer(state, {
+      type: "SET_ROOM_FLOOR_IMAGE",
+      roomId,
+      floorImage: { dataUrl: "data:image/png;base64,Zmxvb3I=", tileIn: 24 },
+    });
+    expect(state.design.rooms[0].finish).toBe("tile");
+    expect(state.design.rooms[0].floorImage).toEqual({ dataUrl: "data:image/png;base64,Zmxvb3I=", tileIn: 24 });
+  });
 });
 
 describe("designerReducer — background underlay", () => {

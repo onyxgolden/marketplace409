@@ -77,3 +77,43 @@ export async function decodeUnderlayFile(file) {
   });
   return { dataUrl, ...dims, mimeType: file.type || "image/png" };
 }
+
+/**
+ * Average color of an already-decoded image (a data URL), as a #rrggbb hex
+ * string — used when a wall covering upload is a solid-paint-chip photo
+ * rather than a repeating pattern (see setWallCovering in
+ * designerDocument.js). Downscales to an 8x8 canvas before averaging, so
+ * this stays fast and memory-light regardless of the source photo's actual
+ * resolution: a handful of pixels' average is indistinguishable from the
+ * whole image's for a genuinely solid-colored source, which is the only
+ * case this is meant to handle (a real photo of a room would average out to
+ * a meaningless muddy color, but that's a content problem, not a bug in the
+ * average itself).
+ */
+export function extractAverageColorFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const size = 8;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, size, size);
+      const { data } = ctx.getImageData(0, 0, size, size);
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      const pixelCount = size * size;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i];
+        g += data[i + 1];
+        b += data[i + 2];
+      }
+      const toHexByte = (sum) => Math.round(sum / pixelCount).toString(16).padStart(2, "0");
+      resolve(`#${toHexByte(r)}${toHexByte(g)}${toHexByte(b)}`);
+    };
+    img.onerror = () => reject(new Error("Could not read that image — the format may be unsupported."));
+    img.src = dataUrl;
+  });
+}
