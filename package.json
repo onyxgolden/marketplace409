@@ -19,7 +19,8 @@
     "forge:risks": "node scripts/engineering-brain/query/runUndiscoveredRisksCli.mjs",
     "forge:diagnose-quality": "node scripts/engineering-brain/query/runDiagnosticQualityCli.mjs",
     "forge:undiscovered-errors": "node scripts/engineering-brain/signals/runUndiscoveredErrorsCli.mjs",
-    "forge:fix-pr": "node scripts/engineering-brain/patch/runFixPrCli.mjs"
+    "forge:fix-pr": "node scripts/engineering-brain/patch/runFixPrCli.mjs",
+    "forge:self-heal": "node scripts/engineering-brain/patch/runSelfHealCli.mjs"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.7",
