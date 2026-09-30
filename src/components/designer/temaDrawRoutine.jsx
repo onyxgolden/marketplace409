@@ -70,7 +70,7 @@ export function drawTemaSymbol({ symbol, instance, toScreen, scale, highlighted 
   const drawing = temaDrawing(symbol, instance);
   const c = toScreen({ x: instance.x, y: instance.y });
   const style = {
-    stroke: highlighted ? "#f59e0b" : "#e2e8f0",
+    stroke: highlighted ? "#f59e0b" : symbol.memberColor || "#e2e8f0",
     sw: highlighted ? 3 : 1.75,
     accent: highlighted ? "#f59e0b" : symbol.color || "#f59e0b",
     body: "#0f172a",
