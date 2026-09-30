@@ -2858,13 +2858,15 @@ export function RoomNameField({ room, dispatch }) {
 
 /**
  * Plain-language companion to the ⇄/⇅ on-canvas door handles, for anyone
- * who wouldn't recognize those icons: "Left-handed" / "Right-handed" for
- * which edge the hinge is on, "Opens in" / "Opens out" for which face it
- * swings to. Both are relative to the WALL's own drawn direction (see
- * designerHandles.js's doorSwingOf) — not a claim of matching the door-
- * hardware industry's own LH/RH convention, which additionally depends on
- * which side of the wall is "inside" a room, something this data model
- * doesn't track.
+ * who wouldn't recognize those icons. Deliberately neutral geometric
+ * wording ("Start edge" / "End edge", "Side A" / "Side B") rather than
+ * LH/RH or in/out: both values are relative to the WALL's own arbitrary
+ * drawn direction (see designerHandles.js's doorSwingOf), and reversing
+ * that drawn direction swaps start/end and the wall's normal without the
+ * physical door changing at all. This data model has no room-side/
+ * interior-side datum, so there is no true "left/right hand" or "in/out"
+ * to report — labeling it that way would assert a physical meaning the
+ * model doesn't contain.
  *
  * Clicking a button that's already active is a no-op; only a genuine
  * change dispatches FLIP_DOOR — the only mutation this data model offers,
@@ -2882,28 +2884,28 @@ export function DoorHandednessFields({ opening, dispatch }) {
   return (
     <div className="mt-2 space-y-2">
       <div className="text-xs text-gray-400">
-        Hinge side
-        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Hinge side">
+        Hinge edge
+        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Hinge edge">
           <button type="button" aria-pressed={hinge === "start"} className={toggleClass(hinge === "start")}
             onClick={() => flipIfNeeded("hinge", hinge, "start")}>
-            Left-handed
+            Start edge
           </button>
           <button type="button" aria-pressed={hinge === "end"} className={toggleClass(hinge === "end")}
             onClick={() => flipIfNeeded("hinge", hinge, "end")}>
-            Right-handed
+            End edge
           </button>
         </div>
       </div>
       <div className="text-xs text-gray-400">
-        Swing direction
-        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Swing direction">
+        Swing side
+        <div className="mt-1 flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Swing side">
           <button type="button" aria-pressed={swing === "positive"} className={toggleClass(swing === "positive")}
             onClick={() => flipIfNeeded("swing", swing, "positive")}>
-            Opens in
+            Side A
           </button>
           <button type="button" aria-pressed={swing === "negative"} className={toggleClass(swing === "negative")}
             onClick={() => flipIfNeeded("swing", swing, "negative")}>
-            Opens out
+            Side B
           </button>
         </div>
       </div>
