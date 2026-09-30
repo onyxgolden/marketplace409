@@ -358,14 +358,24 @@ function arcPoints(cx, cy, r, a0, a1, n = 8) {
   return pts;
 }
 
+// Wardrobe is the one plan symbol that deliberately extends past its own
+// footprint (see the exception carved out for it in
+// furniturePlanSymbols.test.js): a hinged door's swing has to show where it
+// actually opens TO, and a wardrobe's doors open outward into the room —
+// the same convention as a real door-in-wall symbol, not a cabinet door
+// that folds back flat against its own face.
 function wardrobe(w, d) {
-  const door = Math.min(w / 2, d); // swing radius kept inside the footprint
+  const door = Math.min(w / 2, d); // each door is at most half the wardrobe wide
   return [
     rect(-w / 2, -d / 2, w, d, "frame", 0.5),
     line(-w / 2, 0, w / 2, 0, "rod"), // hanging rod
     line(0, d / 2 - 1, 0, d / 2, "door"),
-    poly(arcPoints(-w / 2, d / 2, door, -Math.PI / 2, 0).map(([x, y]) => [x, Math.min(y, d / 2)]), "swing", false),
-    poly(arcPoints(w / 2, d / 2, door, Math.PI, 1.5 * Math.PI).map(([x, y]) => [x, Math.min(y, d / 2)]), "swing", false),
+    // Left door: hinged at the front-left corner. Closed = flush along the
+    // front edge (angle 0); open = perpendicular, swung forward out of the
+    // case into the room (angle PI/2).
+    poly(arcPoints(-w / 2, d / 2, door, 0, Math.PI / 2), "swing", false),
+    // Right door: hinged at the front-right corner, mirrored.
+    poly(arcPoints(w / 2, d / 2, door, Math.PI / 2, Math.PI), "swing", false),
   ];
 }
 

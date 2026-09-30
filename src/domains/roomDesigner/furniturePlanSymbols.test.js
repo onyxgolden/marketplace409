@@ -103,8 +103,17 @@ describe("plan symbols for the Phase 1 objects", () => {
 describe("Phase 2: the whole residential catalog has plan symbols", () => {
   const texts = (prims) => prims.filter((p) => p.kind === "text").map((p) => p.text);
 
+  // "wardrobe" is a deliberate, documented exception to full containment: a
+  // hinged door's swing has to show where it actually opens TO, and a
+  // wardrobe's doors swing outward into the room (see furniturePlanSymbols.js's
+  // own comment on wardrobe()) — the same convention a real door-in-wall
+  // symbol uses. It gets its own positive-coverage test below instead of
+  // just being silently skipped here.
+  const EXTENDS_PAST_FOOTPRINT = new Set(["wardrobe"]);
+
   it("every furniture catalog id (incl. cabinets) has a symbol inside its footprint", () => {
     for (const e of FURNITURE_CATALOG) {
+      if (EXTENDS_PAST_FOOTPRINT.has(e.id)) continue;
       const prims = furniturePlanSymbol(e.id, e.widthIn, e.depthIn);
       expect(prims, e.id).not.toBeNull();
       expect(prims.length, e.id).toBeGreaterThanOrEqual(2);
@@ -117,6 +126,21 @@ describe("Phase 2: the whole residential catalog has plan symbols", () => {
       for (const p of prims) for (const v of Object.values(p)) if (typeof v === "number") expect(Number.isFinite(v), e.id).toBe(true);
     }
     expect(PLAN_SYMBOL_CATALOG_IDS.length).toBe(FURNITURE_CATALOG.length);
+  });
+
+  it("wardrobe's doors swing outward past the front edge, into the room, by exactly the door radius", () => {
+    const e = getCatalogEntry("wardrobe");
+    const prims = furniturePlanSymbol("wardrobe", e.widthIn, e.depthIn);
+    const doorRadius = Math.min(e.widthIn / 2, e.depthIn);
+    const b = bounds(prims);
+    const eps = 1e-6;
+    // Still contained on every OTHER side: width, and the back against the wall.
+    expect(b.minX).toBeGreaterThanOrEqual(-e.widthIn / 2 - eps);
+    expect(b.maxX).toBeLessThanOrEqual(e.widthIn / 2 + eps);
+    expect(b.minY).toBeGreaterThanOrEqual(-e.depthIn / 2 - eps);
+    // The front edge is exactly where it should be: the swing extends the
+    // full door radius past it, not further and not clipped short.
+    expect(b.maxY).toBeCloseTo(e.depthIn / 2 + doorRadius, 5);
   });
 
   it("sofas show a back, two arms and one cushion per seat", () => {
