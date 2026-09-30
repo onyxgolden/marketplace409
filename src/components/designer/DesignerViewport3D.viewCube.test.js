@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   applySphericalToCamera,
   COMPASS_AZIMUTH,
+  DOLLHOUSE_POLAR_RANGE,
   orbitCameraByDrag,
   snapToCompassDirection,
   snapToFaceNormal,
@@ -140,5 +141,23 @@ describe("orbitCameraByDrag", () => {
     applySphericalToCamera(camera, controls, target, { radius: 175, azimuth: 0.3, polar: 1.1 });
     orbitCameraByDrag(camera, controls, target, 20, -10);
     expect(sphericalFromCamera(camera, target).radius).toBeCloseTo(175);
+  });
+
+  it("respects a tighter minPolarAngle/maxPolarAngle on the controls object (Dollhouse mode)", () => {
+    const { camera } = rig();
+    const controls = {
+      target: new THREE.Vector3(),
+      update() {},
+      minPolarAngle: DOLLHOUSE_POLAR_RANGE.min,
+      maxPolarAngle: DOLLHOUSE_POLAR_RANGE.max,
+    };
+    const target = { x: 0, y: 0, z: 0 };
+    applySphericalToCamera(camera, controls, target, { radius: 300, azimuth: 0, polar: (DOLLHOUSE_POLAR_RANGE.min + DOLLHOUSE_POLAR_RANGE.max) / 2 });
+    // An extreme drag that would normally clamp to the plain MIN_POLAR (0.05)
+    // must instead stop at Dollhouse's own, tighter minPolarAngle.
+    orbitCameraByDrag(camera, controls, target, 0, 100000, 0.01);
+    const polar = sphericalFromCamera(camera, target).polar;
+    expect(polar).toBeGreaterThanOrEqual(DOLLHOUSE_POLAR_RANGE.min - 1e-6);
+    expect(polar).toBeLessThanOrEqual(DOLLHOUSE_POLAR_RANGE.max + 1e-6);
   });
 });

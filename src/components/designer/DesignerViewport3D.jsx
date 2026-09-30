@@ -283,12 +283,29 @@ export const COMPASS_AZIMUTH = Object.freeze({ N: 0, E: Math.PI / 2, S: Math.PI,
 const MIN_POLAR = 0.05;
 const MAX_POLAR = Math.PI - 0.05;
 
+/**
+ * The polar-angle band to clamp into: `controls.minPolarAngle`/`maxPolarAngle`
+ * when the controls object actually sets them (Dollhouse constrains these to
+ * DOLLHOUSE_POLAR_RANGE — see setCameraMode), otherwise the plain MIN_POLAR/
+ * MAX_POLAR default. Reading it off `controls` itself, rather than requiring
+ * every caller to know which mode is active, keeps this in one place: it's
+ * the same clamp OrbitControls.update() would already apply on the next
+ * orbit drag, so the gizmo can never push the camera somewhere a normal
+ * mouse-drag orbit couldn't also reach.
+ */
+function polarBounds(controls) {
+  const min = Number.isFinite(controls?.minPolarAngle) ? controls.minPolarAngle : MIN_POLAR;
+  const max = Number.isFinite(controls?.maxPolarAngle) ? controls.maxPolarAngle : MAX_POLAR;
+  return { min, max };
+}
+
 /** Snap to a compass direction: same radius and tilt (polar angle) as now, azimuth only changes. */
 export function snapToCompassDirection(camera, controls, target, direction) {
   const azimuth = COMPASS_AZIMUTH[direction];
   if (azimuth === undefined) return false;
   const { radius, polar } = sphericalFromCamera(camera, target);
-  applySphericalToCamera(camera, controls, target, { radius, azimuth, polar: clamp(polar, MIN_POLAR, MAX_POLAR) });
+  const { min, max } = polarBounds(controls);
+  applySphericalToCamera(camera, controls, target, { radius, azimuth, polar: clamp(polar, min, max) });
   return true;
 }
 
@@ -297,7 +314,8 @@ export function snapToFaceNormal(camera, controls, target, normal) {
   const { radius } = sphericalFromCamera(camera, target);
   const polar = Math.acos(clamp(normal.y, -1, 1));
   const azimuth = Math.atan2(normal.x, normal.z);
-  applySphericalToCamera(camera, controls, target, { radius, azimuth, polar: clamp(polar, MIN_POLAR, MAX_POLAR) });
+  const { min, max } = polarBounds(controls);
+  applySphericalToCamera(camera, controls, target, { radius, azimuth, polar: clamp(polar, min, max) });
   return true;
 }
 
@@ -307,10 +325,11 @@ export const GIZMO_DRAG_SENSITIVITY = 0.012;
 /** One incremental drag step on the gizmo: orbits the camera by a pixel delta, same math OrbitControls itself uses. */
 export function orbitCameraByDrag(camera, controls, target, dxPx, dyPx, sensitivity = GIZMO_DRAG_SENSITIVITY) {
   const { radius, azimuth, polar } = sphericalFromCamera(camera, target);
+  const { min, max } = polarBounds(controls);
   applySphericalToCamera(camera, controls, target, {
     radius,
     azimuth: azimuth - dxPx * sensitivity,
-    polar: clamp(polar - dyPx * sensitivity, MIN_POLAR, MAX_POLAR),
+    polar: clamp(polar - dyPx * sensitivity, min, max),
   });
 }
 
