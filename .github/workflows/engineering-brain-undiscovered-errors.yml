@@ -1,0 +1,109 @@
+# Nightly undiscovered-error scan for the FORGE Engineering Brain (scripts/engineering-brain/signals/).
+# Collects runtime signals nobody has asked about yet -- failed/stuck receipt and notification
+# deliveries from Supabase, failed CI runs on main from GitHub Actions -- and runs the Brain's
+# deterministic correlator over them (pass-1 retrieval with content tokens, no model calls).
+#
+# Deliberately conservative, matching engineering-brain-sync.yml's precedent:
+#   1. Runs nightly + on manual dispatch, not on every push to main -- the scan is naturally
+#      idempotent (same signals + manifest always yield the same report), so there is no
+#      correctness reason to run it more often, and running it less often keeps CI minutes
+#      and Supabase read volume low. Scheduled after the brain sync so a red sync run is
+#      itself picked up as a signal by the GitHub fetcher.
+#   2. Never commits anything back to the repository and never pushes to main -- a push to main
+#      is what triggers this repo's Vercel Production deployment, and this workflow has no
+#      reason to touch application code or trigger a deploy. The report exists as a workflow
+#      artifact for the run; nothing is written back to the repo.
+#   3. The fetchers are strictly read-only (SELECTs on delivery/outbox tables; Actions runs API).
+#      The correlator is pure and deterministic. No production data is written by this workflow.
+#   4. Fails loudly when undiscovered errors are found -- a green run with findings nobody reads
+#      would defeat the purpose. The human-readable report is printed into the failed step's log
+#      and the full JSON report is kept as an artifact either way.
+#   5. A collection failure (fetcher exits nonzero, missing/malformed signals file) also fails
+#      the run: a missing signals file is a collection failure, never an all-clear.
+#
+# Requires two repository configuration values, neither committed here:
+#   - secret SUPABASE_SERVICE_ROLE_KEY -- read-only use here (SELECTs on delivery/outbox tables);
+#     Production-sensitive, must stay a GitHub Actions secret, never a plain workflow env var.
+#   - NEXT_PUBLIC_SUPABASE_URL is hardcoded below as a literal, not a secret -- it is a
+#     NEXT_PUBLIC_ variable by Next.js's own convention, meaning it is already public in every
+#     client bundle this app ships; treating it as sensitive would be a false sense of security.
+# GitHub API access uses the automatic GITHUB_TOKEN (actions: read covers listing workflow runs).
+
+name: FORGE Engineering Brain — Undiscovered Errors
+
+on:
+  schedule:
+    - cron: '0 10 * * *'  # 5:00 AM America/Chicago during CDT (UTC-5, roughly Mar-Nov)
+    - cron: '0 11 * * *'  # 5:00 AM America/Chicago during CST (UTC-6, roughly Nov-Mar)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: engineering-brain-undiscovered-errors
+  cancel-in-progress: true
+
+env:
+  NEXT_PUBLIC_SUPABASE_URL: https://bzqvenxjlstinmgbuvvg.supabase.co
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Collect Supabase runtime signals
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/engineering-brain/signals/fetchSupabaseSignals.mjs --out signals-supabase.json
+
+      - name: Collect GitHub Actions signals
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/engineering-brain/signals/fetchGithubSignals.py --out signals-github.json
+
+      - name: Merge signals and run the scan
+        id: scan
+        run: |
+          node -e "
+            const fs = require('fs');
+            const a = JSON.parse(fs.readFileSync('signals-supabase.json', 'utf8')).signals;
+            const b = JSON.parse(fs.readFileSync('signals-github.json', 'utf8')).signals;
+            fs.writeFileSync('signals.json', JSON.stringify({ signals: a.concat(b) }));
+            console.log('merged signals: supabase=' + a.length + ' github=' + b.length);
+          "
+          node scripts/engineering-brain/signals/runUndiscoveredErrorsCli.mjs --signals signals.json --json > undiscovered-errors-report.json
+          node scripts/engineering-brain/signals/runUndiscoveredErrorsCli.mjs --signals signals.json | tee undiscovered-errors-report.txt
+          ERROR_COUNT=$(node -p "JSON.parse(require('fs').readFileSync('undiscovered-errors-report.json', 'utf8')).error_count")
+          echo "error_count=$ERROR_COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: undiscovered-errors-report
+          path: |
+            undiscovered-errors-report.json
+            undiscovered-errors-report.txt
+          if-no-files-found: warn
+
+      - name: Fail loudly on undiscovered errors
+        if: steps.scan.outputs.error_count != '0'
+        run: |
+          echo "Undiscovered errors found: ${{ steps.scan.outputs.error_count }} -- full report above and in the artifact."
+          cat undiscovered-errors-report.txt
+          exit 1
