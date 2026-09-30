@@ -141,4 +141,39 @@ describe("assembleDiagnosticContext", () => {
     const b = assembleDiagnosticContext({ manifest: sampleManifest(), queryText: "billing", excerptReader: reader(), bugRecords });
     expect(a.result_content_hash).toBe(b.result_content_hash);
   });
+
+  it("evidenceSignal re-ranks implicated_code without touching other facets or inventing results", () => {
+    const aContent = "export function calculateLateFee(balance) { return balance * 0.05; }";
+    const bContent = "import { calculateLateFee } from './billing.js';\nexport function buildNsisInstaller() { const fee = calculateLateFee(100); return fee; }";
+    const manifest = {
+      schema_version: "1.0",
+      commit_sha: "sha1",
+      index_content_hash: "manifest-hash",
+      records: [
+        record("src/lib/billing.js", "application_source_symbol", "calculateLateFee", aContent),
+        record("src/lib/nsis-pack.js", "application_source_symbol", "buildNsisInstaller", bContent),
+        record("docs/billing.md", "synchronized_document_section", "Billing", docContent),
+      ],
+    };
+    const byPath = { "src/lib/billing.js": aContent, "src/lib/nsis-pack.js": bContent, "docs/billing.md": docContent };
+    const cp = (sha, p) => byPath[p] || null;
+    const rdr = { readFileAtCommit: cp, readMigrationsAtCommit: () => [] };
+    const signal = { failed_step: "package installer", error_lines: [], mentioned_paths: ["src/lib/nsis-pack.js"] };
+
+    const natural = assembleDiagnosticContext({ manifest, queryText: "calculateLateFee", excerptReader: rdr, contentProvider: cp });
+    expect(natural.evidence_signal_applied).toBe(false);
+    expect(natural.facets.implicated_code[0].source_path).toBe("src/lib/billing.js");
+    expect(natural.facets.implicated_code[0].evidence_match).toBeUndefined();
+
+    const ranked = assembleDiagnosticContext({ manifest, queryText: "calculateLateFee", excerptReader: rdr, contentProvider: cp, evidenceSignal: signal });
+    expect(ranked.evidence_signal_applied).toBe(true);
+    // The failure log named nsis-pack.js exactly: it promotes to first with a tier-0 annotation.
+    expect(ranked.facets.implicated_code[0].source_path).toBe("src/lib/nsis-pack.js");
+    expect(ranked.facets.implicated_code[0].evidence_match.tier).toBe(0);
+    // Nothing dropped, nothing invented; other facets keep their order.
+    expect(ranked.facets.implicated_code.map((e) => e.source_path).sort())
+      .toEqual(natural.facets.implicated_code.map((e) => e.source_path).sort());
+    expect(ranked.facets.intended_behavior.map((e) => e.source_path))
+      .toEqual(natural.facets.intended_behavior.map((e) => e.source_path));
+  });
 });
