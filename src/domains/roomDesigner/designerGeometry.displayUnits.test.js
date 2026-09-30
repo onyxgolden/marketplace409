@@ -10,6 +10,7 @@ import {
   DISPLAY_UNITS_STORAGE_KEY,
   feetInchesLabel,
   getDisplayUnits,
+  parseDimensionInput,
   setDisplayUnits,
 } from "./designerGeometry";
 
@@ -50,11 +51,11 @@ describe("getDisplayUnits / setDisplayUnits", () => {
 });
 
 describe("feetInchesLabel with the inches display preference", () => {
-  it("formats as plain inches once the preference is set", () => {
+  it("formats as plain inches (ASCII double-quote) once the preference is set", () => {
     setDisplayUnits("in");
-    expect(feetInchesLabel(144)).toBe("144″");
-    expect(feetInchesLabel(150)).toBe("150″");
-    expect(feetInchesLabel(7)).toBe("7″");
+    expect(feetInchesLabel(144)).toBe('144"');
+    expect(feetInchesLabel(150)).toBe('150"');
+    expect(feetInchesLabel(7)).toBe('7"');
   });
 
   it("still returns the not-a-number placeholder regardless of preference", () => {
@@ -64,8 +65,21 @@ describe("feetInchesLabel with the inches display preference", () => {
 
   it("reverts to feet-and-inches once the preference is cleared", () => {
     setDisplayUnits("in");
-    expect(feetInchesLabel(150)).toBe("150″");
+    expect(feetInchesLabel(150)).toBe('150"');
     setDisplayUnits("ft-in");
     expect(feetInchesLabel(150)).toBe("12' 6\"");
+  });
+
+  // Regression: this formatter also seeds an editable field
+  // (Viewport3DSizePopup's SizeField) that re-parses its own displayed text
+  // via parseDimensionInput if the user edits and resubmits it. An earlier
+  // version of this feature used the typographic "″" prime mark here, which
+  // parseDimensionInput doesn't recognize as an inches suffix at all — that
+  // value would round-trip to NaN instead of back to itself.
+  it("round-trips through parseDimensionInput in both display modes", () => {
+    setDisplayUnits("in");
+    expect(parseDimensionInput(feetInchesLabel(150))).toBe(150);
+    setDisplayUnits("ft-in");
+    expect(parseDimensionInput(feetInchesLabel(150))).toBe(150);
   });
 });

@@ -489,7 +489,7 @@ export function roomAreaSqFt(room) {
 }
 
 // Measurement display preference: "ft-in" (default, e.g. 12' 6") or "in"
-// (e.g. 150″). A global, per-browser preference — not project data — so it
+// (e.g. 150"). A global, per-browser preference — not project data — so it
 // lives in localStorage, read fresh on every call rather than cached in a
 // module variable (this file has 100+ existing pure-function unit tests;
 // caching it here would leak state between them). Same defensive try/catch
@@ -519,15 +519,20 @@ export function setDisplayUnits(units) {
 
 /**
  * Format inches as a dimension label, honoring the current display-units
- * preference: `12' 6"` by default, or `150″` when the user has switched to
- * inches-only. Every existing call site across the Designer UI reads this
- * preference automatically — nothing else needed to change to support the
- * toggle.
+ * preference: `12' 6"` by default, or `150"` when the user has switched to
+ * inches-only. Deliberately the plain ASCII double-quote in both modes (not
+ * the typographic `″` prime some read-only labels elsewhere use, e.g.
+ * gridSpacingLabel) — this formatter also seeds editable fields
+ * (Viewport3DSizePopup's SizeField), and parseDimensionInput only recognizes
+ * the ASCII quote as an inches suffix; a fancier mark here would silently
+ * fail to parse back if resubmitted unedited. Every existing call site
+ * across the Designer UI reads this preference automatically — nothing else
+ * needed to change to support the toggle.
  */
 export function feetInchesLabel(inches) {
   if (!isFiniteNumber(inches)) return "—";
   const rounded = Math.round(inches);
-  if (getDisplayUnits() === "in") return `${rounded}″`;
+  if (getDisplayUnits() === "in") return `${rounded}"`;
   const sign = rounded < 0 ? "-" : "";
   const abs = Math.abs(rounded);
   const feet = Math.floor(abs / 12);
