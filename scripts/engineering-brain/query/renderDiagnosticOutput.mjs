@@ -37,6 +37,10 @@ export function renderDiagnosticOutputText(bundle) {
     lines.push(`Filters: ${JSON.stringify(bundle.filters)}`);
   }
   lines.push(`Manifest commit: ${bundle.manifest_commit_sha}`);
+  if (bundle.evidence_signal_applied) {
+    const step = bundle.evidence_failed_step ? ` (failed step: ${bundle.evidence_failed_step})` : "";
+    lines.push(`Evidence re-rank from collected signal "${bundle.evidence_signal_id}"${step}`);
+  }
   lines.push("");
 
   if (bundle.insufficient_evidence) {

@@ -7,6 +7,7 @@ import { assembleDiagnosticContext } from "./assembleDiagnosticContext.mjs";
 import { searchBugCatalog } from "./searchBugCatalog.mjs";
 import { renderQueryOutputJson, renderQueryOutputText } from "./renderQueryOutput.mjs";
 import { renderDiagnosticOutputJson, renderDiagnosticOutputText } from "./renderDiagnosticOutput.mjs";
+import { loadCollectedEvidenceFile, selectEvidenceSignal } from "./loadCollectedEvidence.mjs";
 import { createCachedGitReader } from "./createCachedGitReader.mjs";
 import { readFileAtCommit, readMigrationsAtCommit } from "../gitRepository.mjs";
 
@@ -14,7 +15,7 @@ const DEFAULT_MANIFEST_PATH = path.join("engineering-brain", "index-manifest.jso
 const BUG_CATALOG_FILENAME = "bug-catalog.json";
 
 function parseArgs(argv) {
-  const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined, bugCatalogPath: null, noBugs: false, diagnose: false };
+  const args = { queryText: "", filters: {}, json: false, metadataOnly: false, manifestPath: DEFAULT_MANIFEST_PATH, maxResults: undefined, bugCatalogPath: null, noBugs: false, diagnose: false, evidencePath: null, evidenceSignalId: null };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -30,6 +31,8 @@ function parseArgs(argv) {
     else if (arg === "--path") args.filters.sourcePath = argv[++i];
     else if (arg === "--max-results") args.maxResults = Number(argv[++i]);
     else if (arg === "--diagnose") args.diagnose = true;
+    else if (arg === "--evidence") args.evidencePath = argv[++i];
+    else if (arg === "--signal") args.evidenceSignalId = argv[++i];
     else rest.push(arg);
   }
   args.queryText = rest.join(" ");
@@ -70,7 +73,24 @@ export function runCli(argv, { cwd = process.cwd() } = {}) {
   // the manifest it is searched with the same query and attached for review.
   // In --diagnose mode the assembler owns the whole bundle (facets, contradictions,
   // past fixes); the flat related_fixes attachment below is the non-diagnostic path only.
+  if ((args.evidencePath || args.evidenceSignalId) && !args.diagnose) {
+    throw new Error("--evidence/--signal require --diagnose");
+  }
   if (args.diagnose) {
+    // Collected-evidence re-rank: the nightly evidence.json names the failure
+    // whose log paths/tokens should promote implicated code. Never guesses —
+    // an ambiguous or empty evidence file is a hard error, not a silent skip.
+    let evidenceSignal = null;
+    if (args.evidencePath) {
+      const evidenceFile = path.isAbsolute(args.evidencePath)
+        ? args.evidencePath
+        : path.join(cwd, args.evidencePath);
+      const { signals, warnings } = loadCollectedEvidenceFile(evidenceFile);
+      for (const warning of warnings) console.error(`warning: ${warning}`);
+      evidenceSignal = selectEvidenceSignal(signals, args.evidenceSignalId);
+    } else if (args.evidenceSignalId) {
+      throw new Error("--signal requires --evidence <evidence.json>");
+    }
     const bugRecords = args.noBugs || !args.queryText.trim()
       ? []
       : loadBugCatalogRecords({ manifestPath, bugCatalogPath: args.bugCatalogPath });
@@ -83,6 +103,7 @@ export function runCli(argv, { cwd = process.cwd() } = {}) {
       contentProvider: (commitSha, sourcePath) => cachedReader.readFileAtCommit(commitSha, sourcePath),
       excerptReader: cachedReader,
       bugRecords,
+      evidenceSignal,
     });
     return { response: bundle, output: args.json ? renderDiagnosticOutputJson(bundle) : renderDiagnosticOutputText(bundle) };
   }
