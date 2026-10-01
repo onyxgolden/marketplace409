@@ -459,11 +459,12 @@ describe("Rental Manager route", () => {
       monthlyRentCents: 160000, rentDueDay: 5, startDate: "2026-09-01", endDate: "2027-08-31", earlyPayDays: 10 } }));
     expect(response.status).toBe(200);
     // Atomicity by construction: exactly one call carries every term value, so the
-    // database can never hold a half-applied update.
+    // database can never hold a half-applied update. An omitted begin-charges
+    // date travels as null so the RPC keeps the lease's current value.
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith("update_lease_terms", { p_owner_id: "owner_1", p_lease_id: "lease_1",
       p_monthly_rent_cents: 160000, p_due_day: 5, p_start_date: "2026-09-01", p_end_date: "2027-08-31",
-      p_early_pay_days: 10 });
+      p_early_pay_days: 10, p_begin_charges_date: null });
     const body = await response.json();
     expect(body.success).toBe(true);
     expect(body.lease.monthly_rent_cents).toBe(160000);
@@ -476,11 +477,26 @@ describe("Rental Manager route", () => {
       { monthlyRentCents: 160000, rentDueDay: 1, startDate: "09/01/2026", earlyPayDays: 7 },
       { monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", endDate: "2026-08-01", earlyPayDays: 7 },
       { monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 32 },
+      { monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-09-01", earlyPayDays: 7, beginChargesDate: "09/01/2026" },
     ];
     for (const terms of invalid) {
       const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1", ...terms } }));
       expect(response.status).toBe(400);
     }
+  });
+  it("update-lease-terms passes an explicit begin-charges date through to the RPC", async () => {
+    const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "active" }, error: null })) };
+    const rpc = vi.fn(async () => ({ data: { lease: { id: "lease_1", begin_charges_date: "2026-09-01" },
+      schedule: { id: "schedule_1" } }, error: null }));
+    const from = vi.fn((table) => table === "rental_leases" ? leaseQuery : defaultFrom(table));
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
+      supabaseClient: { from, rpc } });
+    const response = await POST(request({ operation: "update-lease-terms", terms: { leaseId: "lease_1",
+      monthlyRentCents: 160000, rentDueDay: 1, startDate: "2026-08-28", earlyPayDays: 7, beginChargesDate: "2026-09-01" } }));
+    expect(response.status).toBe(200);
+    expect(rpc).toHaveBeenCalledWith("update_lease_terms", expect.objectContaining({ p_begin_charges_date: "2026-09-01" }));
   });
   it("update-lease-terms returns 404 for another owner's lease and never writes", async () => {
     const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
@@ -657,6 +673,25 @@ describe("Rental Manager route", () => {
     expect(response.status).toBe(200);
     expect(application.saveLease).toHaveBeenCalledWith(expect.objectContaining({ unitId: "unit_1" }), "jason_owner");
     expect(application.saveLease).not.toHaveBeenCalledWith(expect.anything(), "brandy_co_owner");
+  });
+  it("save-lease passes the begin-charges date through and defaults it to the move-in date", async () => {
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    for (const lease of [
+      { propertyId: "property_1", unitId: "unit_1", tenantIds: ["tenant_1"], startDate: "2026-08-28",
+        beginChargesDate: "2026-09-01", monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 },
+      { propertyId: "property_1", unitId: "unit_1", tenantIds: ["tenant_1"], startDate: "2026-09-01",
+        monthlyRentCents: 150000, currencyCode: "USD", rentDueDay: 1 },
+    ]) {
+      application.saveLease.mockResolvedValueOnce({ id: "rental_lease_1" });
+      createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+        effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(defaultFrom) } });
+      const response = await POST(request({ operation: "save-lease", lease }));
+      expect(response.status).toBe(200);
+    }
+    expect(application.saveLease).toHaveBeenNthCalledWith(1,
+      expect.objectContaining({ startDate: "2026-08-28", beginChargesDate: "2026-09-01" }), "owner_1");
+    expect(application.saveLease).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({ startDate: "2026-09-01", beginChargesDate: "2026-09-01" }), "owner_1");
   });
   it("save-lease rejects a read_only member with 403 and never calls saveLease", async () => {
     memberRole = "read_only";

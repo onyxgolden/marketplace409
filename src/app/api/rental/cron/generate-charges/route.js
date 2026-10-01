@@ -39,10 +39,22 @@ export async function GET(request) {
       .eq("status", "active").eq("collection_mode", "forge").in("owner_id", enabledOwnerIds);
     if (error) throw error;
 
+    // R10: the begin-charges date lives on the lease (rental_leases), not the
+    // schedule — one extra owner-scoped lookup maps it onto each schedule so
+    // generateRentCharge() can gate on it. A lease row missing its date (or
+    // missing entirely) falls back to no gate: pre-R10 behavior, never a
+    // newly blocked charge.
+    const leaseIds = [...new Set((schedules || []).map((row) => row.lease_id).filter(Boolean))];
+    const { data: leaseRows, error: leaseError } = leaseIds.length
+      ? await db.from("rental_leases").select("id, begin_charges_date").in("id", leaseIds).in("owner_id", enabledOwnerIds)
+      : { data: [], error: null };
+    if (leaseError) throw leaseError;
+    const beginChargesByLease = new Map((leaseRows || []).map((lease) => [lease.id, lease.begin_charges_date ?? null]));
+
     let processed = 0, failed = 0;
     for (const row of schedules || []) {
       try {
-        const schedule = mapRentScheduleRow(row);
+        const schedule = { ...mapRentScheduleRow(row), beginChargesDate: beginChargesByLease.get(row.lease_id) ?? null };
         // Current month always generates.
         const periods = [period];
         // Next month generates only inside this schedule's early-pay window.

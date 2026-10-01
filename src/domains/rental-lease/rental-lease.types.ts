@@ -17,6 +17,11 @@ export type RentalLease = Readonly<{
   status: RentalLeaseStatus;
   startDate: string;
   endDate: string | null;
+  // Rentec-parity R10: the date rent charges begin, distinct from the move-in
+  // (lease start) date — e.g. moved in Aug 28 but charges start Sep 1. Defaults
+  // to startDate when omitted, so existing callers keep working unchanged.
+  // Always populated on anything createRentalLease() returns.
+  beginChargesDate?: string;
   monthlyRentCents: number;
   currencyCode: string;
   rentDueDay: number;
@@ -89,6 +94,13 @@ export function createRentalLease(
   if (endDate !== null && endDate < startDate) {
     throw new Error("Rental lease end date cannot precede its start date.");
   }
+  // Sensible default: charges begin on the move-in date unless the landlord
+  // says otherwise (Rentec's "begin charges on" field). A valid date is
+  // required when provided; it may precede or follow the start date — the
+  // charge generator only suppresses periods whose due date falls before it.
+  const beginChargesDate = lease.beginChargesDate === null || lease.beginChargesDate === undefined
+    ? startDate
+    : dateOnly(lease.beginChargesDate, "beginChargesDate");
 
   return Object.freeze({
     ...lease,
@@ -98,6 +110,7 @@ export function createRentalLease(
     tenantIds: Object.freeze(tenantIds),
     startDate,
     endDate,
+    beginChargesDate,
     monthlyRentCents: lease.monthlyRentCents,
     currencyCode,
     documentEvidenceId: lease.documentEvidenceId?.trim() || null,

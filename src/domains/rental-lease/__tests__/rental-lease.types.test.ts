@@ -65,4 +65,18 @@ describe("RentalLease", () => {
     expect(() => createRentalLease(buildLease({ status: "unknown" }) as never))
       .toThrow("Rental lease requires a supported status.");
   });
+
+  // Rentec-parity R10: begin-charges date, distinct from the move-in date.
+  it("defaults the begin-charges date to the move-in date when omitted", () => {
+    expect(createRentalLease(buildLease()).beginChargesDate).toBe("2026-09-01");
+    expect(createRentalLease(buildLease({ beginChargesDate: null as unknown as string })).beginChargesDate).toBe("2026-09-01");
+  });
+  it("keeps an explicit begin-charges date distinct from the move-in date", () => {
+    const lease = createRentalLease(buildLease({ startDate: "2026-08-28", beginChargesDate: "2026-09-01" }));
+    expect(lease.startDate).toBe("2026-08-28");
+    expect(lease.beginChargesDate).toBe("2026-09-01");
+  });
+  it("rejects an invalid begin-charges date", () => {
+    expect(() => createRentalLease(buildLease({ beginChargesDate: "09/01/2026" }))).toThrow();
+  });
 });

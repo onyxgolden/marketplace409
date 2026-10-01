@@ -13,6 +13,16 @@ describe("rental lease persistence", () => {
     expect(rows.tenants).toEqual([{ owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1" }]);
     expect(mapRentalLeaseRowsToRentalLease(rows.lease, rows.tenants)).toEqual(lease());
   });
+  it("round trips the begin-charges date and falls back to the move-in date for pre-R10 rows", () => {
+    const rows = mapRentalLeaseToRows(lease(), "owner_1");
+    expect(rows.lease.begin_charges_date).toBe("2026-09-01");
+    // A row read before the R10 migration applied carries no column value —
+    // mapping must not fail and must use the move-in date (the backfill rule).
+    const legacyRow = { ...rows.lease, begin_charges_date: null };
+    expect(mapRentalLeaseRowsToRentalLease(legacyRow, rows.tenants).beginChargesDate).toBe("2026-09-01");
+    const distinct = createRentalLease({ ...lease(), id: "lease_2", startDate: "2026-08-28", beginChargesDate: "2026-09-01" });
+    expect(mapRentalLeaseToRows(distinct, "owner_1").lease.begin_charges_date).toBe("2026-09-01");
+  });
   it("isolates and queries leases by owner, unit, and tenant", async () => {
     const repository = new InMemoryRentalLeaseRepository();
     await repository.save(lease(), { ownerId: "owner_1" });

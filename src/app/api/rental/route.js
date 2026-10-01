@@ -379,7 +379,8 @@ export async function POST(request) {
         const input = body.lease;
         if (!input || typeof input !== "object") return badRequest("lease is required.");
         const lease = createRentalLease({ ...input, id: id("rental_lease", input.id), status: input.status ?? "draft",
-          endDate: input.endDate ?? null, documentEvidenceId: input.documentEvidenceId ?? null,
+          endDate: input.endDate ?? null, beginChargesDate: input.beginChargesDate ?? null,
+          documentEvidenceId: input.documentEvidenceId ?? null,
           activatedAt: input.activatedAt ?? null, endedAt: input.endedAt ?? null,
           createdAt: input.createdAt || timestamp, updatedAt: timestamp, notes: input.notes ?? null });
         return NextResponse.json({ success: true, lease: await application.saveLease(lease, effectiveOwnerId) });
@@ -419,6 +420,12 @@ export async function POST(request) {
         if (endDate !== null && endDate < input.startDate) return badRequest("The end date cannot be before the start date.");
         const earlyPayDays = Number(input.earlyPayDays);
         if (!Number.isInteger(earlyPayDays) || earlyPayDays < 0 || earlyPayDays > 31) return badRequest("Early pay window must be between 0 and 31 days.");
+        // R10: begin-charges date is optional — omitted/blank keeps the lease's
+        // current value (never clobbers), a provided value must be a valid date.
+        const rawBeginCharges = input.beginChargesDate === null || input.beginChargesDate === undefined
+          ? "" : String(input.beginChargesDate).trim();
+        if (rawBeginCharges !== "" && !datePattern.test(rawBeginCharges)) return badRequest("A valid begin-charges date (YYYY-MM-DD) is required.");
+        const beginChargesDate = rawBeginCharges === "" ? null : rawBeginCharges;
         // Owner-scoped lookup: a lease from another workspace resolves to 404, never a 403
         // that would leak its existence.
         const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
@@ -447,6 +454,7 @@ export async function POST(request) {
           p_start_date: input.startDate,
           p_end_date: endDate,
           p_early_pay_days: earlyPayDays,
+          p_begin_charges_date: beginChargesDate,
         });
         if (termsError) {
           const message = String(termsError.message || "");

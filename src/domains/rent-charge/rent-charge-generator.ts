@@ -30,6 +30,11 @@ export function generateRentCharge({
   const dueDate = periodDate(period, schedule.dueDay);
   const periodEnd = `${period}-28`;
   if (periodEnd < schedule.effectiveStartDate || (schedule.effectiveEndDate !== null && dueDate > schedule.effectiveEndDate)) return null;
+  // Rentec-parity R10: no charge with a due date before the lease's
+  // begin-charges date — this is what prevents the bogus past-due balance when
+  // the move-in date and the charge start date differ (moved in Aug 28,
+  // charges begin Sep 1: no August charge is ever generated).
+  if (schedule.beginChargesDate && dueDate < schedule.beginChargesDate) return null;
   // Never generate a charge for a period before the reviewed cutover date, even for a
   // FORGE-collectible schedule — FORGE only ever collects obligations on or after cutover.
   if (dueDate < schedule.forgeCutoverDate) return null;

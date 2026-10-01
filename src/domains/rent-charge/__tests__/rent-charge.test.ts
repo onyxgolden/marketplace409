@@ -60,4 +60,28 @@ describe("RentCharge", () => {
       expect(generateRentCharge({ schedule: midMonthCutover, period: "2026-10", now: "2026-10-01T00:00:00.000Z" })?.dueDate).toBe("2026-10-01");
     });
   });
+
+  // Rentec-parity R10: the lease's begin-charges date ("Day charges start")
+  // gates generation independently of the move-in date — no charge whose due
+  // date precedes it is ever generated.
+  describe("begin-charges date", () => {
+    // Moved in Aug 28, charges begin Sep 1: the August charge (due Aug 1)
+    // would be a bogus past-due balance — it must never generate.
+    const movedInLateAugust = () => schedule({ effectiveStartDate: "2026-08-28", beginChargesDate: "2026-09-01" });
+    it("never generates a charge whose due date precedes the begin-charges date", () => {
+      expect(generateRentCharge({ schedule: movedInLateAugust(), period: "2026-08", now: "2026-09-02T00:00:00.000Z" })).toBeNull();
+    });
+    it("generates the first charge whose due date is on or after the begin-charges date", () => {
+      const september = generateRentCharge({ schedule: movedInLateAugust(), period: "2026-09", now: "2026-09-02T00:00:00.000Z" });
+      expect(september?.dueDate).toBe("2026-09-01");
+      expect(generateRentCharge({ schedule: movedInLateAugust(), period: "2026-10", now: "2026-10-01T00:00:00.000Z" })).not.toBeNull();
+    });
+    it("keeps the pre-R10 behavior when no begin-charges date is attached", () => {
+      expect(generateRentCharge({ schedule: schedule({ beginChargesDate: null }), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).not.toBeNull();
+      expect(generateRentCharge({ schedule: schedule(), period: "2026-09", now: "2026-09-01T00:00:00.000Z" })).not.toBeNull();
+    });
+    it("rejects an invalid begin-charges date on the schedule input", () => {
+      expect(() => schedule({ beginChargesDate: "09/01/2026" })).toThrow();
+    });
+  });
 });
