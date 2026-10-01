@@ -107,6 +107,7 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   owners: Object.freeze({ title: "Owners", summary: "The owner side of the books: running balances due to each owner, disbursements, and contributions.", actions: Object.freeze(["Review what each owner is owed before disbursing.", "Owner contributions are recorded here, never as rental income."]) }),
   reports: Object.freeze({ title: "Reports", summary: "Review rent roll, tenant ledger, and rental operating results.", actions: Object.freeze(["Confirm the reporting period and scope.", "Resolve payment or reconciliation exceptions before relying on totals."]) }),
   "owner-statements": Object.freeze({ title: "Owner Statements", summary: "Running balance due to the owner, monthly owner statement, disbursements, and owner contributions.", actions: Object.freeze(["Confirm the statement month before printing or emailing.", "A disbursement can never exceed the available balance; void a movement to reverse it instead of deleting it.", "Owner contributions are equity, never income — they never appear on income reports."]) }),
+  "tax-1099": Object.freeze({ title: "1099 Filing", summary: "Prepare 1099 reporting data for contractors and owners: who got paid, how much, and which form they need.", actions: Object.freeze(["Add each recipient and their payments for the tax year; full TINs are stored encrypted and only shown masked.", "Vendors map to 1099-NEC, owners to 1099-MISC; confirm the mapping with your CPA before filing.", "E-filing is not connected: download the export file and file manually or hand it to your CPA."]) }),
   "financial-setup": Object.freeze({ title: "Financial Setup", summary: "Assign property-specific financial treatment and reporting setup.", actions: Object.freeze(["Open it from the correct property context.", "Review accounting treatment before saving changes that affect reporting."]) }),
   autopay: Object.freeze({ title: "Autopay", summary: "Review tenant authorization and owner-side collection readiness.", actions: Object.freeze(["Confirm authorization, payment method, lease, and amount controls.", "Authorization alone never activates a debit."]) }),
   support: Object.freeze({ title: "Support", summary: "Track incidents and support cases without silently changing money records.", actions: Object.freeze(["Document the issue, evidence, owner, and resolution.", "A support action never moves money automatically."]) }),
@@ -126,6 +127,7 @@ export const RENTAL_HELP_GROUPS = Object.freeze([
   Object.freeze({ title: "Banking", ids: Object.freeze(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "receipts", "chart-of-accounts", "batch-entry"]) }),
   Object.freeze({ title: "Owners", ids: Object.freeze(["owners"]) }),
   Object.freeze({ title: "Reports", ids: Object.freeze(["reports", "owner-statements"]) }),
+  Object.freeze({ title: "Tax", ids: Object.freeze(["tax-1099"]) }),
   Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "setup-guide"]) }),
 ]);
 
