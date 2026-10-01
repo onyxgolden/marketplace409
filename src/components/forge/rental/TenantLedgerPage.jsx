@@ -5,6 +5,7 @@ import AddTenantChargeForm from "./AddTenantChargeForm";
 import TenantCreditSection from "./TenantCreditSection";
 import TenantInvoiceEditor from "./TenantInvoiceEditor";
 import StatementEmailDialog from "./StatementEmailDialog";
+import CorrectPaymentDialog from "./CorrectPaymentDialog";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
@@ -484,7 +485,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
         </>
       )}
 
-      {detailEntry && <TransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} />}
+      {detailEntry && <TransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} onCorrected={refresh} />}
       {emailStatementOpen && (
         <StatementEmailDialog
           title={`Email statement — ${tenantName || "tenant"}`}
@@ -504,8 +505,13 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
 
 // Read-only transaction detail: date, amount, payment type, category, check/ref #,
 // memo, and every ledger/record this entry posted to.
-function TransactionDetailModal({ entry, onClose }) {
+function TransactionDetailModal({ entry, onClose, onCorrected }) {
+  const [showCorrect, setShowCorrect] = useState(false);
   const isPayment = entry.kind === "payment";
+  // R18: correction is offered on completed payments. The dialog loads the
+  // authoritative correctable state (offline vs provider, reconciled, …)
+  // and the API enforces owner/co-owner — a 403 reads as plain English.
+  const canOfferCorrection = isPayment && entry.status === "succeeded";
   const postedTo = ["Tenant payment ledger"];
   if (entry.kind === "charge") postedTo.push("Rent charge record");
   if (entry.chargeId) postedTo.push("Applied to rent charge");
@@ -557,7 +563,24 @@ function TransactionDetailModal({ entry, onClose }) {
             Refunded {money.format(entry.refundedAmountCents / 100)} — the refund posts as its own compensating entry.
           </p>
         )}
+        {canOfferCorrection && (
+          <div className="mt-4 flex justify-end print:hidden">
+            <button type="button" onClick={() => setShowCorrect(true)}
+              className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-bold text-white hover:bg-sky-700">
+              Correct payment
+            </button>
+          </div>
+        )}
       </div>
+      {showCorrect && (
+        <div onClick={(event) => event.stopPropagation()}>
+          <CorrectPaymentDialog
+            paymentId={entry.sourceId}
+            onClose={() => setShowCorrect(false)}
+            onDone={() => { setShowCorrect(false); onClose(); onCorrected?.(); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
