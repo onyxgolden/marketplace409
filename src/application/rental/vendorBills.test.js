@@ -70,6 +70,10 @@ describe("bill status rules", () => {
     expect(canVoidBill(openBill)).toBe(true);
     expect(canVoidBill({ ...openBill, status: "paid" })).toBe(false);
     expect(canVoidBill({ ...openBill, status: "voided" })).toBe(false);
+    // A bill with any applied payment can never be voided — even when the
+    // status still reads open (concurrent payment landed first).
+    expect(canVoidBill({ ...openBill, status: "partial" })).toBe(false);
+    expect(canVoidBill({ ...openBill, status: "open", paid_amount_cents: 1 })).toBe(false);
   });
 });
 

@@ -140,7 +140,11 @@ export function canEditBill(bill) {
 // Voidable while open (R3) or partially paid (R4). Paid bills resolve through
 // refunds/credits, never a void — same rule as tenant charges.
 export function canVoidBill(bill) {
-  return bill?.status === "open" || bill?.status === "partial";
+  // Void is reversal of an untouched bill: it must still be open AND have no
+  // applied payments. A partially paid bill can never be voided — record a
+  // credit/adjustment instead. The write-time UPDATE re-checks both so a
+  // payment landing between the read and the write cannot be voided away.
+  return bill?.status === "open" && Number(bill?.paid_amount_cents || 0) === 0;
 }
 
 export function billBalanceCents(bill) {

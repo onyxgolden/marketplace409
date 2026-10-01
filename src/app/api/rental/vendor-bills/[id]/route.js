@@ -92,20 +92,23 @@ export async function PATCH(request, { params }) {
 
     if (body.void === true) {
       if (!canVoidBill(bill)) {
-        return NextResponse.json({ error: "Only open bills can be voided." }, { status: 409 });
+        return NextResponse.json({ error: "Only unpaid open bills can be voided." }, { status: 409 });
       }
       const voidReason = typeof body.voidReason === "string" ? body.voidReason.trim() : "";
       if (!voidReason) {
         return NextResponse.json({ error: "A reason is required to void a bill." }, { status: 400 });
       }
-      // Write-time guard: the bill must still be open — a payment recorded
-      // between the read and the write must not be silently voided away.
+      // Write-time guard: the bill must still be open AND unpaid — a payment
+      // recorded between the read and the write (e.g. R4's payment RPC, which
+      // transitions status on its own schedule) must not be silently voided
+      // away. Zero rows = the bill changed → 409.
       const { data, error } = await supabaseClient
         .from("rental_vendor_bills")
         .update({ status: "voided", void_reason: voidReason.slice(0, 500), voided_at: new Date().toISOString() })
         .eq("owner_id", effectiveOwnerId)
         .eq("id", bill.id)
         .eq("status", "open")
+        .eq("paid_amount_cents", 0)
         .select(BILL_COLUMNS)
         .single();
       if (error) {

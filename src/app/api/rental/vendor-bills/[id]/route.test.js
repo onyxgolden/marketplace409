@@ -133,6 +133,17 @@ describe("PATCH /api/rental/vendor-bills/[id] — void", () => {
     expect((await patch({ void: true, voidReason: "oops" })).status).toBe(409);
   });
 
+  it("refuses to void an open bill that has any applied payment (concurrent payment)", async () => {
+    // The read still shows status=open (R4's status transition not yet
+    // observed), but a payment landed first. The void must not go through.
+    const { client, lastPatch } = clientFor({ billRow: { ...bill, status: "open", paid_amount_cents: 12000 } });
+    authAs(client);
+    const response = await patch({ void: true, voidReason: "oops" });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatch(/unpaid open bills/);
+    expect(lastPatch()).toBeNull();
+  });
+
   it("refuses to void an already-voided bill", async () => {
     const { client } = clientFor({ billRow: { ...bill, status: "voided", void_reason: "dup" } });
     authAs(client);
