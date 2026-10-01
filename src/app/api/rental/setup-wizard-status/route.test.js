@@ -42,7 +42,7 @@ describe("GET /api/rental/setup-wizard-status", () => {
       rental_billing_settings: { data: null, error: null },
       rental_email_settings: { data: null, error: null },
       rental_late_fee_rules: { data: [], error: null },
-      workspace_members: { data: [{ id: "m1", status: "active" }], error: null },
+      workspace_members: { data: [{ id: "m1", status: "active", role: "co_owner" }], error: null },
     }));
     const response = await GET();
     const body = await response.json();
@@ -54,6 +54,47 @@ describe("GET /api/rental/setup-wizard-status", () => {
     expect(byId).toEqual({ settings: false, banking: false, owners: true, managers: false, properties: false, tenants: false });
   });
 
+  it("managers completes only for a manager-role member, not other roles", async () => {
+    authed(fakeClient({
+      rental_units: { data: [], error: null },
+      rental_tenants: { data: [], error: null },
+      financial_accounts: { data: [], error: null },
+      rental_billing_settings: { data: null, error: null },
+      rental_email_settings: { data: null, error: null },
+      rental_late_fee_rules: { data: [], error: null },
+      workspace_members: {
+        data: [
+          { id: "m1", status: "active", role: "co_owner" },
+          { id: "m2", status: "active", role: "bookkeeper" },
+          { id: "m3", status: "invited", role: "read_only" },
+        ],
+        error: null,
+      },
+    }));
+    const response = await GET();
+    const body = await response.json();
+    expect(body.steps.find((step) => step.id === "managers").complete).toBe(false);
+
+    authed(fakeClient({
+      rental_units: { data: [], error: null },
+      rental_tenants: { data: [], error: null },
+      financial_accounts: { data: [], error: null },
+      rental_billing_settings: { data: null, error: null },
+      rental_email_settings: { data: null, error: null },
+      rental_late_fee_rules: { data: [], error: null },
+      workspace_members: {
+        data: [
+          { id: "m1", status: "active", role: "co_owner" },
+          { id: "m2", status: "invited", role: "manager" },
+        ],
+        error: null,
+      },
+    }));
+    const withManager = await GET();
+    const withManagerBody = await withManager.json();
+    expect(withManagerBody.steps.find((step) => step.id === "managers").complete).toBe(true);
+  });
+
   it("derives completion from data: settings, banking, members, property, tenant", async () => {
     authed(fakeClient({
       rental_units: { data: [{ id: "u1", status: "active" }], error: null },
@@ -62,7 +103,13 @@ describe("GET /api/rental/setup-wizard-status", () => {
       rental_billing_settings: { data: null, error: null },
       rental_email_settings: { data: { owner_id: "owner-1" }, error: null },
       rental_late_fee_rules: { data: [], error: null },
-      workspace_members: { data: [{ id: "m1", status: "active" }, { id: "m2", status: "invited" }], error: null },
+      workspace_members: {
+        data: [
+          { id: "m1", status: "active", role: "co_owner" },
+          { id: "m2", status: "invited", role: "manager" },
+        ],
+        error: null,
+      },
     }));
     const response = await GET();
     const body = await response.json();

@@ -11,7 +11,7 @@ function wizardPayload(overrides = {}) {
   return {
     success: true,
     ...buildSetupWizardStatus({
-      units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, memberCount: 1, ...overrides,
+      units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, members: [], ...overrides,
     }),
   };
 }
@@ -124,7 +124,7 @@ describe("RentalSetupWizardPanel", () => {
   });
 
   it("marks steps done from data: a mid-setup workspace shows partial completion", async () => {
-    stubFetch(wizardPayload({ settingsConfigured: true, bankAccountCount: 1, memberCount: 2 }));
+    stubFetch(wizardPayload({ settingsConfigured: true, bankAccountCount: 1, members: [{ role: "manager", status: "active" }] }));
     mounted = renderPanel();
     act(() => mounted.root.render(<RentalSetupWizardPanel mode="guide" onNavigate={() => {}} onExit={() => {}} />));
     await flush();

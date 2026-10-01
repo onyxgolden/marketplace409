@@ -78,7 +78,7 @@ export const SETUP_WIZARD_STEPS = Object.freeze([
     id: "managers",
     title: "Managers",
     whyOrder:
-      "Property managers and helpers come before properties so you know who can touch what. Everyone you invite today is a co-owner; detailed manager roles with limited access are coming in a later update.",
+      "Property managers and helpers come before properties so you know who can touch what. Invite them with the manager role and this step checks off; finer permission levels are coming in a later update.",
     optional: true,
     actions: Object.freeze([
       Object.freeze({ label: "Invite a manager", kind: "href", href: "/forge/workspace" }),
@@ -114,7 +114,7 @@ export const SETUP_WIZARD_STEP_IDS = Object.freeze(SETUP_WIZARD_STEPS.map((step)
 //   tenants: [{}],                  // rental_tenants rows (RLS-scoped)
 //   bankAccountCount: number,       // active financial_accounts of depository/credit/loan type
 //   settingsConfigured: boolean,    // any rental_billing_settings / rental_email_settings / rental_late_fee_rules row
-//   memberCount: number,            // workspace_members rows visible to the caller (RLS-scoped)
+//   members: [{ role, status }],    // non-suspended workspace_members rows visible to the caller (RLS-scoped)
 // }
 const STEP_PREDICATES = Object.freeze({
   settings: (data) => data?.settingsConfigured === true,
@@ -122,7 +122,12 @@ const STEP_PREDICATES = Object.freeze({
   // The workspace always has exactly one primary owner (the signed-in owner),
   // so there is nothing to fill in — complete by definition.
   owners: () => true,
-  managers: (data) => Number(data?.memberCount || 0) > 1,
+  // A step named "Managers" is done only when a manager actually exists: at
+  // least one non-suspended member with the manager role. A co-owner,
+  // bookkeeper, or read-only member does not satisfy it — the invite screen
+  // offers every role, so counting heads would mark this step done for the
+  // wrong team. (The primary owner never has a workspace_members row.)
+  managers: (data) => (data?.members || []).some((member) => member?.role === "manager"),
   properties: (data) => countActiveProperties(data?.units) >= 1,
   tenants: (data) => (data?.tenants || []).length >= 1,
 });

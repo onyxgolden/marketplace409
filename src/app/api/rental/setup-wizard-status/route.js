@@ -28,9 +28,12 @@ export async function GET() {
       supabaseClient.from("rental_billing_settings").select("owner_id").eq("owner_id", effectiveOwnerId).maybeSingle(),
       supabaseClient.from("rental_email_settings").select("owner_id").eq("owner_id", effectiveOwnerId).maybeSingle(),
       supabaseClient.from("rental_late_fee_rules").select("id").eq("owner_id", effectiveOwnerId).limit(1),
-      // Mirrors /api/workspace/members: RLS scopes the rows, so the count is the members
-      // visible to the caller. Suspended members are not a live team.
-      supabaseClient.from("workspace_members").select("id, status").neq("status", "suspended"),
+      // Mirrors /api/workspace/members: RLS scopes the rows, so the rows are the members
+      // visible to the caller. Suspended members are not a live team. Role is selected
+      // because the Managers step is complete only when a manager-role member exists
+      // (see setupWizard.js) — a co-owner, bookkeeper, or read-only member must not
+      // satisfy a step named "Managers".
+      supabaseClient.from("workspace_members").select("id, status, role").neq("status", "suspended"),
     ]);
     const error =
       unitsResult.error || tenantsResult.error || accountsResult.error || billingResult.error ||
@@ -43,7 +46,7 @@ export async function GET() {
       bankAccountCount: (accountsResult.data || []).length,
       settingsConfigured:
         Boolean(billingResult.data) || Boolean(emailResult.data) || (lateFeeRuleResult.data || []).length > 0,
-      memberCount: (membersResult.data || []).length,
+      members: (membersResult.data || []).map((member) => ({ role: member?.role, status: member?.status })),
     });
     return NextResponse.json({ success: true, ...status });
   } catch (error) {

@@ -48,7 +48,6 @@ const EXPECTED_FUNCTION_IDS = [
   "reports", "owner-statements",
   "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "setup-guide",
 ];
-];
 
 function mount(ui) {
   const container = document.createElement("div");
@@ -436,7 +435,7 @@ describe("RentalApplicationShell first-run setup wizard (R16)", () => {
   function seedWizard(unsetup) {
     wizardPayload = {
       success: true,
-      ...buildSetupWizardStatus({ units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, memberCount: 1 }),
+      ...buildSetupWizardStatus({ units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, members: [] }),
       unsetup,
     };
     seedCacheEntry("rental:setup-wizard-status", wizardPayload);

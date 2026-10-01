@@ -9,7 +9,7 @@ import {
 } from "./setupWizard";
 
 function emptyWorkspace() {
-  return { units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, memberCount: 1 };
+  return { units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, members: [] };
 }
 
 describe("setup wizard step order", () => {
@@ -76,9 +76,44 @@ describe("evaluateSetupWizardStep", () => {
     expect(evaluateSetupWizardStep("owners", emptyWorkspace())).toBe(true);
   });
 
-  it("managers completes once a second workspace member exists", () => {
+  it("managers completes only when a manager-role member exists", () => {
     expect(evaluateSetupWizardStep("managers", emptyWorkspace())).toBe(false);
-    expect(evaluateSetupWizardStep("managers", { ...emptyWorkspace(), memberCount: 2 })).toBe(true);
+    expect(
+      evaluateSetupWizardStep("managers", {
+        ...emptyWorkspace(),
+        members: [{ role: "manager", status: "active" }],
+      })
+    ).toBe(true);
+    // An invited (not yet accepted) manager is still a manager on the team.
+    expect(
+      evaluateSetupWizardStep("managers", {
+        ...emptyWorkspace(),
+        members: [{ role: "manager", status: "invited" }],
+      })
+    ).toBe(true);
+  });
+
+  it("managers is not satisfied by co_owner, bookkeeper, or read_only members", () => {
+    for (const role of ["co_owner", "bookkeeper", "read_only"]) {
+      expect(
+        evaluateSetupWizardStep("managers", {
+          ...emptyWorkspace(),
+          members: [{ role, status: "active" }],
+        }),
+        role
+      ).toBe(false);
+    }
+    // Even several non-manager members do not satisfy a step named "Managers".
+    expect(
+      evaluateSetupWizardStep("managers", {
+        ...emptyWorkspace(),
+        members: [
+          { role: "co_owner", status: "active" },
+          { role: "bookkeeper", status: "active" },
+          { role: "read_only", status: "invited" },
+        ],
+      })
+    ).toBe(false);
   });
 
   it("properties completes with one active property", () => {
@@ -134,7 +169,7 @@ describe("buildSetupWizardStatus", () => {
       tenants: [{ id: "t1" }],
       bankAccountCount: 1,
       settingsConfigured: true,
-      memberCount: 2,
+      members: [{ role: "manager", status: "active" }],
     });
     expect(status.unsetup).toBe(false);
     expect(status.completeCount).toBe(status.totalCount);
