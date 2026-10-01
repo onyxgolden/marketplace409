@@ -129,6 +129,55 @@ describe("designerGeometry — snapping", () => {
     expect(isValidPoint({ x: NaN, y: 0 })).toBe(false);
     expect(snapPoint(null).point).toEqual({ x: 0, y: 0 });
   });
+
+  it("snaps to a nearby wall midpoint (TrueView parity)", () => {
+    const { point, snappedTo } = snapPoint(
+      { x: 51, y: 2 },
+      { snapMidpoints: [{ x: 50, y: 0 }, { x: 500, y: 500 }] },
+    );
+    expect(point).toEqual({ x: 50, y: 0 });
+    expect(snappedTo).toBe("midpoint");
+  });
+
+  it("ignores midpoints outside the snap radius, falling back to the grid", () => {
+    const { snappedTo } = snapPoint(
+      { x: 50, y: 50 },
+      { snapMidpoints: [{ x: 100, y: 100 }], snapRadiusIn: 9 },
+    );
+    expect(snappedTo).toBe("grid");
+  });
+
+  it("prefers an endpoint over an equally-close midpoint (endpoint priority on a tie)", () => {
+    const { point, snappedTo } = snapPoint(
+      { x: 100, y: 1 },
+      { snapTargets: [{ x: 100, y: 0 }], snapMidpoints: [{ x: 100, y: 2 }] },
+    );
+    expect(point).toEqual({ x: 100, y: 0 });
+    expect(snappedTo).toBe("endpoint");
+  });
+
+  it("prefers whichever of endpoint/midpoint is genuinely closer", () => {
+    const nearMidpoint = snapPoint(
+      { x: 100, y: 0.4 },
+      { snapTargets: [{ x: 95, y: 0 }], snapMidpoints: [{ x: 100, y: 0 }] },
+    );
+    expect(nearMidpoint.snappedTo).toBe("midpoint");
+
+    const nearEndpoint = snapPoint(
+      { x: 95.4, y: 0 },
+      { snapTargets: [{ x: 95, y: 0 }], snapMidpoints: [{ x: 100, y: 0 }] },
+    );
+    expect(nearEndpoint.snappedTo).toBe("endpoint");
+  });
+
+  it("keeps midpoint snapping even when grid snapping is off", () => {
+    const { point, snappedTo } = snapPoint(
+      { x: 101, y: 2 },
+      { snapToGrid: false, snapMidpoints: [{ x: 100, y: 0 }] },
+    );
+    expect(point).toEqual({ x: 100, y: 0 });
+    expect(snappedTo).toBe("midpoint");
+  });
 });
 
 describe("designerGeometry — Visio-style grid", () => {

@@ -149,35 +149,43 @@ export function nearestPointOnSegment(p, a, b) {
 }
 
 /**
- * Snap a raw pointer point: first to nearby existing endpoints (within
- * snapRadiusIn), otherwise to the grid. Returns the snapped point and what
- * it snapped to, so the UI can show a marker.
+ * Snap a raw pointer point: first to nearby existing endpoints or wall
+ * midpoints (within snapRadiusIn), otherwise to the grid. Returns the
+ * snapped point and what it snapped to, so the UI can show a marker.
  *
- * snapToGrid=false disables grid rounding only — endpoint (object) snapping
- * still applies, matching Visio where the two snaps are independent.
+ * snapToGrid=false disables grid rounding only — endpoint/midpoint (object)
+ * snapping still applies, matching Visio/TrueView where the snaps are
+ * independent. When an endpoint and a midpoint are equally close, the
+ * endpoint wins (snapTargets is checked first, strict `<` means a tie never
+ * displaces it) — matching the usual CAD convention of endpoint priority.
  */
 export function snapPoint(
   point,
   {
     gridIn = DEFAULT_GRID_IN,
     snapTargets = [],
+    snapMidpoints = [],
     snapRadiusIn = DEFAULT_SNAP_RADIUS_IN,
     snapToGrid = true,
   } = {},
 ) {
   if (!isValidPoint(point)) return { point: { x: 0, y: 0 }, snappedTo: "none" };
   let best = null;
+  let bestKind = null;
   let bestDistance = snapRadiusIn;
-  for (const target of snapTargets) {
-    if (!isValidPoint(target)) continue;
+  const consider = (target, kind) => {
+    if (!isValidPoint(target)) return;
     const distance = Math.hypot(point.x - target.x, point.y - target.y);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = target;
+      bestKind = kind;
     }
-  }
+  };
+  for (const target of snapTargets) consider(target, "endpoint");
+  for (const target of snapMidpoints) consider(target, "midpoint");
   if (best) {
-    return { point: { x: best.x, y: best.y }, snappedTo: "endpoint" };
+    return { point: { x: best.x, y: best.y }, snappedTo: bestKind };
   }
   if (!snapToGrid) {
     return { point: { x: point.x, y: point.y }, snappedTo: "none" };

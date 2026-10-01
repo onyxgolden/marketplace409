@@ -1342,6 +1342,31 @@ export function designContentBounds(design) {
   return { x: minX, y: minY, widthIn: maxX - minX, heightIn: maxY - minY };
 }
 
+/** Zoom Extents never requests a span narrower than this on either axis — a
+ * lone perfectly horizontal or vertical wall has zero extent on one axis,
+ * which zoomToFitRect rejects outright (and even a non-zero but tiny span
+ * would zoom in absurdly tight). */
+export const ZOOM_EXTENTS_MIN_SPAN_IN = 24;
+
+/**
+ * The rect the Designer's "Zoom Extents" button fits the view to: the
+ * design's content bounds, padded (grown symmetrically around the content's
+ * own center, never shifted off it) so neither axis is ever narrower than
+ * ZOOM_EXTENTS_MIN_SPAN_IN. Null when the design has nothing to zoom to.
+ */
+export function zoomExtentsRect(design, minSpanIn = ZOOM_EXTENTS_MIN_SPAN_IN) {
+  const bounds = designContentBounds(design);
+  if (!bounds) return null;
+  const padAxis = (origin, span) => {
+    if (span >= minSpanIn) return { origin, span };
+    const center = origin + span / 2;
+    return { origin: center - minSpanIn / 2, span: minSpanIn };
+  };
+  const x = padAxis(bounds.x, bounds.widthIn);
+  const y = padAxis(bounds.y, bounds.heightIn);
+  return { x: x.origin, y: y.origin, widthIn: x.span, heightIn: y.span };
+}
+
 /**
  * Uniform fit scale: paper inches of PRINTED line per plan inch, against the
  * printable area (paper minus the print margin on every side). Uniform —
