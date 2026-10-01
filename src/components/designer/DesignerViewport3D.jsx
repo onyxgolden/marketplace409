@@ -162,10 +162,12 @@ export function frameDollhouseOnModel(camera, controls, built) {
   return true;
 }
 
-/** Brisk walking pace, in inches/second (~10 ft/s). */
-export const WALK_SPEED_IN_PER_S = 120;
-/** Fly mode is faster — covering a whole plant footprint on foot would be tedious. */
-export const FLY_SPEED_IN_PER_S = 260;
+/** Walking pace, in inches/second (~30 ft/s — 3x the original 120, per Jason's
+ * 2026-09-30 request: arrow-key navigation was much too slow). */
+export const WALK_SPEED_IN_PER_S = 360;
+/** Fly mode is faster — covering a whole plant footprint on foot would be
+ * tedious. Also tripled from 260, in step with Walk. */
+export const FLY_SPEED_IN_PER_S = 780;
 /** Exponential velocity decay constant (1/s) applied every frame, key held or not. */
 export const MOVE_DAMPING = 8;
 
