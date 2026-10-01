@@ -3,7 +3,12 @@
 // Per-property depreciation assets with a straight-line monthly schedule
 // engine. ALL money is integer cents. The engine uses largest-remainder
 // rounding: every monthly amount is whole cents and the schedule sums
-// EXACTLY to the depreciable basis (cost - salvage).
+// EXACTLY to the depreciable basis.
+//
+// Depreciable basis = cost - salvage for straight line. The MACRS
+// real-property presets ignore salvage value entirely (IRS tax depreciation
+// does not reduce depreciable basis by salvage): for those methods the
+// basis is the full cost, no matter what salvage is stored.
 //
 // BOOKS INTEGRATION DECISION (see DEPRECIATION_METHODS.md for the full
 // rationale): depreciation is REPORT-ONLY. It never posts to the property
@@ -117,11 +122,16 @@ export function validateDepreciationAsset(input = {}) {
   }
 
   const salvageRaw = input.salvage_value_cents ?? input.salvageValueCents ?? 0;
-  const salvageValueCents = toPositiveIntCents(salvageRaw);
+  let salvageValueCents = toPositiveIntCents(salvageRaw);
   if (salvageValueCents === null || salvageValueCents < 0) {
     return { ok: false, error: "Salvage value must be zero or a positive amount (in cents)." };
   }
-  if (salvageValueCents >= costBasisCents) {
+  if (methodDef.presetLifeMonths) {
+    // MACRS tax depreciation does not recognize salvage value — the full
+    // cost basis is recovered. Force to zero, like the preset life above,
+    // so a stored salvage can never understate a MACRS schedule.
+    salvageValueCents = 0;
+  } else if (salvageValueCents >= costBasisCents) {
     return { ok: false, error: "Salvage value must be less than the cost basis — there has to be something to depreciate." };
   }
 
@@ -152,6 +162,21 @@ function parseYearMonth(dateString) {
   return { year: y, month: m };
 }
 
+// depreciableBasisCents(asset) → whole-cent depreciable basis.
+// Straight line: cost - salvage. MACRS real-property presets: the full
+// cost — IRS tax depreciation does not reduce depreciable basis by salvage
+// value, so any stored salvage is ignored on read (validation already
+// normalizes it to zero on write).
+export function depreciableBasisCents(asset) {
+  const methodDef = DEPRECIATION_METHODS[asset.method];
+  if (methodDef?.presetLifeMonths) return asset.cost_basis_cents;
+  return asset.cost_basis_cents - (asset.salvage_value_cents || 0);
+}
+
+// ---------------------------------------------------------------------------
+// Schedule engine
+// ---------------------------------------------------------------------------
+
 // computeDepreciationSchedule(asset) → array of monthly entries:
 //   { year, month (1-12), depreciationCents }.
 // - Straight line: exactly usefulLifeMonths full months starting with the
@@ -165,7 +190,7 @@ function parseYearMonth(dateString) {
 export function computeDepreciationSchedule(asset) {
   const methodDef = DEPRECIATION_METHODS[asset.method];
   if (!methodDef) throw new Error(`Unsupported depreciation method: ${asset.method}`);
-  const basis = asset.cost_basis_cents - (asset.salvage_value_cents || 0);
+  const basis = depreciableBasisCents(asset);
   if (!Number.isInteger(basis) || basis <= 0) throw new Error("Depreciable basis must be a positive whole-cent amount.");
 
   const lifeMonths = asset.useful_life_months;
@@ -209,15 +234,16 @@ export function computeDepreciationSchedule(asset) {
 export function scheduleSummary(asset) {
   const schedule = computeDepreciationSchedule(asset);
   const totalCents = schedule.reduce((sum, e) => sum + e.depreciationCents, 0);
+  const basis = depreciableBasisCents(asset);
   return {
     assetId: asset.id ?? null,
     description: asset.description,
-    depreciableBasisCents: asset.cost_basis_cents - (asset.salvage_value_cents || 0),
+    depreciableBasisCents: basis,
     totalCents,
     periodCount: schedule.length,
     firstPeriod: { year: schedule[0].year, month: schedule[0].month },
     lastPeriod: { year: schedule[schedule.length - 1].year, month: schedule[schedule.length - 1].month },
-    sumsToBasisExactly: totalCents === asset.cost_basis_cents - (asset.salvage_value_cents || 0),
+    sumsToBasisExactly: totalCents === basis,
     schedule,
   };
 }
@@ -265,7 +291,7 @@ export function computePropertyDepreciationReport({ assets = [], year }) {
     const accumulatedCents = byYear
       .filter((row) => row.year <= reportYear)
       .reduce((sum, row) => sum + row.totalCents, 0);
-    const depreciableBasisCents = asset.cost_basis_cents - (asset.salvage_value_cents || 0);
+    const basis = depreciableBasisCents(asset);
     return {
       id: asset.id ?? null,
       description: asset.description,
@@ -274,7 +300,7 @@ export function computePropertyDepreciationReport({ assets = [], year }) {
       placedInService: asset.placed_in_service,
       costBasisCents: asset.cost_basis_cents,
       salvageValueCents: asset.salvage_value_cents || 0,
-      depreciableBasisCents,
+      depreciableBasisCents: basis,
       depreciationTakenCents: yearRow ? yearRow.totalCents : 0,
       accumulatedCents,
       remainingBookValueCents: asset.cost_basis_cents - accumulatedCents,

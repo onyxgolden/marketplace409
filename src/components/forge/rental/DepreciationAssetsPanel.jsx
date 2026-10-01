@@ -101,7 +101,13 @@ export default function DepreciationAssetsPanel({ propertyId, propertyLabel }) {
     event.preventDefault();
     setSaveError("");
     const costBasisCents = dollarsToCents(form.costDollars);
-    const salvageDollars = form.salvageDollars === "" ? 0 : dollarsToCents(form.salvageDollars);
+    // MACRS tax depreciation does not recognize salvage value — the API
+    // normalizes it to zero; send 0 so the stored row matches the schedule.
+    // (Derived inline from form.method: saveAsset is declared before the
+    // macrsLife memo, and capturing the memo there breaks the compiler's
+    // manual-memoization preservation.)
+    const isMacrsMethod = DEPRECIATION_METHODS[form.method]?.presetLifeMonths != null;
+    const salvageDollars = isMacrsMethod ? 0 : (form.salvageDollars === "" ? 0 : dollarsToCents(form.salvageDollars));
     if (costBasisCents === null || costBasisCents <= 0) { setSaveError("Enter a cost basis above $0."); return; }
     if (salvageDollars === null) { setSaveError("Enter a valid salvage value."); return; }
     const payload = {
@@ -240,7 +246,8 @@ export default function DepreciationAssetsPanel({ propertyId, propertyLabel }) {
             <input required type="number" min="0" step="0.01" value={form.costDollars} onChange={(e) => setForm({ ...form, costDollars: e.target.value })} placeholder="18000.00" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
           </label>
           <label className="text-sm font-bold">Salvage value ($)
-            <input type="number" min="0" step="0.01" value={form.salvageDollars} onChange={(e) => setForm({ ...form, salvageDollars: e.target.value })} placeholder="0.00" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+            <input type="number" min="0" step="0.01" disabled={macrsLife !== null} value={macrsLife !== null ? "" : form.salvageDollars} onChange={(e) => setForm({ ...form, salvageDollars: e.target.value })} placeholder="0.00" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+            {macrsLife !== null && <span className="mt-1 block text-xs font-normal text-slate-500">MACRS ignores salvage value — the full cost basis is recovered (IRS rules).</span>}
           </label>
           <label className="text-sm font-bold md:col-span-2">Depreciation method
             <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value, usefulLifeMonths: DEPRECIATION_METHODS[e.target.value]?.presetLifeMonths ? String(DEPRECIATION_METHODS[e.target.value].presetLifeMonths) : form.usefulLifeMonths })} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white">

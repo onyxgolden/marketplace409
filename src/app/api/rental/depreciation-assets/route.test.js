@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
+vi.mock("@/lib/supabase/isOwnerOrActiveCoOwner", () => ({ isOwnerOrActiveCoOwner: vi.fn() }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { GET, POST } from "./route";
 import { GET as getOne, PUT, DELETE as remove } from "./[id]/route";
 import { GET as getSchedule } from "./schedule/route";
@@ -47,7 +47,7 @@ const del = () => remove(new Request("https://t/asset_1", { method: "DELETE" }),
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getActiveWorkspaceRole.mockResolvedValue("owner");
+  isOwnerOrActiveCoOwner.mockResolvedValue(true);
 });
 
 function authAs(db) {
@@ -92,13 +92,23 @@ describe("depreciation assets collection route", () => {
     expect(res.status).toBe(400);
   });
 
-  it("refuses read-only members on create", async () => {
+  it("refuses non-owner staff on create (manager, bookkeeper, read_only)", async () => {
+    // isOwnerOrActiveCoOwner's own unit test pins the role matrix
+    // (manager/bookkeeper/read_only → false; primary owner/co_owner → true).
+    // Here we prove the route actually enforces the gate on writes.
     const { db } = makeDb();
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
+    isOwnerOrActiveCoOwner.mockResolvedValue(false);
     const res = await post(NEW_ASSET);
     expect(res.status).toBe(403);
-    expect((await res.json()).error).toMatch(/Read-only/);
+    expect((await res.json()).error).toMatch(/owner or co-owner/i);
+  });
+
+  it("allows owner and co-owner writes", async () => {
+    const { db } = makeDb({ insertedRow: ROW });
+    authAs(db);
+    isOwnerOrActiveCoOwner.mockResolvedValue(true);
+    expect((await post(NEW_ASSET)).status).toBe(201);
   });
 
   it("passes auth failures through", async () => {
@@ -139,11 +149,13 @@ describe("depreciation asset item route", () => {
     expect(calls.delete).toHaveLength(1);
   });
 
-  it("refuses read-only members on update and delete", async () => {
+  it("refuses non-owner staff on update and delete", async () => {
     const { db } = makeDb({ oneRow: ROW });
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
-    expect((await put({ description: "x" })).status).toBe(403);
+    isOwnerOrActiveCoOwner.mockResolvedValue(false);
+    const putRes = await put({ description: "x" });
+    expect(putRes.status).toBe(403);
+    expect((await putRes.json()).error).toMatch(/owner or co-owner/i);
     expect((await del()).status).toBe(403);
   });
 });
@@ -175,7 +187,6 @@ describe("depreciation schedule report route", () => {
   it("is readable by read-only members", async () => {
     const { db } = makeDb({ listRows: [ROW] });
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
     const res = await getSchedule(new Request("https://t/?propertyId=308-paula&year=2026"));
     expect(res.status).toBe(200);
   });

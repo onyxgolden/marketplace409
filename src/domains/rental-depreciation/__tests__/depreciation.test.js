@@ -4,6 +4,7 @@ import {
   DEPRECIATION_METHODS,
   computeDepreciationSchedule,
   computePropertyDepreciationReport,
+  depreciableBasisCents,
   groupScheduleByYear,
   scheduleSummary,
   validateDepreciationAsset,
@@ -151,6 +152,45 @@ describe("MACRS presets", () => {
     // Year 1 prorated: June..December.
     const year1 = groupScheduleByYear(schedule).find((row) => row.year === 2026);
     expect(year1.months).toHaveLength(7);
+  });
+});
+
+describe("MACRS salvage handling (tax depreciation ignores salvage)", () => {
+  it("normalizes a submitted salvage to zero for MACRS presets", () => {
+    for (const method of ["macrs_27_5", "macrs_39"]) {
+      const result = validateDepreciationAsset({
+        description: "Building", placed_in_service: "2026-01-15",
+        cost_basis_cents: cents(275000), method, useful_life_months: 12,
+        salvage_value_cents: cents(50000),
+      });
+      expect(result.ok).toBe(true);
+      expect(result.clean.salvage_value_cents).toBe(0);
+    }
+  });
+
+  it("ignores a nonzero stored salvage in the MACRS schedule (regression)", () => {
+    // Rows carrying nonzero salvage must still recover the full cost basis
+    // under a MACRS preset — MACRS does not reduce basis by salvage value.
+    const stored = asset({
+      method: "macrs_27_5", useful_life_months: 330, placed_in_service: "2026-01-20",
+      cost_basis_cents: cents(275000), salvage_value_cents: cents(50000),
+    });
+    const schedule = computeDepreciationSchedule(stored);
+    expect(schedule.reduce((a, e) => a + e.depreciationCents, 0)).toBe(cents(275000));
+    const summary = scheduleSummary(stored);
+    expect(summary.depreciableBasisCents).toBe(cents(275000));
+    expect(summary.sumsToBasisExactly).toBe(true);
+    const report = computePropertyDepreciationReport({ assets: [stored], year: 2026 });
+    expect(report.assets[0].depreciableBasisCents).toBe(cents(275000));
+  });
+
+  it("keeps subtracting salvage for straight line", () => {
+    expect(depreciableBasisCents(asset({
+      cost_basis_cents: cents(12000), salvage_value_cents: cents(2000),
+    }))).toBe(cents(10000));
+    expect(depreciableBasisCents(asset({
+      method: "macrs_39", cost_basis_cents: cents(12000), salvage_value_cents: cents(2000),
+    }))).toBe(cents(12000));
   });
 });
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import {
   DEPRECIATION_METHODS,
   rowToAsset,
@@ -11,7 +11,8 @@ export const runtime = "nodejs";
 
 // Rentec parity R19: depreciation asset register per property.
 // GET is readable by every workspace member (read-only included) — reading
-// the register is not a write. POST is owner/co-owner only.
+// the register is not a write. POST is owner/co-owner only: managers,
+// bookkeepers, and read-only members get 403.
 // GET ?propertyId= is required: assets are always scoped to one property.
 //
 // BOOKS INTEGRATION DECISION (report-only): depreciation is a non-cash
@@ -22,11 +23,14 @@ export const runtime = "nodejs";
 const SELECT_COLUMNS =
   "id, property_id, description, category, placed_in_service, cost_basis_cents, method, useful_life_months, salvage_value_cents, notes, created_at, updated_at";
 
-async function readOnlyWriteBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
+// Owner/co-owner only: the repository's effective-owner/member-role model —
+// a primary owner has no workspace_members row (null), a co-owner has an
+// active co_owner row; manager, bookkeeper, and read_only are staff.
+async function writeBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
-  })) === "read_only";
+  }));
 }
 
 export function rowToDepreciationAsset(row) {
@@ -60,8 +64,8 @@ export async function GET(request) {
 export async function POST(request) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
-  if (await readOnlyWriteBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot manage depreciation assets." }, { status: 403 });
+  if (await writeBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can manage depreciation assets." }, { status: 403 });
   }
   const body = await request.json().catch(() => ({}));
   try {

@@ -24,6 +24,11 @@ MACRS methods lock the useful life to the preset (330 / 468). A
 caller-supplied life on a MACRS asset is normalized to the preset, never
 honored silently.
 
+MACRS methods also ignore salvage value: IRS tax depreciation does not
+reduce depreciable basis by salvage, so the API normalizes any submitted
+salvage to zero and the engine computes the schedule on the full cost
+basis. Straight line still subtracts salvage (basis = cost − salvage).
+
 ## Explicitly out of scope
 
 - Declining-balance methods (200% / 150% DB) and any other accelerated method.

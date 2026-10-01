@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { validateDepreciationAsset } from "@/domains/rental-depreciation/depreciation";
 import { rowToDepreciationAsset } from "../route";
 
 export const runtime = "nodejs";
 
 // Rentec parity R19: single-asset CRUD. Reads are open to every workspace
-// member; PUT/DELETE are owner/co-owner only (read-only members get 403).
+// member; PUT/DELETE are owner/co-owner only (managers, bookkeepers, and
+// read-only members get 403).
 // Report-only books decision: nothing here posts to any ledger or register.
 
 const SELECT_COLUMNS =
@@ -24,11 +25,12 @@ async function loadOne(authenticated, id) {
   return data;
 }
 
+// Owner/co-owner only — same boundary as the collection route.
 async function writeBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
+  return !(await isOwnerOrActiveCoOwner({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
-  })) === "read_only";
+  }));
 }
 
 export async function GET(request, { params }) {
@@ -48,7 +50,7 @@ export async function PUT(request, { params }) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
   if (await writeBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot manage depreciation assets." }, { status: 403 });
+    return NextResponse.json({ error: "Only the owner or co-owner can manage depreciation assets." }, { status: 403 });
   }
   const body = await request.json().catch(() => ({}));
   try {
@@ -85,7 +87,7 @@ export async function DELETE(request, { params }) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
   if (await writeBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot manage depreciation assets." }, { status: 403 });
+    return NextResponse.json({ error: "Only the owner or co-owner can manage depreciation assets." }, { status: 403 });
   }
   try {
     const existing = await loadOne(authenticated, params.id);
