@@ -12,6 +12,7 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { PAYMENT_POLICIES, paymentPolicyDescription, paymentPolicyLabel } from "@/domains/rental-payment/paymentPolicy";
+import { useRentalTerminology } from "./rentalTerminologyContext";
 
 export function propertyLabelForTenant(tenant, leases, leaseMemberships, units) {
   const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id);
@@ -57,6 +58,8 @@ export function tenantInviteLabel(tenant) {
 }
 
 export default function RentalTenantPanel({ initialTenants = [], onNavigate: navigate, recordContext = null }) {
+  // R25 terminology: panel headings resolve through the workspace term map.
+  const { termLabel } = useRentalTerminology();
   const [message, setMessage] = useState("");
   const openCreateTenant = recordContext?.openCreateTenant === true;
   // Master tenant dataset: stale-while-revalidate under one global key. The panel
@@ -259,8 +262,8 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   }
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-setup>
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Tenant setup</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Tenants</h2>
+      <div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{termLabel("tenant", { capitalize: true })} setup</p>
+        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("tenant", { plural: true, capitalize: true })}</h2>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p></div>
       {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
     </div>
