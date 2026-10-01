@@ -2,7 +2,7 @@
 // workflows and button explanations can evolve without changing rendering logic.
 
 export const RENTAL_DAILY_WORKFLOW = Object.freeze([
-  "Open Dashboard and review anything due, late, failed, unresolved, or awaiting approval.",
+  "Open Summary and review anything due, late, failed, unresolved, or awaiting approval.",
   "Check Rent & Payments for money received, overdue charges, failures, and offline payments that need recording.",
   "Review Maintenance, Communications, and Support for new tenant requests or follow-up work.",
   "Check upcoming lease changes, inspections, insurance expirations, and animal reviews.",
@@ -36,7 +36,7 @@ export const RENTAL_COMMON_WORKFLOWS = Object.freeze([
     id: "late-or-failed",
     title: "Handle late or failed rent",
     steps: Object.freeze([
-      "Open Dashboard or Rent & Payments and inspect the specific late or failed charge.",
+      "Open Summary or Rent & Payments and inspect the specific late or failed charge.",
       "Confirm whether the failure is real, pending, reversed, or already paid outside FORGE.",
       "Record verified offline payment when applicable; never create a second payment to make the balance look right.",
       "Use Lease Changes for owner-controlled late-fee decisions and Communications for the notice trail.",
@@ -78,9 +78,12 @@ export const RENTAL_COMMON_WORKFLOWS = Object.freeze([
 ]);
 
 export const RENTAL_FUNCTION_HELP = Object.freeze({
-  overview: Object.freeze({ title: "Dashboard", summary: "Your exception-first daily starting point: five portfolio numbers plus today's priorities.", actions: Object.freeze(["Review due, late, failed, unresolved, and approval-needed work.", "Open the affected function instead of changing records from the dashboard."]) }),
+  overview: Object.freeze({ title: "Summary", summary: "Your exception-first daily starting point: five portfolio numbers plus today's priorities.", actions: Object.freeze(["Review due, late, failed, unresolved, and approval-needed work.", "Open the affected function instead of changing records from the summary."]) }),
   setup: Object.freeze({ title: "Property & Unit", summary: "Create and maintain the rental portfolio records that other workflows depend on.", actions: Object.freeze(["Add or select a property and its rentable units.", "Use property actions to open related financial setup or operating work."]) }),
   insurance: Object.freeze({ title: "Insurance", summary: "Track renter-insurance requirements and verification.", actions: Object.freeze(["Record policy evidence and expiration follow-up.", "FORGE tracks compliance; it does not collect insurance premiums."]) }),
+  maintenance: Object.freeze({ title: "Maintenance", summary: "Track requests, work orders, contractors, and verified completion.", actions: Object.freeze(["Record urgency and access instructions clearly.", "Field confirmation remains authoritative for completed work."]) }),
+  inspections: Object.freeze({ title: "Inspections", summary: "Document move-in, move-out, and periodic property condition.", actions: Object.freeze(["Use the correct tenant, unit, date, photos, and notes.", "Inspection findings never create a deposit deduction automatically."]) }),
+  documents: Object.freeze({ title: "Documents", summary: "Store leases, notices, invoices, photos, and other controlled rental records.", actions: Object.freeze(["Choose the correct property, tenant, lease, category, and visibility.", "Verify the file before making it available through a tenant-facing workflow."]) }),
   tenants: Object.freeze({ title: "Tenants", summary: "Create and manage renter identity records.", actions: Object.freeze(["Add a tenant before creating a lease.", "Select a tenant to work with leases, payments, documents, and communications in context."]) }),
   leases: Object.freeze({ title: "Leases", summary: "Connect a saved tenant to a saved unit and maintain rent schedules.", actions: Object.freeze(["Choose persisted unit and tenant records; do not enter internal IDs manually.", "Review dates, rent, deposit, and schedule before activation."]) }),
   "lease-lifecycle": Object.freeze({ title: "Lease Changes", summary: "Record renewals, amendments, prorating, notices, and owner-controlled late fees.", actions: Object.freeze(["Use a dated, auditable change instead of silently rewriting history.", "Review money and effective dates before confirming."]) }),
@@ -96,9 +99,9 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   reconciliation: Object.freeze({ title: "Reconciliation", summary: "Compare FORGE payment records with provider and settlement evidence.", actions: Object.freeze(["Investigate mismatches instead of forcing balances to agree.", "Finish reconciliation before treating reports as final."]) }),
   "bank-ledger": Object.freeze({ title: "Bank Ledger", summary: "Review a bank account's register — every transaction with a running balance — and mark items cleared as they post.", actions: Object.freeze(["Pick the correct bank account before marking anything cleared.", "Mark an item cleared only when it appears on the bank statement; the Reconcile summary shows the cleared balance and how many items are still uncleared."]) }),
   vendors: Object.freeze({ title: "Vendors", summary: "Keep the vendor list and record vendor bills — what you owe, to whom, and when it is due.", actions: Object.freeze(["Add a vendor once, then record each bill against them with the right expense account.", "A bill is only a record of what you owe; nothing posts to the books until it is paid.", "Void a mistaken bill with a reason instead of deleting it — the history stays."]) }),
-  maintenance: Object.freeze({ title: "Maintenance", summary: "Track requests, work orders, contractors, and verified completion.", actions: Object.freeze(["Record urgency and access instructions clearly.", "Field confirmation remains authoritative for completed work."]) }),
-  inspections: Object.freeze({ title: "Inspections", summary: "Document move-in, move-out, and periodic property condition.", actions: Object.freeze(["Use the correct tenant, unit, date, photos, and notes.", "Inspection findings never create a deposit deduction automatically."]) }),
-  documents: Object.freeze({ title: "Documents", summary: "Store leases, notices, invoices, photos, and other controlled rental records.", actions: Object.freeze(["Choose the correct property, tenant, lease, category, and visibility.", "Verify the file before making it available through a tenant-facing workflow."]) }),
+  "chart-of-accounts": Object.freeze({ title: "Chart of Accounts", summary: "Maintain the account list the bank ledger and reports post against.", actions: Object.freeze(["Rename or deactivate accounts without rewriting posted history.", "Confirm the account type before saving; it drives reporting."]) }),
+  "batch-entry": Object.freeze({ title: "Batch Entry", summary: "Record many expenses at once against the right property and account.", actions: Object.freeze(["Confirm the property and account on every line before posting.", "Review the batch totals before confirming."]) }),
+  owners: Object.freeze({ title: "Owners", summary: "The owner side of the books: running balances due to each owner, disbursements, and contributions.", actions: Object.freeze(["Review what each owner is owed before disbursing.", "Owner contributions are recorded here, never as rental income."]) }),
   reports: Object.freeze({ title: "Reports", summary: "Review rent roll, tenant ledger, and rental operating results.", actions: Object.freeze(["Confirm the reporting period and scope.", "Resolve payment or reconciliation exceptions before relying on totals."]) }),
   "financial-setup": Object.freeze({ title: "Financial Setup", summary: "Assign property-specific financial treatment and reporting setup.", actions: Object.freeze(["Open it from the correct property context.", "Review accounting treatment before saving changes that affect reporting."]) }),
   autopay: Object.freeze({ title: "Autopay", summary: "Review tenant authorization and owner-side collection readiness.", actions: Object.freeze(["Confirm authorization, payment method, lease, and amount controls.", "Authorization alone never activates a debit."]) }),
@@ -110,12 +113,11 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
 });
 
 export const RENTAL_HELP_GROUPS = Object.freeze([
-  Object.freeze({ title: "Dashboard", ids: Object.freeze(["overview"]) }),
-  Object.freeze({ title: "Properties", ids: Object.freeze(["setup", "insurance"]) }),
+  Object.freeze({ title: "Summary", ids: Object.freeze(["overview"]) }),
+  Object.freeze({ title: "Properties", ids: Object.freeze(["setup", "insurance", "maintenance", "inspections", "documents"]) }),
   Object.freeze({ title: "Tenants", ids: Object.freeze(["tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals"]) }),
-  Object.freeze({ title: "Transactions", ids: Object.freeze(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors"]) }),
-  Object.freeze({ title: "Maintenance", ids: Object.freeze(["maintenance", "inspections"]) }),
-  Object.freeze({ title: "Documents", ids: Object.freeze(["documents"]) }),
+  Object.freeze({ title: "Banking", ids: Object.freeze(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry"]) }),
+  Object.freeze({ title: "Owners", ids: Object.freeze(["owners"]) }),
   Object.freeze({ title: "Reports", ids: Object.freeze(["reports"]) }),
   Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import"]) }),
 ]);

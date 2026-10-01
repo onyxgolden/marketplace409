@@ -39,11 +39,10 @@ afterEach(() => { clearSWRCache(); });
 
 const EXPECTED_FUNCTION_IDS = [
   "overview",
-  "setup", "insurance",
+  "setup", "insurance", "maintenance", "inspections", "documents",
   "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
-  "maintenance", "inspections",
-  "documents",
+  "owners",
   "reports",
   "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import",
 ];
@@ -123,15 +122,41 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
   });
 });
 
-describe("RentalApplicationShell eight-section registry", () => {
-  it("exposes exactly the eight owner-approved sections, in order", () => {
+describe("RentalApplicationShell seven-section Rentec-style registry", () => {
+  it("exposes exactly the seven Rentec-style sections, in order", () => {
     expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual([
-      "Dashboard", "Properties", "Tenants", "Transactions", "Maintenance", "Documents", "Reports", "Settings",
+      "Summary", "Properties", "Tenants", "Banking", "Owners", "Reports", "Settings",
     ]);
   });
 
   it("keeps every surviving function id byte-identical, in the new section order", () => {
     expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(EXPECTED_FUNCTION_IDS);
+  });
+
+  it("labels the landing destination Summary while keeping the overview function id for old links and stored prefs", () => {
+    const summary = RENTAL_NAVIGATION[0];
+    expect(summary.label).toBe("Summary");
+    expect(summary.items).toEqual([{ id: "overview", label: "Summary" }]);
+  });
+
+  it("homes maintenance, inspections, and documents under Properties", () => {
+    const properties = RENTAL_NAVIGATION.find((group) => group.label === "Properties");
+    expect(properties.items.map(({ id }) => id)).toEqual(["setup", "insurance", "maintenance", "inspections", "documents"]);
+  });
+
+  it("groups the money screens under Banking", () => {
+    const banking = RENTAL_NAVIGATION.find((group) => group.label === "Banking");
+    expect(banking.items.map(({ id }) => id)).toEqual(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry"]);
+    expect(banking.items.find(({ id }) => id === "charges").label).toBe("Rent & Payments");
+  });
+
+  it("gives Owners its own section home as the R9 mount point", () => {
+    const owners = RENTAL_NAVIGATION.find((group) => group.label === "Owners");
+    expect(owners.items.map(({ id }) => id)).toEqual(["owners"]);
+    const markup = renderToStaticMarkup(buildRentalSurface("owners"));
+    expect(markup).toContain("data-rental-owners-home");
+    expect(markup).toContain("data-owner-statements-mount");
+    expect(markup).toContain("Owner statements");
   });
 
   it("places animals under Tenants and the combined owner inbox under Tenants, not under a property split", () => {
@@ -143,10 +168,10 @@ describe("RentalApplicationShell eight-section registry", () => {
     expect(properties.items.map(({ id }) => id)).not.toContain("animals");
   });
 
-  it("keeps Dashboard first so retired ids fall back to overview, and never offers Dashboard as hideable", () => {
+  it("keeps Summary first so retired ids fall back to overview, and never offers Summary as hideable", () => {
     expect(RENTAL_FUNCTIONS[0].id).toBe("overview");
     expect(HIDEABLE_SIDEBAR_SECTIONS.map(({ sectionLabel }) => sectionLabel)).toEqual([
-      "Properties", "Tenants", "Transactions", "Maintenance", "Documents", "Reports", "Settings",
+      "Properties", "Tenants", "Banking", "Owners", "Reports", "Settings",
     ]);
   });
 
@@ -162,9 +187,16 @@ describe("resolveRentalSectionParam", () => {
   it("maps a section label to the section's first function id", () => {
     expect(resolveRentalSectionParam("properties")).toBe("setup");
     expect(resolveRentalSectionParam("tenants")).toBe("tenants");
-    expect(resolveRentalSectionParam("dashboard")).toBe("overview");
+    expect(resolveRentalSectionParam("banking")).toBe("charges");
+    expect(resolveRentalSectionParam("owners")).toBe("owners");
+    expect(resolveRentalSectionParam("summary")).toBe("overview");
     expect(resolveRentalSectionParam("settings")).toBe("financial-setup");
     expect(resolveRentalSectionParam("reports")).toBe("reports");
+  });
+
+  it("keeps retired pre-R8 group labels resolving to their Rentec-style successors", () => {
+    expect(resolveRentalSectionParam("dashboard")).toBe("overview");
+    expect(resolveRentalSectionParam("transactions")).toBe("charges");
   });
 
   it("accepts a function id directly, case-insensitively with surrounding whitespace tolerated", () => {
@@ -264,12 +296,12 @@ describe("RentalApplicationShell retired-id fallback", () => {
 });
 
 describe("RentalApplicationShell", () => {
-  it("renders an exception-first dashboard in grouped navigation", () => {
+  it("renders an exception-first summary in grouped navigation", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
-    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Dashboard", "Properties", "Tenants", "Transactions", "Maintenance", "Documents", "Reports", "Settings"]);
+    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Banking", "Owners", "Reports", "Settings"]);
   });
   it("renders the first-tenant readiness surface as its own reachable function", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("readiness"));

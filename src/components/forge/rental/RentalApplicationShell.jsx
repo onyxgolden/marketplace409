@@ -6,6 +6,7 @@ import { useSidebarHiddenItems } from "@/components/forge/workspace/useSidebarHi
 import SidebarCustomizePopover from "@/components/forge/workspace/SidebarCustomizePopover";
 import RentalContextualSurface from "./RentalContextualSurface";
 import RentalOverviewPanel from "./RentalOverviewPanel"; import RentalSetupPanel from "./RentalSetupPanel"; import RentalTenantPanel from "./RentalTenantPanel"; import RentalLeasePanel from "./RentalLeasePanel"; import RentalPaymentsPanel from "./RentalPaymentsPanel"; import RentalInsurancePanel from "./RentalInsurancePanel"; import RentalMaintenancePanel from "./RentalMaintenancePanel"; import RentalDocumentsPanel from "./RentalDocumentsPanel"; import RentalCommunicationsPanel from "./RentalCommunicationsPanel"; import MessagesPanel from "./MessagesPanel"; import RentalReconciliationPanel from "./RentalReconciliationPanel"; import BankLedgerPage from "./BankLedgerPage"; import ChartOfAccountsPage from "./ChartOfAccountsPage"; import BatchExpenseForm from "./BatchExpenseForm"; import RentalReportsPanel from "./RentalReportsPanel"; import RentalDepositsPanel from "./RentalDepositsPanel"; import RentalInspectionsPanel from "./RentalInspectionsPanel"; import RentalLeaseLifecyclePanel from "./RentalLeaseLifecyclePanel"; import RentalLeasePreparationPanel from "./RentalLeasePreparationPanel"; import RentalAutopayPanel from "./RentalAutopayPanel"; import RentalAnimalsPanel from "./RentalAnimalsPanel"; import RentalSupportPanel from "./RentalSupportPanel"; import RentalVendorsPanel from "./RentalVendorsPanel"; import BankingToolsPanel from "./BankingToolsPanel";
+import RentalOwnersHomePanel from "./RentalOwnersHomePanel";
 import RentecMigrationPanel from "./RentecMigrationPanel";
 import RentecFileInventoryPanel from "./RentecFileInventoryPanel";
 import RentecPaymentImportPanel from "./RentecPaymentImportPanel";
@@ -16,15 +17,30 @@ import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritie
 import RentalFirstTenantReadinessPanel from "./guided-workflow/RentalFirstTenantReadinessPanel";
 import RentalLeaseRenewalPanel from "./guided-workflow/RentalLeaseRenewalPanel";
 
-// Eight-section Rental Manager information architecture (owner-approved 2026-09-21).
-// Every surviving function id is byte-identical to the pre-simplification registry, so
-// buildRentalSurface, stored activeFunctionId values, sidebar hide-prefs (key
-// "rental-manager"), and RentalContextualSurface record-scoping keep working untouched.
-// Retired ids ("guide", "private-financing", and the RV trio) resolve through
-// resolveActiveFunction's fallback to the first entry -- "overview" -- below.
+// Seven-section Rentec-style information architecture (Rentec-parity R8,
+// 2026-10-01): Summary landing, then Properties / Tenants / Banking / Owners /
+// Reports / Settings -- the grouping a Rentec user reaches for. This replaces
+// the eight-section layout (owner-approved 2026-09-21) as part of the
+// Rentec-parity program. Every surviving function id is byte-identical to the
+// pre-R8 registry, so buildRentalSurface, stored activeFunctionId values,
+// sidebar hide-prefs (key "rental-manager"), and RentalContextualSurface
+// record-scoping keep working untouched. Retired group labels ("dashboard",
+// "transactions") still resolve through resolveRentalSectionParam's legacy map
+// below, and retired ids ("guide", "private-financing", and the RV trio)
+// resolve through resolveActiveFunction's fallback to the first entry --
+// "overview" -- below.
 export const RENTAL_NAVIGATION = Object.freeze([
-  Object.freeze({ label: "Dashboard", items: Object.freeze([{ id: "overview", label: "Dashboard" }]) }),
-  Object.freeze({ label: "Properties", items: Object.freeze([{ id: "setup", label: "Properties" }, { id: "insurance", label: "Insurance" }]) }),
+  Object.freeze({ label: "Summary", items: Object.freeze([{ id: "overview", label: "Summary" }]) }),
+  Object.freeze({
+    label: "Properties",
+    items: Object.freeze([
+      { id: "setup", label: "Properties" },
+      { id: "insurance", label: "Insurance" },
+      { id: "maintenance", label: "Maintenance" },
+      { id: "inspections", label: "Inspections" },
+      { id: "documents", label: "Documents" },
+    ]),
+  }),
   Object.freeze({
     label: "Tenants",
     items: Object.freeze([
@@ -42,9 +58,20 @@ export const RENTAL_NAVIGATION = Object.freeze([
       { id: "animals", label: "Animals" },
     ]),
   }),
-  Object.freeze({ label: "Transactions", items: Object.freeze([{ id: "charges", label: "Rent & Payments" }, { id: "deposits", label: "Deposits" }, { id: "checks-deposits", label: "Checks & Deposits" }, { id: "reconciliation", label: "Reconciliation" }, { id: "bank-ledger", label: "Bank Ledger" }, { id: "vendors", label: "Vendors" }, { id: "chart-of-accounts", label: "Chart of Accounts" }, { id: "batch-entry", label: "Batch Entry" }]) }),
-  Object.freeze({ label: "Maintenance", items: Object.freeze([{ id: "maintenance", label: "Maintenance" }, { id: "inspections", label: "Inspections" }]) }),
-  Object.freeze({ label: "Documents", items: Object.freeze([{ id: "documents", label: "Documents" }]) }),
+  Object.freeze({
+    label: "Banking",
+    items: Object.freeze([
+      { id: "charges", label: "Rent & Payments" },
+      { id: "deposits", label: "Deposits" },
+      { id: "checks-deposits", label: "Checks & Deposits" },
+      { id: "reconciliation", label: "Reconciliation" },
+      { id: "bank-ledger", label: "Bank Ledger" },
+      { id: "vendors", label: "Vendors" },
+      { id: "chart-of-accounts", label: "Chart of Accounts" },
+      { id: "batch-entry", label: "Batch Entry" },
+    ]),
+  }),
+  Object.freeze({ label: "Owners", items: Object.freeze([{ id: "owners", label: "Owners" }]) }),
   Object.freeze({ label: "Reports", items: Object.freeze([{ id: "reports", label: "Reports" }]) }),
   Object.freeze({
     label: "Settings",
@@ -63,17 +90,23 @@ export const RENTAL_FUNCTIONS = Object.freeze(RENTAL_NAVIGATION.flatMap((group) 
 
 // Maps a `?section=` URL value to a rental function id so external entry points (notably the
 // /forge/property compatibility redirect) can deep-link a section instead of dumping the user
-// on the Dashboard default. Accepts a function id directly ("maintenance") or a section label
-// ("properties" -> the section's first item, "setup"). Returns null when nothing matches, and
+// on the Summary default. Accepts a function id directly ("maintenance") or a section label
+// ("banking" -> the section's first item, "charges"). Retired pre-R8 group labels keep working
+// through LEGACY_RENTAL_SECTION_LABELS below. Returns null when nothing matches, and
 // the caller falls back to "overview" -- which resolveActiveFunction also guarantees for any
 // retired id, since "overview" remains the first RENTAL_FUNCTIONS entry.
+const LEGACY_RENTAL_SECTION_LABELS = Object.freeze({
+  dashboard: "overview",
+  transactions: "charges",
+});
 export function resolveRentalSectionParam(value) {
   const slug = String(value || "").trim().toLowerCase();
   if (!slug) return null;
   const byId = RENTAL_FUNCTIONS.find((item) => item.id === slug);
   if (byId) return byId.id;
   const group = RENTAL_NAVIGATION.find((entry) => entry.label.toLowerCase() === slug);
-  return group?.items[0]?.id ?? null;
+  if (group?.items[0]?.id) return group.items[0].id;
+  return LEGACY_RENTAL_SECTION_LABELS[slug] ?? null;
 }
 
 // Re-exported for convenience: the pure ?recordType=/?recordId=/?propertyId=
@@ -82,19 +115,19 @@ export function resolveRentalSectionParam(value) {
 export { resolveRentalRecordContextParam, KNOWN_RECORD_TYPES } from "./rentalRecordParam";
 
 // Every item that may be hidden via the sidebar's Customize control, grouped by the section label
-// shown in that checklist -- everything except Dashboard, which every user needs as a landing view
+// shown in that checklist -- everything except Summary, which every user needs as a landing view
 // and is therefore never offered as hideable in the first place.
 const SIDEBAR_KEY = "rental-manager";
 export const HIDEABLE_SIDEBAR_SECTIONS = Object.freeze(
   RENTAL_NAVIGATION
-    .filter((group) => group.label !== "Dashboard")
+    .filter((group) => group.label !== "Summary")
     .map((group) => Object.freeze({ sectionLabel: group.label, items: group.items })),
 );
 
-// Dashboard is never filterable, even defensively against a corrupted/stale hidden-ids value --
+// Summary is never filterable, even defensively against a corrupted/stale hidden-ids value --
 // every user needs a landing view regardless of what's stored server-side.
 function isItemHidden(group, itemId, hiddenItemIds) {
-  return group.label !== "Dashboard" && hiddenItemIds.has(itemId);
+  return group.label !== "Summary" && hiddenItemIds.has(itemId);
 }
 
 // Surfaces that render a dead end with no record context. Sidebar navigation
@@ -105,7 +138,7 @@ const CONTEXT_CARRY_SURFACES = new Set(["financial-setup"]);
 
 export function buildRentalSurface(id, { onNavigate, recordContext = null, viewFilter = null } = {}) {
   if(recordContext&&["charges","maintenance","inspections","documents","communications"].includes(id))return <RentalContextualSurface surfaceId={id} recordContext={recordContext}/>;
-  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} initialViewFilter={viewFilter} recordContext={recordContext} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} initialViewFilter={viewFilter} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} initialViewFilter={viewFilter} />, insurance: <RentalInsurancePanel />, maintenance: <RentalMaintenancePanel recordContext={recordContext} initialViewFilter={viewFilter} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "bank-ledger": <BankLedgerPage onNavigate={onNavigate} />, vendors: <RentalVendorsPanel />, "chart-of-accounts": <ChartOfAccountsPage onNavigate={onNavigate} />, "batch-entry": <BatchExpenseForm />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} onNavigate={onNavigate} />, deposits: <RentalDepositsPanel />, "checks-deposits": <BankingToolsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel /> };
+  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, owners: <RentalOwnersHomePanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} initialViewFilter={viewFilter} recordContext={recordContext} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} initialViewFilter={viewFilter} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} initialViewFilter={viewFilter} />, insurance: <RentalInsurancePanel />, maintenance: <RentalMaintenancePanel recordContext={recordContext} initialViewFilter={viewFilter} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "bank-ledger": <BankLedgerPage onNavigate={onNavigate} />, vendors: <RentalVendorsPanel />, "chart-of-accounts": <ChartOfAccountsPage onNavigate={onNavigate} />, "batch-entry": <BatchExpenseForm />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} onNavigate={onNavigate} />, deposits: <RentalDepositsPanel />, "checks-deposits": <BankingToolsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel /> };
   return surfaces[id] || <RentalOverviewPanel onNavigate={onNavigate} />;
 }
 

@@ -82,7 +82,7 @@ function EmptyPortfolioState({ onNavigate }) {
     <section className="space-y-6" data-rental-overview data-rental-overview-empty>
       <div>
         <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
+        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
       </div>
       <div className="flex flex-col items-center gap-4 rounded-3xl border border-dashed border-slate-300 bg-white p-12 text-center dark:border-slate-700 dark:bg-slate-900">
         <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-400" aria-hidden="true">
@@ -125,7 +125,7 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
     <section className="space-y-5" data-rental-overview>
       <div>
         <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
+        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
       </div>
       <p className="rounded-2xl border border-slate-200 bg-white p-6 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">Loading rental summary…</p>
     </section>
@@ -179,7 +179,7 @@ export default function RentalOverviewPanel({ onNavigate, initialData = null, in
         <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between lg:p-8">
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Rental operations</p>
-            <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Dashboard</h2>
+            <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Summary</h2>
             <p className="mt-2 max-w-xl text-sm text-slate-600 dark:text-slate-400">Exceptions first, then the numbers that describe the portfolio — every figure comes from your rental records.</p>
             <div className="mt-4 flex items-center gap-3">
               <PortfolioStrip units={summary.portfolioUnits} />
