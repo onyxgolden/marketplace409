@@ -1085,7 +1085,34 @@ describe("Rental Manager POST — convenience fee settings (R12)", () => {
     const response = await POST(request({ operation: "save-convenience-fee", feePercent: "2.95" }));
     memberRole = null;
     expect(response.status).toBe(403);
-    expect((await response.json()).error).toMatch(/read-only/i);
+    expect((await response.json()).error).toMatch(/only the owner or co-owner/i);
     expect(rpc).not.toHaveBeenCalled();
+  });
+  it("blocks manager and bookkeeper staff from changing the fee (403)", async () => {
+    for (const role of ["manager", "bookkeeper"]) {
+      const rpc = vi.fn();
+      const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+      createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: `staff_${role}` },
+        effectiveOwnerId: "owner_1", supabaseClient: { from: vi.fn(defaultFrom), rpc } });
+      memberRole = role;
+      const response = await POST(request({ operation: "save-convenience-fee", feePercent: "2.95" }));
+      memberRole = null;
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toMatch(/only the owner or co-owner/i);
+      expect(rpc).not.toHaveBeenCalled();
+    }
+  });
+  it("lets an active co_owner change the fee", async () => {
+    const client = feeClient();
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({
+      application, user: { id: "coowner_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
+    });
+    memberRole = "co_owner";
+    const response = await POST(request({ operation: "save-convenience-fee", feePercent: "2.95" }));
+    memberRole = null;
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("set_rental_card_convenience_fee",
+      { p_owner_id: "owner_1", p_fee_bps: 295 });
   });
 });

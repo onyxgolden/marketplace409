@@ -40,6 +40,18 @@ async function ownerOnlyPolicyWriteBlocked(authenticated) {
     actorUserId: authenticated.user.id,
   }));
 }
+// R12: the card convenience-fee percentage is owner/co-owner only (the Rentec parity
+// contract). Staff -- manager, bookkeeper, read_only -- may not change the percentage
+// charged to tenants. isOwnerOrActiveCoOwner answers exactly this question: the primary
+// owner (no membership row) or an active co_owner is the owning household, never staff.
+// The set_rental_card_convenience_fee RPC re-checks has_workspace_access
+// (owner-or-active-co_owner only) as defense in depth behind this route gate.
+async function ownerOnlyFeeWriteBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
+    supabaseClient: authenticated.supabaseClient,
+    actorUserId: authenticated.user.id,
+  }));
+}
 
 // R11: for the payment-policy gate on manual payment recording, the tenant is
 // the explicitly supplied tenantId when given, otherwise the charge's primary
@@ -525,9 +537,10 @@ export async function POST(request) {
       }
       // R12: workspace card convenience fee. The UI sends a human percent
       // ("2.95"); the server validates and stores integer basis points. The
-      // RPC audits every change. Read-only members are blocked outright.
+      // RPC audits every change. Owner/co-owner only: staff may not change
+      // the percentage charged to tenants.
       case "save-convenience-fee": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change convenience fee settings." }, { status: 403 });
+        if (await ownerOnlyFeeWriteBlocked(authenticated)) return NextResponse.json({ error: "Only the owner or co-owner can change convenience fee settings." }, { status: 403 });
         const validation = validateFeeInput(body.feePercent);
         if (!validation.ok) return badRequest(validation.message);
         const { data, error } = await authenticated.supabaseClient.rpc("set_rental_card_convenience_fee", {

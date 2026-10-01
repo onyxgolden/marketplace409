@@ -50,6 +50,17 @@ describe("r12 convenience fees migration", () => {
     expect(lower).toContain("grant execute on function public.set_rental_card_convenience_fee(text, integer) to authenticated");
   });
 
+  it("gates the fee RPC to owner-or-active-co_owner via has_workspace_access (defense in depth)", () => {
+    // has_workspace_access is owner/co_owner only: p_owner_id = auth.uid() or an
+    // active co_owner row. Staff (manager, bookkeeper, read_only) fail it, so even
+    // a direct RPC call cannot change the fee.
+    const start = lower.indexOf("create or replace function public.set_rental_card_convenience_fee(");
+    const end = lower.indexOf("revoke all on function public.set_rental_card_convenience_fee");
+    const rpc = lower.slice(start, end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(rpc).toMatch(/not\s+has_workspace_access\s*\(\s*p_owner_id\s*\)/);
+  });
+
   it("books the fee as a separate reimbursement row, never income", () => {
     expect(lower).toContain("create or replace function post_succeeded_rental_payment_to_financial_event()");
     // The rent row stays income/rental_income and excludes the fee.
