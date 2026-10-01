@@ -148,6 +148,7 @@ export async function POST(request) {
       .select("id");
     if (insertError && insertError.code !== "23505") throw insertError;
     let notificationId = inserted?.[0]?.id || null;
+    let reclaimedRow = null;
     if (!notificationId) {
       const existing = await findExistingSend(supabaseClient, effectiveOwnerId, eventKey);
       if (existing && ["queued", "sending", "sent"].includes(existing.status)) {
@@ -159,7 +160,7 @@ export async function POST(request) {
           .eq("owner_id", effectiveOwnerId).eq("id", existing.id).eq("status", "failed")
           .select("id");
         if (reclaimError) throw reclaimError;
-        if (reclaimed?.length === 1) notificationId = existing.id;
+        if (reclaimed?.length === 1) { notificationId = existing.id; reclaimedRow = existing; }
         else return NextResponse.json({ success: true, alreadySent: true, notificationId: existing.id });
       } else {
         return NextResponse.json({ success: true, alreadySent: true, notificationId: existing?.id || null });
@@ -167,9 +168,18 @@ export async function POST(request) {
     }
 
     // Guarded transition to 'sending' — the loser of a race finds zero rows.
+    // The claim INCREMENTS attempt_count rather than resetting it: a reclaimed
+    // failed row keeps its retry history, so max_attempts cannot be bypassed
+    // across repeated reclaim cycles. The .eq("attempt_count", expectedAttempts)
+    // predicate makes the increment atomic under the race guard — a concurrent
+    // claimer (this route or the /notifications/deliver cron) changes either
+    // status or attempt_count first and the loser finds zero rows.
+    const expectedAttempts = Number(reclaimedRow?.attempt_count || 0);
+    const maxAttempts = Number(reclaimedRow?.max_attempts || MAX_SEND_ATTEMPTS);
     const { data: claimed, error: claimError } = await supabaseClient.from("rental_notification_outbox")
-      .update({ status: "sending", attempt_count: 1, last_attempt_at: new Date().toISOString() })
+      .update({ status: "sending", attempt_count: expectedAttempts + 1, last_attempt_at: new Date().toISOString() })
       .eq("owner_id", effectiveOwnerId).eq("id", notificationId).eq("status", "queued")
+      .eq("attempt_count", expectedAttempts).lt("attempt_count", maxAttempts)
       .select("id");
     if (claimError) throw claimError;
     if (!claimed?.length) {

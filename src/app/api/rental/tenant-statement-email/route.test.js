@@ -35,15 +35,19 @@ const LEDGER_DATA = {
 
 // Chainable supabase mock: every query method returns the chain; awaiting the
 // chain resolves with the result configured for that table+operation.
+// Captures update payloads + eq predicates on db.__updates for assertions.
 function makeDb({ insertResult, existingRow = null, claimCount = 1 } = {}) {
-  return {
+  const updates = [];
+  const db = {
+    __updates: updates,
     from: (table) => {
-      const state = { table, op: null };
+      const state = { table, op: null, payload: null, eqs: [] };
       const chain = {
         select: () => { state.op = state.op || "select"; return chain; },
         insert: () => { state.op = "insert"; return chain; },
-        update: () => { state.op = "update"; return chain; },
-        eq: () => chain,
+        update: (payload) => { state.op = "update"; state.payload = payload; return chain; },
+        eq: (col, val) => { state.eqs.push([col, val]); return chain; },
+        lt: (col, val) => { state.eqs.push(["lt:" + col, val]); return chain; },
         maybeSingle: () => chain,
         order: () => chain,
         then: (resolve) => {
@@ -53,6 +57,7 @@ function makeDb({ insertResult, existingRow = null, claimCount = 1 } = {}) {
           } else if (table === "rental_notification_outbox" && state.op === "select") {
             result = { data: existingRow, error: null };
           } else if (table === "rental_notification_outbox" && state.op === "update") {
+            updates.push({ table, payload: state.payload, eqs: state.eqs });
             result = claimCount > 0 ? { data: [{ id: "n1" }], error: null } : { data: [], error: null };
           }
           return Promise.resolve(result).then(resolve);
@@ -61,6 +66,7 @@ function makeDb({ insertResult, existingRow = null, claimCount = 1 } = {}) {
       return chain;
     },
   };
+  return db;
 }
 
 function post(body) {
@@ -165,5 +171,41 @@ describe("POST /api/rental/tenant-statement-email", () => {
     const response = await POST(post({ tenantId: "t1", kind: "invoice" }));
     expect(response.status).toBe(400);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("increments attempt_count (never resets) when reclaiming a failed row", async () => {
+    db = makeDb({
+      insertResult: { data: [], error: { code: "23505" } },
+      existingRow: { id: "n1", status: "failed", attempt_count: 2, max_attempts: 3 },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      supabaseClient: db, effectiveOwnerId: "owner1", user: { id: "user1" }, response: null,
+    });
+    const response = await POST(post({ tenantId: "t1", kind: "statement" }));
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledTimes(1);
+    const claim = db.__updates.find((u) => u.payload?.status === "sending");
+    expect(claim).toBeDefined();
+    // Attempt 2 failed before; the retry is attempt 3, not attempt 1.
+    expect(claim.payload.attempt_count).toBe(3);
+    expect(claim.eqs).toContainEqual(["attempt_count", 2]);
+    expect(claim.eqs).toContainEqual(["lt:attempt_count", 3]);
+  });
+
+  it("refuses to reclaim a failed row that reached max_attempts", async () => {
+    db = makeDb({
+      insertResult: { data: [], error: { code: "23505" } },
+      existingRow: { id: "n1", status: "failed", attempt_count: 3, max_attempts: 3 },
+    });
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      supabaseClient: db, effectiveOwnerId: "owner1", user: { id: "user1" }, response: null,
+    });
+    const response = await POST(post({ tenantId: "t1", kind: "statement" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.alreadySent).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+    // No reclaim update and no sending claim were issued.
+    expect(db.__updates.some((u) => u.payload?.status === "sending")).toBe(false);
   });
 });
