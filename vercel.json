@@ -25,6 +25,10 @@
       "schedule": "0 10 * * *"
     },
     {
+      "path": "/api/rental/cron/late-fee-posting",
+      "schedule": "0 11 * * *"
+    },
+    {
       "path": "/api/rental/cron/owner-payment-notifications",
       "schedule": "0 14 * * *"
     },
