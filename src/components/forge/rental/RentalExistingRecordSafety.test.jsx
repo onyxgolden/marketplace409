@@ -45,7 +45,11 @@ describe("rental existing-record safety", () => {
     expect(unitMarkup).not.toContain("Save Kent Avenue unit");
     expect(tenantMarkup).toContain("Add a new tenant");
     expect(tenantMarkup).toContain("Tenant household");
-    expect(tenantMarkup).toContain("Primary tenant");
+    // Rentec-parity R8: the tenant record leads with the ledger tab; the profile
+    // card ("Primary tenant") is one click away on the Tenant details tab.
+    expect(tenantMarkup).toContain('data-record-tab="ledger"');
+    expect(tenantMarkup).toContain('data-record-tab="details"');
+    expect(tenantMarkup).not.toContain("Primary tenant");
     expect(tenantMarkup).toContain("Tenant actions");
     expect(tenantMarkup).toContain("Rent &amp; payments");
     expect(tenantMarkup).toContain("Messaging");

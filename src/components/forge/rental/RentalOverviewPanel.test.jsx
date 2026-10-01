@@ -215,10 +215,10 @@ describe("RentalOverviewPanel structure and empty state", () => {
   let mounted;
   afterEach(() => { if (mounted) { unmount(mounted); mounted = null; } vi.unstubAllGlobals(); resetRentalSummaryClient(); clearSWRCache(); });
 
-  it("uses a real heading hierarchy: one Dashboard heading", () => {
+  it("uses a real heading hierarchy: one Summary heading", () => {
     mounted = mount(<RentalOverviewPanel initialData={baseData} initialReport={null} />);
     const h2 = mounted.container.querySelectorAll("h2");
-    expect(Array.from(h2).some((el) => el.textContent === "Dashboard")).toBe(true);
+    expect(Array.from(h2).some((el) => el.textContent === "Summary")).toBe(true);
   });
 
   it("embeds Today's Priorities instead of duplicating its logic", async () => {

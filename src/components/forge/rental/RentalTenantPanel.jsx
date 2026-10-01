@@ -273,6 +273,14 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           onClick={(event) => openTenantMenuBelow(event.currentTarget, tenant, context)}
           className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button><RentalRecordActions label="Tenant actions" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div></div>
         <LeaseSummary lease={household.lease} unit={household.unit}/>
+        <TenantRecordTabs
+          key={tenant.id}
+          tenantId={tenant.id}
+          tenantName={tenant.display_name}
+          unitLabel={propertyLabelForTenant(tenant, leases, leaseMemberships, units)}
+          onOpenPropertyLedger={(propertyKey, propertyLabel) => onNavigate("setup", { recordType: "property", recordId: propertyKey, recordLabel: propertyLabel })}
+          onOpenBankLedger={() => navigate?.("bank-ledger")}
+          details={<>
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
         <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===tenant.id)||null} saveLateFeeOverride={saveLateFeeOverride}/>
         {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => { setDeleteTarget(tenant); setDeleteConfirmText(""); }} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
@@ -296,7 +304,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           </div>
         </div>}
         <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===coTenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
-        <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></div>; })()}
+        <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></>}
+        />
+        </div>; })()}
     </RentalRecordBrowser>}
     {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
       <label className="text-sm font-bold text-slate-900 dark:text-white">Tenant name<input name="displayName" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
@@ -305,6 +315,35 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       <div className="flex items-end gap-3"><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save tenant"}</button>{tenants.length > 0 && <button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 dark:border-slate-600 dark:text-slate-200">Cancel</button>}</div>
     </form>}
   </section>;
+}
+
+// Rentec-parity R8: the tenant record leads with the ledger -- the money view is
+// the record home, and the profile/details card is the second tab. Keyed by tenant
+// id by the caller so switching records always resets to the ledger tab.
+function TenantRecordTabs({ tenantId, tenantName, unitLabel, onOpenPropertyLedger, onOpenBankLedger, details }) {
+  const [recordTab, setRecordTab] = useState("ledger");
+  const tabClass = (active) => `rounded-t-xl px-4 py-2.5 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
+    active
+      ? "bg-white text-slate-950 shadow-[inset_0_-2px_0_0_#0284c7] dark:bg-slate-900 dark:text-white"
+      : "text-slate-500 hover:text-slate-950 dark:text-slate-400 dark:hover:text-white"
+  }`;
+  return <>
+    <div role="tablist" aria-label={`Record views for ${tenantName}`} className="mt-5 flex gap-1 border-b border-slate-200 dark:border-slate-700">
+      <button type="button" role="tab" aria-selected={recordTab === "ledger"} data-record-tab="ledger"
+        onClick={() => setRecordTab("ledger")} className={tabClass(recordTab === "ledger")}>Ledger</button>
+      <button type="button" role="tab" aria-selected={recordTab === "details"} data-record-tab="details"
+        onClick={() => setRecordTab("details")} className={tabClass(recordTab === "details")}>Tenant details</button>
+    </div>
+    {recordTab === "ledger" ? (
+      <div role="tabpanel" aria-label="Tenant ledger" className="mt-4">
+        <TenantLedgerPage tenantId={tenantId} tenantName={tenantName} unitLabel={unitLabel}
+          closeLabel="Tenant details" onClose={() => setRecordTab("details")}
+          onOpenPropertyLedger={onOpenPropertyLedger} onOpenBankLedger={onOpenBankLedger} />
+      </div>
+    ) : (
+      <div role="tabpanel" aria-label="Tenant details" className="mt-4">{details}</div>
+    )}
+  </>;
 }
 
 function LeaseSummary({lease,unit}) { return <div className="mt-5 grid gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30 sm:grid-cols-2 lg:grid-cols-4"><Info label="Property" value={unit?.label||lease?.property_id}/><Info label="Lease status" value={lease?.status}/><Info label="Lease dates" value={lease?`${lease.start_date} to ${lease.end_date||"Open-ended"}`:null}/><Info label="Monthly rent" value={lease?money.format(Number(lease.monthly_rent_cents||0)/100):null}/></div> }

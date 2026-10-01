@@ -40,7 +40,7 @@ async function fetchTenantLedger(tenantId) {
 //
 // Data layer: stale-while-revalidate. Reopening a recently viewed tenant's
 // ledger serves the cached payload instantly and refreshes in the background.
-export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onClose, initialView = null, onOpenPropertyLedger, onOpenBankLedger }) {
+export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onClose, closeLabel = "Tenants", initialView = null, onOpenPropertyLedger, onOpenBankLedger }) {
   const { data, error, isLoading, isRefreshing, refresh } = useStaleWhileRevalidate(
     tenantId ? `tenant-ledger:${tenantId}` : null,
     () => fetchTenantLedger(tenantId),
@@ -177,7 +177,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
         <div>
           <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
-            <button type="button" onClick={onClose} className="font-black text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Tenants</button>
+            <button type="button" onClick={onClose} className="font-black text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">{closeLabel}</button>
             <span className="mx-1.5">/</span>
             <span className="font-black text-slate-700 dark:text-slate-200">{tenantName || "Tenant"}</span>
           </p>
