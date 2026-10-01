@@ -424,21 +424,43 @@ describe("PdfImportPanel", () => {
 
   // ---- commit ----
 
-  it("commits a vector import as one dispatched result and reports what landed", async () => {
+  it("commits a vector import as one dispatched result and reports what landed, after the scale is explicitly confirmed", async () => {
     const prepared = vectorPrepared();
     vi.mocked(listPdfPages).mockResolvedValue({
       pageCount: 1, surveyedCount: 1,
       pages: [{ pageNumber: 1, widthIn: 8.5, heightIn: 11, kind: "vector", kindReason: "v", pathCount: 900, imageCount: 0 }],
     });
     vi.mocked(preparePdfImport).mockResolvedValue(prepared);
+    vi.mocked(applyVectorScale).mockReturnValue(prepared);
     renderPanel();
     await chooseFile("plan.pdf");
     await waitForText("Editable wall segments");
+    // A silent default scale must never be committable — see the next test.
+    await setField("Plot scale", "arch-1-8");
+    await waitFor(() => vi.mocked(applyVectorScale).mock.calls.length > 0, "a re-scale");
     await clickText("Import this page");
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith({ type: "IMPORT_PDF_RESULT", importResult: prepared });
     expect(container.textContent).toContain("Imported 2 editable wall segments");
     expect(container.textContent).toContain("1/4\" = 1'-0\"");
+  });
+
+  it("never commits a vector import at its silent default scale — the user must explicitly choose or confirm one first", async () => {
+    vi.mocked(listPdfPages).mockResolvedValue({
+      pageCount: 1, surveyedCount: 1,
+      pages: [{ pageNumber: 1, widthIn: 8.5, heightIn: 11, kind: "vector", kindReason: "v", pathCount: 900, imageCount: 0 }],
+    });
+    vi.mocked(preparePdfImport).mockResolvedValue(vectorPrepared());
+    renderPanel();
+    await chooseFile("plan.pdf");
+    await waitForText("Editable wall segments");
+    const importBtn = [...container.querySelectorAll("button")].find((b) => b.textContent === "Import this page");
+    expect(importBtn.disabled).toBe(true);
+    expect(container.textContent).toContain("Choose or confirm the scale above");
+    await act(async () => {
+      importBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("does not commit anything while previewing", async () => {
