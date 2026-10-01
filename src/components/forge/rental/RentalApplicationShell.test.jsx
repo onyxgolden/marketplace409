@@ -43,7 +43,7 @@ const EXPECTED_FUNCTION_IDS = [
   "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
   "owners",
-  "reports",
+  "reports", "owner-statements",
   "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import",
 ];
 
