@@ -41,7 +41,7 @@ const EXPECTED_FUNCTION_IDS = [
   "overview",
   "setup", "insurance",
   "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
-  "charges", "deposits", "reconciliation", "bank-ledger", "chart-of-accounts", "batch-entry",
+  "charges", "deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
   "maintenance", "inspections",
   "documents",
   "reports",
