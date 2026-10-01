@@ -29,7 +29,7 @@ function authAs(client, role = "owner") {
 
 // The [id] routes chain: from(table).select().eq().eq().maybeSingle() for the
 // read, then from().update().eq().eq().select().single() for the write.
-function clientFor({ vendorRow = vendor, bills = [bill], updated = null } = {}) {
+function clientFor({ vendorRow = vendor, bills = [bill], payments = [], updated = null } = {}) {
   const client = {
     from: vi.fn((table) => {
       if (table === "rental_vendors") {
@@ -38,6 +38,16 @@ function clientFor({ vendorRow = vendor, bills = [bill], updated = null } = {}) 
           update: (patch) => ({
             eq: () => ({ eq: () => ({ select: () => ({ single: () => Promise.resolve({ data: updated || { ...vendorRow, ...patch }, error: null }) }) }) }),
           }),
+        };
+      }
+      if (table === "rental_vendor_payments") {
+        return {
+          select: () => ({ eq: () => ({ eq: () => ({ order: () => ({ order: () => Promise.resolve({ data: payments, error: null }) }) }) }) }),
+        };
+      }
+      if (table === "rental_vendor_payment_applications") {
+        return {
+          select: () => ({ eq: () => ({ in: () => Promise.resolve({ data: [], error: null }) }) }),
         };
       }
       return {
@@ -68,6 +78,21 @@ describe("GET /api/rental/vendors/[id]", () => {
   it("404s for another workspace's vendor", async () => {
     authAs(clientFor({ vendorRow: null }));
     expect((await get()).status).toBe(404);
+  });
+
+  it("includes the vendor's payment history", async () => {
+    const payment = {
+      id: "rental_vendor_payment_1", vendor_id: "rental_vendor_1", payment_date: "2026-09-30",
+      payment_method: "ach", amount_cents: 15000, bank_account_id: "bank_1", check_number: null,
+      memo: "", financial_event_ids: ["event_1"], status: "active", void_reason: null, voided_at: null,
+      created_at: null, updated_at: null,
+    };
+    authAs(clientFor({ payments: [payment] }));
+    const response = await get();
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.payments).toHaveLength(1);
+    expect(body.payments[0]).toMatchObject({ id: "rental_vendor_payment_1", paymentMethod: "ach", amountCents: 15000, vendorName: "Acme Plumbing" });
   });
 });
 

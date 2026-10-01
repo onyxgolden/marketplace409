@@ -286,9 +286,205 @@ function VoidBillForm({ bill, onDone, onClose }) {
     </Modal>
   );
 }
+// Rentec parity R4 — record a check/ACH payment against the vendor's open
+// bills. One payment can cover many bills; each line defaults to the bill's
+// remaining balance and can never exceed it. props.bills are the vendor's
+// open/partial serialized bills; props.presetBillIds pre-selects lines.
+function PaymentForm({ vendorId, vendorName, bills, presetBillIds, onSaved, onClose }) {
+  const [lines, setLines] = useState(() =>
+    bills.map((bill) => ({
+      billId: bill.id,
+      billDate: bill.billDate,
+      dueDate: bill.dueDate,
+      balanceCents: Number(bill.balanceCents || 0),
+      selected: presetBillIds ? presetBillIds.includes(bill.id) : true,
+      amount: (Number(bill.balanceCents || 0) / 100).toFixed(2),
+    }))
+  );
+  const [method, setMethod] = useState("check");
+  const [checkNumber, setCheckNumber] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [memo, setMemo] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-export default function RentalVendorsPanel() {
-  const [tab, setTab] = useState("vendors");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const body = await readJson(await fetch("/api/rental/bank-accounts"));
+        if (!cancelled) setBankAccounts(body.accounts || []);
+      } catch (caught) {
+        if (!cancelled) setError(caught.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleLine = (billId) => setLines((list) => list.map((line) => line.billId === billId ? { ...line, selected: !line.selected } : line));
+  const setLineAmount = (billId, amount) => setLines((list) => list.map((line) => line.billId === billId ? { ...line, amount } : line));
+
+  const selectedLines = lines.filter((line) => line.selected);
+  const totalCents = selectedLines.reduce((sum, line) => sum + (dollarsToCents(line.amount) || 0), 0);
+
+  async function save(event) {
+    event.preventDefault();
+    setError("");
+    if (selectedLines.length === 0) { setError("Choose at least one bill to pay."); return; }
+    if (!bankAccountId) { setError("Choose the bank account this payment comes from."); return; }
+    if (method === "check" && !checkNumber.trim()) { setError("Enter the check number."); return; }
+    const applications = [];
+    for (const line of selectedLines) {
+      const amountCents = dollarsToCents(line.amount);
+      if (!amountCents) { setError(`Enter an amount for the ${line.billDate} bill.`); return; }
+      if (amountCents > line.balanceCents) { setError(`The ${line.billDate} bill only has ${centsToDollars(line.balanceCents)} left to pay.`); return; }
+      applications.push({ billId: line.billId, amountCents });
+    }
+    setSaving(true);
+    try {
+      const body = await readJson(await fetch("/api/rental/vendor-payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: `rental_vendor_payment_${crypto.randomUUID().replaceAll("-", "")}`,
+          vendorId,
+          paymentDate,
+          paymentMethod: method,
+          checkNumber: method === "check" ? checkNumber.trim() : undefined,
+          bankAccountId,
+          memo: memo.trim(),
+          amountCents: totalCents,
+          applications,
+        }),
+      }));
+      onSaved(body.payment);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Pay ${vendorName || "vendor"}`} onClose={onClose} wide>
+      <form onSubmit={save} className="space-y-4">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+          <table className="w-full text-left text-sm">
+            <thead><tr className="border-b border-slate-200 dark:border-slate-700 text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-4 py-2">Pay</th><th className="px-4 py-2">Bill</th><th className="px-4 py-2">Due</th><th className="px-4 py-2">Balance</th><th className="px-4 py-2">Amount</th>
+            </tr></thead>
+            <tbody>
+              {lines.map((line) => (
+                <tr key={line.billId} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
+                  <td className="px-4 py-2"><input type="checkbox" checked={line.selected} onChange={() => toggleLine(line.billId)} aria-label={`Pay bill ${line.billDate}`} /></td>
+                  <td className="px-4 py-2">{line.billDate}</td>
+                  <td className="px-4 py-2">{line.dueDate}</td>
+                  <td className="px-4 py-2">{centsToDollars(line.balanceCents)}</td>
+                  <td className="px-4 py-2">
+                    <input className={`${inputClass} mt-0 w-32`} value={line.amount} onChange={(e) => setLineAmount(line.billId, e.target.value)} inputMode="decimal" aria-label={`Amount for bill ${line.billDate}`} disabled={!line.selected} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className={labelClass}>Method *
+            <span className="mt-1 flex gap-4 text-sm normal-case text-slate-900 dark:text-slate-100">
+              <label className="flex items-center gap-1 font-bold"><input type="radio" name="paymentMethod" checked={method === "check"} onChange={() => setMethod("check")} /> Check</label>
+              <label className="flex items-center gap-1 font-bold"><input type="radio" name="paymentMethod" checked={method === "ach"} onChange={() => setMethod("ach")} /> ACH</label>
+            </span>
+          </label>
+          <label className={labelClass}>Payment date *
+            <input className={inputClass} type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+          </label>
+          {method === "check" && (
+            <label className={labelClass}>Check number *
+              <input className={inputClass} value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)} placeholder="e.g. 1042" />
+            </label>
+          )}
+          <label className={labelClass}>Bank account *
+            <select className={inputClass} value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)}>
+              <option value="">Choose an account…</option>
+              {bankAccounts.map((account) => <option key={account.id} value={account.id}>{account.official_name || account.name}</option>)}
+            </select>
+          </label>
+          <label className={`${labelClass} sm:col-span-2`}>Memo
+            <input className={inputClass} value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="Optional note on the payment" />
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg bg-slate-50 dark:bg-slate-800/60 px-4 py-3">
+          <span className="text-sm text-slate-500">Total payment</span>
+          <span className="text-lg font-black text-slate-900 dark:text-white">{centsToDollars(totalCents)}</span>
+        </div>
+        <p className="text-xs text-slate-500">Posting records the expense on the ledger and marks each bill paid in full (or partially, for short payments).</p>
+
+        {error && <p className="text-sm font-bold text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+          <button type="submit" disabled={saving} className={goldControlClassName}>{saving ? "Posting…" : "Post payment"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function VoidPaymentForm({ payment, onDone, onClose }) {
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function voidPayment(event) {
+    event.preventDefault();
+    setError("");
+    if (!reason.trim()) { setError("A reason is required to void a payment."); return; }
+    if (!confirmed) { setError("Please confirm you want to void this payment."); return; }
+    setSaving(true);
+    try {
+      const body = await readJson(await fetch(`/api/rental/vendor-payments/${encodeURIComponent(payment.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ void: true, voidReason: reason.trim() }),
+      }));
+      onDone(body.payment);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Void payment" onClose={onClose}>
+      <form onSubmit={voidPayment} className="space-y-3">
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Voiding reverses this {payment.paymentMethod === "check" ? "check" : "ACH"} payment of {centsToDollars(payment.amountCents)}
+          {payment.checkNumber ? ` (#${payment.checkNumber})` : ""} and rolls every bill balance back.
+          The ledger entries are reversed, never deleted — the void stays on the books as history.
+        </p>
+        <label className={labelClass}>Reason *
+          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this payment being voided?" autoFocus />
+        </label>
+        <label className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+          I confirm I want to void this payment.
+        </label>
+        {error && <p className="text-sm font-bold text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+          <button type="submit" disabled={saving} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">{saving ? "Voiding…" : "Void payment"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export default function RentalVendorsPanel() {  const [tab, setTab] = useState("vendors");
   const [vendors, setVendors] = useState([]);
   const [bills, setBills] = useState([]);
   const [expenseAccounts, setExpenseAccounts] = useState([]);
@@ -305,6 +501,9 @@ export default function RentalVendorsPanel() {
   const [editingBill, setEditingBill] = useState(null);
   const [billVendorPreset, setBillVendorPreset] = useState(null);
   const [voidingBill, setVoidingBill] = useState(null);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [payingBills, setPayingBills] = useState(null);
+  const [voidingPayment, setVoidingPayment] = useState(null);
   const [togglingActive, setTogglingActive] = useState(false);
 
   // Pure data fetchers (no setState inside) so effects can call them through
@@ -449,6 +648,25 @@ export default function RentalVendorsPanel() {
     setShowBillForm(true);
   }
 
+  function openPaymentForm(vendorId, vendorName, bills, presetBillIds = null) {
+    const payable = (bills || []).filter((b) => b.status === "open" || b.status === "partial");
+    if (payable.length === 0) return;
+    setPayingBills({ vendorId, vendorName, bills: payable, presetBillIds });
+    setShowPaymentForm(true);
+  }
+
+  function afterPaymentSaved(saved) {
+    setShowPaymentForm(false);
+    setPayingBills(null);
+    setVoidingPayment(null);
+    // Bill balances and statuses changed — refresh the bills list and the
+    // vendor's ledger so both views agree.
+    fetchAll()
+      .then((all) => { setVendors(all.vendors); setBills(all.bills); })
+      .catch((caught) => setError(caught.message));
+    if (saved?.vendorId) refreshVendorDetail(saved.vendorId);
+  }
+
   if (loading) return <ForgeLoadingState label="Loading vendors…" />;
   const selectedVendor = vendors.find((v) => v.id === selectedVendorId) || null;
 
@@ -513,6 +731,9 @@ export default function RentalVendorsPanel() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => openBillForm(selectedVendor.id)} className={goldControlClassName}>Record bill</button>
+                    {vendorDetail.totals.openCents > 0 && (
+                      <button type="button" onClick={() => openPaymentForm(selectedVendor.id, vendorDetail.vendor.name, vendorDetail.bills)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">Pay bills</button>
+                    )}
                     <button type="button" onClick={() => { setEditingVendor(vendorDetail.vendor); setShowVendorForm(true); }} className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800">Edit</button>
                     <button type="button" disabled={togglingActive} onClick={() => toggleVendorActive(vendorDetail.vendor)} className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-50">
                       {vendorDetail.vendor.isActive ? "Deactivate" : "Reactivate"}
@@ -553,8 +774,47 @@ export default function RentalVendorsPanel() {
                               <td className="py-2">
                                 <span className="flex gap-2">
                                   {bill.status === "open" && <button type="button" onClick={() => openBillForm(null, bill)} className="text-xs font-bold text-amber-700 hover:underline dark:text-amber-300">Edit</button>}
+                                  {(bill.status === "open" || bill.status === "partial") && (
+                                    <button type="button" onClick={() => openPaymentForm(selectedVendor.id, vendorDetail.vendor.name, vendorDetail.bills, [bill.id])} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Pay</button>
+                                  )}
                                   {(bill.status === "open") && <button type="button" onClick={() => setVoidingBill(bill)} className="text-xs font-bold text-red-600 hover:underline">Void</button>}
                                 </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h4 className="mb-2 text-sm font-black uppercase tracking-wide text-slate-500">Payment history</h4>
+                  {(!vendorDetail.payments || vendorDetail.payments.length === 0) && <p className="text-sm text-slate-500">No payments recorded for this vendor yet.</p>}
+                  {vendorDetail.payments && vendorDetail.payments.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead><tr className="text-xs uppercase tracking-wide text-slate-500">
+                          <th className="py-2 pr-3">Date</th><th className="py-2 pr-3">Method</th><th className="py-2 pr-3">Amount</th><th className="py-2 pr-3">Bills</th><th className="py-2 pr-3">Status</th><th className="py-2">Actions</th>
+                        </tr></thead>
+                        <tbody>
+                          {vendorDetail.payments.map((payment) => (
+                            <tr key={payment.id} className="border-t border-slate-100 dark:border-slate-800">
+                              <td className="py-2 pr-3">{payment.paymentDate}</td>
+                              <td className="py-2 pr-3">{payment.paymentMethod === "check" ? `Check${payment.checkNumber ? ` #${payment.checkNumber}` : ""}` : "ACH"}</td>
+                              <td className="py-2 pr-3 font-bold">{centsToDollars(payment.amountCents)}</td>
+                              <td className="py-2 pr-3 text-xs text-slate-500">
+                                {(payment.applications || []).map((app) => `${app.billBillDate || "bill"} (${centsToDollars(app.amountCents)})`).join(", ") || "—"}
+                              </td>
+                              <td className="py-2 pr-3">
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${payment.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"}`}>
+                                  {payment.status === "active" ? "Active" : "Voided"}
+                                </span>
+                              </td>
+                              <td className="py-2">
+                                {payment.status === "active" && (
+                                  <button type="button" onClick={() => setVoidingPayment(payment)} className="text-xs font-bold text-red-600 hover:underline">Void</button>
+                                )}
                               </td>
                             </tr>
                           ))}
@@ -598,6 +858,9 @@ export default function RentalVendorsPanel() {
                       <td className="px-4 py-2">
                         <span className="flex gap-2">
                           {bill.status === "open" && <button type="button" onClick={() => openBillForm(null, bill)} className="text-xs font-bold text-amber-700 hover:underline dark:text-amber-300">Edit</button>}
+                          {(bill.status === "open" || bill.status === "partial") && (
+                            <button type="button" onClick={() => openPaymentForm(bill.vendorId, bill.vendorName, [bill], [bill.id])} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Pay</button>
+                          )}
                           {bill.status === "open" && <button type="button" onClick={() => setVoidingBill(bill)} className="text-xs font-bold text-red-600 hover:underline">Void</button>}
                         </span>
                       </td>
@@ -622,6 +885,17 @@ export default function RentalVendorsPanel() {
         />
       )}
       {voidingBill && <VoidBillForm bill={voidingBill} onDone={afterBillSaved} onClose={() => setVoidingBill(null)} />}
+      {showPaymentForm && payingBills && (
+        <PaymentForm
+          vendorId={payingBills.vendorId}
+          vendorName={payingBills.vendorName}
+          bills={payingBills.bills}
+          presetBillIds={payingBills.presetBillIds}
+          onSaved={afterPaymentSaved}
+          onClose={() => { setShowPaymentForm(false); setPayingBills(null); }}
+        />
+      )}
+      {voidingPayment && <VoidPaymentForm payment={voidingPayment} onDone={afterPaymentSaved} onClose={() => setVoidingPayment(null)} />}
     </section>
   );
 }
