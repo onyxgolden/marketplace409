@@ -111,6 +111,7 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   "rentec-files": Object.freeze({ title: "Rentec Files", summary: "Inspect available Rentec file metadata without exposing file contents unnecessarily.", actions: Object.freeze(["Use the inventory to identify documents that require deliberate migration.", "File names and contents are not automatically returned."]) }),
   "rentec-payment-import": Object.freeze({ title: "Rentec Payment Import", summary: "Preview externally collected Rentec payments for controlled recording in FORGE.", actions: Object.freeze(["Review matched, ambiguous, ignored, and conflict classifications.", "Never approve an ambiguous transaction by guessing."]) }),
   "rentec-financial-history-import": Object.freeze({ title: "Rentec Financial History Import", summary: "Resume historical financial-event import using current Rentec evidence.", actions: Object.freeze(["Preview classifications and resolve conflicts first.", "This records financial history; it does not create rent charges or Stripe payments."]) }),
+  "setup-guide": Object.freeze({ title: "Setup guide", summary: "The ordered first-run tour: settings, banking, owners, managers, properties, then tenants — with the reason each step comes where it does.", actions: Object.freeze(["Work the steps in order; completion is read from your actual records.", "Skip any step you are not ready for — the guide stays under Settings."]) }),
 });
 
 export const RENTAL_HELP_GROUPS = Object.freeze([
@@ -120,7 +121,7 @@ export const RENTAL_HELP_GROUPS = Object.freeze([
   Object.freeze({ title: "Banking", ids: Object.freeze(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry"]) }),
   Object.freeze({ title: "Owners", ids: Object.freeze(["owners"]) }),
   Object.freeze({ title: "Reports", ids: Object.freeze(["reports", "owner-statements"]) }),
-  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import"]) }),
+  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "setup-guide"]) }),
 ]);
 
 export function getRentalFunctionHelp(activeFunctionId) {

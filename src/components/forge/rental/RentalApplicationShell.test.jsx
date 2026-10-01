@@ -7,6 +7,8 @@ import { clearSWRCache, fetchWithDedupe, seedCacheEntry } from "../../../hooks/s
 import RentalApplicationShell, { buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
 import { resolveRentalRecordContextParam } from "./rentalRecordParam.js";
 import { RENTAL_DASHBOARD_PAYLOAD_SWR_KEY } from "./useRentalDashboardPayload.js";
+import RentalSetupWizardPanel, { SETUP_WIZARD_DISMISSAL_STORAGE_KEY } from "./RentalSetupWizardPanel.jsx";
+import { buildSetupWizardStatus } from "@/application/rental/setupWizard";
 import RentalPageClient from "./RentalPageClient.jsx";
 import RentalLeasePanel from "./RentalLeasePanel.jsx";
 
@@ -44,7 +46,8 @@ const EXPECTED_FUNCTION_IDS = [
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
   "owners",
   "reports", "owner-statements",
-  "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import",
+  "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "setup-guide",
+];
 ];
 
 function mount(ui) {
@@ -416,4 +419,91 @@ describe("RentalApplicationShell", () => {
     }
   });
 
+});
+
+describe("RentalApplicationShell first-run setup wizard (R16)", () => {
+  let mounted;
+  let wizardPayload;
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => wizardPayload })));
+  });
+  afterEach(() => {
+    if (mounted) { unmount(mounted); mounted = null; }
+    window.localStorage.removeItem(SETUP_WIZARD_DISMISSAL_STORAGE_KEY);
+    vi.unstubAllGlobals();
+  });
+
+  function seedWizard(unsetup) {
+    wizardPayload = {
+      success: true,
+      ...buildSetupWizardStatus({ units: [], tenants: [], bankAccountCount: 0, settingsConfigured: false, memberCount: 1 }),
+      unsetup,
+    };
+    seedCacheEntry("rental:setup-wizard-status", wizardPayload);
+  }
+
+  it("shows the guided tour instead of the empty dashboard on an unsetup workspace", async () => {
+    seedWizard(true);
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    const wizard = mounted.container.querySelector('[data-setup-wizard-panel][data-setup-wizard-mode="first-run"]');
+    expect(wizard).not.toBeNull();
+    expect(wizard.textContent).toContain("This takes about 10 minutes and you only do it once");
+    // The overview surface is replaced, not stacked.
+    expect(mounted.container.querySelector("[data-setup-wizard-panel] [data-setup-wizard-step]")).not.toBeNull();
+  });
+
+  it("shows the normal dashboard when the workspace already has properties", async () => {
+    seedWizard(false);
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    expect(mounted.container.querySelector("[data-setup-wizard-panel]")).toBeNull();
+  });
+
+  it("never traps the user: skip dismisses the tour and restores the dashboard", async () => {
+    seedWizard(true);
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    const skip = mounted.container.querySelector("[data-setup-wizard-skip]");
+    expect(skip).not.toBeNull();
+    act(() => { skip.click(); });
+    await flush();
+    expect(window.localStorage.getItem(SETUP_WIZARD_DISMISSAL_STORAGE_KEY)).toBe("1");
+    expect(mounted.container.querySelector("[data-setup-wizard-panel]")).toBeNull();
+  });
+
+  it("stays dismissed on reload: a dismissed tour never hijacks the landing again", async () => {
+    window.localStorage.setItem(SETUP_WIZARD_DISMISSAL_STORAGE_KEY, "1");
+    seedWizard(true);
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={() => {}} />);
+    await flush();
+    expect(mounted.container.querySelector("[data-setup-wizard-panel]")).toBeNull();
+  });
+
+  it("does not hijack deep links: the tour only replaces the landing view", async () => {
+    seedWizard(true);
+    mounted = mount(<RentalApplicationShell activeFunctionId="tenants" onFunctionChange={() => {}} />);
+    await flush();
+    expect(mounted.container.querySelector("[data-setup-wizard-panel]")).toBeNull();
+  });
+
+  it("offers the Setup guide under Settings as the re-run entry", async () => {
+    const visited = [];
+    mounted = mount(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={(id) => visited.push(id)} />);
+    await flush();
+    const settingsToggle = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded]'))
+      .find((button) => button.textContent.includes("Settings"));
+    if (settingsToggle.getAttribute("aria-expanded") === "false") act(() => { settingsToggle.click(); });
+    const guideButton = Array.from(mounted.container.querySelectorAll('nav[aria-label="Rental Manager functions"] button'))
+      .find((button) => button.textContent === "Setup guide");
+    expect(guideButton).not.toBeUndefined();
+    act(() => { guideButton.click(); });
+    expect(visited).toEqual(["setup-guide"]);
+  });
+
+  it("maps the setup-guide destination to the re-runnable wizard panel", () => {
+    const element = buildRentalSurface("setup-guide", { onNavigate: () => {} });
+    expect(element.type).toBe(RentalSetupWizardPanel);
+    expect(element.props.mode).toBe("guide");
+  });
 });
