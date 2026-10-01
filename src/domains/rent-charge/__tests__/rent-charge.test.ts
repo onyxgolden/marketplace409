@@ -84,4 +84,41 @@ describe("RentCharge", () => {
       expect(() => schedule({ beginChargesDate: "09/01/2026" })).toThrow();
     });
   });
+
+  // Parity regression (PR #515 review finding): the manual SQL path
+  // (generate_monthly_rent_charge) must implement the same period/start
+  // eligibility as this canonical JS generator. The rule: a period is
+  // eligible when its last possible day (YYYY-MM-28) is not before the
+  // schedule's effective start date — the due date is NOT compared to the
+  // start date. A late-month move-in keeps its move-in month eligible even
+  // when the due day precedes move-in; the begin-charges gate then decides
+  // whether that month's charge is actually generated. The migration
+  // contract test pins the same rule in the SQL text.
+  describe("period/start eligibility parity with the SQL RPC", () => {
+    // Moved in Aug 28, due on the 1st, charges begin Aug 1: the August
+    // charge IS generated — this is the exact case where the pre-fix RPC
+    // diverged (it compared the Aug 1 due date to the Aug 28 start date and
+    // returned null).
+    const chargesFromAug1 = () => schedule({ effectiveStartDate: "2026-08-28", beginChargesDate: "2026-08-01",
+      forgeCutoverDate: "2026-08-01" });
+    it("generates the move-in month's charge when the due day precedes a late-month move-in and begin-charges allows it", () => {
+      const august = generateRentCharge({ schedule: chargesFromAug1(), period: "2026-08", now: "2026-08-02T00:00:00.000Z" });
+      expect(august?.dueDate).toBe("2026-08-01");
+    });
+    it("still suppresses the move-in month's charge when its due date precedes the begin-charges date", () => {
+      const chargesFromAug28 = schedule({ effectiveStartDate: "2026-08-28", beginChargesDate: "2026-08-28",
+        forgeCutoverDate: "2026-08-01" });
+      expect(generateRentCharge({ schedule: chargesFromAug28, period: "2026-08", now: "2026-08-29T00:00:00.000Z" })).toBeNull();
+      expect(generateRentCharge({ schedule: chargesFromAug28, period: "2026-09", now: "2026-09-01T00:00:00.000Z" })?.dueDate).toBe("2026-09-01");
+    });
+    it("keeps the move-in month eligible with no begin-charges date (pre-R10 fail-open)", () => {
+      const noGate = schedule({ effectiveStartDate: "2026-08-28", beginChargesDate: null, forgeCutoverDate: "2026-08-01" });
+      expect(generateRentCharge({ schedule: noGate, period: "2026-08", now: "2026-08-29T00:00:00.000Z" })?.dueDate).toBe("2026-08-01");
+    });
+    it("still skips periods whose last possible day precedes the effective start date", () => {
+      const movedInSep = schedule({ effectiveStartDate: "2026-09-05", beginChargesDate: null, forgeCutoverDate: "2026-08-01" });
+      expect(generateRentCharge({ schedule: movedInSep, period: "2026-08", now: "2026-09-06T00:00:00.000Z" })).toBeNull();
+      expect(generateRentCharge({ schedule: movedInSep, period: "2026-07", now: "2026-09-06T00:00:00.000Z" })).toBeNull();
+    });
+  });
 });
