@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import RentalTenantPanel, { activeBalanceCentsForTenant, propertyLabelForTenant, tenantHouseholdForSelection } from "./RentalTenantPanel";
+import RentalTenantPanel, { activeBalanceCentsForTenant, propertyLabelForTenant, tenantHouseholdForSelection, tenantInviteLabel } from "./RentalTenantPanel";
 
 const leases = [
   { id: "lease_1", unit_id: "unit_1", status: "active" },
@@ -21,6 +21,19 @@ describe("propertyLabelForTenant", () => {
   });
   it("falls back to the raw unit id if the unit record is missing", () => {
     expect(propertyLabelForTenant({ id: "tenant_1" }, leases, leaseMemberships, [])).toBe("unit_1");
+  });
+});
+
+describe("tenantInviteLabel", () => {
+  it("says the invite was not sent when invited_at is missing, even if status is invited", () => {
+    expect(tenantInviteLabel({ id: "t1", status: "invited", invited_at: null, auth_user_id: null })).toBe("Invite not sent");
+  });
+  it("shows the invite date once invited_at is set", () => {
+    expect(tenantInviteLabel({ id: "t1", status: "invited", invited_at: "2026-10-01T10:00:00Z", auth_user_id: null }))
+      .toBe(`Invite sent ${new Date("2026-10-01T10:00:00Z").toLocaleDateString()}`);
+  });
+  it("shows the portal as claimed once auth_user_id is set", () => {
+    expect(tenantInviteLabel({ id: "t1", status: "active", invited_at: "2026-10-01T10:00:00Z", auth_user_id: "user_1" })).toBe("Portal claimed");
   });
 });
 

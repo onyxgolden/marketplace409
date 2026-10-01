@@ -43,6 +43,16 @@ export function tenantHouseholdForSelection(selectedTenant, tenants, leases, lea
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
+export function tenantInviteLabel(tenant) {
+  // The lifecycle `status` column is stamped "invited" at creation, before any
+  // email goes out — it must never be shown as the invite state. Derive the
+  // label from what actually happened: portal claimed, invite email sent, or
+  // nothing yet.
+  if (tenant?.auth_user_id) return "Portal claimed";
+  if (tenant?.invited_at) return `Invite sent ${new Date(tenant.invited_at).toLocaleDateString()}`;
+  return "Invite not sent";
+}
+
 export default function RentalTenantPanel({ initialTenants = [], onNavigate: navigate, recordContext = null }) {
   const [message, setMessage] = useState("");
   const openCreateTenant = recordContext?.openCreateTenant === true;
@@ -218,7 +228,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
     {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={selectedId} onSelect={setSelectedId} getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
       columns={[
-        { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenant.status || "Status not set"}</span></> },
+        { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenantInviteLabel(tenant)}</span></> },
         { header: "Property", render: (tenant) => { const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units); return propertyLabel || <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>; } },
         { header: "Active balance", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
           ? <span className="text-slate-500 dark:text-slate-400">—</span>
