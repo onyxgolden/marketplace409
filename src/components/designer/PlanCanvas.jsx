@@ -1064,6 +1064,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         setDrag(null);
         setMeasureStart(null);
         setMeasureLivePoint(null);
+        setMeasurement(null);
       }
     };
     const onKeyUp = (e) => {

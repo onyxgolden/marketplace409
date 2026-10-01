@@ -96,6 +96,17 @@ describe("PlanCanvas measure tool", () => {
     expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: expect.stringContaining("MEASURE") }));
   });
 
+  it("Escape also clears an already-completed measurement, not just an in-progress one (ChatGPT review of PR #502)", () => {
+    renderCanvas();
+    pointer(svg, "pointerdown", { x: 0, y: 0 });
+    pointer(svg, "pointerdown", { x: 144, y: 0 });
+    expect(container.textContent).toContain("12' 0\"");
+    act(() => {
+      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(container.textContent).not.toContain("12' 0\"");
+  });
+
   it("snaps the measured points to existing wall endpoints, same as drawing", () => {
     let design = createEmptyDesign();
     design = addWall(design, { x: 0, y: 0 }, { x: 120, y: 0 });
