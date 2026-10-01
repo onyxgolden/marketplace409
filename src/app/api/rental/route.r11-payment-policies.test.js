@@ -130,6 +130,51 @@ describe("R11 payment policies route", () => {
     });
   });
 
+  describe("owner-only policy authorization", () => {
+    // The R11 contract: policy changes are owner/co-owner only. Staff --
+    // manager, bookkeeper, read_only -- may not change the portfolio policy
+    // or a tenant override.
+    beforeEach(() => { tables.rental_tenants = [{ id: "tenant_1" }]; });
+    const staffRoles = ["manager", "bookkeeper", "read_only"];
+    it.each(staffRoles)("blocks %s from changing the portfolio policy with 403", async (role) => {
+      memberRole = role;
+      const response = await POST(request({ operation: "save-payment-policy", policy: "require_rent" }));
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toContain("owner or co-owner");
+      expect(rpc).not.toHaveBeenCalled();
+    });
+    it.each(staffRoles)("blocks %s from changing a tenant policy override with 403", async (role) => {
+      memberRole = role;
+      const response = await POST(request({ operation: "save-payment-policy-tenant-override",
+        override: { tenantId: "tenant_1", policy: "require_balance" } }));
+      expect(response.status).toBe(403);
+      expect((await response.json()).error).toContain("owner or co-owner");
+      expect(updateCalls).toHaveLength(0);
+    });
+    it("lets an active co_owner change the portfolio policy", async () => {
+      memberRole = "co_owner";
+      const response = await POST(request({ operation: "save-payment-policy", policy: "require_rent" }));
+      expect(response.status).toBe(200);
+      expect(rpc).toHaveBeenCalledWith("set_rental_payment_policy",
+        expect.objectContaining({ p_policy: "require_rent" }));
+    });
+    it("lets an active co_owner change a tenant policy override", async () => {
+      memberRole = "co_owner";
+      const response = await POST(request({ operation: "save-payment-policy-tenant-override",
+        override: { tenantId: "tenant_1", policy: "require_balance" } }));
+      expect(response.status).toBe(200);
+      expect(updateCalls).toEqual([{ payment_policy: "require_balance" }]);
+    });
+    it("lets the primary owner (no membership row) change both", async () => {
+      memberRole = null;
+      const portfolio = await POST(request({ operation: "save-payment-policy", policy: "require_rent" }));
+      expect(portfolio.status).toBe(200);
+      const override = await POST(request({ operation: "save-payment-policy-tenant-override",
+        override: { tenantId: "tenant_1", policy: "require_balance" } }));
+      expect(override.status).toBe(200);
+    });
+  });
+
   describe("record-offline-payment policy gate", () => {
     const basePayment = {
       chargeId: "charge_1", paymentMethod: "cash", receivedAt: "2026-10-01T12:00:00.000Z",

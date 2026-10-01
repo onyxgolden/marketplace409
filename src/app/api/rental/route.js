@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { createRentalUnit } from "@/domains/rental-unit";
 import { createRentalTenant } from "@/domains/rental-tenant";
 import { createRentalLease } from "@/domains/rental-lease";
@@ -26,6 +27,17 @@ async function readOnlyWriteBlocked(authenticated) {
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
   })) === "read_only";
+}
+
+// R11: payment-policy mutations are owner/co-owner only (the Rentec parity contract).
+// Staff -- manager, bookkeeper, read_only -- may not change the portfolio policy or a
+// tenant override. isOwnerOrActiveCoOwner answers exactly this question: the primary
+// owner (no membership row) or an active co_owner is the owning household, never staff.
+async function ownerOnlyPolicyWriteBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
+    supabaseClient: authenticated.supabaseClient,
+    actorUserId: authenticated.user.id,
+  }));
 }
 
 // R11: for the payment-policy gate on manual payment recording, the tenant is
@@ -745,7 +757,7 @@ export async function POST(request) {
         return NextResponse.json({ success: true, override: data });
       }
       case "save-payment-policy": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change payment policies." }, { status: 403 });
+        if (await ownerOnlyPolicyWriteBlocked(authenticated)) return NextResponse.json({ error: "Only the owner or co-owner can change payment policies." }, { status: 403 });
         const policy = typeof body.policy === "string" ? body.policy.trim() : "";
         if (!isPaymentPolicy(policy)) return badRequest(`Payment policy must be one of: ${PAYMENT_POLICIES.join(", ")}.`);
         const { data, error } = await authenticated.supabaseClient.rpc("set_rental_payment_policy", {
@@ -755,7 +767,7 @@ export async function POST(request) {
         return NextResponse.json({ success: true, paymentPolicy: data?.payment_policy || policy });
       }
       case "save-payment-policy-tenant-override": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change payment policy overrides." }, { status: 403 });
+        if (await ownerOnlyPolicyWriteBlocked(authenticated)) return NextResponse.json({ error: "Only the owner or co-owner can change payment policy overrides." }, { status: 403 });
         const input = body.override;
         if (!input?.tenantId) return badRequest("tenantId is required.");
         // null / "inherit" clears the override so the tenant inherits the
