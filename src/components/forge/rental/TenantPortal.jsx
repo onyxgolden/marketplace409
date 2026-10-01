@@ -18,6 +18,7 @@ import TenantAnimalsPanel from "./TenantAnimalsPanel";
 import TenantLeaseSigningPanel from "./TenantLeaseSigningPanel";
 import TenantMessagesPanel from "./TenantMessagesPanel";
 import { minimumPaymentCents, paymentPolicyTenantExplanation, PAYMENT_POLICY_ALLOW_ANY_AMOUNT } from "@/domains/rental-payment/paymentPolicy";
+import TenantStatementPanel from "./TenantStatementPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -284,6 +285,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
             <span className="text-right"><span className="font-bold">{money.format(payment.amountCents / 100)}</span>{payment.refundedAmountCents?<><br/><span className="text-red-700">Refunded {money.format(payment.refundedAmountCents/100)}</span></>:null}{payment.status==="succeeded"?<><br/><button onClick={()=>setReceipt({payment,unitLabel:unit?.label||"Rental home"})} className="mt-1 font-bold text-blue-700 underline">View receipt</button></>:null}</span></div>)}</div>
       </section>) }
     {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
+    {!session ? <TenantStatementPanel /> : null}
     {!session ? <TenantLeaseSigningPanel rentals={portal.rentals} onSigned={reloadPortal} /> : null}
     {!session ? <TenantDepositPanel rentals={portal.rentals} /> : null}
     {!session ? <TenantAutopayPanel rentals={portal.rentals} convenienceFeeBps={portal.convenienceFeeBps || 0} onChanged={reloadPortal} /> : null}
