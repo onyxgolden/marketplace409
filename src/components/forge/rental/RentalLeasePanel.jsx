@@ -5,6 +5,7 @@ import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import RentRollImportPanel from "./RentRollImportPanel";
 import CustomFieldsEditor from "./CustomFieldsEditor";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import PaymentFrequencyPicker, { paymentFrequencyDescription } from "./PaymentFrequencyPicker";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 
@@ -123,6 +124,11 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           effectiveStartDate: schedule.effective_start_date, effectiveEndDate: schedule.effective_end_date,
           collectionMode: schedule.collection_mode, collectionProvider: schedule.collection_provider,
           forgeCutoverDate: schedule.forge_cutover_date, createdAt: schedule.created_at,
+          // R13: pass the frequency/anchor through explicitly -- createRentSchedule()
+          // defaults an omitted frequency to 'monthly', which would silently reset
+          // a weekly/bi-weekly schedule on every early-pay save.
+          paymentFrequency: schedule.payment_frequency || "monthly",
+          paymentAnchorDate: schedule.payment_anchor_date || schedule.effective_start_date,
           earlyPayDays: Number(form.get("earlyPayDays")) } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to save the early pay window.");
@@ -139,7 +145,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
           monthlyRentCents: Math.round(Number(form.get("monthlyRent")) * 100), rentDueDay: Number(form.get("dueDay")),
           startDate: form.get("startDate"), endDate: form.get("endDate") || null,
           beginChargesDate: form.get("beginChargesDate") || null,
-          earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
+          earlyPayDays: Number(form.get("earlyPayDays") ?? 7),
+          paymentFrequency: form.get("paymentFrequency") || "monthly" } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to update the lease terms.");
       setMessage("Lease terms updated. Future charges will use the new terms.");
@@ -154,6 +161,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
         body: JSON.stringify({ operation: "save-schedule", schedule: { leaseId: lease.id, status: "draft",
           amountCents: Math.round(Number(form.get("monthlyRent")) * 100), currencyCode: lease.currency_code || "USD",
           dueDay: Number(form.get("dueDay")), effectiveStartDate: form.get("startDate"), effectiveEndDate: form.get("endDate") || null,
+          paymentFrequency: form.get("paymentFrequency") || "monthly",
           earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to save the rent schedule.");
@@ -191,7 +199,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       const scheduleResponse = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-schedule", schedule: { leaseId: leaseResult.lease.id, status: "draft",
           amountCents: leaseResult.lease.monthlyRentCents, currencyCode: "USD", dueDay: leaseResult.lease.rentDueDay,
-          effectiveStartDate: leaseResult.lease.startDate, effectiveEndDate: leaseResult.lease.endDate } }) });
+          effectiveStartDate: leaseResult.lease.startDate, effectiveEndDate: leaseResult.lease.endDate,
+          paymentFrequency: form.get("paymentFrequency") || "monthly" } }) });
       const scheduleResult = await scheduleResponse.json();
       if (!scheduleResponse.ok) throw new Error(scheduleResult.error || "Lease saved, but its rent schedule could not be saved.");
       setMessage(`Lease saved: ${leaseResult.lease.id} — Schedule: ${scheduleResult.schedule.id}`);
@@ -237,6 +246,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+      <PaymentFrequencyPicker />
       <label className="text-sm font-bold text-slate-900 dark:text-white xl:col-span-2">Notes<input name="notes" placeholder="e.g. Month-to-month after original 1-year term expired" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <div className="md:col-span-2 xl:col-span-3 flex items-center gap-4"><button disabled={working || setup.units.length === 0 || setup.tenants.length === 0 || !selectedUnitId} className={`rounded-xl px-5 py-3 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>{working ? "Saving…" : "Save draft lease and schedule"}</button></div>
     </form>}
@@ -260,6 +270,7 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
       <Detail label="Due day" value={lease.rent_due_day || "Not recorded"} />
       <Detail label="Move-in date" value={lease.start_date} />
       <Detail label="Charges begin" value={lease.begin_charges_date || lease.start_date} />
+      <Detail label="Payment frequency" value={paymentFrequencyDescription(schedule?.payment_frequency || "monthly")} />
       <Detail label="Ends" value={lease.end_date || "Current"} />
       <Detail label="Property" value={lease.property_id} />
       <Detail label="Lease ID" value={lease.id} />
@@ -276,8 +287,9 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
             <label className="text-sm font-bold text-slate-900 dark:text-white">Begin charges on<input name="beginChargesDate" type="date" required defaultValue={lease.begin_charges_date || lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day charges start — e.g. moved in Aug 28 but charges start Sep 1. No charge is ever generated for a period due before this date.</span></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" defaultValue={lease.end_date || ""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" required defaultValue={schedule.early_pay_days ?? 7} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <div className="sm:col-span-2"><PaymentFrequencyPicker name="paymentFrequency" defaultValue={schedule.payment_frequency || "monthly"} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></div>
             <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300 sm:col-span-2">{working ? "Saving…" : "Save terms"}</button>
-            <p className="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">New terms apply to future charges only — charges already generated keep their original terms.</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">New terms apply to future charges only — charges already generated keep their original terms. Changing the frequency restarts the payment cadence from today.</p>
           </form>
         )}
       </div>
@@ -300,6 +312,7 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
         <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required defaultValue={(Number(lease.monthly_rent_cents) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" required defaultValue={lease.rent_due_day || 1} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" defaultValue={7} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+        <div className="sm:col-span-2"><PaymentFrequencyPicker name="paymentFrequency" defaultValue="monthly" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></div>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Effective start<input name="startDate" type="date" required defaultValue={lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <label className="text-sm font-bold text-slate-900 dark:text-white">Effective end<input name="endDate" type="date" defaultValue={lease.end_date || ""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
         <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300 sm:col-span-2">{working ? "Saving…" : "Save rent schedule"}</button>

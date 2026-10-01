@@ -250,3 +250,72 @@ describe("rent charge generation cron", () => {
     expect(schedules.in).toHaveBeenCalledWith("owner_id", ["owner_enabled"]);
   });
 });
+
+  // R13: weekly/bi-weekly schedules generate one charge per cadence occurrence,
+  // never backfilling missed occurrences.
+  describe("payment frequency", () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const baseRow = (overrides = {}) => ({ owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1",
+      status: "active", amount_cents: 160000, currency_code: "USD", due_day: 1,
+      effective_start_date: "2020-01-01", effective_end_date: null,
+      created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+      collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01",
+      early_pay_days: 7, ...overrides });
+    const runWith = (row) => {
+      const schedules = chain({ data: [row], error: null });
+      const charges = chain({ error: null });
+      createRentalWebhookClient.mockReturnValue(
+        db({ settings: settingsChain(["owner_1"]), schedules, charges }));
+      return GET(request({ authorization: "Bearer cron-secret" })).then(async (response) =>
+        ({ response, body: await response.json(), charges }));
+    };
+
+    it("generates the current weekly occurrence plus the one inside the early-pay window", async () => {
+      const { response, body, charges } = await runWith(
+        baseRow({ payment_frequency: "weekly", payment_anchor_date: todayStr }));
+      expect(response.status).toBe(200);
+      // anchor is today and next week's occurrence falls inside the 7-day early-pay window
+      expect(body.processed).toBe(2);
+      const calls = charges.upsert.mock.calls;
+      const [row] = calls[0];
+      // occurrence index 0 on a $1,600/mo schedule
+      expect(row.amount_cents).toBe(36923);
+      expect(row.source_key).toBe(`rent:schedule_1:${todayStr}`);
+      expect(row.period).toBe(todayStr);
+      const nextWeek = new Date(Date.parse(`${todayStr}T00:00:00.000Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+      expect(calls[1][0].source_key).toBe(`rent:schedule_1:${nextWeek}`);
+    });
+
+    it("generates the current bi-weekly occurrence plus the windowed neighbors, never backfilling", async () => {
+      const twoWeeksAgo = new Date(Date.parse(`${todayStr}T00:00:00.000Z`) - 14 * 86_400_000).toISOString().slice(0, 10);
+      const twoWeeksAhead = new Date(Date.parse(`${todayStr}T00:00:00.000Z`) + 14 * 86_400_000).toISOString().slice(0, 10);
+      const { response, body, charges } = await runWith(
+        baseRow({ payment_frequency: "biweekly", payment_anchor_date: twoWeeksAgo, early_pay_days: 14 }));
+      expect(response.status).toBe(200);
+      // occurrences on (anchor), today, and two-weeks-ahead -- the anchor itself is
+      // never regenerated because the generator runs against the occurrence list
+      expect(body.processed).toBe(3);
+      const sourceKeys = charges.upsert.mock.calls.map(([row]) => row.source_key).sort();
+      expect(sourceKeys).toContain(`rent:schedule_1:${todayStr}`);
+      expect(sourceKeys).toContain(`rent:schedule_1:${twoWeeksAhead}`);
+    });
+
+    it("never generates a pre-anchor occurrence even with a wide window", async () => {
+      const { response, body, charges } = await runWith(
+        baseRow({ payment_frequency: "weekly", payment_anchor_date: todayStr, early_pay_days: 31 }));
+      expect(response.status).toBe(200);
+      const dueDates = charges.upsert.mock.calls.map(([row]) => row.due_date).sort();
+      expect(dueDates.every((due) => due >= todayStr)).toBe(true);
+      expect(body.processed).toBe(dueDates.length);
+    });
+
+    it("keeps legacy rows without a frequency column on the unchanged monthly path", async () => {
+      const { response, body, charges } = await runWith(
+        baseRow({ payment_frequency: null, payment_anchor_date: null, early_pay_days: 0 }));
+      expect(response.status).toBe(200);
+      expect(body.processed).toBe(1);
+      const [row] = charges.upsert.mock.calls[0];
+      expect(row.amount_cents).toBe(160000);
+      expect(row.source_key).toBe(`rent:schedule_1:${todayStr.slice(0, 7)}`);
+    });
+  });

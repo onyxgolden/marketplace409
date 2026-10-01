@@ -5,7 +5,7 @@ import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { createRentalUnit } from "@/domains/rental-unit";
 import { createRentalTenant } from "@/domains/rental-tenant";
 import { createRentalLease } from "@/domains/rental-lease";
-import { createRentSchedule } from "@/domains/rent-schedule";
+import { createRentSchedule, RENT_SCHEDULE_PAYMENT_FREQUENCIES } from "@/domains/rent-schedule";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
@@ -88,7 +88,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_tenants")
         .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, invited_at, auth_user_id, payment_policy, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
-        .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
+        .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date, payment_frequency, payment_anchor_date")
         .order("effective_start_date", { ascending: false }),
       authenticated.supabaseClient.from("rental_maintenance_requests")
         .select("id, lease_id, unit_id, tenant_id, title, description, priority, status, permission_to_enter, contact_phone, owner_notes, submitted_at, updated_at, completed_at")
@@ -470,6 +470,21 @@ export async function POST(request) {
           ? "" : String(input.beginChargesDate).trim();
         if (rawBeginCharges !== "" && !datePattern.test(rawBeginCharges)) return badRequest("A valid begin-charges date (YYYY-MM-DD) is required.");
         const beginChargesDate = rawBeginCharges === "" ? null : rawBeginCharges;
+        // R13: payment frequency is optional on edit-terms. It lives only on the
+        // rent_schedules row (the charge cron's single read source), so it is
+        // written by a second, owner-scoped update right after the atomic
+        // terms RPC -- there is no lease-row counterpart to drift against.
+        // Changing the frequency resets the cadence anchor to today unless the
+        // caller passes an explicit anchor, so a mid-lease switch never
+        // backfills weeks of "missed" charges under the old cadence. Charges
+        // already generated keep their original terms and are never rewritten.
+        const paymentFrequency = input.paymentFrequency ?? null;
+        if (paymentFrequency !== null && !RENT_SCHEDULE_PAYMENT_FREQUENCIES.includes(paymentFrequency))
+          return badRequest("Payment frequency must be weekly, biweekly, or monthly.");
+        const paymentAnchorDate = input.paymentAnchorDate ?? null;
+        if (paymentAnchorDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(paymentAnchorDate))
+          return badRequest("Payment anchor date must use YYYY-MM-DD format.");
+        const todayStr = new Date().toISOString().slice(0, 10);
         // Owner-scoped lookup: a lease from another workspace resolves to 404, never a 403
         // that would leak its existence.
         const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
@@ -508,7 +523,23 @@ export async function POST(request) {
             return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
           throw termsError;
         }
-        return NextResponse.json({ success: true, lease: termsResult?.lease, schedule: termsResult?.schedule });
+        let schedule = termsResult?.schedule ?? null;
+        if (paymentFrequency !== null) {
+          const { data: currentSchedule, error: currentScheduleError } = await authenticated.supabaseClient
+            .from("rent_schedules").select("id, payment_frequency").eq("owner_id", effectiveOwnerId)
+            .eq("lease_id", leaseId).maybeSingle();
+          if (currentScheduleError) throw currentScheduleError;
+          // Anchor reset on frequency change only; an explicit anchor always wins.
+          const anchorDate = paymentAnchorDate ?? (currentSchedule?.payment_frequency !== paymentFrequency ? todayStr : null);
+          const frequencyUpdate = { payment_frequency: paymentFrequency, updated_at: timestamp };
+          if (anchorDate !== null) frequencyUpdate.payment_anchor_date = anchorDate;
+          const { data: updatedSchedule, error: frequencyError } = await authenticated.supabaseClient
+            .from("rent_schedules").update(frequencyUpdate).eq("owner_id", effectiveOwnerId)
+            .eq("lease_id", leaseId).select("*").maybeSingle();
+          if (frequencyError) throw frequencyError;
+          schedule = updatedSchedule ?? schedule;
+        }
+        return NextResponse.json({ success: true, lease: termsResult?.lease, schedule });
       }
       case "generate-charge": {
         if (!body.scheduleId || !body.period) return badRequest("scheduleId and period are required.");

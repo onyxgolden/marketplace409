@@ -1,9 +1,42 @@
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
-import { mapRentScheduleRow } from "@/domains/rent-schedule";
+import { mapRentScheduleRow, paymentFrequencyOf, paymentAnchorDate, dueDatesInWindow } from "@/domains/rent-schedule";
 import { generateRentCharge, mapRentChargeToRow } from "@/domains/rent-charge";
 
 export const runtime = "nodejs";
+
+const DAY_MS = 86_400_000;
+function addDays(dateStr, days) {
+  return new Date(Date.parse(`${dateStr}T00:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+// R13: the periods this schedule needs charges for. Monthly keeps its exact
+// prior behavior (current month + next month inside the early-pay window).
+// Weekly/bi-weekly schedules generate every cadence occurrence with a due
+// date in [today - stepDays, today + earlyPayDays]: the current period always
+// generates (mirroring monthly), the next inside the early-pay window, and
+// nothing older is backfilled. The occurrence list is deterministic and the
+// upsert below is keyed on (owner_id, source_key), so daily runs can neither
+// double-generate nor skip an occurrence.
+function chargePeriodsForSchedule(schedule, { period, nextPeriod, todayStr }) {
+  const frequency = paymentFrequencyOf(schedule);
+  if (frequency === "monthly") {
+    const periods = [period];
+    if (nextPeriod !== period) {
+      const nextDueDate = `${nextPeriod}-${String(schedule.dueDay).padStart(2, "0")}`;
+      const daysUntilDue = Math.round((Date.parse(`${nextDueDate}T00:00:00.000Z`) - Date.parse(`${todayStr}T00:00:00.000Z`)) / DAY_MS);
+      if (daysUntilDue <= (schedule.earlyPayDays ?? 7)) periods.push(nextPeriod);
+    }
+    return periods;
+  }
+  const stepDays = frequency === "weekly" ? 7 : 14;
+  return dueDatesInWindow({
+    anchorDate: paymentAnchorDate(schedule),
+    frequency,
+    windowStart: addDays(todayStr, -stepDays),
+    windowEnd: addDays(todayStr, schedule.earlyPayDays ?? 7),
+  });
+}
 
 // Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically when
 // CRON_SECRET is set in the project env — see vercel.json for the schedule.
@@ -55,15 +88,7 @@ export async function GET(request) {
     for (const row of schedules || []) {
       try {
         const schedule = { ...mapRentScheduleRow(row), beginChargesDate: beginChargesByLease.get(row.lease_id) ?? null };
-        // Current month always generates.
-        const periods = [period];
-        // Next month generates only inside this schedule's early-pay window.
-        if (nextPeriod !== period) {
-          const nextDueDate = `${nextPeriod}-${String(schedule.dueDay).padStart(2, "0")}`;
-          const daysUntilDue = Math.round((Date.parse(`${nextDueDate}T00:00:00.000Z`) - Date.parse(`${todayStr}T00:00:00.000Z`)) / 86400000);
-          if (daysUntilDue <= (schedule.earlyPayDays ?? 7)) periods.push(nextPeriod);
-        }
-        for (const p of periods) {
+        for (const p of chargePeriodsForSchedule(schedule, { period, nextPeriod, todayStr })) {
           const charge = generateRentCharge({ schedule, period: p });
           if (!charge) continue;
           const { error: upsertError } = await db.from("rent_charges")

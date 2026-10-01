@@ -1,6 +1,13 @@
 export const RENT_SCHEDULE_STATUSES = ["draft", "active", "paused", "ended"] as const;
 export type RentScheduleStatus = typeof RENT_SCHEDULE_STATUSES[number];
 
+// R13: payment frequency -- how the monthly headline rent is split into
+// charges. Chosen at move-in (the schedule created alongside the lease),
+// editable by the owner afterwards. Defaults to 'monthly', which is the
+// pre-R13 behavior, so every existing schedule keeps working unchanged.
+export const RENT_SCHEDULE_PAYMENT_FREQUENCIES = ["weekly", "biweekly", "monthly"] as const;
+export type RentSchedulePaymentFrequency = typeof RENT_SCHEDULE_PAYMENT_FREQUENCIES[number];
+
 // Collection authority — who is actually owed and collecting rent for this lease right now — is
 // orthogonal to `status` (lifecycle). A schedule can be lifecycle-'active' while
 // collection_mode stays 'external' (Rentec still collects it) indefinitely. Defaults to
@@ -37,6 +44,15 @@ export type RentSchedule = Readonly<{
   // reads it directly). Never persisted on rent_schedules — rental_leases owns
   // it. Null/omitted = no begin-charges gate (pre-R10 behavior).
   beginChargesDate?: string | null;
+  // R13: 'weekly' | 'biweekly' | 'monthly'. Optional on input -- createRentSchedule()
+  // defaults it to 'monthly' (the pre-R13 behavior), so callers that don't know about
+  // frequency yet still produce a valid schedule. Always populated on return.
+  paymentFrequency?: RentSchedulePaymentFrequency;
+  // First due date of the weekly/bi-weekly cadence; occurrences step 7/14 days from it.
+  // Optional on input -- null/omitted resolves to effectiveStartDate (see paymentAnchorDate()
+  // in payment-frequency.ts). Reset to the change date whenever the frequency itself
+  // changes, so a mid-lease switch never backfills weeks of "missed" charges.
+  paymentAnchorDate?: string | null;
 }>;
 
 function required(value: string, field: string): string {
@@ -86,11 +102,18 @@ export function createRentSchedule(schedule: RentSchedule): RentSchedule {
   // An empty string counts as absent, matching how form posts omit the field.
   const rawBeginCharges = typeof schedule.beginChargesDate === "string" ? schedule.beginChargesDate.trim() : schedule.beginChargesDate;
   const beginChargesDate = rawBeginCharges ? date(rawBeginCharges, "beginChargesDate") : null;
+  // R13: defaults to 'monthly' -- every schedule created before R13 (and every
+  // caller that doesn't pass a frequency) keeps the exact pre-R13 behavior.
+  const paymentFrequency = schedule.paymentFrequency ?? "monthly";
+  if (!RENT_SCHEDULE_PAYMENT_FREQUENCIES.includes(paymentFrequency))
+    throw new Error("Rent schedule payment frequency must be weekly, biweekly, or monthly.");
+  const paymentAnchorDate = schedule.paymentAnchorDate ?? null;
+  if (paymentAnchorDate !== null) date(paymentAnchorDate, "paymentAnchorDate");
   return Object.freeze({ ...schedule, id: required(schedule.id, "an id"), leaseId: required(schedule.leaseId, "a lease id"),
     amountCents: schedule.amountCents, currencyCode, effectiveStartDate, effectiveEndDate,
     createdAt: timestamp(schedule.createdAt, "createdAt"), updatedAt: timestamp(schedule.updatedAt, "updatedAt"),
     collectionMode, collectionProvider, forgeCutoverDate: forgeCutoverDate === null ? null : date(forgeCutoverDate, "forgeCutoverDate"),
-    earlyPayDays, beginChargesDate });
+    earlyPayDays, beginChargesDate, paymentFrequency, paymentAnchorDate });
 }
 
 // Pure, single source of truth for "is this schedule allowed to generate/collect a FORGE charge

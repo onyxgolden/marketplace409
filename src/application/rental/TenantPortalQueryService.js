@@ -2,9 +2,29 @@ import { mapRentalTenantRowToRentalTenant } from "@/domains/rental-tenant/rental
 import { mapRentalLeaseRowsToRentalLease } from "@/domains/rental-lease/rental-lease.mapper";
 import { mapRentalUnitRowToRentalUnit } from "@/domains/rental-unit/rental-unit.mapper";
 import { mapRentScheduleRow } from "@/domains/rent-schedule";
+import { paymentFrequencyOf, paymentAnchorDate, periodAmountCents, occurrenceIndexForDueDate,
+  nextPaymentDueDate, describePaymentFrequency } from "@/domains/rent-schedule";
 import { mapRentChargeRow } from "@/domains/rent-charge";
 import { resolveEffectivePaymentPolicy } from "@/domains/rental-payment/paymentPolicy";
 import { resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
+
+// R13: the payment-schedule summary the tenant portal renders per rental --
+// frequency in plain English, the whole-cent amount of each payment, and the
+// next due date. Derived from the active rent schedule; null when there is none.
+function billingCadenceForSchedules(schedules, today = new Date().toISOString().slice(0, 10)) {
+  const schedule = (schedules || []).find((item) => item.status === "active") || (schedules || [])[0];
+  if (!schedule) return null;
+  const frequency = paymentFrequencyOf(schedule);
+  const nextDueDate = nextPaymentDueDate({ schedule, today });
+  let perPaymentCents = schedule.amountCents;
+  if (frequency !== "monthly") {
+    const occurrenceIndex = occurrenceIndexForDueDate({ anchorDate: paymentAnchorDate(schedule), dueDate: nextDueDate, frequency });
+    perPaymentCents = periodAmountCents({ monthlyAmountCents: schedule.amountCents, frequency,
+      occurrenceIndex: occurrenceIndex === null ? 0 : occurrenceIndex });
+  }
+  return Object.freeze({ frequency, frequencyLabel: describePaymentFrequency(frequency),
+    perPaymentCents, nextDueDate });
+}
 
 export class TenantPortalQueryService {
   constructor(supabaseClient) {
@@ -118,9 +138,11 @@ export class TenantPortalQueryService {
       const workUpdateResult=await this.supabase.rpc("load_rental_maintenance_work_updates",{p_lease_id:leaseRow.id});
       if(workUpdateResult.error)throw workUpdateResult.error;const maintenanceWorkOrders=workUpdateResult.data||[];
       const membershipRows = (memberships || []).filter(({ lease_id }) => lease_id === leaseRow.id);
+      const mappedSchedules = Object.freeze((scheduleResult.data || []).map(mapRentScheduleRow));
       return Object.freeze({ lease: mapRentalLeaseRowsToRentalLease(leaseRow, membershipRows),
         unit: unitResult.data ? mapRentalUnitRowToRentalUnit(unitResult.data) : null,
-        schedules: Object.freeze((scheduleResult.data || []).map(mapRentScheduleRow)),
+        schedules: mappedSchedules,
+        billingCadence: billingCadenceForSchedules(mappedSchedules),
         charges: Object.freeze((chargeResult.data || []).map((row)=>Object.freeze({...mapRentChargeRow(row),chargeType:row.charge_type||"rent",relatedChargeId:row.related_charge_id||null}))),
         payments: Object.freeze((paymentResult.data || []).map((row) => Object.freeze({ id: row.id, chargeId: row.charge_id,
           amountCents: Number(row.amount_cents), refundedAmountCents:Number(row.refunded_amount_cents||0), currencyCode: row.currency_code, status: row.status,

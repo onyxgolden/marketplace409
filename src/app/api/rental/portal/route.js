@@ -111,6 +111,34 @@ export async function POST(request) {
       }
       const{data,error}=await authenticated.supabaseClient.rpc("request_rental_autopay_enrollment",{p_lease_id:body.leaseId,p_payment_method_type:body.paymentMethodType,p_charge_day:Number(body.chargeDay),p_reminder_days_before:Number(body.reminderDaysBefore),p_consent_text:consentText,p_provider_mode:provider.mode,p_fee_consent_bps:feeConsentBps});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
     }
+    if(body?.operation==="change-payment-frequency"){
+      // R13: portal self-scheduling, atomic. change_rental_payment_frequency
+      // performs the schedule mutation AND the owner notification insert in
+      // ONE transaction: either both commit or neither does, so a
+      // notification failure can never misreport an already-committed change.
+      const leaseId=typeof body.leaseId==="string"?body.leaseId.trim():"";
+      const paymentFrequency=body.paymentFrequency;
+      if(!leaseId)return NextResponse.json({error:"leaseId is required."},{status:400});
+      if(!["weekly","biweekly","monthly"].includes(paymentFrequency))
+        return NextResponse.json({error:"paymentFrequency must be weekly, biweekly, or monthly."},{status:400});
+      const{data,error}=await authenticated.supabaseClient.rpc("change_rental_payment_frequency",
+        {p_lease_id:leaseId,p_payment_frequency:paymentFrequency});
+      if(error){
+        const code=error.code||"";
+        const message=error.message||"Unable to change the payment schedule.";
+        // Preserve the portal's existing status contract: auth/permission
+        // failures 403, no-active-schedule 409, validation 400.
+        if(code==="42501")return NextResponse.json({error:message},{status:403});
+        if(code==="P0002"){
+          if(message.includes("No active rent schedule"))
+            return NextResponse.json({error:message},{status:409});
+          return NextResponse.json({error:message},{status:403});
+        }
+        if(code==="22023")return NextResponse.json({error:message},{status:400});
+        throw error;
+      }
+      return NextResponse.json(data);
+    }
     if(body?.operation==="cancel-autopay"){
       if(!body.enrollmentId)return NextResponse.json({error:"enrollmentId is required."},{status:400});const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_autopay_enrollment",{p_enrollment_id:body.enrollmentId,p_reason:body.reason||"Cancelled by tenant"});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
     }
