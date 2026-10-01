@@ -93,6 +93,8 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   communications: Object.freeze({ title: "Communications", summary: "Maintain the auditable notification and reminder outbox.", actions: Object.freeze(["Confirm recipient, message, and delivery state.", "Queued does not mean delivered; email delivery may not yet be active."]) }),
   messages: Object.freeze({ title: "Owner Inbox", summary: "The combined owner inbox: tenant conversations and private-financing borrower conversations in one list.", actions: Object.freeze(["Each thread still resolves through its own domain-scoped API.", "Unread counts cover both rental and financing conversations."]) }),
   animals: Object.freeze({ title: "Animals", summary: "Separate pet approval and fees from assistance-animal review.", actions: Object.freeze(["Record each animal and owner decision.", "Never charge a pet fee for an assistance animal."]) }),
+  listings: Object.freeze({ title: "Listings", summary: "Publish public listing pages for vacant units and build the application forms applicants fill in.", actions: Object.freeze(["Preview the public page before publishing — the /rentals/<slug> URL is what applicants see.", "Auto-posting to listing sites stays gated; use the copy-paste pack or the RSS feed for manual syndication."]) }),
+  applications: Object.freeze({ title: "Applications", summary: "Review online applications: approve to create a tenant record plus a draft lease, or deny with a reason.", actions: Object.freeze(["Every decision writes an append-only audit record.", "Approving creates a draft lease — finalize rent and dates in the normal lease flow before activation."]) }),
   charges: Object.freeze({ title: "Rent & Payments", summary: "Manage charges, balances, payment records, and billing setup.", actions: Object.freeze(["Confirm the tenant, lease, amount, and payment status before recording money.", "Consent or a saved payment method alone does not authorize a debit."]) }),
   deposits: Object.freeze({ title: "Deposits", summary: "Track security-deposit liability separately from rental income.", actions: Object.freeze(["Record receipt, holding, approved deductions, and disposition with evidence.", "Deposits are never rent or NOI."]) }),
   "checks-deposits": Object.freeze({ title: "Checks & Deposits", summary: "Print recorded check payments in batches and build bank deposit slips from received payments.", actions: Object.freeze(["Print only recorded, unprinted check payments — voided payments never print.", "Batch received payments into one deposit slip; the slip total always equals the sum of its lines."]) }),
@@ -111,25 +113,19 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   "rentec-files": Object.freeze({ title: "Rentec Files", summary: "Inspect available Rentec file metadata without exposing file contents unnecessarily.", actions: Object.freeze(["Use the inventory to identify documents that require deliberate migration.", "File names and contents are not automatically returned."]) }),
   "rentec-payment-import": Object.freeze({ title: "Rentec Payment Import", summary: "Preview externally collected Rentec payments for controlled recording in FORGE.", actions: Object.freeze(["Review matched, ambiguous, ignored, and conflict classifications.", "Never approve an ambiguous transaction by guessing."]) }),
   "rentec-financial-history-import": Object.freeze({ title: "Rentec Financial History Import", summary: "Resume historical financial-event import using current Rentec evidence.", actions: Object.freeze(["Preview classifications and resolve conflicts first.", "This records financial history; it does not create rent charges or Stripe payments."]) }),
-<<<<<<< HEAD
-  "setup-guide": Object.freeze({ title: "Setup guide", summary: "The ordered first-run tour: settings, banking, owners, managers, properties, then tenants — with the reason each step comes where it does.", actions: Object.freeze(["Work the steps in order; completion is read from your actual records.", "Skip any step you are not ready for — the guide stays under Settings."]) }),
-=======
   terminology: Object.freeze({ title: "Terminology", summary: "Rename tenant, property, lease, owner, and vendor workspace-wide.", actions: Object.freeze(["Enter singular and plural forms, then watch the live preview.", "Renaming never changes records, reports, or portal links — only the words shown."]) }),
->>>>>>> a3c3adb2 (feat(rentec-parity): R25 terminology customization)
+  "setup-guide": Object.freeze({ title: "Setup guide", summary: "The ordered first-run tour: settings, banking, owners, managers, properties, then tenants — with the reason each step comes where it does.", actions: Object.freeze(["Work the steps in order; completion is read from your actual records.", "Skip any step you are not ready for — the guide stays under Settings."]) }),
 });
 
 export const RENTAL_HELP_GROUPS = Object.freeze([
   Object.freeze({ title: "Summary", ids: Object.freeze(["overview"]) }),
   Object.freeze({ title: "Properties", ids: Object.freeze(["setup", "insurance", "maintenance", "inspections", "documents"]) }),
   Object.freeze({ title: "Tenants", ids: Object.freeze(["tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals"]) }),
+  Object.freeze({ title: "Leasing", ids: Object.freeze(["listings", "applications"]) }),
   Object.freeze({ title: "Banking", ids: Object.freeze(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry"]) }),
   Object.freeze({ title: "Owners", ids: Object.freeze(["owners"]) }),
   Object.freeze({ title: "Reports", ids: Object.freeze(["reports", "owner-statements"]) }),
-<<<<<<< HEAD
-  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "setup-guide"]) }),
-=======
-  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology"]) }),
->>>>>>> a3c3adb2 (feat(rentec-parity): R25 terminology customization)
+  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "setup-guide"]) }),
 ]);
 
 export function getRentalFunctionHelp(activeFunctionId) {
