@@ -68,4 +68,16 @@ describe("ConversationThread", () => {
     mounted = mount(<ConversationThread messages={[]} selfSenderType="tenant" onSend={vi.fn()} error="Unable to send this message." />);
     expect(mounted.container.textContent).toContain("Unable to send this message.");
   });
+
+  it("renders a composer addon above the form and lets it insert draft text", () => {
+    const onSend = vi.fn().mockResolvedValue();
+    mounted = mount(<ConversationThread messages={[]} selfSenderType="tenant" onSend={onSend}
+      composerAddon={({ insertText }) => <button type="button" onClick={() => insertText("Hello {{tenant_name}}")}>Insert</button>} />);
+    const addonButton = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent === "Insert");
+    expect(addonButton).toBeTruthy();
+    // The addon renders inside the composer form, before the textarea.
+    expect(mounted.container.querySelector("form").textContent).toContain("Insert");
+    act(() => addonButton.click());
+    expect(mounted.container.querySelector('textarea[name="body"]').value).toBe("Hello {{tenant_name}}");
+  });
 });

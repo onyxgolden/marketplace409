@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 const dateTime = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const CATEGORY_LABEL = { issue: "Issue", suggestion: "Suggestion" };
@@ -8,8 +8,21 @@ const CATEGORY_LABEL = { issue: "Issue", suggestion: "Suggestion" };
 // financing owner/borrower) -- each surface's own component owns the fetch/send wiring and passes
 // plain data in, exactly like TenantPaymentForm is shared across the rental and private-financing
 // payment flows.
-export default function ConversationThread({ messages, selfSenderType, onSend, busy = false, error = "", allowCategory = false, placeholder = "Type a message…" }) {
+//
+// composerAddon (Rentec parity R6): an optional render prop called with
+// { insertText } and rendered above the composer form. The message-template
+// picker uses it to insert rendered template text into the draft without
+// taking over the textarea (which stays uncontrolled, as before).
+export default function ConversationThread({ messages, selfSenderType, onSend, busy = false, error = "", allowCategory = false, placeholder = "Type a message…", composerAddon = null }) {
   const [category, setCategory] = useState("");
+  const bodyRef = useRef(null);
+  const insertText = useCallback((text) => {
+    const element = bodyRef.current;
+    if (!element || !text) return;
+    const prefix = element.value && !element.value.endsWith("\n") ? "\n" : "";
+    element.value = `${element.value}${prefix}${text}`;
+    element.focus();
+  }, []);
   async function submit(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -32,7 +45,8 @@ export default function ConversationThread({ messages, selfSenderType, onSend, b
       })}
     </div>
     <form onSubmit={submit} className="space-y-2">
-      <textarea name="body" required placeholder={placeholder} rows={3}
+      {composerAddon ? composerAddon({ insertText }) : null}
+      <textarea name="body" ref={bodyRef} required placeholder={placeholder} rows={3}
         className="w-full rounded-xl border p-3 text-sm text-slate-950" />
       {allowCategory ? <div className="flex gap-2">
         {["issue", "suggestion"].map((value) => <button key={value} type="button" onClick={() => setCategory((current) => current === value ? "" : value)}
