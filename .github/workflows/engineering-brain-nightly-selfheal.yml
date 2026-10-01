@@ -1,0 +1,105 @@
+# Nightly self-heal runner for the FORGE Engineering Brain
+# (scripts/engineering-brain/patch/runNightlySelfHeal*.mjs).
+#
+# Trigger: fires when the "FORGE Engineering Brain — Undiscovered Errors"
+# scan workflow completes (success OR failure — the scan fails loudly when it
+# finds errors, which is exactly when healing matters).
+#
+# What it does:
+#   1. Downloads that run's evidence.json artifact (fail-closed if missing).
+#   2. Runs the nightly runner: each new usable signal gets at most one
+#      driver run, each driver run opens at most one fix PR (max 3 signals
+#      per night; signals with a prior fix PR are skipped).
+#   3. Uploads the per-signal report as an artifact either way.
+#
+# What it never does:
+#   - Never merges, never deploys, never writes production data. The only
+#     mutations are fix-branch pushes and fix-PR creation through the
+#     reviewed Slice 7 pipeline. Review (ChatGPT) and merge (Jason) stay
+#     human, exactly as before.
+#   - Never heals from branch-dispatch evidence: the head_branch guard below
+#     means only scan runs on main can trigger a healing pass, and the
+#     checkout pins main deliberately (the opposite of the scan workflow's
+#     ${{ github.ref }} — here main's tip is the point).
+#
+# Secrets: uses only the automatic GITHUB_TOKEN (contents: write for the fix
+# branch push, pull-requests: write for PR creation, actions: read to fetch
+# the scan run's artifact). No Supabase access, no extra secrets.
+
+name: FORGE Engineering Brain — Nightly Self-Heal
+
+on:
+  workflow_run:
+    workflows: ["FORGE Engineering Brain — Undiscovered Errors"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: engineering-brain-nightly-selfheal
+  cancel-in-progress: true
+
+jobs:
+  heal:
+    if: >
+      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.conclusion == 'success' ||
+       github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          # Deliberate: the healer always heals main's tip, never a feature branch.
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure git identity for fix commits
+        run: |
+          git config user.name "forge-engineering-brain"
+          git config user.email "forge-engineering-brain@users.noreply.github.com"
+
+      - name: Download evidence artifact from the scan run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download ${{ github.event.workflow_run.id }} \
+            --repo ${{ github.repository }} \
+            -n undiscovered-errors-report \
+            -D ./evidence-in
+          test -f evidence-in/evidence.json
+
+      - name: Run the nightly self-heal pass
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # pipefail: the CLI's nonzero exit must fail this step even though
+          # its output is piped through tee. GitHub's default shell does not
+          # enable pipefail, so without this a runner failure would look green.
+          set -o pipefail
+          node scripts/engineering-brain/patch/runNightlySelfHealCli.mjs \
+            --evidence evidence-in/evidence.json \
+            --repo "$GITHUB_WORKSPACE" \
+            --base "$(git rev-parse HEAD)" \
+            --github-actions \
+            --json | tee selfheal-report.json
+
+      - name: Upload self-heal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfheal-report
+          path: selfheal-report.json
+          if-no-files-found: warn
