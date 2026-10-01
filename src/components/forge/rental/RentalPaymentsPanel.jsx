@@ -9,6 +9,7 @@ import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { seedCacheEntry } from "@/hooks/swrCache";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { depositStateLabel, resolveDepositState, DEPOSIT_STATE_DEPOSITED, DEPOSIT_STATE_RECEIVED, MONEY_MOVED_STATUSES } from "@/application/rental/paymentDepositState";
+import { PAYMENT_POLICIES, paymentPolicyDescription, paymentPolicyLabel } from "@/domains/rental-payment/paymentPolicy";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const label = (value) => value?.replaceAll("_", " ") || "—";
@@ -124,6 +125,39 @@ function BillingPauseBanner({ billingEnabled, busy, onSetBillingEnabled }) {
   </div>;
 }
 
+// R11 payment policies: the portfolio default that governs what tenant
+// payments are accepted (portal payment submission + manual recording, both
+// server-side gated). Read-only members get a 403 from the route.
+function PaymentPolicySettings({ policy, busy, onSave }) {
+  const [selected, setSelected] = useState(policy || "allow_any_amount");
+  const prevPolicy = useRef(policy || "allow_any_amount");
+  if (prevPolicy.current !== (policy || "allow_any_amount")) {
+    prevPolicy.current = policy || "allow_any_amount";
+    setSelected(policy || "allow_any_amount");
+  }
+  return <form aria-label="Payment policy settings" onSubmit={(event) => { event.preventDefault(); onSave(selected); }}
+    className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+    <h3 className="text-lg font-black text-slate-950 dark:text-white">Payment policies</h3>
+    <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-400">
+      What payments tenants may make. Applies to the tenant portal and to manually recorded payments
+      (both checked on the server). Autopay keeps running unchanged — it collects the computed schedule amount, never a tenant-entered one.
+    </p>
+    <div className="mt-4 space-y-3">
+      {PAYMENT_POLICIES.map((option) => <label key={option}
+        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${selected === option ? "border-sky-500 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/40" : "border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"}`}>
+        <input type="radio" name="paymentPolicy" value={option} checked={selected === option}
+          onChange={() => setSelected(option)} className="mt-1" />
+        <span><span className="block font-black text-slate-950 dark:text-white">{paymentPolicyLabel(option)}</span>
+          <span className="mt-1 block text-sm text-slate-600 dark:text-slate-400">{paymentPolicyDescription(option)}</span></span>
+      </label>)}
+    </div>
+    <button type="submit" disabled={busy || selected === (policy || "allow_any_amount")}
+      className={`mt-4 rounded-xl px-5 py-2.5 text-sm font-black transition disabled:opacity-50 ${goldControlClassName}`}>
+      {busy ? "Saving…" : "Save payment policy"}
+    </button>
+  </form>;
+}
+
 const identity = (value) => value;
 export default function RentalPaymentsPanel({ initialData = null, initialAccount, dataScope = identity, initialShowSetup = false, initialShowOffline = false, cacheKey = "rental:payments", initialViewFilter = null }) {
   // Rent collection: stale-while-revalidate under a cache key — the rental data
@@ -201,9 +235,11 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   async function setDepositState(paymentId, depositState) { return post({ operation: "set-payment-deposit-state", paymentId, depositState }, (body) => body?.payment?.changed === false ? "Deposit state is already up to date." : depositState === "deposited" ? "Payment marked as deposited." : "Payment marked as awaiting deposit."); }
   async function voidCharge(chargeId, reason) { return post({ operation: "void-charge", chargeId, reason }, () => "Charge voided."); }
   async function setBillingEnabled(nextEnabled) { return post({ operation: "set-billing-enabled", enabled: nextEnabled }, () => nextEnabled ? "Rental online billing resumed." : "Rental online billing paused."); }
+  async function setPaymentPolicy(policy) { return post({ operation: "save-payment-policy", policy }, () => `Payment policy saved: ${policy.replaceAll("_", " ")}.`); }
   const enabled = account?.status === "enabled";
   return <section className="space-y-6" data-rental-payments>
     <BillingPauseBanner billingEnabled={data.billingEnabled === true} busy={busy} onSetBillingEnabled={setBillingEnabled} />
+    <PaymentPolicySettings policy={data.paymentPolicy} busy={busy} onSave={setPaymentPolicy} />
     {viewFilter === "overdue" && <RentalViewFilterBanner filterLabel="Overdue rent charges" onClear={() => setViewFilter(null)} />}
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-4">

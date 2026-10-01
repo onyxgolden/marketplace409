@@ -868,10 +868,22 @@ describe("Rental Manager POST — co-owner manager-action scoping", () => {
 });
 
 describe("Rental Manager POST — tenant credit operations", () => {
+  function emptyPolicyChain() {
+    // Thenable empty query chain: the R11 payment-policy gate reads through
+    // from(), so the mock must support it. Empty rows resolve the policy to
+    // the allow_any_amount default and the gate passes the payment through.
+    const chain = {
+      select: () => chain, eq: () => chain, in: () => chain, order: () => chain, limit: () => chain,
+      maybeSingle: async () => ({ data: null, error: null }),
+      single: async () => ({ data: null, error: null }),
+      then: (resolve) => resolve({ data: [], error: null }),
+    };
+    return chain;
+  }
   function rpcClient({ rpcResult = { data: {}, error: null } } = {}) {
     const recorded = [];
     const rpc = vi.fn(async (name, params) => { recorded.push([name, params]); return rpcResult; });
-    return { from: vi.fn(() => ({})), rpc, recorded };
+    return { from: vi.fn(() => emptyPolicyChain()), rpc, recorded };
   }
   async function asOwner(client) {
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");

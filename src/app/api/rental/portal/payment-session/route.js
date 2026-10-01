@@ -3,6 +3,7 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
+import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
 
 function failure(message, status) { return NextResponse.json({ error: message }, { status }); }
 
@@ -90,6 +91,18 @@ export async function POST(request) {
     }
 
     const remainingCents = Number(charge.amount_cents) - Number(charge.paid_amount_cents);
+    // R11 payment-policy gate (server-side, never client-only): the payment
+    // amount -- the full remaining charge balance, computed above, never
+    // tenant-entered -- must satisfy the tenant's effective policy (per-tenant
+    // override, else the landlord's portfolio default). A require_balance
+    // policy rejects paying one charge while other charges are still open;
+    // a require_rent policy rejects a payment below one month's rent. Stripe
+    // autopay is intentionally exempt -- its amounts are computed from the
+    // consented enrollment schedule, not entered by the tenant.
+    const gate = await checkRentalPaymentPolicy(database, {
+      ownerId: tenant.owner_id, tenantId: tenant.id, amountCents: remainingCents,
+    });
+    if (!gate.ok) return failure(gate.message, 422);
     const paymentId = `rental_payment_${crypto.randomUUID()}`;
     const idempotencyKey = `rent:${charge.id}:${paymentId}`;
     const timestamp = new Date().toISOString();

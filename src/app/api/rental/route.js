@@ -9,6 +9,8 @@ import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
 import { validateAddressFields } from "@/lib/address/validateAddress";
+import { isPaymentPolicy, PAYMENT_POLICIES } from "@/domains/rental-payment/paymentPolicy";
+import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
 
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
@@ -24,6 +26,20 @@ async function readOnlyWriteBlocked(authenticated) {
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
   })) === "read_only";
+}
+
+// R11: for the payment-policy gate on manual payment recording, the tenant is
+// the explicitly supplied tenantId when given, otherwise the charge's primary
+// lease member. Returns null when nothing is derivable -- the gate then fails
+// open to the portfolio default (never newly blocking a payment).
+async function findPolicyTenantIdForCharge(supabaseClient, ownerId, chargeId) {
+  const { data: charge } = await supabaseClient.from("rent_charges").select("lease_id")
+    .eq("owner_id", ownerId).eq("id", chargeId).maybeSingle();
+  if (!charge?.lease_id) return null;
+  const { data: memberships } = await supabaseClient.from("rental_lease_tenants").select("tenant_id, occupancy_role")
+    .eq("owner_id", ownerId).eq("lease_id", charge.lease_id);
+  if (!memberships?.length) return null;
+  return (memberships.find((row) => row.occupancy_role === "primary") || memberships[0]).tenant_id;
 }
 
 async function withPhotoUrls(supabaseClient, records) {
@@ -45,7 +61,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_units")
         .select("id, property_id, label, status, photo_bucket, photo_object_path").order("label", { ascending: true }),
       authenticated.supabaseClient.from("rental_tenants")
-        .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, invited_at, auth_user_id, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
+        .select("id, display_name, email, phone, work_phone, employer_name, employer_phone, monthly_income_cents, emergency_contact_name, emergency_contact_phone, application_status, application_submitted_at, screening_provider, screening_reference, screening_status, screening_completed_at, ssn_last_four, landlord_notes, status, invited_at, auth_user_id, payment_policy, photo_bucket, photo_object_path").order("display_name", { ascending: true }),
       authenticated.supabaseClient.from("rent_schedules")
         .select("id, lease_id, status, amount_cents, currency_code, due_day, effective_start_date, effective_end_date, collection_mode, collection_provider, forge_cutover_date")
         .order("effective_start_date", { ascending: false }),
@@ -72,7 +88,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_late_fee_rules").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_assessments").select("*").order("approved_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_billing_settings")
-        .select("owner_id, late_fee_auto_post, late_fee_grace_days, late_fee_calculation_type, late_fee_fixed_amount_cents, late_fee_percentage_basis_points, late_fee_maximum_amount_cents")
+        .select("owner_id, late_fee_auto_post, late_fee_grace_days, late_fee_calculation_type, late_fee_fixed_amount_cents, late_fee_percentage_basis_points, late_fee_maximum_amount_cents, payment_policy")
         .eq("owner_id", authenticated.effectiveOwnerId).maybeSingle(),
       authenticated.supabaseClient.from("rental_late_fee_tenant_overrides").select("*").order("tenant_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_contractors").select("*").order("business_name",{ascending:true}),
@@ -145,7 +161,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],contractors:contractorResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],paymentPolicy:lateAutoSettingsResult.data?.payment_policy||"allow_any_amount",contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
       // unread: the tenant sent the most recent message and the owner hasn't read past it yet --
       // never derived from tenant_last_read_at, which says nothing about what the OWNER has seen.
       // Work-order threads are conversation rows with work_order_id set; their unread flag is
@@ -522,6 +538,16 @@ export async function POST(request) {
         // Defaults to "received" so un-deposited money is never silently claimed as
         // settled — the form captures it explicitly at record time.
         const depositState = input.depositState === "deposited" ? "deposited" : "received";
+        // R11 payment-policy gate (server-side, never client-only): the entered
+        // amount must satisfy the tenant's effective policy (per-tenant
+        // override, else the portfolio default) before the RPC records
+        // anything. Stripe autopay is intentionally exempt -- its amounts are
+        // computed from the consented schedule, never tenant-entered.
+        const policyTenantId = tenantId || (await findPolicyTenantIdForCharge(authenticated.supabaseClient, effectiveOwnerId, input.chargeId));
+        const gate = await checkRentalPaymentPolicy(authenticated.supabaseClient, {
+          ownerId: effectiveOwnerId, tenantId: policyTenantId, amountCents,
+        });
+        if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: 422 });
         const { data, error } = await authenticated.supabaseClient.rpc("record_offline_rental_payment", {
           p_owner_id: effectiveOwnerId, p_charge_id: input.chargeId, p_payment_method: input.paymentMethod,
           p_amount_cents: amountCents, p_received_at: input.receivedAt,
@@ -717,6 +743,35 @@ export async function POST(request) {
             updated_at: timestamp }, { onConflict: "owner_id,tenant_id" }).select("*").single();
         if (error) throw error;
         return NextResponse.json({ success: true, override: data });
+      }
+      case "save-payment-policy": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change payment policies." }, { status: 403 });
+        const policy = typeof body.policy === "string" ? body.policy.trim() : "";
+        if (!isPaymentPolicy(policy)) return badRequest(`Payment policy must be one of: ${PAYMENT_POLICIES.join(", ")}.`);
+        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_payment_policy", {
+          p_owner_id: effectiveOwnerId, p_policy: policy,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, paymentPolicy: data?.payment_policy || policy });
+      }
+      case "save-payment-policy-tenant-override": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change payment policy overrides." }, { status: 403 });
+        const input = body.override;
+        if (!input?.tenantId) return badRequest("tenantId is required.");
+        // null / "inherit" clears the override so the tenant inherits the
+        // portfolio default again.
+        const policy = input.policy === null || input.policy === undefined || input.policy === "" || input.policy === "inherit"
+          ? null : String(input.policy).trim();
+        if (policy !== null && !isPaymentPolicy(policy)) return badRequest(`Payment policy must be one of: ${PAYMENT_POLICIES.join(", ")}.`);
+        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id").eq("owner_id", effectiveOwnerId).eq("id", input.tenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (!tenant) return badRequest("Tenant was not found.");
+        const { data, error } = await authenticated.supabaseClient.from("rental_tenants")
+          .update({ payment_policy: policy }).eq("owner_id", effectiveOwnerId).eq("id", input.tenantId)
+          .select("id, payment_policy").single();
+        if (error) throw error;
+        return NextResponse.json({ success: true, override: data?.payment_policy || null });
       }
       case "save-contractor": {
         const input=body.contractor;if(!input?.businessName?.trim())return badRequest("Contractor business name is required.");const taxLast4=input.taxIdLast4?.trim()||null;if(taxLast4&&!/^\d{4}$/.test(taxLast4))return badRequest("Tax ID last four must contain four digits.");const {data,error}=await authenticated.supabaseClient.from("rental_contractors").insert({owner_id:effectiveOwnerId,id:id("rental_contractor",input.id),business_name:input.businessName.trim(),contact_name:input.contactName?.trim()||null,email:input.email?.trim()||null,phone:input.phone?.trim()||null,status:"active",trade:input.trade?.trim()||null,license_reference:input.licenseReference?.trim()||null,insurance_expiration:input.insuranceExpiration||null,w9_status:input.w9Status||"not_requested",tax_classification:input.taxClassification?.trim()||null,tax_id_last4:taxLast4}).select("*").single();if(error)throw error;return NextResponse.json({success:true,contractor:data});

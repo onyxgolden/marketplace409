@@ -16,6 +16,7 @@ import TenantInsurancePanel from "./TenantInsurancePanel";
 import TenantAnimalsPanel from "./TenantAnimalsPanel";
 import TenantLeaseSigningPanel from "./TenantLeaseSigningPanel";
 import TenantMessagesPanel from "./TenantMessagesPanel";
+import { minimumPaymentCents, paymentPolicyTenantExplanation, PAYMENT_POLICY_ALLOW_ANY_AMOUNT } from "@/domains/rental-payment/paymentPolicy";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -36,6 +37,26 @@ export function buildTenantPaymentSummary(rentals, billingEnabled) {
     }
   }
   return Object.freeze({ dueCents, openCharges, externallyManagedCents, externallyManagedChargeCount });
+}
+// R11: tenant-facing payment-policy note. The server-side payment-session gate
+// enforces the same rule with the same arithmetic; this only explains it up
+// front so the tenant is never surprised by a declined payment.
+export function buildPaymentPolicyNote(paymentPolicy, rentals) {
+  if (!paymentPolicy || paymentPolicy === PAYMENT_POLICY_ALLOW_ANY_AMOUNT) return null;
+  let balanceCents = 0, rentCents = null;
+  for (const rental of rentals || []) {
+    for (const charge of rental.charges || []) {
+      if (["paid", "void"].includes(charge.status)) continue;
+      balanceCents += Math.max(0, Number(charge.amountCents) - Number(charge.paidAmountCents));
+    }
+    const activeSchedule = (rental.schedules || []).find((schedule) => schedule.status === "active");
+    const scheduleRent = activeSchedule ? Number(activeSchedule.amountCents) : null;
+    const leaseRent = rental.lease ? Number(rental.lease.monthlyRentCents) : null;
+    const candidate = Number.isSafeInteger(scheduleRent) && scheduleRent > 0 ? scheduleRent
+      : Number.isSafeInteger(leaseRent) && leaseRent > 0 ? leaseRent : null;
+    if (candidate != null && (rentCents == null || candidate > rentCents)) rentCents = candidate;
+  }
+  return paymentPolicyTenantExplanation(paymentPolicy, minimumPaymentCents(paymentPolicy, rentCents, balanceCents));
 }
 const RESUMABLE_PAYMENT_STATUSES = ["created", "requires_payment_method", "requires_action"];
 export function paymentPendingForCharge(payments, chargeId) {
@@ -166,6 +187,8 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       <p className="text-sm font-bold uppercase tracking-widest text-amber-400">Current balance</p>
       <p className="mt-2 text-4xl font-black">{money.format(summary.dueCents / 100)}</p>
       <p className="mt-2 text-sm text-slate-300">{summary.openCharges ? `${summary.openCharges} open rent charge${summary.openCharges === 1 ? "" : "s"}` : "You have no FORGE-payable balance."}</p>
+      {(() => { const policyNote = buildPaymentPolicyNote(portal.paymentPolicy, portal.rentals);
+        return policyNote ? <p className="mt-3 rounded-xl bg-slate-800 p-3 text-sm font-bold text-amber-300">Payment rule: {policyNote}</p> : null; })()}
       {summary.externallyManagedChargeCount ? (
         <p className="mt-3 text-xs font-bold text-amber-300">
           {money.format(summary.externallyManagedCents / 100)} across {summary.externallyManagedChargeCount} charge{summary.externallyManagedChargeCount === 1 ? "" : "s"} is still managed in Rentec and is not payable here — see &quot;Managed in Rentec&quot; below.

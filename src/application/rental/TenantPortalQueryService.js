@@ -3,6 +3,7 @@ import { mapRentalLeaseRowsToRentalLease } from "@/domains/rental-lease/rental-l
 import { mapRentalUnitRowToRentalUnit } from "@/domains/rental-unit/rental-unit.mapper";
 import { mapRentScheduleRow } from "@/domains/rent-schedule";
 import { mapRentChargeRow } from "@/domains/rent-charge";
+import { resolveEffectivePaymentPolicy } from "@/domains/rental-payment/paymentPolicy";
 
 export class TenantPortalQueryService {
   constructor(supabaseClient) {
@@ -17,9 +18,13 @@ export class TenantPortalQueryService {
     if (!tenantRow) return null;
 
     const { data: billingSettingsRow, error: billingSettingsError } = await this.supabase
-      .from("rental_billing_settings").select("billing_enabled").eq("owner_id", tenantRow.owner_id).maybeSingle();
+      .from("rental_billing_settings").select("billing_enabled, payment_policy").eq("owner_id", tenantRow.owner_id).maybeSingle();
     if (billingSettingsError) throw billingSettingsError;
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
+    // R11: the tenant's effective payment policy (per-tenant override, else the
+    // portfolio default) -- the portal explains the rule and the server-side
+    // payment-session gate enforces it.
+    const paymentPolicy = resolveEffectivePaymentPolicy(tenantRow.payment_policy, billingSettingsRow?.payment_policy);
 
     const conversation = await this.loadConversation(tenantRow);
 
@@ -27,7 +32,7 @@ export class TenantPortalQueryService {
       .select("owner_id, lease_id, tenant_id").eq("owner_id", tenantRow.owner_id).eq("tenant_id", tenantRow.id);
     if (membershipError) throw membershipError;
     const leaseIds = (memberships || []).map(({ lease_id }) => lease_id);
-    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, conversation, rentals: Object.freeze([]) });
+    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, paymentPolicy, conversation, rentals: Object.freeze([]) });
 
     const { data: leases, error: leaseError } = await this.supabase.from("rental_leases").select("*")
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
@@ -168,7 +173,7 @@ export class TenantPortalQueryService {
         }) : null,
       });
     }));
-    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, conversation, rentals: Object.freeze(rentals) });
+    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, paymentPolicy, conversation, rentals: Object.freeze(rentals) });
   }
 
   // One continuous conversation with the owner (not per-lease) -- messaging is a tenant<->owner
