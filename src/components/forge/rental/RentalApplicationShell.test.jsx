@@ -44,7 +44,7 @@ const EXPECTED_FUNCTION_IDS = [
   "setup", "insurance", "maintenance", "inspections", "documents",
   "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
   "listings", "applications",
-  "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
+  "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "receipts", "chart-of-accounts", "batch-entry",
   "owners",
   "reports", "owner-statements",
   "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "setup-guide",
@@ -149,7 +149,7 @@ describe("RentalApplicationShell eight-section Rentec-style registry", () => {
 
   it("groups the money screens under Banking", () => {
     const banking = RENTAL_NAVIGATION.find((group) => group.label === "Banking");
-    expect(banking.items.map(({ id }) => id)).toEqual(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry"]);
+    expect(banking.items.map(({ id }) => id)).toEqual(["charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "receipts", "chart-of-accounts", "batch-entry"]);
     expect(banking.items.find(({ id }) => id === "charges").label).toBe("Rent & Payments");
   });
 
