@@ -47,7 +47,19 @@ function clientFor({ billRow = bill, writeResult = "updated" } = {}) {
           },
         };
       }
-      return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { name: "Acme Plumbing" }, error: null }) }) }) }) };
+      // Vendors lookup, and any other list read (e.g. the R18 audits query:
+      // select → eq → eq → eq → order, awaited as a list).
+      const listFallback = () => {
+        const b = {
+          select: () => b,
+          eq: () => b,
+          order: () => b,
+          maybeSingle: () => Promise.resolve({ data: { name: "Acme Plumbing" }, error: null }),
+        };
+        b.then = (resolve) => resolve({ data: [], error: null });
+        return b;
+      };
+      return listFallback();
     }),
   };
   return { client, lastPatch: () => lastPatch };
@@ -148,5 +160,130 @@ describe("PATCH /api/rental/vendor-bills/[id] — void", () => {
     const { client } = clientFor({ billRow: { ...bill, status: "voided", void_reason: "dup" } });
     authAs(client);
     expect((await patch({ void: true, voidReason: "again" })).status).toBe(409);
+  });
+});
+
+// R18 (rentec-parity): un-void a voided bill.
+describe("PATCH /api/rental/vendor-bills/[id] — un-void", () => {
+  const voidedBillRow = {
+    ...bill,
+    status: "voided",
+    paid_amount_cents: 0,
+    void_reason: "duplicate entry",
+    voided_at: "2026-09-20",
+    created_at: "2026-09-15T00:00:00Z",
+  };
+
+  function unvoidClient({ billRow = voidedBillRow, candidates = [], updateError = null } = {}) {
+    const updated = { ...billRow, status: "open" };
+    return {
+      from: vi.fn((table) => {
+        if (table === "rental_vendor_bills") {
+          const b = {
+            select() { return b; },
+            eq() { return b; },
+            neq() { return b; },
+            update(patch) {
+              const u = {
+                eq() { return u; },
+                select() { return u; },
+                single() {
+                  return updateError
+                    ? Promise.resolve({ data: null, error: updateError })
+                    : Promise.resolve({ data: { ...updated, ...patch }, error: null });
+                },
+              };
+              return u;
+            },
+            maybeSingle() { return Promise.resolve({ data: billRow, error: null }); },
+            then(resolve) { resolve({ data: candidates, error: null }); },
+          };
+          return b;
+        }
+        if (table === "rental_vendors") {
+          const b = {
+            select() { return b; },
+            eq() { return b; },
+            maybeSingle() { return Promise.resolve({ data: { name: "Acme Plumbing" }, error: null }); },
+          };
+          return b;
+        }
+        if (table === "rental_void_audits") {
+          const b = {
+            insert() { return Promise.resolve({ error: null }); },
+            select() { return b; },
+            eq() { return b; },
+            order() { return b; },
+            then(resolve) { resolve({ data: [], error: null }); },
+          };
+          return b;
+        }
+        const b = {
+          select() { return b; },
+          eq() { return b; },
+          then(resolve) { resolve({ data: [], error: null }); },
+        };
+        return b;
+      }),
+    };
+  }
+
+  const unvoid = (body) => PATCH(new Request("https://t/", { method: "PATCH", body: JSON.stringify(body) }), { params: { id: "rental_vendor_bill_1" } });
+
+  it("un-voids a voided bill back to open", async () => {
+    const client = unvoidClient();
+    authAs(client);
+    const response = await unvoid({ unvoid: true, unvoidReason: "entered in error" });
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.bill).toMatchObject({ status: "open", vendorName: "Acme Plumbing" });
+  });
+
+  it("forbids read-only members from un-voiding", async () => {
+    const client = unvoidClient();
+    authAs(client, "read_only");
+    expect((await unvoid({ unvoid: true, unvoidReason: "x" })).status).toBe(403);
+  });
+
+  it("requires an un-void reason", async () => {
+    const client = unvoidClient();
+    authAs(client);
+    expect((await unvoid({ unvoid: true, unvoidReason: "  " })).status).toBe(400);
+  });
+
+  it("refuses to un-void a non-voided bill", async () => {
+    const client = unvoidClient({ billRow: { ...voidedBillRow, status: "open" } });
+    authAs(client);
+    const response = await unvoid({ unvoid: true, unvoidReason: "x" });
+    const body = await response.json();
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/voided bills/i);
+  });
+
+  it("blocks un-void when a replacement bill was entered after the void", async () => {
+    const candidate = {
+      id: "rental_vendor_bill_2",
+      vendor_id: voidedBillRow.vendor_id,
+      property_id: voidedBillRow.property_id,
+      bill_date: voidedBillRow.bill_date,
+      amount_cents: voidedBillRow.amount_cents,
+      status: "open",
+      created_at: "2026-09-25T00:00:00Z",
+    };
+    const client = unvoidClient({ candidates: [candidate] });
+    authAs(client);
+    const response = await unvoid({ unvoid: true, unvoidReason: "x" });
+    const body = await response.json();
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/replacement bill/i);
+  });
+
+  it("409s when the bill changed between read and write", async () => {
+    const client = unvoidClient({ updateError: { code: "PGRST116" } });
+    authAs(client);
+    const response = await unvoid({ unvoid: true, unvoidReason: "x" });
+    const body = await response.json();
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/changed while you were editing/i);
   });
 });

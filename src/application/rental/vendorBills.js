@@ -195,3 +195,55 @@ export function serializeVendorBill(row, vendorName = null) {
     updatedAt: row.updated_at || null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// R18 (rentec-parity): un-void
+// ---------------------------------------------------------------------------
+// A voided bill can be un-voided (restored to open) because void requires an
+// untouched bill: open AND zero applied payments. Un-voiding restores exactly
+// that state — nothing else can have happened to the bill in between (no
+// payment can land on a voided bill; the write-time guard re-checks).
+//
+// Supersession guard: un-void is blocked when a probable replacement bill
+// exists — a newer, non-voided bill for the same vendor + property + bill
+// date + amount. That is almost certainly the bill re-entered after the void,
+// and un-voiding the old one would double the payable. The route surfaces
+// the replacement so the denial reads in plain English.
+export function canUnvoidBill(bill) {
+  return (
+    bill?.status === "voided" && Number(bill?.paid_amount_cents || 0) === 0
+  );
+}
+
+/**
+ * Is `candidate` a probable re-entered replacement of `bill`?
+ * Both rows: { id, vendor_id, property_id, bill_date, amount_cents, status, created_at }.
+ */
+export function isProbableReplacementBill(candidate, bill) {
+  if (!candidate || !bill || candidate.id === bill.id) return false;
+  if (candidate.status === "voided") return false;
+  return (
+    candidate.vendor_id === bill.vendor_id &&
+    (candidate.property_id || null) === (bill.property_id || null) &&
+    candidate.bill_date === bill.bill_date &&
+    Number(candidate.amount_cents || 0) === Number(bill.amount_cents || 0) &&
+    String(candidate.created_at || "") > String(bill.created_at || "")
+  );
+}
+
+/**
+ * Serialize a void-audit row (rental_void_audits) for the API/UI.
+ */
+export function serializeVoidAudit(row) {
+  const actionLabels = { unvoid: "Un-voided", reissue: "Re-issued" };
+  return {
+    id: row.id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    action: row.action,
+    actionLabel: actionLabels[row.action] || row.action,
+    reason: row.reason,
+    actorId: row.actor_id || null,
+    createdAt: row.created_at,
+  };
+}

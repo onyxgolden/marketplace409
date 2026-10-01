@@ -14,7 +14,7 @@ async function requireWriter(authenticated) {
 
 const VENDOR_COLUMNS = "id, name, contact_name, email, phone, address, trade, tax_classification, tax_id_last4, notes, is_active, created_at, updated_at";
 const BILL_COLUMNS = "id, vendor_id, property_id, bill_date, due_date, amount_cents, paid_amount_cents, expense_account_code, memo, attachment_reference, status, void_reason, voided_at, created_at, updated_at";
-const PAYMENT_COLUMNS = "id, vendor_id, payment_date, payment_method, amount_cents, bank_account_id, check_number, memo, financial_event_ids, status, void_reason, voided_at, created_at, updated_at";
+const PAYMENT_COLUMNS = "id, vendor_id, payment_date, payment_method, amount_cents, bank_account_id, check_number, memo, financial_event_ids, status, void_reason, voided_at, reissued_from_payment_id, created_at, updated_at";
 
 async function findOwnedVendor(supabaseClient, ownerId, vendorId) {
   const { data, error } = await supabaseClient
@@ -88,18 +88,36 @@ export async function GET(request, { params }) {
       if (!appsByPayment.has(app.payment_id)) appsByPayment.set(app.payment_id, []);
       appsByPayment.get(app.payment_id).push(app);
     }
+    // R18: for voided payments, surface the live re-issue (if any) so the
+    // vendor ledger reads "Voided — re-issued as check #…" instead of a
+    // dead end.
+    const voidedIds = paymentRows.filter((p) => p.status === "voided").map((p) => p.id);
+    let reissueByOriginal = new Map();
+    if (voidedIds.length > 0) {
+      const { data: reissues, error: reissuesError } = await supabaseClient
+        .from("rental_vendor_payments")
+        .select("id, check_number, reissued_from_payment_id")
+        .eq("owner_id", effectiveOwnerId)
+        .in("reissued_from_payment_id", voidedIds)
+        .eq("status", "active");
+      if (reissuesError) throw reissuesError;
+      reissueByOriginal = new Map((reissues || []).map((r) => [r.reissued_from_payment_id, r]));
+    }
 
     return NextResponse.json({
       success: true,
       vendor: serializeVendor(vendor),
       bills: (bills || []).map((bill) => serializeVendorBill(bill, vendor.name)),
       totals,
-      payments: paymentRows.map((payment) =>
-        serializeVendorPayment(payment, {
+      payments: paymentRows.map((payment) => {
+        const reissue = reissueByOriginal.get(payment.id) || null;
+        return serializeVendorPayment(payment, {
           applications: appsByPayment.get(payment.id) || [],
           vendorName: vendor.name,
-        })
-      ),
+          reissuePaymentId: reissue?.id || null,
+          reissueCheckNumber: reissue?.check_number || null,
+        });
+      }),
     });
   } catch (error) {
     console.error("Vendor detail error", error);

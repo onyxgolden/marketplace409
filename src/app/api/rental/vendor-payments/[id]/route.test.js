@@ -15,7 +15,7 @@ const paymentRow = (overrides = {}) => ({
 
 function singleBuilder(row) {
   const b = {
-    select() { return b; }, eq() { return b; }, in() { return b; },
+    select() { return b; }, eq() { return b; }, in() { return b; }, order() { return b; },
     maybeSingle() { return Promise.resolve({ data: row, error: null }); },
     update() { return b; },
     then(resolve) { resolve({ data: [row], error: null }); },
@@ -25,7 +25,7 @@ function singleBuilder(row) {
 
 function listBuilder(rows) {
   const b = {
-    select() { return b; }, eq() { return b; }, in() { return b; },
+    select() { return b; }, eq() { return b; }, in() { return b; }, order() { return b; },
     then(resolve) { resolve({ data: rows, error: null }); },
   };
   return b;
@@ -87,6 +87,33 @@ describe("GET /api/rental/vendor-payments/[id]", () => {
     const response = await get();
     expect(response.status).toBe(404);
   });
+
+  it("surfaces the live re-issue child and audits on a voided payment", async () => {
+    const voidedRow = paymentRow({ status: "voided" });
+    const reissueRow = { id: "rental_vendor_payment_2", check_number: "1043" };
+    let reads = 0;
+    const client = {
+      from: vi.fn((table) => {
+        if (table === "rental_vendor_payments") {
+          reads += 1;
+          return singleBuilder(reads === 1 ? voidedRow : reissueRow);
+        }
+        if (table === "rental_vendor_payment_applications") return listBuilder([]);
+        if (table === "rental_vendors") return singleBuilder({ name: "Acme Plumbing" });
+        return listBuilder([]);
+      }),
+    };
+    authAs(client);
+    const response = await get();
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.payment).toMatchObject({
+      status: "voided",
+      reissuePaymentId: "rental_vendor_payment_2",
+      reissueCheckNumber: "1043",
+    });
+    expect(body.audits).toEqual([]);
+  });
 });
 
 describe("PATCH /api/rental/vendor-payments/[id] — edit", () => {
@@ -145,9 +172,10 @@ describe("PATCH /api/rental/vendor-payments/[id] — void", () => {
       rpc,
       from: vi.fn((table) => {
         if (table === "rental_vendor_payments") {
-          // Pre-void check sees the active payment; the refresh sees it voided.
+          // Pre-void check sees the active payment; the refresh sees it
+          // voided; the re-issue child lookup sees nothing (no re-issue).
           paymentReads += 1;
-          return singleBuilder(paymentReads === 1 ? paymentRow() : voided);
+          return singleBuilder(paymentReads === 1 ? paymentRow() : paymentReads === 2 ? voided : null);
         }
         if (table === "rental_vendor_payment_applications") return listBuilder([]);
         if (table === "rental_vendors") return singleBuilder({ name: "Acme Plumbing" });

@@ -484,6 +484,174 @@ function VoidPaymentForm({ payment, onDone, onClose }) {
   );
 }
 
+// R18 (rentec-parity): un-void a voided bill. Restores it to open — safe
+// because a voided bill was untouched. Blocked when a probable replacement
+// bill exists; the API names the replacement in plain English.
+function UnvoidBillForm({ bill, onDone, onClose }) {
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [audits, setAudits] = useState([]);
+  const [loadingAudits, setLoadingAudits] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const body = await readJson(await fetch(`/api/rental/vendor-bills/${encodeURIComponent(bill.id)}`));
+        if (!cancelled) setAudits(body.audits || []);
+      } catch {
+        if (!cancelled) setAudits([]);
+      } finally {
+        if (!cancelled) setLoadingAudits(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bill.id]);
+
+  async function unvoidBill(event) {
+    event.preventDefault();
+    setError("");
+    if (!reason.trim()) { setError("A reason is required to un-void a bill."); return; }
+    if (!confirmed) { setError("Please confirm you want to un-void this bill."); return; }
+    setSaving(true);
+    try {
+      const body = await readJson(await fetch(`/api/rental/vendor-bills/${encodeURIComponent(bill.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unvoid: true, unvoidReason: reason.trim() }),
+      }));
+      onDone(body.bill);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Un-void bill" onClose={onClose}>
+      <form onSubmit={unvoidBill} className="space-y-3">
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Un-voiding restores this bill to open ({centsToDollars(bill.amountCents)} from {bill.vendorName || "the vendor"}).
+          {bill.voidReason ? <> It was voided because: <span className="font-bold">“{bill.voidReason}”</span>.</> : null}
+          {" "}This is blocked if a replacement bill was entered after the void — un-voiding then would double the amount owed.
+        </p>
+        {!loadingAudits && audits.length > 0 && (
+          <div className="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-3">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-500">History</p>
+            <ul className="mt-1 space-y-1 text-sm text-slate-600 dark:text-slate-300">
+              {audits.map((audit) => (
+                <li key={audit.id}>{audit.actionLabel} — {audit.reason} <span className="text-slate-400">({String(audit.createdAt || "").slice(0, 10)})</span></li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <label className={labelClass}>Reason *
+          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this bill being restored?" autoFocus />
+        </label>
+        <label className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+          I confirm I want to un-void this bill.
+        </label>
+        {error && <p className="text-sm font-bold text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+          <button type="submit" disabled={saving} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? "Un-voiding…" : "Un-void bill"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// R18 (rentec-parity): re-issue a voided vendor payment. A voided payment is
+// never un-voided — instead a NEW payment (new check number) is recorded
+// through the same validated path and linked to the voided original.
+function ReissuePaymentForm({ payment, onDone, onClose }) {
+  const isCheck = payment.paymentMethod === "check";
+  const [checkNumber, setCheckNumber] = useState("");
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [memo, setMemo] = useState(payment.memo || "");
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function reissue(event) {
+    event.preventDefault();
+    setError("");
+    if (isCheck && !checkNumber.trim()) { setError("A new check number is required to re-issue a check."); return; }
+    if (isCheck && checkNumber.trim() === (payment.checkNumber || "").trim()) { setError("The re-issued check needs a new check number — it cannot reuse the voided check's number."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) { setError("Enter a valid payment date (YYYY-MM-DD)."); return; }
+    if (!reason.trim()) { setError("A reason is required to re-issue a payment."); return; }
+    if (!confirmed) { setError("Please confirm you want to re-issue this payment."); return; }
+    setSaving(true);
+    try {
+      const body = await readJson(await fetch("/api/rental/vendor-payments/reissue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          voidedPaymentId: payment.id,
+          checkNumber: checkNumber.trim(),
+          paymentDate,
+          memo: memo.trim(),
+          reason: reason.trim(),
+        }),
+      }));
+      onDone(body.payment);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Re-issue ${isCheck ? "check" : "payment"}`} onClose={onClose}>
+      <form onSubmit={reissue} className="space-y-3">
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Re-issuing records a <span className="font-bold">new</span> {isCheck ? "check" : "ACH"} payment of {centsToDollars(payment.amountCents)} to {payment.vendorName || "the vendor"},
+          linked to the voided {isCheck ? `check #${payment.checkNumber || "—"}` : "payment"}. The voided original stays on the books as history.
+          {payment.voidReason ? <> It was voided because: <span className="font-bold">“{payment.voidReason}”</span>.</> : null}
+        </p>
+        {isCheck && (
+          <label className={labelClass}>New check number *
+            <input className={inputClass} value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)} placeholder="Must differ from the voided check" autoFocus />
+          </label>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <label className={labelClass}>Payment date
+            <input type="date" className={inputClass} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+          </label>
+          <label className={labelClass}>Memo
+            <input className={inputClass} value={memo} onChange={(e) => setMemo(e.target.value)} />
+          </label>
+        </div>
+        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-800 dark:bg-sky-950/30">
+          <p className="text-xs font-black uppercase tracking-wide text-sky-800 dark:text-sky-300">Before → after</p>
+          <p className="mt-1 text-sm font-bold text-sky-900 dark:text-sky-200">
+            Voided {isCheck ? `check #${payment.checkNumber || "—"}` : "payment"} of {centsToDollars(payment.amountCents)}
+            {" "}<span aria-hidden="true">→</span> new {isCheck ? `check #${checkNumber.trim() || "…"}` : "ACH"} of {centsToDollars(payment.amountCents)} on {paymentDate}
+          </p>
+        </div>
+        <label className={labelClass}>Reason *
+          <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this payment being re-issued?" />
+        </label>
+        <label className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+          I confirm I want to re-issue this payment.
+        </label>
+        {error && <p className="text-sm font-bold text-red-600">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+          <button type="submit" disabled={saving} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{saving ? "Re-issuing…" : "Re-issue payment"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export default function RentalVendorsPanel() {  const [tab, setTab] = useState("vendors");
   const [vendors, setVendors] = useState([]);
   const [bills, setBills] = useState([]);
@@ -501,9 +669,11 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
   const [editingBill, setEditingBill] = useState(null);
   const [billVendorPreset, setBillVendorPreset] = useState(null);
   const [voidingBill, setVoidingBill] = useState(null);
+  const [unvoidingBill, setUnvoidingBill] = useState(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [payingBills, setPayingBills] = useState(null);
   const [voidingPayment, setVoidingPayment] = useState(null);
+  const [reissuingPayment, setReissuingPayment] = useState(null);
   const [togglingActive, setTogglingActive] = useState(false);
 
   // Pure data fetchers (no setState inside) so effects can call them through
@@ -778,6 +948,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
                                     <button type="button" onClick={() => openPaymentForm(selectedVendor.id, vendorDetail.vendor.name, vendorDetail.bills, [bill.id])} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Pay</button>
                                   )}
                                   {(bill.status === "open") && <button type="button" onClick={() => setVoidingBill(bill)} className="text-xs font-bold text-red-600 hover:underline">Void</button>}
+                                  {bill.status === "voided" && <button type="button" onClick={() => setUnvoidingBill(bill)} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Un-void</button>}
                                 </span>
                               </td>
                             </tr>
@@ -810,10 +981,24 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
                                 <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${payment.status === "active" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"}`}>
                                   {payment.status === "active" ? "Active" : "Voided"}
                                 </span>
+                                {payment.reissueCheckNumber && (
+                                  <span className="ml-1 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-xs font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">
+                                    Re-issued as check #{payment.reissueCheckNumber}
+                                  </span>
+                                )}
+                                {!payment.reissueCheckNumber && payment.reissuePaymentId && (
+                                  <span className="ml-1 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-xs font-bold text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">Re-issued</span>
+                                )}
+                                {payment.reissuedFromPaymentId && (
+                                  <span className="ml-1 inline-block rounded-full bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-800 dark:bg-violet-900/40 dark:text-violet-300">Re-issue of voided payment</span>
+                                )}
                               </td>
                               <td className="py-2">
                                 {payment.status === "active" && (
                                   <button type="button" onClick={() => setVoidingPayment(payment)} className="text-xs font-bold text-red-600 hover:underline">Void</button>
+                                )}
+                                {payment.status === "voided" && !payment.reissuePaymentId && (
+                                  <button type="button" onClick={() => setReissuingPayment(payment)} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Re-issue</button>
                                 )}
                               </td>
                             </tr>
@@ -862,6 +1047,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
                             <button type="button" onClick={() => openPaymentForm(bill.vendorId, bill.vendorName, [bill], [bill.id])} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Pay</button>
                           )}
                           {bill.status === "open" && <button type="button" onClick={() => setVoidingBill(bill)} className="text-xs font-bold text-red-600 hover:underline">Void</button>}
+                          {bill.status === "voided" && <button type="button" onClick={() => setUnvoidingBill(bill)} className="text-xs font-bold text-emerald-700 hover:underline dark:text-emerald-300">Un-void</button>}
                         </span>
                       </td>
                     </tr>
@@ -885,6 +1071,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
         />
       )}
       {voidingBill && <VoidBillForm bill={voidingBill} onDone={afterBillSaved} onClose={() => setVoidingBill(null)} />}
+      {unvoidingBill && <UnvoidBillForm bill={unvoidingBill} onDone={afterBillSaved} onClose={() => setUnvoidingBill(null)} />}
       {showPaymentForm && payingBills && (
         <PaymentForm
           vendorId={payingBills.vendorId}
@@ -896,6 +1083,7 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
         />
       )}
       {voidingPayment && <VoidPaymentForm payment={voidingPayment} onDone={afterPaymentSaved} onClose={() => setVoidingPayment(null)} />}
+      {reissuingPayment && <ReissuePaymentForm payment={reissuingPayment} onDone={afterPaymentSaved} onClose={() => setReissuingPayment(null)} />}
     </section>
   );
 }

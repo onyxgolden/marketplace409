@@ -163,6 +163,11 @@ export function buildTenantPaymentLedger({
       unitLabel: context.unitLabel,
       reference: payment.receipt_reference || payment.provider_payment_id || payment.id,
       refundedAmountCents: refundedCents,
+      // R18: provider + payment-method carried so the UI can offer correction
+      // (offline payments: amount/date/method; provider payments: notes only).
+      // Additive only — no existing consumer changes.
+      provider: payment.provider || null,
+      paymentMethod: payment.payment_method || null,
       // Deposit state (Slice D): whether the collected money has reached the bank.
       // Missing on pre-migration rows — resolved with the paid_out-settlement
       // fallback so un-deposited money is never silently claimed as deposited.

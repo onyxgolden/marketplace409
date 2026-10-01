@@ -17,7 +17,7 @@ async function requireWriter(authenticated) {
 }
 
 const PAYMENT_COLUMNS =
-  "id, vendor_id, payment_date, payment_method, amount_cents, bank_account_id, check_number, memo, financial_event_ids, status, void_reason, voided_at, created_at, updated_at";
+  "id, vendor_id, payment_date, payment_method, amount_cents, bank_account_id, check_number, memo, financial_event_ids, status, void_reason, voided_at, reissued_from_payment_id, created_at, updated_at";
 const RECONCILIATION_COLUMNS = "status, cleared_event_ids";
 
 async function findOwnedPayment(supabaseClient, ownerId, paymentId) {
@@ -54,7 +54,25 @@ async function loadDetail(supabaseClient, ownerId, payment) {
     .maybeSingle();
   if (vendorError) throw vendorError;
   vendorName = vendor?.name || null;
-  return serializeVendorPayment(payment, { applications, vendorName });
+  // R18: re-issue linkage — the voided original names the live re-issue
+  // (if any), and a re-issue names the voided payment it replaces.
+  let reissuePaymentId = null;
+  let reissueCheckNumber = null;
+  if (payment.status === "voided") {
+    const { data: reissue, error: reissueError } = await supabaseClient
+      .from("rental_vendor_payments")
+      .select("id, check_number")
+      .eq("owner_id", ownerId)
+      .eq("reissued_from_payment_id", payment.id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (reissueError) throw reissueError;
+    if (reissue) {
+      reissuePaymentId = reissue.id;
+      reissueCheckNumber = reissue.check_number || null;
+    }
+  }
+  return serializeVendorPayment(payment, { applications, vendorName, reissuePaymentId, reissueCheckNumber });
 }
 
 async function loadReconciliations(supabaseClient, ownerId, payment) {
@@ -84,9 +102,25 @@ export async function GET(request, { params }) {
     const payment = await findOwnedPayment(supabaseClient, effectiveOwnerId, params.id);
     if (!payment) return NextResponse.json({ error: "The payment was not found." }, { status: 404 });
 
+    // R18: the re-issue audit trail, newest first — visible on the record.
+    const { data: audits, error: auditsError } = await supabaseClient
+      .from("rental_void_audits")
+      .select("id, entity_type, entity_id, action, reason, actor_id, created_at")
+      .eq("owner_id", effectiveOwnerId)
+      .eq("entity_type", "vendor_payment")
+      .eq("entity_id", payment.id)
+      .order("created_at", { ascending: false });
+    if (auditsError) throw auditsError;
+
     return NextResponse.json({
       success: true,
       payment: await loadDetail(supabaseClient, effectiveOwnerId, payment),
+      audits: (audits || []).map((row) => ({
+        id: row.id,
+        action: row.action,
+        reason: row.reason,
+        createdAt: row.created_at,
+      })),
     });
   } catch (error) {
     console.error("Vendor payment detail error", error);

@@ -241,9 +241,70 @@ export function serializeVendorPayment(row, options = {}) {
     status: row.status,
     voidReason: row.void_reason || null,
     voidedAt: row.voided_at || null,
+    reissuedFromPaymentId: row.reissued_from_payment_id || null,
+    reissuePaymentId: options.reissuePaymentId || null,
+    reissueCheckNumber: options.reissueCheckNumber || null,
     eventIds: Array.isArray(row.financial_event_ids) ? row.financial_event_ids.map(String) : [],
     applications,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// R18 (rentec-parity): re-issue
+// ---------------------------------------------------------------------------
+// Un-void is deliberately NOT offered for vendor payments: voiding
+// soft-deletes the shared ledger events and rolls bill balances back, and
+// the bills may have moved on since (re-paid, voided, edited) — restoring
+// the old state is not safe. Re-issue is the recovery path: a NEW payment
+// (new check number) linked to the voided one, re-validated against the
+// bills' current balances.
+//
+// Supersession guard: a voided payment with a live re-issue cannot be
+// re-issued again — that would double-pay the vendor. (A re-issue that was
+// itself voided may be re-issued again.)
+export function canReissuePayment(payment) {
+  return payment?.status === "voided";
+}
+
+/**
+ * Validate a re-issue submission against the voided original.
+ * input: { checkNumber?, paymentDate?, memo?, reason }.
+ * original: the voided rental_vendor_payments row.
+ * Returns { valid, errors, value }.
+ */
+export function validateReissueInput(input, original) {
+  const errors = [];
+  if (!canReissuePayment(original)) {
+    return { valid: false, errors: ["Only a voided payment can be re-issued."], value: null };
+  }
+  const reason = typeof input?.reason === "string" ? input.reason.trim() : "";
+  if (!reason) errors.push("A reason is required to re-issue a payment.");
+
+  const value = { reason };
+  const isCheck = original.payment_method === "check";
+  if (isCheck) {
+    const checkNumber = typeof input?.checkNumber === "string" ? input.checkNumber.trim() : "";
+    if (!checkNumber) {
+      errors.push("A new check number is required to re-issue a check.");
+    } else if (checkNumber === (original.check_number || "").trim()) {
+      errors.push("The re-issued check needs a new check number — it cannot reuse the voided check's number.");
+    } else {
+      value.checkNumber = checkNumber;
+    }
+  }
+  if (input?.paymentDate !== undefined) {
+    const paymentDate = typeof input.paymentDate === "string" ? input.paymentDate.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate) || Number.isNaN(new Date(`${paymentDate}T00:00:00Z`).getTime())) {
+      errors.push("Enter a valid payment date (YYYY-MM-DD).");
+    } else {
+      value.paymentDate = paymentDate;
+    }
+  }
+  if (input?.memo !== undefined) {
+    value.memo = typeof input.memo === "string" ? input.memo.trim() : "";
+  }
+  if (errors.length > 0) return { valid: false, errors, value: null };
+  return { valid: true, errors: [], value };
 }
