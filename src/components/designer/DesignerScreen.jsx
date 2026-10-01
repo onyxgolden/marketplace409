@@ -13,6 +13,7 @@ import {
   Home,
   Lock,
   LockOpen,
+  Maximize,
   MousePointer2,
   Network,
   PanelRight,
@@ -103,7 +104,7 @@ import {
 } from "@/domains/roomDesigner/homeProject";
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign } from "@/domains/roomDesigner/designerDocument";
+import { ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign, zoomExtentsRect } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import {
   feetInchesLabel,
@@ -188,6 +189,7 @@ export const TOOL_DEFS = [
   { id: "process-equipment", label: "Equipment", icon: Factory, hint: "Pick process equipment, then click the plan to place it · tags number themselves (P-101, P-102…)", symbolDomain: "processEquipment" },
   { id: "orgchart", label: "Org chart", icon: Network, hint: "Click the plan to place an org chart, then add people and reporting lines" },
   { id: "erase", label: "Erase", icon: Eraser, hint: "Click anything to delete it" },
+  { id: "measure", label: "Measure", icon: Ruler, hint: "Click two points to see the distance between them · Esc cancels" },
   { id: "pan", label: "Pan", icon: Hand, hint: "Drag to pan · scroll to zoom (or hold Space anytime)" },
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
@@ -763,6 +765,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [zoomRequest, setZoomRequest] = useState(null);
   const zoomSeq = useRef(0);
 
+  // Zoom Extents: fit the whole plan's current content in view. A silent
+  // no-op on an empty design — there's nothing to zoom to yet.
+  const onZoomExtents = useCallback(() => {
+    const rect = zoomExtentsRect(design);
+    if (!rect) return;
+    setZoomRequest({ rect, nonce: (zoomSeq.current += 1) });
+  }, [design]);
+
   return (
     <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
       {/* top bar: scrolls horizontally on phones so the canvas keeps its width */}
@@ -838,6 +848,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
           >
             {displayUnits === "in" ? "in" : "ft-in"}
+          </button>
+          <button
+            onClick={onZoomExtents}
+            title="Zoom Extents: fit the whole plan in view"
+            className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
+          >
+            <Maximize size={15} />
           </button>
           <button
             onClick={() => dispatch({ type: "UNDO" })}

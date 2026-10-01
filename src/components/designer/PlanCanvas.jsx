@@ -76,6 +76,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const wrapRef = useRef(null);
   const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
   const [drawPreview, setDrawPreview] = useState(null); // {kind: "wall"|"wall-rect", a, b} plan inches while drawing
+  const [measureStart, setMeasureStart] = useState(null); // plan-inch point once the Measure tool's first click lands; null = waiting for it
+  const [measureLivePoint, setMeasureLivePoint] = useState(null); // live second point while measureStart is set, follows the cursor
+  const [measurement, setMeasurement] = useState(null); // {a, b} plan inches — the last COMPLETED measurement, stays visible until a new one starts or the tool changes
   const [pipePreview, setPipePreview] = useState(null); // [points] plan inches while drawing a pipe run
   const [hoverPoint, setHoverPoint] = useState(null); // rubber-band cursor point for the pipe tool
   const [ghost, setGhost] = useState(null); // placement ghost preview (component-local only; never dispatched)
@@ -106,6 +109,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     (layer) => (layerVisibility || {})[layer] !== false,
     [layerVisibility],
   );
+
+  // Leaving the Measure tool clears any in-progress first click and the
+  // last completed result. Without this, switching away mid-measurement and
+  // back would let a stale measureStart from a different tool session get
+  // silently used as the first point of the next measurement.
+  useEffect(() => {
+    if (tool !== "measure") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing component-local UI state (never design data) when the active tool changes away from Measure, not syncing a derived value.
+      setMeasureStart(null);
+      setMeasureLivePoint(null);
+      setMeasurement(null);
+    }
+  }, [tool]);
+
 
   // Track the visible canvas size so the rulers can track pan/zoom.
   useEffect(() => {
@@ -162,6 +179,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const snapTargetsExcluding = useCallback(
     (excludeIds) => snapTargets.filter((_, i) => !excludeIds.has(Math.floor(i / 2))),
     [snapTargets],
+  );
+
+  // Midpoint object-snap (TrueView parity, scoped 2026-09-30): every place
+  // endpoint snapping already applies also offers each wall's midpoint —
+  // one entry per wall, so the same per-wall exclude-by-index trick used
+  // for endpoints (two entries per wall) works here unchanged.
+  const midpointTargets = useMemo(
+    () => design.walls.map((w) => ({ x: (w.a.x + w.b.x) / 2, y: (w.a.y + w.b.y) / 2 })),
+    [design.walls],
+  );
+
+  const midpointTargetsExcluding = useCallback(
+    (excludeIds) => midpointTargets.filter((_, i) => !excludeIds.has(i)),
+    [midpointTargets],
   );
 
   const eventPoint = useCallback(
@@ -379,7 +410,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       };
     }
     if (tool === "wall" || tool === "wallrect") {
-      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
       return { kind: "anchor", x: point.x, y: point.y };
     }
     return null;
@@ -414,16 +445,33 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       if (design.underlay) dispatch({ type: "ADD_CALIBRATION_POINT", point: plan });
       return;
     }
+    // Measure: click two points, see the distance. Never dispatched — a
+    // pure read, nothing in the design document changes. A third click
+    // starts a brand-new measurement rather than chaining off the last
+    // point, matching TrueView's MEASUREGEOM Distance behavior.
+    if (tool === "measure") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
+      if (!measureStart) {
+        setMeasureStart(point);
+        setMeasureLivePoint(point);
+        setMeasurement(null);
+      } else {
+        setMeasurement({ a: measureStart, b: point });
+        setMeasureStart(null);
+        setMeasureLivePoint(null);
+      }
+      return;
+    }
     if (tool === "wall") {
       const exclude = new Set();
-      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
       setDrag({ kind: "draw-wall", a: point, exclude });
       setDrawPreview({ kind: "wall", a: point, b: point });
       return;
     }
     if (tool === "wallrect") {
       const exclude = new Set();
-      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapRadiusIn: 9 });
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
       setDrag({ kind: "draw-wall-rect", a: point, exclude });
       setDrawPreview({ kind: "wall-rect", a: point, b: point });
       return;
@@ -715,6 +763,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       setHoverPoint(nozzle ? { x: nozzle.x, y: nozzle.y } : last && orthoSnap ? applyOrthoSnap(last, point) : point);
       return;
     }
+    // Measure tool: after the first click, the live second point follows
+    // the cursor (snapped the same way the first click was) until the
+    // second click commits it.
+    if (tool === "measure" && measureStart && !drag) {
+      const plan = toPlan(screen);
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
+      setMeasureLivePoint(point);
+      return;
+    }
     // Placement ghost follows the mouse while a placement tool is active.
     if (!drag) {
       setGhost(computeGhost(screen));
@@ -729,6 +786,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, {
         ...snapOptions,
         snapTargets: snapTargetsExcluding(drag.exclude),
+        snapMidpoints: midpointTargetsExcluding(drag.exclude),
         snapRadiusIn: 9,
       });
       setDrawPreview({ kind: "wall", a: drag.a, b: point });
@@ -738,6 +796,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, {
         ...snapOptions,
         snapTargets: snapTargetsExcluding(drag.exclude),
+        snapMidpoints: midpointTargetsExcluding(drag.exclude),
         snapRadiusIn: 9,
       });
       setDrawPreview({ kind: "wall-rect", a: drag.a, b: point });
@@ -747,6 +806,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, {
         ...snapOptions,
         snapTargets: snapTargetsExcluding(drag.exclude),
+        snapMidpoints: midpointTargetsExcluding(drag.exclude),
         snapRadiusIn: 9,
       });
       dispatch({ type: "MOVE_WALL_ENDPOINT", wallId: drag.wallId, end: drag.end, point, coalesce: `move-wall-endpoint:${drag.wallId}:${drag.end}` });
@@ -1002,6 +1062,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         setHoverPoint(null);
         setGhost(null);
         setDrag(null);
+        setMeasureStart(null);
+        setMeasureLivePoint(null);
       }
     };
     const onKeyUp = (e) => {
@@ -1794,6 +1856,36 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#34d399" strokeWidth={thicknessPx} strokeLinecap="round" strokeDasharray="10 6" />
               <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#34d399">
                 {feetInchesLabel(Math.hypot(drawPreview.b.x - drawPreview.a.x, drawPreview.b.y - drawPreview.a.y))}
+              </text>
+            </g>
+          );
+        })()}
+        {(() => {
+          // Measure tool: a dashed in-progress line while the second point
+          // is still being aimed, or a solid line for the last completed
+          // result — sky blue, distinct from the emerald draw/placement
+          // previews above, since this never changes the design.
+          // Gated on the tool, not just the state: switching away from
+          // Measure must stop showing the last result immediately, without
+          // needing an effect to proactively clear state on tool change.
+          if (tool !== "measure") return null;
+          const live = measureStart && measureLivePoint ? { a: measureStart, b: measureLivePoint } : null;
+          const shown = live || measurement;
+          if (!shown) return null;
+          const a = toScreen(shown.a);
+          const b = toScreen(shown.b);
+          const distanceIn = Math.hypot(shown.b.x - shown.a.x, shown.b.y - shown.a.y);
+          return (
+            <g>
+              <line
+                x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                stroke="#38bdf8" strokeWidth={2} strokeLinecap="round"
+                strokeDasharray={live ? "8 5" : undefined}
+              />
+              <circle cx={a.x} cy={a.y} r={4} fill="#38bdf8" />
+              <circle cx={b.x} cy={b.y} r={4} fill="#38bdf8" />
+              <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#38bdf8">
+                {feetInchesLabel(distanceIn)}
               </text>
             </g>
           );

@@ -41,6 +41,8 @@ import {
   updateUnderlay,
   validateDesign,
   wallRectSegments,
+  zoomExtentsRect,
+  ZOOM_EXTENTS_MIN_SPAN_IN,
 } from "./designerDocument";
 import { ROOM_TEMPLATES } from "./designerDocument";
 
@@ -786,5 +788,46 @@ describe("designerDocument — moveRoom", () => {
     expect(() => moveRoom(d, "room_nope", 1, 1)).toThrow(/Unknown room/);
     expect(() => moveRoom(d, d.rooms[0].id, NaN, 1)).toThrow(/finite/);
     expect(() => moveRoom(d, d.rooms[0].id, 1, Infinity)).toThrow(/finite/);
+  });
+});
+
+describe("zoomExtentsRect", () => {
+  it("returns null for an empty design — nothing to zoom to", () => {
+    expect(zoomExtentsRect(createEmptyDesign("Empty"))).toBeNull();
+  });
+
+  it("fits content with real extent on both axes exactly, no padding needed", () => {
+    let d = createEmptyDesign("Test");
+    d = addRoomFromTemplate(d, "bedroom", { x: 0, y: 0 });
+    const rect = zoomExtentsRect(d);
+    expect(rect.widthIn).toBeGreaterThanOrEqual(ZOOM_EXTENTS_MIN_SPAN_IN);
+    expect(rect.heightIn).toBeGreaterThanOrEqual(ZOOM_EXTENTS_MIN_SPAN_IN);
+  });
+
+  it("pads a perfectly horizontal wall's zero-height extent, centered on the content", () => {
+    let d = createEmptyDesign("Test");
+    d = addWall(d, { x: 0, y: 50 }, { x: 200, y: 50 });
+    const rect = zoomExtentsRect(d);
+    expect(rect.widthIn).toBe(200);
+    expect(rect.heightIn).toBe(ZOOM_EXTENTS_MIN_SPAN_IN);
+    // Padded symmetrically: the original zero-height line (y=50) stays centered.
+    expect(rect.y).toBeCloseTo(50 - ZOOM_EXTENTS_MIN_SPAN_IN / 2);
+  });
+
+  it("pads a perfectly vertical wall's zero-width extent, centered on the content", () => {
+    let d = createEmptyDesign("Test");
+    d = addWall(d, { x: 50, y: 0 }, { x: 50, y: 200 });
+    const rect = zoomExtentsRect(d);
+    expect(rect.heightIn).toBe(200);
+    expect(rect.widthIn).toBe(ZOOM_EXTENTS_MIN_SPAN_IN);
+    expect(rect.x).toBeCloseTo(50 - ZOOM_EXTENTS_MIN_SPAN_IN / 2);
+  });
+
+  it("never returns a rect zoomToFitRect would reject (both spans always positive)", () => {
+    let d = createEmptyDesign("Test");
+    d = addWall(d, { x: 0, y: 0 }, { x: 1, y: 0 }); // a near-degenerate single short wall
+    const rect = zoomExtentsRect(d);
+    expect(rect.widthIn).toBeGreaterThan(0);
+    expect(rect.heightIn).toBeGreaterThan(0);
   });
 });
