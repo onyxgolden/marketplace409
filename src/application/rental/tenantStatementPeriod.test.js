@@ -89,4 +89,38 @@ describe("buildTenantStatementPeriod", () => {
     expect(statement).toMatchObject({ openingBalanceCents: 0, closingBalanceCents: 0 });
     expect(statement.entries).toEqual([]);
   });
+
+  it("shows a credit for a succeeded payment derived from its balance movement", () => {
+    const entries = [
+      { id: "charge:c1", kind: "charge", date: "2026-10-01", amountCents: 160000, balanceEffectCents: 160000, label: "Rent charge", balanceAfterCents: 160000, status: "due" },
+      { id: "payment:p1", kind: "payment", date: "2026-10-05", amountCents: 160000, balanceEffectCents: -160000, label: "Payment", balanceAfterCents: 0, status: "succeeded" },
+    ];
+    const statement = buildTenantStatementPeriod({ entries, periodStart: "2026-10-01", periodEndExclusive: "2026-11-01" });
+    const byId = Object.fromEntries(statement.entries.map((line) => [line.id, line]));
+    expect([byId["payment:p1"].debitCents, byId["payment:p1"].creditCents]).toEqual([0, 160000]);
+    expect(statement.totals.paidCents).toBe(160000);
+  });
+
+  it("keeps failed/cancelled/processing payments visible but shows no payment credit", () => {
+    // buildTenantPaymentLedger deliberately keeps no-balance-effect payment
+    // rows in the ledger; the statement must not render them as credits.
+    const entries = [
+      { id: "charge:c1", kind: "charge", date: "2026-10-01", amountCents: 160000, balanceEffectCents: 160000, label: "Rent charge", balanceAfterCents: 160000, status: "due" },
+      { id: "payment:p-failed", kind: "payment", date: "2026-10-05", amountCents: 160000, balanceEffectCents: 0, label: "Payment", balanceAfterCents: 160000, status: "failed" },
+      { id: "payment:p-processing", kind: "payment", date: "2026-10-06", amountCents: 160000, balanceEffectCents: 0, label: "Payment", balanceAfterCents: 160000, status: "processing" },
+      { id: "payment:p-cancelled", kind: "payment", date: "2026-10-07", amountCents: 160000, balanceEffectCents: 0, label: "Payment", balanceAfterCents: 160000, status: "cancelled" },
+    ];
+    const statement = buildTenantStatementPeriod({ entries, periodStart: "2026-10-01", periodEndExclusive: "2026-11-01" });
+    // Every row stays visible in the statement.
+    expect(statement.entries.map((line) => line.id)).toEqual([
+      "charge:c1", "payment:p-failed", "payment:p-processing", "payment:p-cancelled",
+    ]);
+    // None of the no-effect payments renders a credit in the Payment column.
+    for (const line of statement.entries) {
+      if (line.kind === "payment") expect([line.debitCents, line.creditCents]).toEqual([0, 0]);
+    }
+    // Balance and totals ignore them, matching the totals code.
+    expect(statement.closingBalanceCents).toBe(160000);
+    expect(statement.totals).toEqual({ chargedCents: 160000, paidCents: 0, refundedCents: 0 });
+  });
 });

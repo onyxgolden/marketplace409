@@ -46,13 +46,19 @@ function entryDateValue(entry) {
 
 // Debit/credit split for the statement table: charges, fees and refunds
 // increase what the tenant owes (debit); payments decrease it (credit).
+// The payment credit is derived from the actual balance movement, not the
+// attempted amount: failed/cancelled/processing payments stay visible in the
+// statement but show no credit, matching the running balance and the totals.
 // Overpayment credits and their applications are balance-neutral memo rows —
 // the money already moved in the payment that created the credit.
 function debitCreditSplit(entry) {
   if (entry.kind === "charge" || entry.kind === "refund") {
     return { debitCents: entry.amountCents, creditCents: 0 };
   }
-  if (entry.kind === "payment") return { debitCents: 0, creditCents: entry.amountCents };
+  if (entry.kind === "payment") {
+    const effectCents = asCents(entry.balanceEffectCents);
+    return { debitCents: 0, creditCents: effectCents < 0 ? -effectCents : 0 };
+  }
   return { debitCents: 0, creditCents: 0 };
 }
 

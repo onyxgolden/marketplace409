@@ -34,6 +34,7 @@ export default function TenantStatementPanel() {
   const [error, setError] = useState("");
   useEffect(() => {
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load this tenant's statement when the panel opens or the period changes.
     setLoading(true); setError("");
     fetch(`/api/rental/portal/statement?period=${period}`)
       .then(async (response) => {
