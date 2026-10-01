@@ -38,7 +38,7 @@ export async function GET() {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult, conversationResult] = await Promise.all([
+    const [chargesResult, unitsResult, tenantsResult, schedulesResult, maintenanceResult, notificationResult, paymentResult, settlementResult, depositResult, depositTransactionResult, inspectionResult, inspectionItemResult, inspectionAckResult, leaseResult, membershipResult, leaseChangeResult, lateRuleResult, lateAssessmentResult, lateAutoSettingsResult, lateTenantOverrideResult, contractorResult, workOrderResult, workEventResult, leasePreparationResult, leasePreparationVersionResult, leaseSignatureResult, autopayResult, insurancePolicyResult, insuranceRequirementResult, animalResult, supportResult, financialEventResult, conversationResult] = await Promise.all([
       authenticated.supabaseClient.from("rent_charges")
         .select("id, lease_id, schedule_id, period, due_date, amount_cents, paid_amount_cents, currency_code, status, charge_type, related_charge_id")
         .in("status", ["scheduled", "due", "partially_paid", "overdue"]).order("due_date", { ascending: true }),
@@ -71,6 +71,10 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_lease_changes").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_rules").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_assessments").select("*").order("approved_at",{ascending:false}),
+      authenticated.supabaseClient.from("rental_billing_settings")
+        .select("owner_id, late_fee_auto_post, late_fee_grace_days, late_fee_calculation_type, late_fee_fixed_amount_cents, late_fee_percentage_basis_points, late_fee_maximum_amount_cents")
+        .eq("owner_id", authenticated.effectiveOwnerId).maybeSingle(),
+      authenticated.supabaseClient.from("rental_late_fee_tenant_overrides").select("*").order("tenant_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_contractors").select("*").order("business_name",{ascending:true}),
       authenticated.supabaseClient.from("rental_maintenance_work_orders").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_maintenance_work_events").select("*").order("occurred_at",{ascending:false}),
@@ -102,7 +106,7 @@ export async function GET() {
       }).then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught })),
       authenticated.supabaseClient.from("rental_conversations").select("id, tenant_id, last_message_at, last_message_body, last_message_sender_type, owner_last_read_at, tenant_last_read_at").order("last_message_at",{ascending:false}),
     ]);
-    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error || conversationResult.error;
+    const error = chargesResult.error || unitsResult.error || tenantsResult.error || schedulesResult.error || maintenanceResult.error || notificationResult.error || paymentResult.error || settlementResult.error || depositResult.error || depositTransactionResult.error || inspectionResult.error || inspectionItemResult.error || inspectionAckResult.error || leaseResult.error || membershipResult.error || leaseChangeResult.error || lateRuleResult.error || lateAssessmentResult.error || lateAutoSettingsResult.error || lateTenantOverrideResult.error || contractorResult.error || workOrderResult.error || workEventResult.error || leasePreparationResult.error || leasePreparationVersionResult.error || leaseSignatureResult.error || autopayResult.error || insurancePolicyResult.error || insuranceRequirementResult.error || animalResult.error || supportResult.error || financialEventResult.error || conversationResult.error;
     if (error) throw error;
     const [unitsWithPhotos, tenantsWithPhotos] = await Promise.all([
       withPhotoUrls(authenticated.supabaseClient, unitsResult.data || []),
@@ -141,7 +145,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
       // unread: the tenant sent the most recent message and the owner hasn't read past it yet --
       // never derived from tenant_last_read_at, which says nothing about what the OWNER has seen.
       conversations:(conversationResult.data||[]).map(row=>({id:row.id,tenantId:row.tenant_id,lastMessageAt:row.last_message_at,lastMessageBody:row.last_message_body,lastMessageSenderType:row.last_message_sender_type,unread:row.last_message_sender_type==="tenant"&&(!row.owner_last_read_at||row.owner_last_read_at<row.last_message_at)})) });
@@ -644,6 +648,72 @@ export async function POST(request) {
       }
       case "assess-late-fee": {
         if(!body.ruleId||!body.chargeId||!body.reason?.trim()||body.ownerApproved!==true)return badRequest("Rule, overdue charge, reason, and explicit owner approval are required.");const {data,error}=await authenticated.supabaseClient.rpc("assess_rental_late_fee",{p_owner_id:effectiveOwnerId,p_rule_id:body.ruleId,p_charge_id:body.chargeId,p_reason:body.reason.trim()});if(error)throw error;return NextResponse.json({success:true,assessment:data});
+      }
+      case "save-late-fee-auto-settings": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change late-fee settings." }, { status: 403 });
+        const input = body.settings;
+        if (!input || typeof input !== "object" || typeof input.enabled !== "boolean") return badRequest("enabled must be boolean.");
+        if (input.enabled === true && input.confirmAutoPost !== true) return badRequest("Confirm automatic posting before enabling.");
+        const graceDays = Number(input.graceDays);
+        const calculationType = input.calculationType;
+        const fixed = calculationType === "fixed" ? Number(input.fixedAmountCents) : null;
+        const percentage = calculationType === "percentage" ? Number(input.percentageBasisPoints) : null;
+        const maximum = input.maximumAmountCents === null || input.maximumAmountCents === undefined || input.maximumAmountCents === "" ? null : Number(input.maximumAmountCents);
+        if (input.enabled === true) {
+          if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 31) return badRequest("Grace days must be between 0 and 31.");
+          if ((calculationType === "fixed" && (!Number.isSafeInteger(fixed) || fixed <= 0)) || (calculationType === "percentage" && (!Number.isInteger(percentage) || percentage <= 0))) return badRequest("A valid late-fee calculation is required.");
+          if (maximum !== null && (!Number.isSafeInteger(maximum) || maximum <= 0)) return badRequest("Maximum amount must be positive.");
+        }
+        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_late_fee_auto_settings", {
+          p_owner_id: effectiveOwnerId,
+          p_settings: { enabled: input.enabled, graceDays: input.enabled ? graceDays : null,
+            calculationType: input.enabled ? calculationType : null,
+            fixedAmountCents: input.enabled ? fixed : null,
+            percentageBasisPoints: input.enabled ? percentage : null,
+            maximumAmountCents: input.enabled ? maximum : null },
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, settings: data });
+      }
+      case "save-late-fee-tenant-override": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change late-fee overrides." }, { status: 403 });
+        const input = body.override;
+        if (!input?.tenantId) return badRequest("tenantId is required.");
+        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
+          .select("id").eq("owner_id", effectiveOwnerId).eq("id", input.tenantId).maybeSingle();
+        if (tenantError) throw tenantError;
+        if (!tenant) return badRequest("Tenant was not found.");
+        const exempt = input.exempt === true;
+        const numOrNull = (value) => (value === null || value === undefined || value === "" ? null : Number(value));
+        const graceDays = numOrNull(input.graceDays);
+        const calculationType = input.calculationType || null;
+        const fixed = calculationType === "fixed" ? numOrNull(input.fixedAmountCents) : null;
+        const percentage = calculationType === "percentage" ? numOrNull(input.percentageBasisPoints) : null;
+        const maximum = numOrNull(input.maximumAmountCents);
+        if (!exempt) {
+          if (graceDays !== null && (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 31)) return badRequest("Grace days must be between 0 and 31.");
+          if (calculationType !== null && !["fixed", "percentage"].includes(calculationType)) return badRequest("Calculation type must be fixed or percentage.");
+          if (fixed !== null && (!Number.isSafeInteger(fixed) || fixed <= 0)) return badRequest("Fixed amount must be positive.");
+          if (percentage !== null && (!Number.isInteger(percentage) || percentage <= 0)) return badRequest("Percentage must be positive.");
+          if (maximum !== null && (!Number.isSafeInteger(maximum) || maximum <= 0)) return badRequest("Maximum amount must be positive.");
+        }
+        const isEmpty = !exempt && graceDays === null && calculationType === null && maximum === null;
+        if (isEmpty) {
+          const { error } = await authenticated.supabaseClient.from("rental_late_fee_tenant_overrides")
+            .delete().eq("owner_id", effectiveOwnerId).eq("tenant_id", input.tenantId);
+          if (error) throw error;
+          return NextResponse.json({ success: true, override: null });
+        }
+        const { data, error } = await authenticated.supabaseClient.from("rental_late_fee_tenant_overrides")
+          .upsert({ owner_id: effectiveOwnerId, tenant_id: input.tenantId, exempt,
+            grace_days: exempt ? null : graceDays,
+            calculation_type: exempt ? null : calculationType,
+            fixed_amount_cents: exempt ? null : fixed,
+            percentage_basis_points: exempt ? null : percentage,
+            maximum_amount_cents: exempt ? null : maximum,
+            updated_at: timestamp }, { onConflict: "owner_id,tenant_id" }).select("*").single();
+        if (error) throw error;
+        return NextResponse.json({ success: true, override: data });
       }
       case "save-contractor": {
         const input=body.contractor;if(!input?.businessName?.trim())return badRequest("Contractor business name is required.");const taxLast4=input.taxIdLast4?.trim()||null;if(taxLast4&&!/^\d{4}$/.test(taxLast4))return badRequest("Tax ID last four must contain four digits.");const {data,error}=await authenticated.supabaseClient.from("rental_contractors").insert({owner_id:effectiveOwnerId,id:id("rental_contractor",input.id),business_name:input.businessName.trim(),contact_name:input.contactName?.trim()||null,email:input.email?.trim()||null,phone:input.phone?.trim()||null,status:"active",trade:input.trade?.trim()||null,license_reference:input.licenseReference?.trim()||null,insurance_expiration:input.insuranceExpiration||null,w9_status:input.w9Status||"not_requested",tax_classification:input.taxClassification?.trim()||null,tax_id_last4:taxLast4}).select("*").single();if(error)throw error;return NextResponse.json({success:true,contractor:data});

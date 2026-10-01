@@ -194,6 +194,31 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       setMessage("Primary tenant updated."); await refresh();
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
+  // Per-tenant late-fee override: exempt, or per-field overrides of the
+  // portfolio default. Saving with every field blank clears the override.
+  async function saveLateFeeOverride(event, tenantId, clear) {
+    event.preventDefault(); setWorking(true); setMessage("");
+    let payload;
+    if (clear) {
+      payload = { tenantId, exempt: false };
+    } else {
+      const form = new FormData(event.currentTarget);
+      payload = { tenantId,
+        exempt: form.get("overrideExempt") === "on",
+        graceDays: form.get("overrideGraceDays") || null,
+        calculationType: form.get("overrideCalculationType") || null,
+        fixedAmountCents: form.get("overrideFixedAmount") ? Math.round(Number(form.get("overrideFixedAmount")) * 100) : null,
+        percentageBasisPoints: form.get("overridePercentage") ? Math.round(Number(form.get("overridePercentage")) * 100) : null,
+        maximumAmountCents: form.get("overrideMaximumAmount") ? Math.round(Number(form.get("overrideMaximumAmount")) * 100) : null };
+    }
+    try {
+      const response = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "save-late-fee-tenant-override", override: payload }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.error || "Unable to save the late-fee override.");
+      setMessage(result.override ? `Late-fee override saved.` : `Late-fee override cleared — the portfolio default applies.`);
+      await refresh();
+    } catch (error) { setMessage(error.message); } finally { setWorking(false); }
+  }
   // Full-page ledger replaces the entire panel surface — Rentec-style, no cramped card.
   if (ledgerTenant?.tenant) {
     const ledgered = ledgerTenant.tenant;
@@ -239,7 +264,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button><RentalRecordActions label="Tenant actions" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div></div>
         <LeaseSummary lease={household.lease} unit={household.unit}/>
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
-        <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id}/>
+        <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===tenant.id)||null} saveLateFeeOverride={saveLateFeeOverride}/>
         {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => { setDeleteTarget(tenant); setDeleteConfirmText(""); }} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
         {deleteTarget && <div role="alertdialog" aria-modal="true" aria-labelledby="delete-unused-tenant-title" aria-describedby="delete-unused-tenant-desc"
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
@@ -260,7 +285,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
             </div>
           </div>
         </div>}
-        <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
+        <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===coTenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></div>; })()}
     </RentalRecordBrowser>}
     {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
@@ -275,7 +300,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
 function LeaseSummary({lease,unit}) { return <div className="mt-5 grid gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30 sm:grid-cols-2 lg:grid-cols-4"><Info label="Property" value={unit?.label||lease?.property_id}/><Info label="Lease status" value={lease?.status}/><Info label="Lease dates" value={lease?`${lease.start_date} to ${lease.end_date||"Open-ended"}`:null}/><Info label="Monthly rent" value={lease?money.format(Number(lease.monthly_rent_cents||0)/100):null}/></div> }
 function Info({label,value}) { return <div><p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p><p className="mt-1 font-bold text-slate-950 dark:text-white">{value||"Not recorded"}</p></div> }
 function Field({label,name,defaultValue="",type="text",step}) { return <label className="text-sm font-bold text-slate-900 dark:text-white">{label}<input name={name} type={type} step={step} defaultValue={defaultValue??""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label> }
-function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId}) {
+function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId,lateFeeOverride,saveLateFeeOverride}) {
   // Join-up invite confirmation (mirrors the borrower-invite pattern: checkbox
   // plus a typed phrase). The button fires a real email, so a single click
   // must never send it.
@@ -324,4 +349,32 @@ function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadT
     <label className="text-sm font-bold text-slate-900 dark:text-white sm:col-span-2 lg:col-span-3">Private landlord notes<textarea name="landlordNotes" defaultValue={tenant.landlord_notes||""} rows="3" className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label>
     <div className="sm:col-span-2 lg:col-span-3"><p className="mb-3 text-xs font-bold text-amber-800 dark:text-amber-300">Never enter a full Social Security number. Full screening credentials stay with the screening provider.</p><button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Save tenant information</button></div>
   </form>
+  <LateFeeOverrideForm tenant={tenant} override={lateFeeOverride} working={working} onSave={saveLateFeeOverride}/>
 </article> }
+
+// Per-tenant automatic late-fee override. Blank fields fall back to the
+// portfolio default; exempt skips the tenant entirely.
+function LateFeeOverrideForm({tenant,override,working,onSave}) {
+  const inputClassName="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white";
+  const formKey=`latefee-override-${tenant.id}-${override?.updated_at||"none"}`;
+  return <form key={formKey} onSubmit={(event)=>onSave(event,tenant.id,false)} className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+    <p className="text-xs font-black uppercase tracking-wide text-red-700 dark:text-red-400">Late-fee override</p>
+    <h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Automatic late fees for {tenant.display_name}</h4>
+    <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Blank fields fall back to the portfolio default. Exempt skips this tenant entirely.</p>
+    {override
+      ? <p className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm font-bold text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">Override active{override.exempt?" — exempt from automatic late fees":" — custom terms apply"}.</p>
+      : <p className="mt-3 text-sm font-bold text-slate-500 dark:text-slate-400">No override — the portfolio default applies.</p>}
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <label className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><input name="overrideExempt" type="checkbox" defaultChecked={override?.exempt===true}/> Exempt from automatic late fees</label>
+      <Field label="Grace days (override)" name="overrideGraceDays" type="number" defaultValue={override?.grace_days??""} min={0} max={31} className={inputClassName}/>
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Calculation (override)<select name="overrideCalculationType" defaultValue={override?.calculation_type||""} className={inputClassName}><option value="">Portfolio default</option><option value="fixed">Fixed amount</option><option value="percentage">Percentage of unpaid balance</option></select></label>
+      <Field label="Fixed amount $ (override)" name="overrideFixedAmount" type="number" step="0.01" min="0.01" defaultValue={override?.fixed_amount_cents!=null?Number(override.fixed_amount_cents)/100:""} className={inputClassName}/>
+      <Field label="Percentage % (override)" name="overridePercentage" type="number" step="0.01" min="0.01" defaultValue={override?.percentage_basis_points!=null?Number(override.percentage_basis_points)/100:""} className={inputClassName}/>
+      <Field label="Maximum $ (override)" name="overrideMaximumAmount" type="number" step="0.01" min="0.01" defaultValue={override?.maximum_amount_cents!=null?Number(override.maximum_amount_cents)/100:""} className={inputClassName}/>
+    </div>
+    <div className="mt-4 flex flex-wrap gap-3">
+      <button disabled={working} className={`rounded-xl px-5 py-3 text-sm font-black disabled:opacity-50 ${goldControlClassName}`}>Save override</button>
+      {override?<button type="button" disabled={working} onClick={(event)=>onSave(event,tenant.id,true)} className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Clear override</button>:null}
+    </div>
+  </form>;
+}

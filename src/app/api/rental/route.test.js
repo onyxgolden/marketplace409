@@ -156,7 +156,7 @@ describe("Rental Manager route", () => {
       rental_inspection_items: result([{ id: "item_1", inspection_id: "inspection_1" }]),
       rental_inspection_acknowledgements: result([]),rental_leases:result([{id:"lease_1",status:"active"}]),
       rental_lease_tenants:result([{lease_id:"lease_1",tenant_id:"tenant_1"}]),
-      rental_lease_changes:result([{id:"change_1",status:"draft"}]),rental_late_fee_rules:result([{id:"rule_1",status:"active"}]),rental_late_fee_assessments:result([]),
+      rental_lease_changes:result([{id:"change_1",status:"draft"}]),rental_late_fee_rules:result([{id:"rule_1",status:"active"}]),rental_late_fee_assessments:result([]),rental_late_fee_tenant_overrides:result([]),
       rental_contractors:result([{id:"contractor_1",business_name:"Reliable Plumbing"}]),rental_maintenance_work_orders:result([{id:"work_1",request_id:"request_1"}]),rental_maintenance_work_events:result([{id:"event_1",work_order_id:"work_1"}]),rental_lease_preparations:result([{id:"prep_1",lease_id:"lease_1",current_version:1}]),rental_lease_preparation_versions:result([{preparation_id:"prep_1",version_number:1}]),rental_lease_signatures:result([{id:"sig_1",lease_id:"lease_1",preparation_id:"prep_1",version_number:1,tenant_id:"tenant_1",signer_name:"Jane Tenant",signed_at:"2026-09-05T10:00:00Z"}]),rental_conversations:result([{id:"conversation_1",tenant_id:"tenant_1",last_message_at:"2026-09-05T11:00:00Z",last_message_body:"Heater is broken",last_message_sender_type:"tenant",owner_last_read_at:null,tenant_last_read_at:"2026-09-05T11:00:00Z"}]),rental_autopay_enrollments:result([{id:"autopay_1",status:"setup_required"}]),renters_insurance_policies:result([{id:"policy_1",status:"pending_verification"}]),renters_insurance_requirements:result([{lease_id:"lease_1",required:true}]),rental_animals:result([{id:"animal_1",classification:"pet",approval_status:"requested"}]),rental_support_cases:result([{id:"case_1",case_type:"failed_payment",status:"open"}]),rental_billing_settings:result({billing_enabled:true}),financial_events:result([{event_date:"2026-08-05",amount:"1500.00",transaction_kind:"income",source_system:"rentec",status:"active",is_deleted:false}]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
     createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1",
@@ -183,7 +183,7 @@ describe("Rental Manager route", () => {
       rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
       rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
       rental_leases: empty, rental_lease_tenants: empty, rental_lease_changes: empty, rental_late_fee_rules: empty,
-      rental_late_fee_assessments: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
+      rental_late_fee_assessments: empty, rental_late_fee_tenant_overrides: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
       rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty, rental_lease_signatures: empty, rental_conversations: empty,
       rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
       rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
@@ -209,7 +209,7 @@ describe("Rental Manager route", () => {
       rental_settlements: empty, rental_security_deposits: empty, rental_security_deposit_transactions: empty,
       rental_inspections: empty, rental_inspection_items: empty, rental_inspection_acknowledgements: empty,
       rental_leases: empty, rental_lease_tenants: empty, rental_lease_changes: empty, rental_late_fee_rules: empty,
-      rental_late_fee_assessments: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
+      rental_late_fee_assessments: empty, rental_late_fee_tenant_overrides: empty, rental_contractors: empty, rental_maintenance_work_orders: empty,
       rental_maintenance_work_events: empty, rental_lease_preparations: empty, rental_lease_preparation_versions: empty, rental_lease_signatures: empty, rental_conversations: empty,
       rental_autopay_enrollments: empty, renters_insurance_policies: empty, renters_insurance_requirements: empty, rental_animals: empty,
       rental_support_cases: empty, rental_billing_settings: result(null), financial_events: empty };
@@ -243,7 +243,7 @@ describe("Rental Manager route", () => {
       rental_settlements: result([]), rental_security_deposits: result([]), rental_security_deposit_transactions: result([]),
       rental_inspections: result([]), rental_inspection_items: result([]), rental_inspection_acknowledgements: result([]),
       rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
-      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]),
+      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]),
       rental_maintenance_work_orders: result([]), rental_maintenance_work_events: result([]), rental_lease_preparations: result([]),
       rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result([]), rental_autopay_enrollments: result([]), renters_insurance_policies: result([]),
       renters_insurance_requirements: result([]),
@@ -274,7 +274,7 @@ describe("Rental Manager route", () => {
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
       rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
-      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
+      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result([]),
       rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
@@ -298,7 +298,7 @@ describe("Rental Manager route", () => {
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
       rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
-      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
+      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result([]),
       rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
     const createSignedUrl = vi.fn(async () => ({ data: { signedUrl: "https://signed.test/unit-photo" }, error: null }));
@@ -324,7 +324,7 @@ describe("Rental Manager route", () => {
       rental_maintenance_requests: result([]), rental_notification_outbox: result([]), rental_payments: result([]), rental_settlements: result([]),
       rental_security_deposits: result([]), rental_security_deposit_transactions: result([]), rental_inspections: result([]), rental_inspection_items: result([]),
       rental_inspection_acknowledgements: result([]), rental_leases: result([]), rental_lease_tenants: result([]), rental_lease_changes: result([]),
-      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
+      rental_late_fee_rules: result([]), rental_late_fee_assessments: result([]), rental_late_fee_tenant_overrides: result([]), rental_contractors: result([]), rental_maintenance_work_orders: result([]),
       rental_maintenance_work_events: result([]), rental_lease_preparations: result([]), rental_lease_preparation_versions: result([]), rental_lease_signatures: result([]), rental_conversations: result(conversations),
       rental_autopay_enrollments: result([]), renters_insurance_policies: result([]), renters_insurance_requirements: result([]), rental_animals: result([]), rental_support_cases: result([]), rental_billing_settings: result(null), financial_events: result([]) };
     const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
