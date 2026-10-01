@@ -23,7 +23,8 @@
     "forge:self-heal": "node scripts/engineering-brain/patch/runSelfHealCli.mjs",
     "forge:self-heal:nightly": "node scripts/engineering-brain/patch/runNightlySelfHealCli.mjs",
     "security:collect-status": "node scripts/forge-security/collectMachineStatus.mjs",
-    "forge:docs:drift": "node scripts/engineering-brain/docs/runDocDriftCli.mjs"
+    "forge:docs:drift": "node scripts/engineering-brain/docs/runDocDriftCli.mjs",
+    "forge:docs:drift:nightly": "node scripts/engineering-brain/docs/runNightlyDocDriftCli.mjs"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.7",
