@@ -9,7 +9,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { MobileDrawer, toggleExclusiveDrawer } from "./DesignerScreen";
+import { MobileDrawer, toggleExclusiveDrawer, dropFileForPanel } from "./DesignerScreen";
 
 function renderDrawer(props) {
   const container = document.createElement("div");
@@ -219,5 +219,45 @@ describe("toggleExclusiveDrawer", () => {
   it("opening one drawer closes the other (never two at once)", () => {
     expect(toggleExclusiveDrawer("panel", "tools")).toBe("tools");
     expect(toggleExclusiveDrawer("tools", "panel")).toBe("panel");
+  });
+});
+
+describe("dropFileForPanel", () => {
+  // RightPanel (and the import sections inside it) is mounted TWICE at
+  // once whenever the mobile drawer is open: the desktop aside stays
+  // mounted (just CSS-hidden), and the drawer mounts its own second copy.
+  // A canvas file drop must reach exactly one of the two — ChatGPT review
+  // of PR #499 found that passing the same pendingDropFile to both caused
+  // the same dropped file to be parsed twice, by two independent staged
+  // import states.
+  const file = { name: "plan.pdf" };
+
+  it("gives the aside the file and the drawer nothing when the drawer is closed", () => {
+    expect(dropFileForPanel(file, null, "aside")).toBe(file);
+    expect(dropFileForPanel(file, "tools", "aside")).toBe(file); // the OTHER drawer, not "panel"
+    expect(dropFileForPanel(file, null, "drawer")).toBeNull();
+    expect(dropFileForPanel(file, "tools", "drawer")).toBeNull();
+  });
+
+  it("gives the drawer the file and the aside nothing when the design-panels drawer is open", () => {
+    expect(dropFileForPanel(file, "panel", "drawer")).toBe(file);
+    expect(dropFileForPanel(file, "panel", "aside")).toBeNull();
+  });
+
+  it("never gives both panels a non-null file for the same inputs, for every drawer state", () => {
+    for (const mobileDrawer of [null, "panel", "tools"]) {
+      const aside = dropFileForPanel(file, mobileDrawer, "aside");
+      const drawer = dropFileForPanel(file, mobileDrawer, "drawer");
+      expect(aside === null || drawer === null).toBe(true);
+      // And since pendingDropFile is actually set here, exactly one (not
+      // neither) must receive it — the drop still has to go somewhere.
+      expect(aside === file || drawer === file).toBe(true);
+    }
+  });
+
+  it("passes through null/undefined pendingDropFile unchanged (nothing to route)", () => {
+    expect(dropFileForPanel(null, "panel", "aside")).toBeNull();
+    expect(dropFileForPanel(null, "panel", "drawer")).toBeNull();
+    expect(dropFileForPanel(undefined, null, "aside")).toBeUndefined();
   });
 });
