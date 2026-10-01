@@ -197,6 +197,17 @@ export async function POST(request) {
           p_available_at: balance.availableAt,
           p_provider_mode: provider.mode,
         });
+        if (charge.cardBrand) {
+          // R12: stamp the settled card's brand on the fee-bearing payment
+          // row as dispute evidence / per-brand reporting. Rows without a
+          // convenience fee are untouched; the brand never affects the fee.
+          const { error: brandError } = await supabase.from("rental_payments").update({
+              fee_card_brand: charge.cardBrand, updated_at: new Date().toISOString(),
+            })
+            .eq("provider_mode", provider.mode).eq("provider_payment_id", paymentIntentId)
+            .gt("convenience_fee_cents", 0);
+          if (brandError) throw brandError;
+        }
       }
       else if(normalized.eventType==="payout.paid"){const ids=await provider.listPayoutBalanceTransactionIds({connectedAccountId:normalized.connectedAccountId},normalized.objectId);projection=await supabase.rpc("mark_stripe_rental_settlements_paid_out",{p_provider_event_id:normalized.providerEventId,p_connected_account_id:normalized.connectedAccountId,p_payout_id:normalized.objectId,p_balance_transaction_ids:ids,p_paid_out_at:normalized.occurredAt,p_provider_mode:provider.mode});}
       else if(normalized.eventType==="refund.updated"){

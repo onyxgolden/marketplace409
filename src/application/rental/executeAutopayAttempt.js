@@ -1,5 +1,6 @@
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { isAutopayCollectibleChargeType } from "./tenantCharges.js";
+import { autopayFeeCents, resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
 
 // Extracted so both the manual /api/rental/autopay/execute endpoint and the
 // autopay-sweep cron can attempt a single (enrollment, charge) pair identically.
@@ -63,7 +64,7 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   // Owner-level master pause overrides an otherwise-eligible per-schedule cutover: autopay must
   // never execute while the owner's rental billing is globally paused, even for a lease whose
   // schedule is individually FORGE-activated with an arrived cutover date.
-  const billingSettings = await db.from("rental_billing_settings").select("billing_enabled")
+  const billingSettings = await db.from("rental_billing_settings").select("billing_enabled, card_convenience_fee_bps")
     .eq("owner_id", enrollment.owner_id).maybeSingle();
   if (billingSettings.error) throw billingSettings.error;
   if (!billingSettings.data?.billing_enabled) return { httpStatus: 409, body: { error: "Rental online billing is currently paused for this owner." } };
@@ -80,9 +81,22 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   const key = `autopay:${enrollment.id}:${charge.id}`;
   const timestamp = new Date().toISOString();
 
+  // R12: card autopay carries the convenience fee ONLY with the tenant's
+  // explicit portal consent, at the consented rate capped at the current
+  // workspace rate (see autopayFeeCents). ACH autopay never carries a fee.
+  // fee_agreed_at is the tenant's original consent timestamp -- the tenant
+  // agreed in the portal at enrollment time, not at each sweep.
+  const feeCents = autopayFeeCents({ paymentMethodType: enrollment.payment_method_type,
+    consentBps: enrollment.fee_consent_bps,
+    workspaceBps: resolveFeeBasisPoints(billingSettings.data?.card_convenience_fee_bps),
+    rentCents: remaining });
+  const totalCents = remaining + feeCents;
+
   const payment = await db.from("rental_payments").insert({
     owner_id: enrollment.owner_id, id: paymentId, charge_id: charge.id, lease_id: charge.lease_id, tenant_id: enrollment.tenant_id,
-    provider: "stripe", provider_mode: enrollment.provider_mode, provider_customer_id: enrollment.provider_customer_id, amount_cents: remaining, refunded_amount_cents: 0,
+    provider: "stripe", provider_mode: enrollment.provider_mode, provider_customer_id: enrollment.provider_customer_id, amount_cents: totalCents, refunded_amount_cents: 0,
+    convenience_fee_cents: feeCents, convenience_fee_bps: feeCents > 0 ? enrollment.fee_consent_bps : null,
+    fee_agreed_at: feeCents > 0 ? (enrollment.fee_consented_at || timestamp) : null,
     currency_code: charge.currency_code, status: "created", idempotency_key: key, created_at: timestamp, updated_at: timestamp,
   }).select("*").single();
   if (payment.error) throw payment.error;
@@ -97,7 +111,7 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     const result = await createStripeBillingProvider().createOffSessionPayment(
       { connectedAccountId: account.data.provider_account_id },
       { paymentId, chargeId: charge.id, enrollmentId: enrollment.id, customerId: enrollment.provider_customer_id,
-        paymentMethodId: enrollment.provider_payment_method_id, amountCents: remaining, currencyCode: charge.currency_code },
+        paymentMethodId: enrollment.provider_payment_method_id, amountCents: totalCents, currencyCode: charge.currency_code },
       key,
     );
     await Promise.all([

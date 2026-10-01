@@ -5,6 +5,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import TenantPaymentForm from "./TenantPaymentForm";
+import TenantPaymentReview from "./TenantPaymentReview";
 import TenantMaintenancePanel from "./TenantMaintenancePanel";
 import TenantDocumentsPanel from "./TenantDocumentsPanel";
 import RentalPaymentReceipt from "./RentalPaymentReceipt";
@@ -109,6 +110,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
   const [error, setError] = useState("");
   const [signInRequired, setSignInRequired] = useState(false);
   const [session, setSession] = useState(null); const [starting, setStarting] = useState(null);
+  const [review, setReview] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [stripeInitError, setStripeInitError] = useState(false); const [stripeRetryCount, setStripeRetryCount] = useState(0);
   // Tenant portal: stale-while-revalidate. The cached portal renders instantly on return
@@ -137,12 +139,25 @@ export default function TenantPortal({ initialPortal = null } = {}) {
       .catch(() => { if (!cancelled) setStripeInitError(true); });
     return () => { cancelled = true; };
   }, [stripePromise]);
-  async function pay(chargeId) {
+  // R12: the tenant reviews method + fee BEFORE the payment session exists, so
+  // the fee is fixed at session creation. The review screen is copy only --
+  // the server recomputes the fee from the workspace rate and requires the
+  // explicit agreement for card payments.
+  function startReview(charge) { setReview({ charge }); setError(""); }
+  async function confirmReview(chargeId, { paymentMethod, feeAgreed, expectedFeeCents }) {
     setStarting(chargeId); setError(""); setStripeInitError(false);
     try { const response = await fetch("/api/rental/portal/payment-session", { method: "POST",
-      headers: { "content-type": "application/json" }, body: JSON.stringify({ chargeId }) });
-      const body = await response.json(); if (!response.ok) throw new Error(body.error); setSession({ ...body, chargeId });
-    } catch (reason) { setError(reason.message); } finally { setStarting(null); }
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chargeId, paymentMethod, feeAgreed, expectedFeeCents }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error);
+      setReview(null); setSession({ ...body, chargeId });
+    } catch (reason) {
+      setError(reason.message);
+      // The server rejected a stale fee echo (the owner changed the rate
+      // mid-review): refresh the portal so the review recomputes from the
+      // live rate, then the tenant reviews again.
+      if (String(reason.message || "").includes("changed while you were reviewing")) reloadPortal();
+    } finally { setStarting(null); }
   }
   async function resume(paymentId, chargeId) {
     setStarting(chargeId); setError(""); setStripeInitError(false);
@@ -208,8 +223,11 @@ export default function TenantPortal({ initialPortal = null } = {}) {
         autopayDateLabel={date.format(new Date(`${sessionCharge.dueDate}T00:00:00`))} /></div> : null}
       <Elements key={stripeRetryCount} stripe={stripePromise} options={{ clientSecret: session.clientSecret, appearance: { theme: "stripe" } }}>
         <TenantPaymentForm returnUrl={session.returnUrl} amountLabel={money.format(session.amountCents / 100)}
+          rentCents={session.rentCents} feeCents={session.convenienceFeeCents || 0} feeBps={session.convenienceFeeBps || 0}
           dueDate={date.format(new Date(`${session.dueDate}T00:00:00`))} chargeLabel={(session.chargeType || "rent").replaceAll("_", " ")} onCancel={() => setSession(null)} />
-      </Elements></section>) : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [], credits = [], creditApplications = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
+      </Elements></section>) : review ? <TenantPaymentReview charge={review.charge} feeBps={portal.convenienceFeeBps || 0}
+        starting={starting === review.charge.id} onCancel={() => setReview(null)}
+        onConfirm={(selection) => confirmReview(review.charge.id, selection)} /> : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [], credits = [], creditApplications = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
       <h2 className="text-xl font-black">{unit?.label || "Rental home"}</h2>
       <p className="mt-1 text-sm text-slate-500">Lease {lease.startDate} {lease.endDate ? `through ${lease.endDate}` : "— current"}</p>
       <div className="mt-6 space-y-3">{charges.map((charge) => <div key={charge.id} className="flex items-center justify-between gap-4 rounded-xl border p-4">
@@ -219,7 +237,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
             isChargePayableThroughForge(charge, schedules, portal.billingEnabled) ? (() => {
               const resumable = resumablePaymentForCharge(payments, charge.id);
               const trulyPending = !resumable && paymentPendingForCharge(payments, charge.id);
-              return <button onClick={() => resumable ? resume(resumable.id, charge.id) : pay(charge.id)}
+              return <button onClick={() => resumable ? resume(resumable.id, charge.id) : startReview(charge)}
                 disabled={starting === charge.id || trulyPending}
                 className="mt-2 rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
                 {trulyPending ? "Payment pending" : starting === charge.id ? "Opening…" : resumable ? "Resume payment" : "Pay now"}</button>;
@@ -268,7 +286,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
     {receipt?<RentalPaymentReceipt payment={receipt.payment} tenantName={portal.tenant.displayName} unitLabel={receipt.unitLabel} onClose={()=>setReceipt(null)}/>:null}
     {!session ? <TenantLeaseSigningPanel rentals={portal.rentals} onSigned={reloadPortal} /> : null}
     {!session ? <TenantDepositPanel rentals={portal.rentals} /> : null}
-    {!session ? <TenantAutopayPanel rentals={portal.rentals} onChanged={reloadPortal} /> : null}
+    {!session ? <TenantAutopayPanel rentals={portal.rentals} convenienceFeeBps={portal.convenienceFeeBps || 0} onChanged={reloadPortal} /> : null}
     {!session ? <TenantInspectionsPanel rentals={portal.rentals} onAcknowledged={reloadPortal} /> : null}
     {!session ? <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6">
       <p className="text-sm font-bold uppercase tracking-widest text-blue-800">Optional tenant service</p>

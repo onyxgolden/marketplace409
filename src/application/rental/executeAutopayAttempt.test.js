@@ -323,4 +323,89 @@ describe("executeAutopayAttempt", () => {
       expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({ amount_cents: 100000 }));
     });
   });
+
+  // R12: card autopay carries the convenience fee ONLY with the tenant's
+  // explicit portal consent, at the consented rate capped at the current
+  // workspace rate. ACH autopay never carries a fee.
+  describe("card convenience fees on autopay", () => {
+    const CARD_CONSENT = { ...ENROLLMENT, payment_method_type: "card", fee_consent_bps: 295, fee_consented_at: "2026-09-01T00:00:00.000Z" };
+    function runSweep(enrollment, billingRow) {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_1", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      const paymentInsert = chain({ data: { id: "rental_payment_1" }, error: null });
+      db.from
+        .mockReturnValueOnce(chain({ data: enrollment, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain({ data: billingRow, error: null }))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(paymentInsert)
+        .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
+        .mockReturnValueOnce(chain({ error: null }))
+        .mockReturnValueOnce(chain({ error: null }));
+      return { offSession, paymentInsert, result: executeAutopayAttempt(db, "enrollment_1", "charge_1") };
+    }
+
+    it("charges rent + the consented fee on card autopay and stamps the consent", async () => {
+      const { offSession, paymentInsert, result } = runSweep(CARD_CONSENT, { billing_enabled: true, card_convenience_fee_bps: 295 });
+      expect((await result).httpStatus).toBe(200);
+      const [, input] = offSession.mock.calls[0];
+      expect(input.amountCents).toBe(154425); // $1500 + 2.95% = $44.25
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+        amount_cents: 154425, convenience_fee_cents: 4425, convenience_fee_bps: 295,
+        fee_agreed_at: "2026-09-01T00:00:00.000Z",
+      }));
+    });
+
+    it("keeps charging the consented rate when the owner later raises the fee", async () => {
+      const { paymentInsert, result } = runSweep(CARD_CONSENT, { billing_enabled: true, card_convenience_fee_bps: 350 });
+      expect((await result).httpStatus).toBe(200);
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+        amount_cents: 154425, convenience_fee_cents: 4425, convenience_fee_bps: 295,
+      }));
+    });
+
+    it("charges the lower current rate when the owner lowers the fee", async () => {
+      const { paymentInsert, result } = runSweep(CARD_CONSENT, { billing_enabled: true, card_convenience_fee_bps: 200 });
+      expect((await result).httpStatus).toBe(200);
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+        amount_cents: 153000, convenience_fee_cents: 3000, convenience_fee_bps: 295,
+      }));
+    });
+
+    it("charges no fee when the owner turned the fee off after consent", async () => {
+      const { offSession, paymentInsert, result } = runSweep(CARD_CONSENT, { billing_enabled: true, card_convenience_fee_bps: 0 });
+      expect((await result).httpStatus).toBe(200);
+      const [, input] = offSession.mock.calls[0];
+      expect(input.amountCents).toBe(150000);
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+        amount_cents: 150000, convenience_fee_cents: 0, convenience_fee_bps: null, fee_agreed_at: null,
+      }));
+    });
+
+    it("charges no fee on card autopay without consent", async () => {
+      const { paymentInsert, result } = runSweep(
+        { ...ENROLLMENT, payment_method_type: "card" },
+        { billing_enabled: true, card_convenience_fee_bps: 295 });
+      expect((await result).httpStatus).toBe(200);
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+        amount_cents: 150000, convenience_fee_cents: 0, convenience_fee_bps: null, fee_agreed_at: null,
+      }));
+    });
+
+    it("never charges a fee on ACH autopay, even when the workspace fee is on", async () => {
+      const { offSession, paymentInsert, result } = runSweep(
+        { ...CARD_CONSENT, payment_method_type: "us_bank_account" },
+        { billing_enabled: true, card_convenience_fee_bps: 295 });
+      expect((await result).httpStatus).toBe(200);
+      const [, input] = offSession.mock.calls[0];
+      expect(input.amountCents).toBe(150000);
+      expect(paymentInsert.insert).toHaveBeenCalledWith(expect.objectContaining({
+        amount_cents: 150000, convenience_fee_cents: 0,
+      }));
+    });
+  });
 });

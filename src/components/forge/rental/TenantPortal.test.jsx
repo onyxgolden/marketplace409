@@ -252,6 +252,13 @@ function mountPanel(ui) {
   act(() => { root.render(ui); });
   return { container, root };
 }
+// R12: the tenant reviews method + fee before the payment session is created.
+async function clickThroughPaymentReview(container) {
+  await clickButtonAndFlush(findButtonByText(container, "Pay now"));
+  const continueButton = Array.from(container.querySelectorAll("button"))
+    .find((candidate) => candidate.textContent.startsWith("Continue to payment"));
+  await clickButtonAndFlush(continueButton);
+}
 function unmountPanel({ container, root }) {
   act(() => { root.unmount(); });
   container.remove();
@@ -274,7 +281,7 @@ describe("TenantPortal Stripe initialization failure", () => {
     mounted = mountPanel(<TenantPortal initialPortal={openChargePortal} />);
     const { container } = mounted;
 
-    await clickButtonAndFlush(findButtonByText(container, "Pay now"));
+    await clickThroughPaymentReview(container);
 
     expect(container.textContent).toContain("Unable to load the secure payment form");
     const paymentSessionCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/payment-session"));
@@ -297,7 +304,7 @@ describe("TenantPortal Stripe initialization failure", () => {
     mounted = mountPanel(<TenantPortal initialPortal={openChargePortal} />);
     const { container } = mounted;
 
-    await clickButtonAndFlush(findButtonByText(container, "Pay now"));
+    await clickThroughPaymentReview(container);
     expect(container.textContent).toContain("Unable to load the secure payment form");
 
     await clickButtonAndFlush(findButtonByText(container, "Back to balance"));

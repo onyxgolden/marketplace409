@@ -12,6 +12,7 @@ import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintStr
 import { validateAddressFields } from "@/lib/address/validateAddress";
 import { isPaymentPolicy, PAYMENT_POLICIES } from "@/domains/rental-payment/paymentPolicy";
 import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
+import { validateFeeInput } from "@/domains/rental-payment/convenienceFee";
 
 function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
 function now() { return new Date().toISOString(); }
@@ -100,7 +101,7 @@ export async function GET() {
       authenticated.supabaseClient.from("rental_late_fee_rules").select("*").order("created_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_late_fee_assessments").select("*").order("approved_at",{ascending:false}),
       authenticated.supabaseClient.from("rental_billing_settings")
-        .select("owner_id, late_fee_auto_post, late_fee_grace_days, late_fee_calculation_type, late_fee_fixed_amount_cents, late_fee_percentage_basis_points, late_fee_maximum_amount_cents, payment_policy")
+        .select("owner_id, late_fee_auto_post, late_fee_grace_days, late_fee_calculation_type, late_fee_fixed_amount_cents, late_fee_percentage_basis_points, late_fee_maximum_amount_cents, payment_policy, card_convenience_fee_bps")
         .eq("owner_id", authenticated.effectiveOwnerId).maybeSingle(),
       authenticated.supabaseClient.from("rental_late_fee_tenant_overrides").select("*").order("tenant_id",{ascending:true}),
       authenticated.supabaseClient.from("rental_contractors").select("*").order("business_name",{ascending:true}),
@@ -173,7 +174,7 @@ export async function GET() {
       payments: paymentResult.data || [], settlements: settlementResult.data || [], deposits: depositResult.data || [],
       depositTransactions: depositTransactionResult.data || [], inspections: inspectionResult.data || [],
       inspectionItems: inspectionItemResult.data || [], inspectionAcknowledgements: inspectionAckResult.data || [],
-      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],paymentPolicy:lateAutoSettingsResult.data?.payment_policy||"allow_any_amount",contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
+      leases:leaseResult.data||[],leaseMemberships:membershipResult.data||[],leaseChanges:leaseChangeResult.data||[],lateFeeRules:lateRuleResult.data||[],lateFeeAssessments:lateAssessmentResult.data||[],lateFeeAutoSettings:lateAutoSettingsResult.data||null,convenienceFeeBps:lateAutoSettingsResult.data?.card_convenience_fee_bps??0,lateFeeTenantOverrides:lateTenantOverrideResult.data||[],paymentPolicy:lateAutoSettingsResult.data?.payment_policy||"allow_any_amount",contractors:contractorResult.data||[],workOrders:workOrderResult.data||[],workEvents:workEventResult.data||[],leasePreparations:leasePreparationResult.data||[],leasePreparationVersions:leasePreparationVersionResult.data||[],leaseSignatures:leaseSignatureResult.data||[],autopayEnrollments:autopayResult.data||[],insurancePolicies:insurancePolicyResult.data||[],insuranceRequirements:insuranceRequirementResult.data||[],animals:animalResult.data||[],supportCases:supportResult.data||[],financialEvents:financialEventResult.data||[],
       // unread: the tenant sent the most recent message and the owner hasn't read past it yet --
       // never derived from tenant_last_read_at, which says nothing about what the OWNER has seen.
       // Work-order threads are conversation rows with work_order_id set; their unread flag is
@@ -521,6 +522,19 @@ export async function POST(request) {
         });
         if (error) throw error;
         return NextResponse.json({ success: true, settings: data });
+      }
+      // R12: workspace card convenience fee. The UI sends a human percent
+      // ("2.95"); the server validates and stores integer basis points. The
+      // RPC audits every change. Read-only members are blocked outright.
+      case "save-convenience-fee": {
+        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change convenience fee settings." }, { status: 403 });
+        const validation = validateFeeInput(body.feePercent);
+        if (!validation.ok) return badRequest(validation.message);
+        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_card_convenience_fee", {
+          p_owner_id: effectiveOwnerId, p_fee_bps: validation.bps,
+        });
+        if (error) throw error;
+        return NextResponse.json({ success: true, convenienceFeeBps: data?.card_convenience_fee_bps ?? validation.bps });
       }
       case "activate-lease-schedule": {
         if (!body.scheduleId) return badRequest("scheduleId is required.");

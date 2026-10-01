@@ -44,6 +44,11 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, clientSecret: intent.clientSecret, connectedAccountId: account.provider_account_id,
       paymentId: payment.id, amountCents: Number(payment.amount_cents), currencyCode: payment.currency_code,
+      // R12: echo the stamped fee so a resumed session shows the same
+      // rent + fee breakdown as a fresh one.
+      rentCents: Number(payment.amount_cents) - Number(payment.convenience_fee_cents || 0),
+      convenienceFeeCents: Number(payment.convenience_fee_cents || 0),
+      convenienceFeeBps: Number(payment.convenience_fee_bps || 0),
       dueDate: charge.due_date, period: charge.period, chargeType: charge.charge_type || "rent",
       returnUrl: `${request.nextUrl.origin}/forge/rental/portal?payment=returned` });
   } catch (error) {

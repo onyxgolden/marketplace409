@@ -10,8 +10,66 @@ import { seedCacheEntry } from "@/hooks/swrCache";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import { depositStateLabel, resolveDepositState, DEPOSIT_STATE_DEPOSITED, DEPOSIT_STATE_RECEIVED, MONEY_MOVED_STATUSES } from "@/application/rental/paymentDepositState";
 import { PAYMENT_POLICIES, paymentPolicyDescription, paymentPolicyLabel } from "@/domains/rental-payment/paymentPolicy";
+import { formatFeePercent } from "@/domains/rental-payment/convenienceFee";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+// R12: card convenience fee settings. The owner enters a human percent
+// ("2.95"); the server validates and stores integer basis points. The fee is
+// added to the tenant's card payment at checkout, shown for their agreement
+// before they pay, and booked as a reimbursement of payment-processing
+// costs -- never as rent income, never touching NOI. Bank payments never
+// carry a fee.
+function ConvenienceFeeSettings({ initialBps = 0, onSave }) {
+  const [draft, setDraft] = useState(initialBps > 0 ? (initialBps / 100).toFixed(2) : "");
+  const [busy, setBusy] = useState(false);
+  const enabled = initialBps > 0;
+  const draftNumber = Number(String(draft).replace("%", "").trim());
+  const exampleCents = Number.isFinite(draftNumber) && draftNumber > 0 ? Math.round(160000 * draftNumber) / 100 : null;
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    const ok = await onSave(draft);
+    setBusy(false);
+    if (ok) setDraft("");
+  }
+  async function turnOff() {
+    setBusy(true);
+    const ok = await onSave("0");
+    setBusy(false);
+    if (ok) setDraft("");
+  }
+  return <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+    <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Card convenience fee</p>
+    <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+      {enabled ? <>Currently <strong>{formatFeePercent(initialBps)}</strong> on every card payment.</> : <>Currently <strong>off</strong> — tenants pay no fee on card payments.</>}
+    </p>
+    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+      The fee is added to the tenant&apos;s card payment and shown for their agreement before checkout.
+      Bank account (ACH) payments never carry a fee. Collected fees are booked as a reimbursement of your
+      payment-processing costs — not as rent income — and never touch NOI.
+    </p>
+    <form onSubmit={save} className="mt-3 flex flex-wrap items-end gap-3">
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Fee percent
+        <span className="mt-1 flex items-center gap-1">
+          <input value={draft} onChange={(event) => setDraft(event.target.value)} inputMode="decimal" placeholder="2.95"
+            className="w-28 rounded-xl border border-slate-300 bg-white p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" />
+          <span className="text-sm font-normal text-slate-500">%</span>
+        </span>
+      </label>
+      <button disabled={busy} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">
+        {busy ? "Saving…" : enabled ? "Update fee" : "Turn on fee"}
+      </button>
+      {enabled ? <button type="button" disabled={busy} onClick={turnOff}
+        className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+        Turn off
+      </button> : null}
+    </form>
+    {exampleCents !== null ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+      On {money.format(1600)} of rent, that&apos;s {money.format(exampleCents / 100)} added to the tenant&apos;s card payment.
+    </p> : null}
+  </div>;
+}
 const label = (value) => value?.replaceAll("_", " ") || "—";
 export const paymentDisplayTimestamp = (payment) => payment.received_at || payment.succeeded_at || payment.created_at || null;
 export function paymentReceiptReference(payment) {
@@ -236,10 +294,13 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
   async function voidCharge(chargeId, reason) { return post({ operation: "void-charge", chargeId, reason }, () => "Charge voided."); }
   async function setBillingEnabled(nextEnabled) { return post({ operation: "set-billing-enabled", enabled: nextEnabled }, () => nextEnabled ? "Rental online billing resumed." : "Rental online billing paused."); }
   async function setPaymentPolicy(policy) { return post({ operation: "save-payment-policy", policy }, () => `Payment policy saved: ${policy.replaceAll("_", " ")}.`); }
+  // R12: the owner sends a human percent; the server validates and stores bps.
+  async function saveConvenienceFee(feePercent) { return post({ operation: "save-convenience-fee", feePercent }, () => "Card convenience fee setting saved."); }
   const enabled = account?.status === "enabled";
   return <section className="space-y-6" data-rental-payments>
     <BillingPauseBanner billingEnabled={data.billingEnabled === true} busy={busy} onSetBillingEnabled={setBillingEnabled} />
     <PaymentPolicySettings policy={data.paymentPolicy} busy={busy} onSave={setPaymentPolicy} />
+    <ConvenienceFeeSettings key={data.convenienceFeeBps ?? 0} initialBps={data.convenienceFeeBps ?? 0} onSave={saveConvenienceFee} />
     {viewFilter === "overdue" && <RentalViewFilterBanner filterLabel="Overdue rent charges" onClear={() => setViewFilter(null)} />}
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-4">

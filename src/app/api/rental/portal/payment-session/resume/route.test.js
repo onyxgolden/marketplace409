@@ -66,6 +66,18 @@ describe("Tenant payment resume route", () => {
     expect(retrieve).toHaveBeenCalledWith({ connectedAccountId: "acct_1" }, "pi_existing");
   });
 
+  it("echoes the stamped fee on a resumed payment so the breakdown renders", async () => {
+    const paymentRow = { id: "rental_payment_1", owner_id: "owner_1", tenant_id: "tenant_1", charge_id: "charge_1",
+      status: "requires_payment_method", provider_payment_id: "pi_existing", amount_cents: 164720, currency_code: "USD",
+      convenience_fee_cents: 4720, convenience_fee_bps: 295 };
+    setup({ paymentRow });
+    const response = await POST(request({ paymentId: "rental_payment_1" }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ amountCents: 164720, rentCents: 160000,
+      convenienceFeeCents: 4720, convenienceFeeBps: 295 });
+  });
+
   it("scopes the landlord account lookup by the server's configured provider_mode", async () => {
     const paymentRow = { id: "rental_payment_1", owner_id: "owner_1", tenant_id: "tenant_1", charge_id: "charge_1",
       status: "requires_payment_method", provider_payment_id: "pi_existing", amount_cents: 2000, currency_code: "USD" };

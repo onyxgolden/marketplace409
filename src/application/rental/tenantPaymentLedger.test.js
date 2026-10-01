@@ -371,4 +371,26 @@ describe("buildTenantPaymentLedger with tenant credits", () => {
     const entry = ledger.entries.find((e) => e.kind === "credit");
     expect(entry.label).toBe("Credit voided");
   });
+
+  // R12: a card payment that included the tenant's convenience fee is labeled
+  // with the fee so the ledger shows what the tenant actually paid. The fee
+  // is not a separate ledger row (it lives in the owner's accounting as a
+  // reimbursement, never income).
+  it("labels a payment that included a card convenience fee", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({
+      payments: [payment({ amount_cents: 154425, convenience_fee_cents: 4425 })],
+    }));
+    const entry = ledger.entries.find((e) => e.kind === "payment");
+    expect(entry.label).toBe("Payment — incl. $44.25 card convenience fee");
+    expect(entry.convenienceFeeCents).toBe(4425);
+    expect(entry.amountCents).toBe(154425);
+    expect(entry.balanceEffectCents).toBe(-154425);
+  });
+
+  it("keeps the plain Payment label when no convenience fee was charged", () => {
+    const ledger = buildTenantPaymentLedger(baseInput({ payments: [payment()] }));
+    const entry = ledger.entries.find((e) => e.kind === "payment");
+    expect(entry.label).toBe("Payment");
+    expect(entry.convenienceFeeCents).toBe(0);
+  });
 });

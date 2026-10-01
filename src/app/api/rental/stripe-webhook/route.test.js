@@ -24,6 +24,10 @@ const mocks = vi.hoisted(() => ({
   rentalPaymentsEqMode: vi.fn(),
   rentalPaymentsEqPaymentIntent: vi.fn(),
   rentalPaymentsMaybeSingle: vi.fn(),
+  rentalPaymentsBrandUpdate: vi.fn(),
+  rentalPaymentsBrandEqMode: vi.fn(),
+  rentalPaymentsBrandEqIntent: vi.fn(),
+  rentalPaymentsBrandGt: vi.fn(),
   rpc: vi.fn(),
 }));
 
@@ -42,7 +46,7 @@ vi.mock("@/lib/supabase/createRentalWebhookClient", () => ({
     from: (table) => {
       if (table === "payment_webhook_events") return { select: mocks.eventsSelect, upsert: mocks.upsert, update: mocks.update };
       if (table === "landlord_payment_accounts") return { select: mocks.landlordSelect };
-      if (table === "rental_payments") return { select: mocks.rentalPaymentsSelect };
+      if (table === "rental_payments") return { select: mocks.rentalPaymentsSelect, update: mocks.rentalPaymentsBrandUpdate };
       if (table === "private_financing_online_payments") {
         const query = { select: () => query, eq: () => query, maybeSingle: async () => ({ data: null, error: null }) };
         return query;
@@ -144,6 +148,11 @@ describe("Stripe rental webhook route", () => {
     mocks.rentalPaymentsEqPaymentIntent.mockImplementation(() => ({ maybeSingle: mocks.rentalPaymentsMaybeSingle }));
     mocks.rentalPaymentsMaybeSingle.mockResolvedValue({ data: null, error: null });
 
+    mocks.rentalPaymentsBrandUpdate.mockImplementation(() => ({ eq: mocks.rentalPaymentsBrandEqMode }));
+    mocks.rentalPaymentsBrandEqMode.mockImplementation(() => ({ eq: mocks.rentalPaymentsBrandEqIntent }));
+    mocks.rentalPaymentsBrandEqIntent.mockImplementation(() => ({ gt: mocks.rentalPaymentsBrandGt }));
+    mocks.rentalPaymentsBrandGt.mockResolvedValue({ error: null });
+
     mocks.rpc.mockResolvedValue({ error: null, data: {} });
     mocks.retrieveCharge.mockResolvedValue({
       id: "ch_delayed", paymentIntentId: "pi_delayed", balanceTransactionId: "txn_delayed",
@@ -224,6 +233,32 @@ describe("Stripe rental webhook route", () => {
         p_payment_intent_id: "pi_delayed",
         p_balance_transaction_id: "txn_1",
       }));
+  });
+
+  // R12: the settled card brand is stamped on fee-bearing payment rows as
+  // dispute evidence / per-brand reporting. The brand never affects the fee.
+  it("stamps the settled card brand on fee-bearing payment rows when a charge settles", async () => {
+    mocks.retrieveCharge.mockResolvedValue({
+      id: "ch_delayed", paymentIntentId: "pi_delayed", balanceTransactionId: "txn_delayed", cardBrand: "visa",
+    });
+    signsOnlyWith(CONNECT_SECRET, delayedChargeSucceeded);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mocks.rentalPaymentsBrandUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ fee_card_brand: "visa" }));
+    expect(mocks.rentalPaymentsBrandEqMode).toHaveBeenCalledWith("provider_mode", "test");
+    expect(mocks.rentalPaymentsBrandEqIntent).toHaveBeenCalledWith("provider_payment_id", "pi_delayed");
+    expect(mocks.rentalPaymentsBrandGt).toHaveBeenCalledWith("convenience_fee_cents", 0);
+  });
+
+  it("does not touch payment rows when the settled charge carries no card brand", async () => {
+    mocks.retrieveCharge.mockResolvedValue({
+      id: "ch_delayed", paymentIntentId: "pi_delayed", balanceTransactionId: "txn_delayed", cardBrand: null,
+    });
+    signsOnlyWith(CONNECT_SECRET, delayedChargeSucceeded);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect(mocks.rentalPaymentsBrandUpdate).not.toHaveBeenCalled();
   });
 
   it("records settlement from charge.updated instead of silently ignoring it", async () => {

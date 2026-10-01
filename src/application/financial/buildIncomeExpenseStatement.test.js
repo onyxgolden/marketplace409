@@ -15,4 +15,13 @@ describe("income & expense statement",()=>{
   it("filters by property and date range",()=>{const scoped=buildIncomeExpenseStatement({events},{propertyId:"4800-kent-ave"});expect(scoped.summary.income).toBe(1420);
     const ranged=buildIncomeExpenseStatement({events},{startDate:"2026-01-04",endDate:"2026-01-04"});expect(ranged.summary).toMatchObject({income:0,expenses:120});});
   it("lists available properties excluding asset-purchase-only scoping quirks",()=>{const report=buildIncomeExpenseStatement({events});expect(report.availableProperties).toEqual(["4800-kent-ave","8760-old-hwy-90"]);});
-  it("exports quoted CSV rows",()=>{const csv=incomeExpenseStatementToCsv(buildIncomeExpenseStatement({events}));expect(csv).toContain('"utilities"');expect(csv).toContain('"1300.00"');});});
+  it("exports quoted CSV rows",()=>{const csv=incomeExpenseStatementToCsv(buildIncomeExpenseStatement({events}));expect(csv).toContain('"utilities"');expect(csv).toContain('"1300.00"');});
+  // R12: a card convenience fee posts as a reimbursement row (affects_noi=false) so it
+  // reimburses the landlord's Stripe processing cost without ever inflating rent revenue,
+  // net, or NOI.
+  it("excludes convenience-fee reimbursement rows from income, net, and NOI",()=>{
+    const feeEvents=[...events,{id:"fee",event_date:"2026-01-01",description:"Card convenience fee reimbursement",amount:47.2,transaction_kind:"reimbursement",normalized_category:"convenience_fee_reimbursement",property_id:"4800-kent-ave",affects_noi:false}];
+    const report=buildIncomeExpenseStatement({events:feeEvents});
+    expect(report.summary).toMatchObject({income:1420,expenses:120,net:1300,noi:1300});
+    const feeRow=report.byCategory.find(row=>row.category==="convenience_fee_reimbursement");
+    expect(feeRow).toMatchObject({income:0,expenses:0,net:0,noi:0});});});

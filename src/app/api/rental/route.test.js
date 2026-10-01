@@ -1047,3 +1047,45 @@ describe("Rental Manager POST — tenant credit operations", () => {
     }));
   });
 });
+
+describe("Rental Manager POST — convenience fee settings (R12)", () => {
+  function feeClient(rpcResult = { data: { card_convenience_fee_bps: 295 }, error: null }) {
+    return { from: vi.fn(defaultFrom), rpc: vi.fn(async () => rpcResult) };
+  }
+  async function asOwnerWith(client) {
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({
+      application, user: { id: "owner_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
+    });
+  }
+  it("saves a validated percent as integer basis points", async () => {
+    const client = feeClient();
+    await asOwnerWith(client);
+    const response = await POST(request({ operation: "save-convenience-fee", feePercent: "2.95" }));
+    expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("set_rental_card_convenience_fee",
+      { p_owner_id: "owner_1", p_fee_bps: 295 });
+    expect((await response.json()).convenienceFeeBps).toBe(295);
+  });
+  it("rejects an out-of-range or non-numeric percent before touching the database", async () => {
+    for (const feePercent of ["abc", "-1", "150", "2.955"]) {
+      const client = feeClient();
+      await asOwnerWith(client);
+      const response = await POST(request({ operation: "save-convenience-fee", feePercent }));
+      expect(response.status).toBe(400);
+      expect(client.rpc).not.toHaveBeenCalled();
+    }
+  });
+  it("lets a read_only member never change the fee (403)", async () => {
+    const rpc = vi.fn();
+    const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+    createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "staff_read_only" },
+      effectiveOwnerId: "staff_read_only", supabaseClient: { from: vi.fn(defaultFrom), rpc } });
+    memberRole = "read_only";
+    const response = await POST(request({ operation: "save-convenience-fee", feePercent: "2.95" }));
+    memberRole = null;
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toMatch(/read-only/i);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});

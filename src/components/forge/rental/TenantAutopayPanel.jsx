@@ -4,6 +4,7 @@ import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import TenantAutopayBankSetupForm from "./TenantAutopayBankSetupForm";
 import ChargeDayPicker, { ordinalDayOfMonth, dayOfMonth } from "./ChargeDayPicker";
+import { formatFeePercent } from "@/domains/rental-payment/convenienceFee";
 
 const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 // Stashed before bank confirmation so activation can resume if the bank's own login flow
@@ -22,9 +23,15 @@ async function postOperation(payload) {
   return body;
 }
 
-export default function TenantAutopayPanel({ rentals, onChanged }) {
+export default function TenantAutopayPanel({ rentals, onChanged, convenienceFeeBps = 0 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // R12: card autopay carries the convenience fee (explicit consent required);
+  // bank autopay never does. Controlled so the fee-consent checkbox can follow
+  // the chosen method.
+  const [methodType, setMethodType] = useState("us_bank_account");
+  const feeEnabled = Number(convenienceFeeBps) > 0;
+  const needsFeeConsent = methodType === "card" && feeEnabled;
   // Cancel is gated behind an explicit confirmation: stopping future automatic
   // payments is one-way for the upcoming charges, so it must never fire on a
   // single accidental tap.
@@ -162,6 +169,9 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
       </div>
     ) : current ? <>
       <p className="mt-3 text-sm">Status: <strong>{current.status.replaceAll("_", " ")}</strong> · charged on the {ordinalDayOfMonth(current.chargeDay)} of each month</p>
+      {Number(current.feeConsentBps) > 0 ? <p className="mt-2 text-sm text-slate-600">
+        Card payments include a {formatFeePercent(current.feeConsentBps)} convenience fee, agreed when autopay was set up.
+      </p> : null}
       {needsBankLink ? <>
         <p className="mt-2 text-sm text-slate-600">
           Consent is recorded. Link your bank account to activate automatic debits — nothing is charged until the account is linked.
@@ -201,9 +211,13 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
     </> : <form className="mt-4 grid gap-4" onSubmit={(event) => {
         event.preventDefault();
         const f = new FormData(event.currentTarget);
-        submit({ operation: "request-autopay", leaseId: f.get("leaseId"), paymentMethodType: f.get("paymentMethodType"),
+        const method = f.get("paymentMethodType");
+        submit({ operation: "request-autopay", leaseId: f.get("leaseId"), paymentMethodType: method,
           chargeDay: Number(f.get("chargeDay")), reminderDaysBefore: Number(f.get("reminderDaysBefore")),
-          consentConfirmed: f.get("consentConfirmed") === "on" });
+          consentConfirmed: f.get("consentConfirmed") === "on",
+          // R12: the rate the tenant actually saw -- the server rejects any drift.
+          feeConsentConfirmed: method === "card" ? f.get("feeConsentConfirmed") === "on" : undefined,
+          feeConsentBps: method === "card" ? Number(convenienceFeeBps) || 0 : undefined });
       }}>
       <label className="text-sm font-bold">Lease
         <select name="leaseId" required value={effectiveLeaseId} onChange={(event) => setLeaseId(event.target.value)}
@@ -212,11 +226,17 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
         </select>
       </label>
       <label className="text-sm font-bold">Payment method
-        <select name="paymentMethodType" className="mt-1 w-full rounded-xl border p-3 font-normal">
+        <select name="paymentMethodType" value={methodType} onChange={(event) => setMethodType(event.target.value)}
+          className="mt-1 w-full rounded-xl border p-3 font-normal">
           <option value="us_bank_account">US bank account</option>
           <option value="card">Card</option>
         </select>
       </label>
+      {feeEnabled ? <p className="text-xs text-slate-600">
+        {methodType === "card"
+          ? `Card payments include a ${formatFeePercent(convenienceFeeBps)} convenience fee, added to each charge.`
+          : "Bank account payments have no fee."}
+      </p> : null}
       <div className="grid grid-cols-2 gap-3">
         <label className="text-sm font-bold">Charge day (day of the month)
           <ChargeDayPicker value={chargeDay} onChange={pickChargeDay} suggestedDay={suggestedDay} />
@@ -230,6 +250,10 @@ export default function TenantAutopayPanel({ rentals, onChanged }) {
         <input name="consentConfirmed" type="checkbox" required />
         <span>I authorize recurring rent payments under the schedule shown here. I understand enrollment is not active until Stripe securely verifies my payment method and mandate, and I may cancel future payments.</span>
       </label>
+      {needsFeeConsent ? <label className="flex gap-3 rounded-xl bg-amber-50 p-4 text-sm">
+        <input name="feeConsentConfirmed" type="checkbox" required />
+        <span>I agree to the {formatFeePercent(convenienceFeeBps)} card convenience fee on each automatic payment. I understand the fee goes to my landlord&apos;s payment costs and is not part of my rent.</span>
+      </label> : null}
       <button disabled={busy} className="rounded-xl bg-slate-950 px-5 py-3 font-bold text-white disabled:opacity-50">
         {busy ? "Saving…" : "Continue autopay setup"}
       </button>
