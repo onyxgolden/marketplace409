@@ -21,9 +21,16 @@ review/merge boundary.
   01:00 America/Chicago execution per day: a single cron entry fires at both
   candidate UTC slots (06:00/07:00 UTC — 1:00 AM Chicago is 06:00 UTC in CDT,
   07:00 UTC in CST) and a schedule-guard step no-ops the slot whose Chicago
-  local hour is not 01. Manual dispatch always runs. Checkout follows the
-  triggering ref (scheduled runs resolve to main); `npm ci`, run the CLI with
-  `--github-actions`, upload the JSON report as an artifact.
+  local hour is not 01. On the autumn DST fall-back day Chicago has two
+  1:00 AMs (01:00 CDT at 06:00 UTC, 01:00 CST at 07:00 UTC); the guard
+  disambiguates by looking one hour ahead — the first 1:00 AM (next hour
+  still 01) no-ops, the second (next hour 02) runs. The logic lives in
+  `scripts/engineering-brain/docs/dstScheduleGuard.sh` (single source of
+  truth, covered by `__tests__/dstScheduleGuard.test.mjs`), which the
+  workflow sources after an ungated checkout of the triggering ref.
+  Manual dispatch always runs. Scheduled runs resolve to main; `npm ci`,
+  run the CLI with `--github-actions`, upload the JSON report as an
+  artifact.
 - `scripts/engineering-brain/docs/__tests__/runNightlyDocDrift.test.mjs`
 - `package.json` — adds `forge:docs:drift:nightly`.
 
