@@ -43,6 +43,7 @@ const EXPECTED_FUNCTION_IDS = [
   "overview",
   "setup", "insurance", "maintenance", "inspections", "documents",
   "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
+  "listings", "applications",
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
   "owners",
   "reports", "owner-statements",
@@ -124,10 +125,10 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
   });
 });
 
-describe("RentalApplicationShell seven-section Rentec-style registry", () => {
-  it("exposes exactly the seven Rentec-style sections, in order", () => {
+describe("RentalApplicationShell eight-section Rentec-style registry", () => {
+  it("exposes exactly the eight Rentec-style sections, in order", () => {
     expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual([
-      "Summary", "Properties", "Tenants", "Banking", "Owners", "Reports", "Settings",
+      "Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Settings",
     ]);
   });
 
@@ -173,7 +174,7 @@ describe("RentalApplicationShell seven-section Rentec-style registry", () => {
   it("keeps Summary first so retired ids fall back to overview, and never offers Summary as hideable", () => {
     expect(RENTAL_FUNCTIONS[0].id).toBe("overview");
     expect(HIDEABLE_SIDEBAR_SECTIONS.map(({ sectionLabel }) => sectionLabel)).toEqual([
-      "Properties", "Tenants", "Banking", "Owners", "Reports", "Settings",
+      "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Settings",
     ]);
   });
 
@@ -303,7 +304,7 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
-    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Banking", "Owners", "Reports", "Settings"]);
+    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Settings"]);
   });
   it("renders the first-tenant readiness surface as its own reachable function", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
