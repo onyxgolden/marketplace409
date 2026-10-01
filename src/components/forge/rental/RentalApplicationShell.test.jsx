@@ -41,7 +41,7 @@ const EXPECTED_FUNCTION_IDS = [
   "overview",
   "setup", "insurance",
   "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
-  "charges", "deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
+  "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
   "maintenance", "inspections",
   "documents",
   "reports",
@@ -328,6 +328,7 @@ describe("RentalApplicationShell", () => {
   it("renders the Rentec financial history import surface as preview-only",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-financial-history-import"));expect(markup).toContain("Import Rentec financial history");expect(markup).toContain("Preview only");});
   it("renders rent roll and tenant ledger reporting",()=>{const markup=renderToStaticMarkup(buildRentalSurface("reports"));expect(markup).toContain("Rent roll and tenant ledger");expect(markup).toContain("Loading report");});
   it("renders a separate security-deposit liability ledger",()=>{const markup=renderToStaticMarkup(buildRentalSurface("deposits"));expect(markup).toContain("Security deposits");expect(markup).toContain("never treated as rent or NOI");});
+  it("renders the checks and deposits banking tools",()=>{const markup=renderToStaticMarkup(buildRentalSurface("checks-deposits"));expect(markup).toContain("Print recorded check payments");expect(markup).toContain("Print checks");expect(markup).toContain("Bank deposits");});
   it("renders controlled move-in and move-out inspections",()=>{const markup=renderToStaticMarkup(buildRentalSurface("inspections"));expect(markup).toContain("Move-in, move-out, and periodic inspections");expect(markup).toContain("never creates a deduction");});
   it("renders auditable lease changes and owner-controlled late fees",()=>{const markup=renderToStaticMarkup(buildRentalSurface("lease-lifecycle"));expect(markup).toContain("Renewals, amendments, and prorating");expect(markup).toContain("Owner-controlled late fees");});
   it("renders editable lease preparation without claiming a licensed form",()=>{const markup=renderToStaticMarkup(buildRentalSurface("lease-preparation"));expect(markup).toContain("Editable terms and version history");expect(markup).toContain("not the Texas REALTORS® form");expect(markup).toContain("Save immutable draft version");});
