@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
+import DepreciationAssetsPanel from "./DepreciationAssetsPanel";
 
 function emptyLine() {
   return { date: "", description: "", amount: "", capitalized: true };
@@ -183,5 +184,6 @@ export default function PropertyFinancialSetupPanel({ recordContext, onNavigate 
 
       <button type="submit" disabled={busy} className="rounded-xl bg-amber-500 px-5 py-3 font-black text-slate-950 disabled:opacity-40">{busy ? "Saving…" : "Save financial setup"}</button>
     </form>
+    {propertyId && <DepreciationAssetsPanel propertyId={propertyId} />}
   </section>;
 }
