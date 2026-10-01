@@ -190,9 +190,9 @@ describe("RentalPaymentsPanel charge-generation identity", () => {
     expect(markup).toContain("property-2");
   });
 
-  it("keeps the Generate monthly charge action tied to the correct schedule", () => {
+  it("keeps the Generate charge action tied to the correct schedule", () => {
     const markup = renderToStaticMarkup(<RentalPaymentsPanel initialData={baseData} initialAccount={null} initialShowSetup />);
-    expect(markup.split("Generate monthly charge").length - 1).toBe(2);
+    expect(markup.split("Generate charge").length - 1).toBe(2);
   });
 
   it("shows an explicit Unknown warning in the row instead of silently omitting identity", () => {
@@ -235,7 +235,7 @@ function unmountPanel({ container, root }) {
   container.remove();
 }
 
-describe("RentalPaymentsPanel Generate monthly charge interaction", () => {
+describe("RentalPaymentsPanel Generate charge interaction", () => {
   let mounted;
 
   afterEach(() => {
@@ -258,7 +258,7 @@ describe("RentalPaymentsPanel Generate monthly charge interaction", () => {
 
     clickButton(findButtonByText(container, "Billing setup"));
 
-    const generateButtons = findAllButtonsByText(container, "Generate monthly charge");
+    const generateButtons = findAllButtonsByText(container, "Generate charge");
     expect(generateButtons).toHaveLength(2);
 
     await clickButtonAndFlush(generateButtons[1]);
@@ -294,7 +294,7 @@ describe("RentalPaymentsPanel Generate monthly charge interaction", () => {
       const periodInput = container.querySelector('input[name="period"]');
       expect(periodInput.value).toBe("2026-09");
 
-      await clickButtonAndFlush(findButtonByText(container, "Generate monthly charge"));
+      await clickButtonAndFlush(findButtonByText(container, "Generate charge"));
 
       const postCall = fetchMock.mock.calls.find(([, options]) => options?.method === "POST");
       const body = JSON.parse(postCall[1].body);

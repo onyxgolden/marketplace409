@@ -1151,3 +1151,76 @@ describe("Rental Manager POST — convenience fee settings (R12)", () => {
       { p_owner_id: "owner_1", p_fee_bps: 295 });
   });
 });
+  // R13: payment frequency on update-lease-terms -- owner-scoped second write on
+  // the schedule row only (frequency lives there, not on the lease).
+  describe("update-lease-terms payment frequency", () => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const terms = { leaseId: "lease_1", monthlyRentCents: 160000, rentDueDay: 1,
+      startDate: "2026-09-01", earlyPayDays: 7 };
+    function mocksForFrequency(currentFrequency) {
+      const leaseQuery = { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => ({ data: { id: "lease_1", status: "active" }, error: null })) };
+      const rpc = vi.fn(async () => ({ data: { lease: { id: "lease_1", status: "active" },
+        schedule: { id: "schedule_1", lease_id: "lease_1", payment_frequency: currentFrequency } }, error: null }));
+      const updatePayloads = [];
+      const scheduleQuery = {
+        select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn(async () => currentFrequency === undefined ? { data: null, error: null }
+          : { data: { id: "schedule_1", payment_frequency: currentFrequency }, error: null }),
+        update: vi.fn((payload) => { updatePayloads.push(payload); return scheduleQuery; }),
+      };
+      const from = vi.fn((table) => table === "rental_leases" ? leaseQuery
+        : table === "rent_schedules" ? scheduleQuery : defaultFrom(table));
+      return { leaseQuery, rpc, from, scheduleQuery, updatePayloads };
+    }
+    async function postTerms(extraTerms, currentFrequency) {
+      const mocks = mocksForFrequency(currentFrequency);
+      const { createAuthenticatedRentalManagerApplication } = await import("@/lib/supabase/createAuthenticatedRentalManagerApplication");
+      createAuthenticatedRentalManagerApplication.mockResolvedValueOnce({ application, user: { id: "owner_1" },
+        effectiveOwnerId: "owner_1", supabaseClient: { from: mocks.from, rpc: mocks.rpc } });
+      const response = await POST(request({ operation: "update-lease-terms",
+        terms: { ...terms, ...extraTerms } }));
+      return { response, body: await response.json(), ...mocks };
+    }
+    it("writes the new frequency and resets the anchor to today on a change", async () => {
+      const { response, body, rpc, scheduleQuery, updatePayloads } =
+        await postTerms({ paymentFrequency: "weekly" }, "monthly");
+      expect(response.status).toBe(200);
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(scheduleQuery.update).toHaveBeenCalledTimes(1);
+      expect(updatePayloads[0].payment_frequency).toBe("weekly");
+      expect(updatePayloads[0].payment_anchor_date).toBe(todayStr);
+      expect(body.schedule).toBeDefined();
+    });
+    it("honors an explicit anchor instead of resetting to today", async () => {
+      const { response, updatePayloads } = await postTerms(
+        { paymentFrequency: "biweekly", paymentAnchorDate: "2026-09-05" }, "monthly");
+      expect(response.status).toBe(200);
+      expect(updatePayloads[0].payment_frequency).toBe("biweekly");
+      expect(updatePayloads[0].payment_anchor_date).toBe("2026-09-05");
+    });
+    it("keeps the existing anchor when the frequency is unchanged", async () => {
+      const { response, updatePayloads } = await postTerms({ paymentFrequency: "monthly" }, "monthly");
+      expect(response.status).toBe(200);
+      expect(updatePayloads[0].payment_frequency).toBe("monthly");
+      expect(updatePayloads[0]).not.toHaveProperty("payment_anchor_date");
+    });
+    it("skips the second write entirely when no frequency is passed", async () => {
+      const { response, scheduleQuery } = await postTerms({}, "monthly");
+      expect(response.status).toBe(200);
+      expect(scheduleQuery.update).not.toHaveBeenCalled();
+    });
+    it("rejects an invalid frequency before any write", async () => {
+      const { response, rpc, scheduleQuery } = await postTerms({ paymentFrequency: "fortnightly" }, "monthly");
+      expect(response.status).toBe(400);
+      expect(rpc).not.toHaveBeenCalled();
+      expect(scheduleQuery.update).not.toHaveBeenCalled();
+    });
+    it("rejects a malformed anchor date before any write", async () => {
+      const { response, rpc, scheduleQuery } = await postTerms(
+        { paymentFrequency: "weekly", paymentAnchorDate: "09/05/2026" }, "monthly");
+      expect(response.status).toBe(400);
+      expect(rpc).not.toHaveBeenCalled();
+      expect(scheduleQuery.update).not.toHaveBeenCalled();
+    });
+  });

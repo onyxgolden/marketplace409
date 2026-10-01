@@ -111,6 +111,55 @@ export async function POST(request) {
       }
       const{data,error}=await authenticated.supabaseClient.rpc("request_rental_autopay_enrollment",{p_lease_id:body.leaseId,p_payment_method_type:body.paymentMethodType,p_charge_day:Number(body.chargeDay),p_reminder_days_before:Number(body.reminderDaysBefore),p_consent_text:consentText,p_provider_mode:provider.mode,p_fee_consent_bps:feeConsentBps});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
     }
+    if(body?.operation==="change-payment-frequency"){
+      // R13: portal self-scheduling. The tenant sees their frequency and may
+      // change it directly; the owner is notified through the in-portal
+      // conversation thread (unread for the owner). The owner can disable
+      // tenant changes entirely via rental_billing_settings.
+      const leaseId=typeof body.leaseId==="string"?body.leaseId.trim():"";
+      const paymentFrequency=body.paymentFrequency;
+      if(!leaseId)return NextResponse.json({error:"leaseId is required."},{status:400});
+      if(!["weekly","biweekly","monthly"].includes(paymentFrequency))
+        return NextResponse.json({error:"paymentFrequency must be weekly, biweekly, or monthly."},{status:400});
+      const database=createRentalWebhookClient();
+      const{data:tenant,error:tenantError}=await database.from("rental_tenants")
+        .select("id, owner_id, display_name").eq("auth_user_id",authenticated.user.id).maybeSingle();
+      if(tenantError)throw tenantError;
+      if(!tenant)return NextResponse.json({error:"No tenant portal access is linked to this account."},{status:403});
+      // Tenant must be on this lease -- a cross-lease id resolves to 403, never leaks.
+      const{data:membership,error:membershipError}=await database.from("rental_lease_tenants")
+        .select("lease_id").eq("owner_id",tenant.owner_id).eq("tenant_id",tenant.id).eq("lease_id",leaseId).maybeSingle();
+      if(membershipError)throw membershipError;
+      if(!membership)return NextResponse.json({error:"This lease was not found."},{status:403});
+      const{data:settings,error:settingsError}=await database.from("rental_billing_settings")
+        .select("tenant_may_change_payment_frequency").eq("owner_id",tenant.owner_id).maybeSingle();
+      if(settingsError)throw settingsError;
+      if(settings&&settings.tenant_may_change_payment_frequency===false)
+        return NextResponse.json({error:"The landlord has disabled payment schedule changes in the portal."},{status:403});
+      const{data:schedule,error:scheduleError}=await database.from("rent_schedules")
+        .select("id, lease_id, payment_frequency").eq("owner_id",tenant.owner_id).eq("lease_id",leaseId)
+        .eq("status","active").maybeSingle();
+      if(scheduleError)throw scheduleError;
+      if(!schedule)return NextResponse.json({error:"No active rent schedule was found for this lease."},{status:409});
+      if(schedule.payment_frequency===paymentFrequency)
+        return NextResponse.json({success:true,unchanged:true,schedule});
+      const todayStr=new Date().toISOString().slice(0,10);
+      // Anchor resets to the change date (same rule as the owner-side edit),
+      // so the new cadence starts cleanly with no backfilled occurrences.
+      const{data:updated,error:updateError}=await database.from("rent_schedules")
+        .update({payment_frequency:paymentFrequency,payment_anchor_date:todayStr,updated_at:new Date().toISOString()})
+        .eq("owner_id",tenant.owner_id).eq("id",schedule.id).select("*").single();
+      if(updateError)throw updateError;
+      const frequencyLabel={weekly:"weekly",biweekly:"every two weeks",monthly:"monthly"}[paymentFrequency];
+      const previousLabel={weekly:"weekly",biweekly:"every two weeks",monthly:"monthly"}[schedule.payment_frequency]||"monthly";
+      // Owner notification: an automatic tenant-sent message in the shared
+      // thread, which the owner sees as unread in the Messages panel.
+      const{error:messageError}=await authenticated.supabaseClient.rpc("send_rental_conversation_tenant_message",{
+        p_body:`[Automatic update] ${tenant.display_name||"The tenant"} changed their payment schedule from ${previousLabel} to ${frequencyLabel}. Future charges follow the new schedule; charges already generated keep their original terms.`,
+        p_category:null});
+      if(messageError)throw messageError;
+      return NextResponse.json({success:true,schedule:updated});
+    }
     if(body?.operation==="cancel-autopay"){
       if(!body.enrollmentId)return NextResponse.json({error:"enrollmentId is required."},{status:400});const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_autopay_enrollment",{p_enrollment_id:body.enrollmentId,p_reason:body.reason||"Cancelled by tenant"});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
     }

@@ -12,6 +12,7 @@ import RentalPaymentReceipt from "./RentalPaymentReceipt";
 import TenantDepositPanel from "./TenantDepositPanel";
 import TenantInspectionsPanel from "./TenantInspectionsPanel";
 import TenantAutopayPanel from "./TenantAutopayPanel";
+import TenantPaymentSchedulePanel from "./TenantPaymentSchedulePanel";
 import AutopayPaymentNotice from "./AutopayPaymentNotice";
 import TenantInsurancePanel from "./TenantInsurancePanel";
 import TenantAnimalsPanel from "./TenantAnimalsPanel";
@@ -228,7 +229,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
           dueDate={date.format(new Date(`${session.dueDate}T00:00:00`))} chargeLabel={(session.chargeType || "rent").replaceAll("_", " ")} onCancel={() => setSession(null)} />
       </Elements></section>) : review ? <TenantPaymentReview charge={review.charge} feeBps={portal.convenienceFeeBps || 0}
         starting={starting === review.charge.id} onCancel={() => setReview(null)}
-        onConfirm={(selection) => confirmReview(review.charge.id, selection)} /> : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [], credits = [], creditApplications = [] }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
+        onConfirm={(selection) => confirmReview(review.charge.id, selection)} /> : portal.rentals.map(({ lease, unit, charges, payments = [], schedules = [], credits = [], creditApplications = [], billingCadence = null }) => <section key={lease.id} className="rounded-2xl border bg-white p-6 shadow-sm">
       <h2 className="text-xl font-black">{unit?.label || "Rental home"}</h2>
       <p className="mt-1 text-sm text-slate-500">Lease {lease.startDate} {lease.endDate ? `through ${lease.endDate}` : "— current"}</p>
       <div className="mt-6 space-y-3">{charges.map((charge) => <div key={charge.id} className="flex items-center justify-between gap-4 rounded-xl border p-4">
@@ -245,6 +246,7 @@ export default function TenantPortal({ initialPortal = null } = {}) {
             })() : <p className="mt-2 text-xs font-bold uppercase tracking-wide text-slate-500">Managed in Rentec</p>
           ) : null}</div>
       </div>)}</div>
+      <TenantPaymentSchedulePanel leaseId={lease.id} billingCadence={billingCadence} onChanged={reloadPortal} />
       {credits.length ? <div className="mt-8 border-t pt-6"><h3 className="font-black">Rent credits</h3>
         <p className="mt-1 text-sm text-slate-500">
           Overpayments you already paid are held as credit and applied to future rent automatically, oldest first.

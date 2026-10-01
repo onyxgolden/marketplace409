@@ -312,4 +312,75 @@ describe("TenantPortalQueryService tenant credits", () => {
     expect(tables.rental_tenant_credits.eq).toHaveBeenCalledWith("tenant_id", "tenant_1");
     expect(tables.rental_credit_applications.eq).toHaveBeenCalledWith("tenant_id", "tenant_1");
   });
+
+  // R13: the portal rental carries the tenant's payment cadence -- frequency in
+  // plain English, the whole-cent amount of each payment, and the next due date.
+  describe("billingCadence", () => {
+    const TENANT = { id: "tenant_1", owner_id: "owner_1", auth_user_id: "auth_1", display_name: "T",
+      email: "t@example.com", phone: null, status: "active", invited_at: null, activated_at: null,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+    const LEASE = { owner_id: "owner_1", id: "lease_1", property_id: "property_1", unit_id: "unit_1",
+      status: "active", start_date: "2026-09-01", end_date: null, monthly_rent_cents: 160000,
+      currency_code: "USD", rent_due_day: 1, document_evidence_id: null, activated_at: "2026-09-01T12:00:00Z",
+      ended_at: null, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", notes: null };
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const WEEKLY_SCHEDULE = { id: "schedule_1", owner_id: "owner_1", lease_id: "lease_1", status: "active",
+      amount_cents: 160000, currency_code: "USD", due_day: 1, effective_start_date: "2026-09-01",
+      effective_end_date: null, collection_mode: "forge", collection_provider: null,
+      forge_cutover_date: "2026-09-01", early_pay_days: 7, payment_frequency: "weekly",
+      payment_anchor_date: todayStr, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" };
+    function tablesFor(scheduleRows) {
+      return {
+        rental_tenants: chain({ data: TENANT, error: null }),
+        rental_billing_settings: chain({ data: null, error: null }),
+        rental_lease_tenants: chain({ data: [{ owner_id: "owner_1", lease_id: "lease_1", tenant_id: "tenant_1" }], error: null }),
+        rental_leases: chain({ data: [LEASE], error: null }),
+        rental_units: chain({ data: null, error: null }),
+        rent_schedules: chain({ data: scheduleRows, error: null }),
+        rent_charges: chain({ data: [], error: null }),
+        rental_payments: chain({ data: [], error: null }),
+        renters_insurance_requirements: chain({ data: null, error: null }),
+        renters_insurance_policies: chain({ data: [], error: null }),
+        rental_maintenance_requests: chain({ data: [], error: null }),
+        rental_security_deposits: chain({ data: [], error: null }),
+        rental_inspections: chain({ data: [], error: null }),
+        rental_autopay_enrollments: chain({ data: [], error: null }),
+        rental_animals: chain({ data: [], error: null }),
+        rental_lease_preparations: chain({ data: null, error: null }),
+        rental_tenant_credits: chain({ data: [], error: null }),
+        rental_credit_applications: chain({ data: [], error: null }),
+        rental_conversations: chain({ data: null, error: null }),
+      };
+    }
+    function chain(result) {
+      const node = { select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+        order: vi.fn(() => node), maybeSingle: vi.fn(async () => result), then: (resolve) => resolve(result) };
+      return node;
+    }
+    async function loadRental(scheduleRows) {
+      const tables = tablesFor(scheduleRows);
+      const service = new TenantPortalQueryService({
+        from: vi.fn((table) => tables[table]),
+        rpc: vi.fn(async () => ({ data: [], error: null })),
+      });
+      const portal = await service.load("auth_1");
+      return portal.rentals[0];
+    }
+    it("summarizes a weekly schedule with the per-payment amount and next due date", async () => {
+      const rental = await loadRental([WEEKLY_SCHEDULE]);
+      expect(rental.billingCadence).toEqual({ frequency: "weekly",
+        frequencyLabel: "Paid weekly \u2014 52 payments a year",
+        perPaymentCents: 36923, nextDueDate: todayStr });
+    });
+    it("summarizes a monthly schedule at the headline rent", async () => {
+      const rental = await loadRental([{ ...WEEKLY_SCHEDULE, payment_frequency: "monthly", payment_anchor_date: null }]);
+      expect(rental.billingCadence).toEqual({ frequency: "monthly",
+        frequencyLabel: "Paid monthly \u2014 12 payments a year",
+        perPaymentCents: 160000, nextDueDate: expect.stringMatching(/^\d{4}-\d{2}-01$/) });
+    });
+    it("is null when the rental has no schedule", async () => {
+      const rental = await loadRental([]);
+      expect(rental.billingCadence).toBeNull();
+    });
+  });
 });

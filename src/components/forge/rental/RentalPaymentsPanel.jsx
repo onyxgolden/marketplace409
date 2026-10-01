@@ -116,6 +116,20 @@ export function defaultChargeMonth(schedule, today = new Date()) {
   return new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 7);
 }
 
+// R13: for weekly/bi-weekly schedules the manual charge form needs a full due
+// date, not a month -- the next cadence occurrence on or after today.
+export function defaultChargeDueDate(schedule, today = new Date()) {
+  const todayStr = today.toISOString().slice(0, 10);
+  const frequency = schedule.payment_frequency || "monthly";
+  if (frequency === "monthly") return `${defaultChargeMonth(schedule, today)}-${String(schedule.due_day).padStart(2, "0")}`;
+  const step = frequency === "weekly" ? 7 : 14;
+  const anchor = schedule.payment_anchor_date || schedule.effective_start_date || todayStr;
+  const anchorMs = Date.parse(`${anchor}T00:00:00.000Z`);
+  const todayMs = Date.parse(`${todayStr}T00:00:00.000Z`);
+  const index = Number.isNaN(anchorMs) ? 0 : Math.max(0, Math.ceil((todayMs - anchorMs) / (step * 86_400_000)));
+  return new Date((Number.isNaN(anchorMs) ? todayMs : anchorMs) + index * step * 86_400_000).toISOString().slice(0, 10);
+}
+
 export function isChargeVoidable(charge) {
   return charge.status !== "void" && Number(charge.paid_amount_cents) === 0;
 }
@@ -344,8 +358,11 @@ export default function RentalPaymentsPanel({ initialData = null, initialAccount
             <p className="mt-1 font-bold text-slate-700 dark:text-slate-300">{money.format(Number(schedule.amount_cents) / 100)} monthly · due day {schedule.due_day} · lease {context.leaseStatus ? label(context.leaseStatus) : "unknown"} · schedule {label(schedule.status)}</p>
             {schedule.status === "draft" ? <button type="button" disabled={busy} onClick={() => post({ operation: "activate-lease-schedule", scheduleId: schedule.id }, () => "Lease and rent schedule activated.")} className="mt-3 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300">Activate lease and schedule</button> : null}
             {schedule.status === "active" ? <form onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); post({ operation: "generate-charge", scheduleId: schedule.id, period: form.get("period") }, (body) => `Rent charge ready for ${body.charge.period}.`); }} className="mt-3 flex items-end gap-3">
-              <label className="text-sm font-bold text-slate-900 dark:text-white">Charge month<input name="period" type="month" required defaultValue={defaultChargeMonth(schedule)} className="mt-1 block rounded-xl border border-slate-300 p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
-              <button disabled={busy} className={`rounded-xl px-4 py-2 text-sm font-black transition ${goldControlClassName}`}>Generate monthly charge</button>
+              {/* R13: sub-monthly schedules need a full due date, not a month */}
+              {schedule.payment_frequency && schedule.payment_frequency !== "monthly"
+                ? <label className="text-sm font-bold text-slate-900 dark:text-white">Charge due date<input name="period" type="date" required defaultValue={defaultChargeDueDate(schedule)} className="mt-1 block rounded-xl border border-slate-300 p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+                : <label className="text-sm font-bold text-slate-900 dark:text-white">Charge month<input name="period" type="month" required defaultValue={defaultChargeMonth(schedule)} className="mt-1 block rounded-xl border border-slate-300 p-2 font-normal dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>}
+              <button disabled={busy} className={`rounded-xl px-4 py-2 text-sm font-black transition ${goldControlClassName}`}>Generate charge</button>
             </form> : null}
           </div>; })}
         </div>

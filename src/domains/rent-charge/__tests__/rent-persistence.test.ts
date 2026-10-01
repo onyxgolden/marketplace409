@@ -13,7 +13,10 @@ const charge = (id = "charge_1") => createRentCharge({ id, leaseId: "lease_1", s
   updatedAt: "2026-09-01T00:00:00.000Z", voidedAt: null, notes: null });
 describe("rent persistence", () => {
   it("round trips schedules and charges", () => {
-    expect(mapRentScheduleRow(mapRentScheduleToRow(schedule, "owner_1"))).toEqual(schedule);
+    // R13: a null payment anchor is resolved to the effective start date at
+    // write time, so a DB round trip returns the resolved anchor.
+    expect(mapRentScheduleRow(mapRentScheduleToRow(schedule, "owner_1"))).toEqual(
+      { ...schedule, paymentAnchorDate: schedule.effectiveStartDate });
     expect(mapRentChargeRow(mapRentChargeToRow(charge(), "owner_1"))).toEqual(charge());
   });
   it("isolates repository reads by owner", async () => {

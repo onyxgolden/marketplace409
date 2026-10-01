@@ -1,12 +1,22 @@
 import { createRentCharge } from "./rent-charge.types";
 import type { RentCharge } from "./rent-charge.types";
 import type { RentSchedule } from "../rent-schedule";
+import { paymentFrequencyOf, paymentAnchorDate, periodAmountCents, occurrenceIndexForDueDate } from "../rent-schedule";
 
-function periodDate(period: string, day: number): string {
+function monthlyPeriodDate(period: string, day: number): string {
   if (!/^\d{4}-\d{2}$/.test(period)) throw new Error("Rent charge period must use YYYY-MM format.");
   const value = `${period}-${String(day).padStart(2, "0")}`;
   if (Number.isNaN(Date.parse(`${value}T00:00:00.000Z`))) throw new Error("Rent charge period must be valid.");
   return value;
+}
+
+// R13: sub-monthly periods are the full due date (YYYY-MM-DD). The period must
+// be a real date; whether it lands on the schedule's cadence is checked by the
+// caller via occurrenceIndexForDueDate (a non-occurrence yields no charge).
+function subMonthlyPeriodDate(period: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(period) || Number.isNaN(Date.parse(`${period}T00:00:00.000Z`)))
+    throw new Error("Rent charge period must use YYYY-MM-DD format for weekly and bi-weekly schedules.");
+  return period;
 }
 
 export function rentChargeSourceKey(scheduleId: string, period: string): string {
@@ -27,9 +37,28 @@ export function generateRentCharge({
   // below), so the relevant boundary is the charge's own due date versus the cutover date, checked
   // next, not whether cutover happens to have already arrived at generation time.
   if (schedule.collectionMode !== "forge" || !schedule.forgeCutoverDate) return null;
-  const dueDate = periodDate(period, schedule.dueDay);
-  const periodEnd = `${period}-28`;
-  if (periodEnd < schedule.effectiveStartDate || (schedule.effectiveEndDate !== null && dueDate > schedule.effectiveEndDate)) return null;
+  const frequency = paymentFrequencyOf(schedule);
+  // R13: monthly keeps its exact prior behavior (period YYYY-MM, due on dueDay,
+  // amount = the headline monthly rent). Weekly/bi-weekly periods are full due
+  // dates on the cadence; each amount is that occurrence's share of the annual
+  // rent in whole cents (see periodAmountCents for the rounding rule).
+  let dueDate: string;
+  let amountCents: number;
+  if (frequency === "monthly") {
+    dueDate = monthlyPeriodDate(period, schedule.dueDay);
+    amountCents = schedule.amountCents;
+  } else {
+    dueDate = subMonthlyPeriodDate(period);
+    const occurrenceIndex = occurrenceIndexForDueDate({ anchorDate: paymentAnchorDate(schedule), dueDate, frequency });
+    // Not on the cadence (or before the anchor): not a real charge occurrence.
+    if (occurrenceIndex === null) return null;
+    amountCents = periodAmountCents({ monthlyAmountCents: schedule.amountCents, frequency, occurrenceIndex });
+  }
+  // Monthly keeps the original overlap check (any part of the month on/after the
+  // start date generates); sub-monthly periods are single dates, so the due
+  // date itself must be on/after the start date.
+  const effectiveOverlap = frequency === "monthly" ? `${period}-28` >= schedule.effectiveStartDate : dueDate >= schedule.effectiveStartDate;
+  if (!effectiveOverlap || (schedule.effectiveEndDate !== null && dueDate > schedule.effectiveEndDate)) return null;
   // Rentec-parity R10: no charge with a due date before the lease's
   // begin-charges date — this is what prevents the bogus past-due balance when
   // the move-in date and the charge start date differ (moved in Aug 28,
@@ -40,12 +69,12 @@ export function generateRentCharge({
   if (dueDate < schedule.forgeCutoverDate) return null;
   const sourceKey = rentChargeSourceKey(schedule.id, period);
   return createRentCharge({
-    id: `rent_charge_${schedule.id}_${period.replace("-", "")}`,
+    id: `rent_charge_${schedule.id}_${period.replaceAll("-", "")}`,
     leaseId: schedule.leaseId,
     scheduleId: schedule.id,
     period,
     dueDate,
-    amountCents: schedule.amountCents,
+    amountCents,
     paidAmountCents: 0,
     currencyCode: schedule.currencyCode,
     status: dueDate > now.slice(0, 10) ? "scheduled" : "due",

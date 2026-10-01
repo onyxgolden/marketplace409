@@ -40,7 +40,9 @@ export function createRentCharge(charge: RentCharge): RentCharge {
     throw new Error("Rent charge amount must be a positive integer number of cents.");
   if (!Number.isSafeInteger(charge.paidAmountCents) || charge.paidAmountCents < 0 || charge.paidAmountCents > charge.amountCents)
     throw new Error("Rent charge paid amount must be between zero and the charge amount.");
-  if (!/^\d{4}-\d{2}$/.test(charge.period)) throw new Error("Rent charge period must use YYYY-MM format.");
+  // R13: monthly charges use YYYY-MM; weekly/bi-weekly charges use their full
+  // due date YYYY-MM-DD (the DB check constraint was broadened the same way).
+  if (!/^\d{4}-\d{2}(-\d{2})?$/.test(charge.period)) throw new Error("Rent charge period must use YYYY-MM or YYYY-MM-DD format.");
   const currencyCode = required(charge.currencyCode, "a currency code").toUpperCase();
   if (!/^[A-Z]{3}$/.test(currencyCode)) throw new Error("Rent charge currency code must contain three letters.");
   if (charge.status === "paid" && charge.paidAmountCents !== charge.amountCents)
