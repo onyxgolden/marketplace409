@@ -4,6 +4,7 @@ import PostIncomeForm from "./PostIncomeForm";
 import AddTenantChargeForm from "./AddTenantChargeForm";
 import TenantCreditSection from "./TenantCreditSection";
 import TenantInvoiceEditor from "./TenantInvoiceEditor";
+import StatementEmailDialog from "./StatementEmailDialog";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
@@ -67,6 +68,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
   const [compactRows, setCompactRows] = useState(false);
   const [showSubLine, setShowSubLine] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [emailStatementOpen, setEmailStatementOpen] = useState(false);
   const depositsRef = useRef(null);
   const printFired = useRef(false);
   // The On Deposit pill scrolls to the inline deposits section and briefly
@@ -133,8 +135,22 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
 
   const openInvoice = (entry) => {
     if (entry.kind !== "charge" || entry.status === "void") return;
-    setInvoiceCharge({ chargeId: entry.sourceId || String(entry.id).replace(/^charge:/, ""), label: entry.label });
+    setInvoiceCharge({ chargeId: entry.sourceId || String(entry.id).replace(/^charge:/, ""), label: entry.label, tenantEmail: data?.tenant?.email || "" });
   };
+
+  async function sendStatementEmail() {
+    const response = await fetch("/api/rental/tenant-statement-email", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tenantId, kind: "statement" }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "The statement email could not be sent.");
+    setEmailStatementOpen(false);
+    refresh();
+    setPostedMessage(body.alreadySent
+      ? `Statement already sent to ${body.recipient || data?.tenant?.email || "the tenant"}.`
+      : `Statement emailed to ${body.recipient || data?.tenant?.email || "the tenant"}.`);
+  }
 
   // The invoice editor is its own screen — the reference's Edit Invoice page.
   if (invoiceCharge) {
@@ -147,6 +163,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
         </button>
         <div className="mt-4">
           <TenantInvoiceEditor chargeId={invoiceCharge.chargeId} tenantId={tenantId} tenantName={tenantName}
+            tenantEmail={invoiceCharge.tenantEmail}
             onClose={() => setInvoiceCharge(null)}
             onSaved={() => { setPostedMessage("Invoice saved."); refresh(); }} />
         </div>
@@ -190,6 +207,11 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
             title="Security deposits held for this tenant — jump to the deposits section below"
             className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-2.5 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
             On Deposit: {money.format(heldCents / 100)}
+          </button>
+          <button type="button" onClick={() => { setPostedMessage(""); setEmailStatementOpen(true); }}
+            title="Email this tenant their ledger statement"
+            className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-2.5 text-sm font-black text-sky-700 transition hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/60 print:hidden">
+            Email Statement
           </button>
           <div className="relative">
             <button type="button" onClick={() => setSettingsOpen((open) => !open)} aria-label="Ledger display settings"
@@ -463,6 +485,19 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       )}
 
       {detailEntry && <TransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} />}
+      {emailStatementOpen && (
+        <StatementEmailDialog
+          title={`Email statement — ${tenantName || "tenant"}`}
+          recipientEmail={data?.tenant?.email || ""}
+          summaryLines={[
+            { label: "Ledger entries", value: String(filteredEntries.length) },
+            { label: "Balance due", value: money.format(Number(ledger?.balanceCents || 0) / 100) },
+          ]}
+          confirmLabel="Send statement"
+          onConfirm={sendStatementEmail}
+          onClose={() => setEmailStatementOpen(false)}
+        />
+      )}
     </section>
   );
 }
