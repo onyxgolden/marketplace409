@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { rowToForm, validateFormInput } from "@/domains/rental-forms/noticeLibrary";
 
 export const runtime = "nodejs";
@@ -9,11 +9,14 @@ export const runtime = "nodejs";
 // the API (duplicate one to customize it); custom forms can be edited and
 // deleted by owner/co-owner.
 
-async function readOnlyWriteBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
+// Writes are owner/co-owner only: isOwnerOrActiveCoOwner is true for the
+// primary owner (no workspace_members row) and an active co_owner, and false
+// for manager, bookkeeper, and read_only staff.
+async function ownerWriteBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
-  })) === "read_only";
+  }));
 }
 
 async function loadForm(authenticated, id) {
@@ -43,8 +46,8 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
-  if (await readOnlyWriteBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot manage custom forms." }, { status: 403 });
+  if (await ownerWriteBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can manage custom forms." }, { status: 403 });
   }
   const body = await request.json().catch(() => ({}));
   const validated = validateFormInput(body);
@@ -76,8 +79,8 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
-  if (await readOnlyWriteBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot manage custom forms." }, { status: 403 });
+  if (await ownerWriteBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can manage custom forms." }, { status: 403 });
   }
   try {
     const existing = await loadForm(authenticated, params.id);

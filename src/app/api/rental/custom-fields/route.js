@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { rowToField, validateFieldDefinition } from "@/domains/rental-forms/customFields";
 
 export const runtime = "nodejs";
@@ -8,13 +8,16 @@ export const runtime = "nodejs";
 // Rentec parity R15: custom field definitions (Settings → Custom fields in
 // Rentec's IA; FORGE mounts it in the Rental Setup panel). GET is readable
 // by every workspace member — reading definitions is not a write. POST/PUT/
-// DELETE are owner/co-owner only (403 for read-only members).
+// DELETE are owner/co-owner only (403 for manager, bookkeeper, and read-only members).
 
-async function readOnlyWriteBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
+// Writes are owner/co-owner only: isOwnerOrActiveCoOwner is true for the
+// primary owner (no workspace_members row) and an active co_owner, and false
+// for manager, bookkeeper, and read_only staff.
+async function ownerWriteBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
-  })) === "read_only";
+  }));
 }
 
 export async function GET(request) {
@@ -43,8 +46,8 @@ export async function GET(request) {
 export async function POST(request) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
-  if (await readOnlyWriteBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot manage custom fields." }, { status: 403 });
+  if (await ownerWriteBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can manage custom fields." }, { status: 403 });
   }
   const body = await request.json().catch(() => ({}));
   const validated = validateFieldDefinition(body);

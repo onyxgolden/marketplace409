@@ -1,21 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+// NOTE: isOwnerOrActiveCoOwner is intentionally NOT mocked here — the stub
+// supabase client answers the workspace_members query, so these tests prove
+// the real role matrix (primary owner / co_owner allowed; manager,
+// bookkeeper, read_only blocked) end to end through the route.
 import { GET, POST } from "./route";
 
-function makeDb({ definitions = [], values = [] } = {}) {
-  const calls = { upsert: [], delete: [], in: [] };
+// memberRole: null = primary owner (no workspace_members row),
+// otherwise the active membership role.
+function makeDb({ definitions = [], values = [], memberRole = null, recordExists = true, rpcError = null } = {}) {
+  const calls = { rpc: [], tableOps: [] };
   const tableFor = (name) => {
     const chain = {
       select() { return chain; },
       eq() { return chain; },
       order() { return chain; },
-      in(column, ids) { calls.in.push([name, column, ids]); return chain; },
-      delete() { calls.delete.push(name); return chain; },
-      upsert(rows, options) { calls.upsert.push([name, rows, options]); return Promise.resolve({ error: null }); },
-      async maybeSingle() { return { data: null, error: null }; },
+      limit() { return chain; },
+      in(column, ids) { calls.tableOps.push(["in", name, column, ids]); return chain; },
+      delete() { calls.tableOps.push(["delete", name]); return chain; },
+      upsert(rows, options) { calls.tableOps.push(["upsert", name, rows, options]); return Promise.resolve({ error: null }); },
+      async maybeSingle() {
+        if (name === "workspace_members") {
+          return { data: memberRole === null ? null : { role: memberRole }, error: null };
+        }
+        // Record-existence probe for the custom-field entity tables.
+        return { data: recordExists ? { probe: 1 } : null, error: null };
+      },
       then(resolve) {
         if (name === "rental_custom_fields") resolve({ data: definitions, error: null });
         else resolve({ data: values, error: null });
@@ -23,7 +34,14 @@ function makeDb({ definitions = [], values = [] } = {}) {
     };
     return chain;
   };
-  return { db: { from: vi.fn((name) => tableFor(name)) }, calls };
+  const db = {
+    from: vi.fn((name) => tableFor(name)),
+    rpc: vi.fn((fnName, args) => {
+      calls.rpc.push([fnName, args]);
+      return Promise.resolve(rpcError ? { error: rpcError } : { error: null });
+    }),
+  };
+  return { db, calls };
 }
 
 const DEFS = [
@@ -36,7 +54,6 @@ const post = (body) => POST(new Request("https://t/", { method: "POST", body: JS
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getActiveWorkspaceRole.mockResolvedValue("owner");
 });
 
 function authAs(db) {
@@ -50,6 +67,25 @@ describe("custom field values route", () => {
     const { db } = makeDb();
     authAs(db);
     expect((await GET(new Request("https://t/"))).status).toBe(400);
+  });
+
+  it("rejects an unknown entity on GET and POST", async () => {
+    const { db } = makeDb();
+    authAs(db);
+    expect((await GET(new Request("https://t/?entity=charge&recordId=x"))).status).toBe(400);
+    const res = await post({ entity: "charge", recordId: "x", values: {} });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 when the record id does not exist in the entity table", async () => {
+    const { db, calls } = makeDb({ definitions: DEFS, recordExists: false });
+    authAs(db);
+    const getRes = await GET(new Request("https://t/?entity=tenant&recordId=ghost"));
+    expect(getRes.status).toBe(404);
+    const postRes = await post({ entity: "tenant", recordId: "ghost", values: { f_date: "2026-10-15" } });
+    expect(postRes.status).toBe(404);
+    // Nothing is written when the record does not exist.
+    expect(calls.rpc).toHaveLength(0);
   });
 
   it("returns definitions with their stored values keyed by field id", async () => {
@@ -66,7 +102,7 @@ describe("custom field values route", () => {
     expect(body.values).toEqual({ f_text: "4821" });
   });
 
-  it("validates then upserts typed-cleaned values", async () => {
+  it("saves through the atomic RPC with type-cleaned values", async () => {
     const { db, calls } = makeDb({ definitions: DEFS });
     authAs(db);
     const res = await post({
@@ -74,25 +110,38 @@ describe("custom field values route", () => {
       values: { f_text: " 4821 ", f_date: "2026-10-15", f_pick: "A2" },
     });
     expect(res.status).toBe(200);
-    expect(calls.upsert).toHaveLength(1);
-    const [table, rows, options] = calls.upsert[0];
-    expect(table).toBe("rental_custom_field_values");
-    expect(options).toMatchObject({ onConflict: "owner_id,field_id,record_id" });
-    const byField = Object.fromEntries(rows.map((row) => [row.field_id, row.value_text]));
+    expect(calls.rpc).toHaveLength(1);
+    const [fnName, args] = calls.rpc[0];
+    expect(fnName).toBe("save_rental_custom_field_values");
+    expect(args.p_owner_id).toBe("owner_1");
+    expect(args.p_record_id).toBe("tenant_1");
+    const byField = Object.fromEntries(args.p_rows.map((row) => [row.field_id, row.value_text]));
     expect(byField).toEqual({ f_text: "4821", f_date: "2026-10-15", f_pick: "A2" });
-    expect(rows[0]).toMatchObject({ owner_id: "owner_1", record_id: "tenant_1" });
+    // The route must not issue its own delete/upsert anymore — the RPC owns
+    // the write, which is what makes it atomic.
+    expect(calls.tableOps.filter(([op]) => op === "delete" || op === "upsert")).toHaveLength(0);
   });
 
-  it("clears optional values (deletes their rows) when omitted", async () => {
+  it("passes cleared optional values as null rows (the RPC deletes them)", async () => {
     const { db, calls } = makeDb({ definitions: DEFS });
     authAs(db);
     // f_date is required so it must be supplied; f_text/f_pick omitted -> cleared.
     const res = await post({ entity: "tenant", recordId: "tenant_1", values: { f_date: "2026-10-15" } });
     expect(res.status).toBe(200);
-    expect(calls.delete).toContain("rental_custom_field_values");
-    const deletedIds = calls.in.find(([table]) => table === "rental_custom_field_values")[2];
-    expect(deletedIds).toEqual(expect.arrayContaining(["f_text", "f_pick"]));
-    expect(deletedIds).not.toContain("f_date");
+    const [, args] = calls.rpc[0];
+    const byField = Object.fromEntries(args.p_rows.map((row) => [row.field_id, row.value_text]));
+    expect(byField).toEqual({ f_text: null, f_date: "2026-10-15", f_pick: null });
+  });
+
+  it("returns 500 without issuing any partial write when the atomic save fails", async () => {
+    const { db, calls } = makeDb({ definitions: DEFS, rpcError: { message: "connection lost" } });
+    authAs(db);
+    const res = await post({ entity: "tenant", recordId: "tenant_1", values: { f_date: "2026-10-15" } });
+    expect(res.status).toBe(500);
+    // The single RPC was attempted and failed; no separate delete or upsert
+    // was ever issued, so prior values remain untouched.
+    expect(calls.rpc).toHaveLength(1);
+    expect(calls.tableOps.filter(([op]) => op === "delete" || op === "upsert")).toHaveLength(0);
   });
 
   it("rejects bad values without writing anything", async () => {
@@ -101,8 +150,7 @@ describe("custom field values route", () => {
     const res = await post({ entity: "tenant", recordId: "tenant_1", values: { f_date: "not-a-date" } });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/date/i);
-    expect(calls.upsert).toHaveLength(0);
-    expect(calls.delete).toHaveLength(0);
+    expect(calls.rpc).toHaveLength(0);
   });
 
   it("enforces required fields even when the whole payload is empty", async () => {
@@ -127,11 +175,16 @@ describe("custom field values route", () => {
     expect(res.status).toBe(400);
   });
 
-  it("blocks read-only members from saving", async () => {
-    const { db } = makeDb({ definitions: DEFS });
+  it.each([
+    [null, 200, "primary owner"],
+    ["co_owner", 200, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("saving values as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ definitions: DEFS, memberRole });
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
-    const res = await post({ entity: "tenant", recordId: "tenant_1", values: {} });
-    expect(res.status).toBe(403);
+    const res = await post({ entity: "tenant", recordId: "tenant_1", values: { f_date: "2026-10-15" } });
+    expect(res.status).toBe(expectedStatus);
   });
 });

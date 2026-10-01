@@ -1,19 +1,22 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { rowToNoticeLog } from "@/domains/rental-forms/noticeLibrary";
 
 export const runtime = "nodejs";
 
 // Rentec parity R15: the generated-notice log — a permanent record on the
 // tenant of every notice the owner produced. GET is readable by every
-// workspace member; logging (POST) is owner/co-owner only (403 read-only).
+// workspace member; logging (POST) is owner/co-owner only (403 for everyone else).
 
-async function readOnlyWriteBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
+// Writes are owner/co-owner only: isOwnerOrActiveCoOwner is true for the
+// primary owner (no workspace_members row) and an active co_owner, and false
+// for manager, bookkeeper, and read_only staff.
+async function ownerWriteBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
-  })) === "read_only";
+  }));
 }
 
 export async function GET(request) {
@@ -39,8 +42,8 @@ export async function GET(request) {
 export async function POST(request) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
-  if (await readOnlyWriteBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot log notices." }, { status: 403 });
+  if (await ownerWriteBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can log notices." }, { status: 403 });
   }
   const body = await request.json().catch(() => ({}));
   const tenantId = String(body.tenantId ?? "").trim();

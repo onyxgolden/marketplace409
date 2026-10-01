@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { rowToField, validateFieldValue } from "@/domains/rental-forms/customFields";
+import { customFieldRecordExists, isKnownCustomFieldEntity } from "@/domains/rental-forms/customFieldTargets";
 
 export const runtime = "nodejs";
 
@@ -13,11 +14,14 @@ export const runtime = "nodejs";
 //        then upserts; clearing an optional field removes its row.
 // Reads are open to every workspace member; writes are owner/co-owner only.
 
-async function readOnlyWriteBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
+// Writes are owner/co-owner only: isOwnerOrActiveCoOwner is true for the
+// primary owner (no workspace_members row) and an active co_owner, and false
+// for manager, bookkeeper, and read_only staff.
+async function ownerWriteBlocked(authenticated) {
+  return !(await isOwnerOrActiveCoOwner({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
-  })) === "read_only";
+  }));
 }
 
 async function loadDefinitions(authenticated, entity) {
@@ -41,7 +45,19 @@ export async function GET(request) {
   if (!entity || !recordId) {
     return NextResponse.json({ error: "entity and recordId are required." }, { status: 400 });
   }
+  if (!isKnownCustomFieldEntity(entity)) {
+    return NextResponse.json({ error: "Unknown record type." }, { status: 400 });
+  }
   try {
+    const recordExists = await customFieldRecordExists({
+      supabaseClient: authenticated.supabaseClient,
+      ownerId: authenticated.effectiveOwnerId,
+      entity,
+      recordId,
+    });
+    if (!recordExists) {
+      return NextResponse.json({ error: "The record was not found." }, { status: 404 });
+    }
     const fields = await loadDefinitions(authenticated, entity);
     const values = {};
     if (fields.length > 0) {
@@ -64,8 +80,8 @@ export async function GET(request) {
 export async function POST(request) {
   const authenticated = await createAuthenticatedRentalManagerApplication();
   if (authenticated.response) return authenticated.response;
-  if (await readOnlyWriteBlocked(authenticated)) {
-    return NextResponse.json({ error: "Read-only members cannot save custom field values." }, { status: 403 });
+  if (await ownerWriteBlocked(authenticated)) {
+    return NextResponse.json({ error: "Only the owner or co-owner can save custom field values." }, { status: 403 });
   }
   const body = await request.json().catch(() => ({}));
   const entity = String(body.entity ?? "").trim();
@@ -74,7 +90,19 @@ export async function POST(request) {
   if (!entity || !recordId) {
     return NextResponse.json({ error: "entity and recordId are required." }, { status: 400 });
   }
+  if (!isKnownCustomFieldEntity(entity)) {
+    return NextResponse.json({ error: "Unknown record type." }, { status: 400 });
+  }
   try {
+    const recordExists = await customFieldRecordExists({
+      supabaseClient: authenticated.supabaseClient,
+      ownerId: authenticated.effectiveOwnerId,
+      entity,
+      recordId,
+    });
+    if (!recordExists) {
+      return NextResponse.json({ error: "The record was not found." }, { status: 404 });
+    }
     const fields = await loadDefinitions(authenticated, entity);
     const byId = new Map(fields.map((field) => [field.id, field]));
 
@@ -96,29 +124,20 @@ export async function POST(request) {
       cleaned[field.id] = validated.clean;
     }
 
-    const upsertRows = [];
-    const clearedIds = [];
-    for (const field of fields) {
-      const clean = cleaned[field.id];
-      if (clean === null) clearedIds.push(field.id);
-      else upsertRows.push({ owner_id: authenticated.effectiveOwnerId, field_id: field.id, record_id: recordId, value_text: clean });
-    }
-
-    if (clearedIds.length > 0) {
-      const { error } = await authenticated.supabaseClient
-        .from("rental_custom_field_values")
-        .delete()
-        .eq("owner_id", authenticated.effectiveOwnerId)
-        .eq("record_id", recordId)
-        .in("field_id", clearedIds);
-      if (error) throw error;
-    }
-    if (upsertRows.length > 0) {
-      const { error } = await authenticated.supabaseClient
-        .from("rental_custom_field_values")
-        .upsert(upsertRows, { onConflict: "owner_id,field_id,record_id" });
-      if (error) throw error;
-    }
+    // The save is all-or-nothing: save_rental_custom_field_values performs the
+    // delete of cleared values and the insert of new values inside a single
+    // database function call, which Postgres executes atomically. The old
+    // two-statement version could 500 after the delete succeeded, permanently
+    // clearing optional values.
+    const { error: saveError } = await authenticated.supabaseClient.rpc(
+      "save_rental_custom_field_values",
+      {
+        p_owner_id: authenticated.effectiveOwnerId,
+        p_record_id: recordId,
+        p_rows: fields.map((field) => ({ field_id: field.id, value_text: cleaned[field.id] })),
+      },
+    );
+    if (saveError) throw saveError;
 
     return NextResponse.json({ success: true, values: Object.fromEntries(fields.map((field) => [field.id, cleaned[field.id]])) });
   } catch (error) {

@@ -1,14 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+// NOTE: isOwnerOrActiveCoOwner is intentionally NOT mocked — the stub
+// supabase client answers the workspace_members query, so these tests prove
+// the real role matrix (primary owner / co_owner allowed; manager,
+// bookkeeper, read_only blocked) end to end through the routes.
 import { GET, POST } from "./route";
 import { GET as getOne, PUT, DELETE as remove } from "./[id]/route";
 
 // Chainable supabase stub with canned responses and call recording.
+// memberRole: null = primary owner (no workspace_members row), otherwise the
+// active membership role.
 function makeDb(overrides = {}) {
   const calls = { insert: [], update: [], delete: [], eq: [], in: [] };
+  const memberTable = {
+    select() { return memberTable; },
+    eq() { return memberTable; },
+    async maybeSingle() {
+      return {
+        data: overrides.memberRole === undefined || overrides.memberRole === null
+          ? null
+          : { role: overrides.memberRole },
+        error: null,
+      };
+    },
+  };
   const table = {
     select() { return table; },
     eq(column, value) { calls.eq.push([column, value]); return table; },
@@ -24,7 +40,10 @@ function makeDb(overrides = {}) {
     },
     then(resolve) { resolve({ data: overrides.listRows || [], error: null }); },
   };
-  return { db: { from: vi.fn(() => table) }, calls };
+  return {
+    db: { from: vi.fn((name) => (name === "workspace_members" ? memberTable : table)) },
+    calls,
+  };
 }
 
 const ROW = {
@@ -38,7 +57,6 @@ const put = (body) => PUT(new Request("https://t/", { method: "PUT", body: JSON.
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getActiveWorkspaceRole.mockResolvedValue("owner");
 });
 
 function authAs(db) {
@@ -90,12 +108,17 @@ describe("custom fields collection route", () => {
     expect(res.status).toBe(409);
   });
 
-  it("blocks read-only members from creating", async () => {
-    const { db } = makeDb();
+  it.each([
+    [null, 201, "primary owner"],
+    ["co_owner", 201, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("creating as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ insertedRow: ROW, memberRole });
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
     const res = await post({ name: "Gate code", entity: "tenant", fieldType: "text" });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(expectedStatus);
   });
 
   it("passes auth failures through", async () => {
@@ -122,11 +145,27 @@ describe("custom field single route", () => {
     expect((await remove(new Request("https://t/"), { params: { id: "nope" } })).status).toBe(404);
   });
 
-  it("blocks read-only members from update and delete", async () => {
-    const { db } = makeDb({ oneRow: ROW });
+  it.each([
+    [null, 200, "primary owner"],
+    ["co_owner", 200, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("update as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ oneRow: ROW, updatedRow: ROW, memberRole });
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
-    expect((await put({ name: "X", entity: "tenant", fieldType: "text" })).status).toBe(403);
-    expect((await remove(new Request("https://t/"), { params: { id: "f_1" } })).status).toBe(403);
+    expect((await put({ name: "X", entity: "tenant", fieldType: "text" })).status).toBe(expectedStatus);
+  });
+
+  it.each([
+    [null, 200, "primary owner"],
+    ["co_owner", 200, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("delete as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ oneRow: ROW, memberRole });
+    authAs(db);
+    expect((await remove(new Request("https://t/"), { params: { id: "f_1" } })).status).toBe(expectedStatus);
   });
 });

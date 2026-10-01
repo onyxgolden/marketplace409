@@ -1,17 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
 vi.mock("@/domains/rental-forms/noticeContext", () => ({ resolveNoticeContext: vi.fn() }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+// NOTE: isOwnerOrActiveCoOwner is intentionally NOT mocked — the stub
+// supabase client answers the workspace_members query, so these tests prove
+// the real role matrix (primary owner / co_owner allowed; manager,
+// bookkeeper, read_only blocked) end to end through the routes.
 import { resolveNoticeContext } from "@/domains/rental-forms/noticeContext";
 import { GET, POST } from "./route";
 import { GET as getOne, PUT, DELETE as remove } from "./[id]/route";
 import { POST as render } from "./render/route";
 import { GET as listNotices, POST as logNotice } from "../notices/route";
 
+// memberRole: null = primary owner (no workspace_members row), otherwise the
+// active membership role.
 function makeDb(overrides = {}) {
   const calls = { upsert: [], insert: [], update: [], delete: [], eq: [], limit: [] };
+  const memberTable = {
+    select() { return memberTable; },
+    eq() { return memberTable; },
+    async maybeSingle() {
+      return {
+        data: overrides.memberRole === undefined || overrides.memberRole === null
+          ? null
+          : { role: overrides.memberRole },
+        error: null,
+      };
+    },
+  };
   const table = {
     select() { return table; },
     eq(column, value) { calls.eq.push([column, value]); return table; },
@@ -25,7 +41,10 @@ function makeDb(overrides = {}) {
     async single() { return { data: overrides.insertedRow ?? overrides.updatedRow, error: null }; },
     then(resolve) { resolve({ data: overrides.listRows || [], error: null }); },
   };
-  return { db: { from: vi.fn(() => table) }, calls };
+  return {
+    db: { from: vi.fn((name) => (name === "workspace_members" ? memberTable : table)) },
+    calls,
+  };
 }
 
 const ROW = {
@@ -39,7 +58,6 @@ const putOne = (body) => PUT(new Request("https://t/", { method: "PUT", body: JS
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getActiveWorkspaceRole.mockResolvedValue("owner");
 });
 
 function authAs(db) {
@@ -81,11 +99,16 @@ describe("custom forms collection route", () => {
     expect(calls.insert[1]).toMatchObject({ name: "Pay or quit notice (copy)", kind: "notice" });
   });
 
-  it("blocks read-only members from creating", async () => {
-    const { db } = makeDb();
+  it.each([
+    [null, 201, "primary owner"],
+    ["co_owner", 201, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("creating as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ insertedRow: ROW, memberRole });
     authAs(db);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
-    expect((await post({ name: "X", kind: "form", body: "Y" })).status).toBe(403);
+    expect((await post({ name: "X", kind: "form", body: "Y" })).status).toBe(expectedStatus);
   });
 });
 
@@ -107,12 +130,34 @@ describe("custom form single route", () => {
     expect(calls.delete).toHaveLength(1);
   });
 
-  it("404s on unknown ids and 403s read-only writes", async () => {
+  it("404s on unknown ids", async () => {
     const { db } = makeDb({ oneRow: null });
     authAs(db);
     expect((await getOne(new Request("https://t/"), { params: { id: "nope" } })).status).toBe(404);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
-    expect((await putOne({ name: "X", kind: "form", body: "Y" })).status).toBe(403);
+  });
+
+  it.each([
+    [null, 200, "primary owner"],
+    ["co_owner", 200, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("update as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ oneRow: ROW, updatedRow: ROW, memberRole });
+    authAs(db);
+    expect((await putOne({ name: "X", kind: "form", body: "Y" })).status).toBe(expectedStatus);
+  });
+
+  it.each([
+    [null, 200, "primary owner"],
+    ["co_owner", 200, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("delete as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const { db } = makeDb({ oneRow: ROW, memberRole });
+    authAs(db);
+    expect((await remove(new Request("https://t/"), { params: { id: "form_1" } })).status).toBe(expectedStatus);
   });
 });
 
@@ -197,13 +242,25 @@ describe("notice log route", () => {
     expect((await res.json()).notice).toMatchObject({ id: "n2" });
   });
 
-  it("validates required log fields and blocks read-only members", async () => {
+  it("validates required log fields", async () => {
     const { db } = makeDb();
     authAs(db);
     expect((await logNotice(new Request("https://t/", { method: "POST", body: JSON.stringify({}) }))).status).toBe(400);
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
-    expect((await logNotice(new Request("https://t/", {
+  });
+
+  it.each([
+    [null, 201, "primary owner"],
+    ["co_owner", 201, "co-owner"],
+    ["manager", 403, "manager"],
+    ["bookkeeper", 403, "bookkeeper"],
+    ["read_only", 403, "read-only"],
+  ])("logging a notice as %s -> %s (%s)", async (memberRole, expectedStatus) => {
+    const inserted = { id: "n2", tenant_id: "t1", lease_id: null, form_id: "f1", form_name: "X", rendered_body: "Y", created_at: "t" };
+    const { db } = makeDb({ insertedRow: inserted, memberRole });
+    authAs(db);
+    const res = await logNotice(new Request("https://t/", {
       method: "POST", body: JSON.stringify({ tenantId: "t1", formName: "X", renderedBody: "Y" }),
-    }))).status).toBe(403);
+    }));
+    expect(res.status).toBe(expectedStatus);
   });
 });
