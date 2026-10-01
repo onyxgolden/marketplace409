@@ -5,6 +5,7 @@
 // invoke IPC is stable and this keeps the shell dependency-free on the
 // frontend side.) The AI Edit session state machine lives in ai-edit.js.
 import { AiEditSession } from "./ai-edit.js";
+import { formatCaptureFailedStatus, previewDataUrl } from "./main-core.js";
 
 function invoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -233,6 +234,12 @@ function captureItem(ref) {
     }
   };
 
+  // Reopens the auto-shown preview for a past capture (the dialog only ever
+  // shows the most recent one it was asked to show).
+  const previewBtn = document.createElement("button");
+  previewBtn.textContent = "Preview";
+  previewBtn.onclick = () => void showPreview(ref);
+
   // AI Edit — on every captured image. The original is never modified;
   // the finished edit arrives as a new versioned copy in this list.
   const aiBtn = document.createElement("button");
@@ -240,14 +247,17 @@ function captureItem(ref) {
   aiBtn.className = "ai-edit-btn";
   aiBtn.onclick = () => openAiEditDialog(ref);
 
+  // "Save As", not "Export": the capture is already autosaved to the
+  // Captures folder the moment it's taken — this writes an explicit extra
+  // copy to a user-chosen location, it does not perform the first save.
   const exportBtn = document.createElement("button");
-  exportBtn.textContent = "Export…";
+  exportBtn.textContent = "Save As…";
   exportBtn.onclick = async () => {
     try {
       const path = await invoke("export_capture", { id: ref.id });
-      setStatus(`Exported to ${path}`, "ok");
+      setStatus(`Saved a copy to ${path}`, "ok");
     } catch (e) {
-      setStatus(`Export failed: ${e}`, "error");
+      setStatus(`Save As failed: ${e}`, "error");
     }
   };
 
@@ -290,9 +300,86 @@ function captureItem(ref) {
     },
   });
 
-  actions.append(copyBtn, aiBtn, exportBtn, metaBtn, saveBtn);
+  actions.append(copyBtn, previewBtn, aiBtn, exportBtn, metaBtn, saveBtn);
   li.append(title, meta, actions);
   $("captures").prepend(li);
+
+  // Snagit-style: a fresh capture opens its own preview automatically. This
+  // runs after the dedup guard above, so it fires exactly once per capture
+  // id no matter which path (the event or a direct invoke() return) got
+  // here first.
+  void showPreview(ref);
+}
+
+// ---------------------------------------------------------------------------
+// Capture preview dialog — Snagit-style: shows the actual image right after
+// a capture, with Copy / Save As / Edit, and is reopenable from history via
+// each row's own "Preview" button. The dialog always reflects whichever
+// capture it was most recently asked to show; a rapid second capture simply
+// replaces the image rather than stacking another window.
+// ---------------------------------------------------------------------------
+
+let previewRef = null;
+
+function setPreviewStatus(text, kind) {
+  const el = $("preview-status");
+  el.textContent = text || "";
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+async function showPreview(ref) {
+  if (!ref) return;
+  previewRef = ref;
+  $("preview-meta").textContent = `${ref.kind} — ${ref.width}x${ref.height}`;
+  $("preview-image").removeAttribute("src");
+  setPreviewStatus("Loading preview…");
+  const dialog = $("preview-dialog");
+  if (!dialog.open) dialog.showModal();
+  try {
+    // Read-only: the same bytes-over-IPC payload the Save-to-FORGE upload
+    // path already uses (base64 + MIME), never a raw file:// URL or a wider
+    // Tauri asset-protocol scope. Capped at 25 MB there, so a very large
+    // capture (an uncommon but real case on a big multi-monitor desktop)
+    // reports that honestly below instead of showing a broken image.
+    const payload = await invoke("get_capture_upload_payload", { id: ref.id });
+    const url = previewDataUrl(payload);
+    if (!url) throw new Error("preview payload was malformed");
+    // A capture superseded by a second one while this was still loading
+    // must not clobber the newer preview that may already be showing.
+    if (previewRef !== ref) return;
+    $("preview-image").src = url;
+    setPreviewStatus("");
+  } catch (e) {
+    if (previewRef !== ref) return;
+    setPreviewStatus(`Preview unavailable (${e.message || e}) — Copy and Save As still work.`, "warning");
+  }
+}
+
+function initPreviewDialog() {
+  $("preview-copy").onclick = async () => {
+    if (!previewRef) return;
+    try {
+      await invoke("copy_to_clipboard", { id: previewRef.id });
+      setPreviewStatus("Copied to clipboard.", "ok");
+    } catch (e) {
+      setPreviewStatus(`Copy failed: ${e}`, "error");
+    }
+  };
+  $("preview-save-as").onclick = async () => {
+    if (!previewRef) return;
+    try {
+      const path = await invoke("export_capture", { id: previewRef.id });
+      setPreviewStatus(`Saved a copy to ${path}`, "ok");
+    } catch (e) {
+      setPreviewStatus(`Save As failed: ${e}`, "error");
+    }
+  };
+  $("preview-edit").onclick = () => {
+    if (!previewRef) return;
+    $("preview-dialog").close();
+    openAiEditDialog(previewRef);
+  };
+  $("preview-close").onclick = () => $("preview-dialog").close();
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +581,8 @@ async function doCapture() {
     captureItem(ref);
     setStatus(`Saved ${ref.width}x${ref.height}.`, "ok");
   } catch (e) {
-    setStatus(`Capture failed: ${e}`, "error");
+    const { text, kind } = formatCaptureFailedStatus(e && e.message ? e.message : e);
+    setStatus(text, kind);
   } finally {
     btn.disabled = false;
     onModeChange(); // restore the scrolling-mode disabled state if needed
@@ -512,6 +600,18 @@ async function doCapture() {
 async function listenCaptureSaved() {
   await listenEvent("capture-saved", (msg) => {
     if (msg && msg.payload) captureItem(msg.payload);
+  });
+}
+
+// A region capture that fails after the overlay window has already closed
+// itself (necessary so the overlay never appears in its own screenshot) has
+// no window left to receive a rejected invoke() — the backend broadcasts
+// capture-failed instead, exactly like capture-saved, so the main window can
+// always show the error regardless of which window asked for the capture.
+async function listenCaptureFailed() {
+  await listenEvent("capture-failed", (msg) => {
+    const { text, kind } = formatCaptureFailedStatus(msg && msg.payload);
+    setStatus(text, kind);
   });
 }
 
@@ -586,9 +686,11 @@ async function init() {
   $("help-btn").addEventListener("click", () => $("help-dialog").showModal());
   $("ai-edit-submit").addEventListener("click", onAiEditSubmit);
   $("ai-edit-cancel").addEventListener("click", onAiEditCancel);
+  initPreviewDialog();
   onModeChange();
   onScrollTargetChange();
   await listenCaptureSaved();
+  await listenCaptureFailed();
   await listenScrollEvents();
   await listenHotkeyEvents();
   await refreshLists();

@@ -64,6 +64,8 @@ body {
   font-weight: 600;
 }
 
+.tab:active { filter: brightness(0.9); }
+
 main { padding: 0 16px 24px; }
 
 #panel-image, #panel-video, #panel-meeting {
@@ -92,6 +94,7 @@ main { padding: 0 16px 24px; }
 }
 
 .chip:hover { border-color: var(--muted); }
+.chip:active { transform: translateY(1px); filter: brightness(0.92); }
 
 .chip.active {
   background: var(--accent);
@@ -136,7 +139,20 @@ button {
 }
 
 button:hover:not(:disabled) { border-color: var(--muted); }
+button:active:not(:disabled) { transform: translateY(1px); filter: brightness(0.92); }
 button:disabled { opacity: 0.45; cursor: default; }
+
+/* Keyboard-only focus ring — mouse/touch clicks never trigger :focus-visible,
+   so this never adds a ring to a plain click, only to Tab navigation. Every
+   interactive control below shares the same ring so none is silently
+   missed as new ones are added. */
+button:focus-visible,
+.chip:focus-visible,
+.tab:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .ghost-btn { background: transparent; }
 .ghost-btn.small { font-size: 12px; padding: 5px 10px; }
@@ -153,6 +169,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 
 .capture-btn:hover:not(:disabled) { background: var(--capture-hover); }
+.capture-btn:active:not(:disabled) { transform: translateY(1px); filter: brightness(0.9); }
 
 .primary-btn {
   background: var(--accent);
@@ -234,6 +251,18 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 dialog h2 { margin: 0 0 8px; font-size: 16px; }
 .dialog-sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+#preview-dialog { max-width: min(90vw, 900px); }
+#preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 65vh;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: repeating-conic-gradient(#2a2e35 0% 25%, #22252b 0% 50%) 0 0 / 20px 20px;
+}
+#preview-image:not([src]) { display: none; }
 
 .help-body { font-size: 13px; }
 .help-body h3 { margin: 14px 0 6px; font-size: 13px; }
