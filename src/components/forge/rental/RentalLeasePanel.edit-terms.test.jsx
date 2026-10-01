@@ -9,7 +9,8 @@ const setup = {
   units: [{ id: "unit_1", label: "1218 Wagner", property_id: "1218-wagner" }],
   tenants: [{ id: "tenant_1", display_name: "Anthony Babino", email: "a@example.com" }],
   leases: [{ id: "lease_1", unit_id: "unit_1", property_id: "1218-wagner", status: "active",
-    monthly_rent_cents: 160000, rent_due_day: 5, start_date: "2026-09-01", end_date: "2027-08-31", currency_code: "USD" }],
+    monthly_rent_cents: 160000, rent_due_day: 5, start_date: "2026-09-01", end_date: "2027-08-31",
+    begin_charges_date: "2026-09-15", currency_code: "USD" }],
   schedules: [{ id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 160000, currency_code: "USD",
     due_day: 5, effective_start_date: "2026-09-01", effective_end_date: "2027-08-31", early_pay_days: 10 }],
   leaseMemberships: [],
@@ -68,8 +69,15 @@ describe("RentalLeasePanel edit terms", () => {
     expect(form.querySelector('input[name="dueDay"]').value).toBe("5");
     expect(form.querySelector('input[name="startDate"]').value).toBe("2026-09-01");
     expect(form.querySelector('input[name="endDate"]').value).toBe("2027-08-31");
+    expect(form.querySelector('input[name="beginChargesDate"]').value).toBe("2026-09-15");
     expect(form.querySelector('input[name="earlyPayDays"]').value).toBe("10");
     expect(form.textContent).toContain("Save terms");
+  });
+  it("shows the move-in date and the begin-charges date as separate fields in the lease detail", () => {
+    stubFetch();
+    const { container } = renderPanel();
+    expect(container.textContent).toContain("Move-in date");
+    expect(container.textContent).toContain("Charges begin");
   });
   it("keeps the standalone early-pay form untouched", () => {
     stubFetch();
@@ -89,7 +97,7 @@ describe("RentalLeasePanel edit terms", () => {
     expect(posted).toHaveLength(1);
     expect(posted[0]).toEqual({ operation: "update-lease-terms", terms: {
       leaseId: "lease_1", monthlyRentCents: 160000, rentDueDay: 5,
-      startDate: "2026-09-01", endDate: "2027-08-31", earlyPayDays: 10 } });
+      startDate: "2026-09-01", endDate: "2027-08-31", beginChargesDate: "2026-09-15", earlyPayDays: 10 } });
     expect(container.textContent).toContain("Lease terms updated");
   });
   it("surfaces an API error without closing the form", async () => {

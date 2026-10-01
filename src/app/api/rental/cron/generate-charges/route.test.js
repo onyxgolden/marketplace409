@@ -16,12 +16,14 @@ function settingsChain(ownerIds) {
   return chain({ data: ownerIds.map((owner_id) => ({ owner_id })), error: null });
 }
 
-function db({ settings, schedules, charges }) {
-  return { from: vi.fn((table) => {
+function db({ settings, schedules, charges, leases = chain({ data: [], error: null }) }) {
+  const from = vi.fn((table) => {
     if (table === "rental_billing_settings") return settings;
     if (table === "rent_schedules") return schedules;
+    if (table === "rental_leases") return leases;
     return charges;
-  }) };
+  });
+  return { from };
 }
 
 beforeEach(() => { process.env.CRON_SECRET = "cron-secret"; });
@@ -139,6 +141,57 @@ describe("rent charge generation cron", () => {
     expect(response.status).toBe(200);
     expect(body.processed).toBe(0);
     expect(body.failed).toBe(1);
+  });
+
+  // Rentec-parity R10: the lease's begin-charges date gates generation —
+  // no charge whose due date precedes it, for either the current or the
+  // early-pay next-month period.
+  it("skips charges whose due date precedes the lease's begin-charges date", async () => {
+    const scheduleRow = (id, leaseId) => ({ owner_id: "owner_1", id, lease_id: leaseId, status: "active",
+      amount_cents: 150000, currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01",
+      effective_end_date: null, created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+      collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01", early_pay_days: 0 });
+    const schedules = chain({ data: [scheduleRow("schedule_1", "lease_1"), scheduleRow("schedule_2", "lease_2")], error: null });
+    const leases = chain({ data: [
+      // Charges begin in 2999: neither the current nor the next period generates.
+      { id: "lease_1", begin_charges_date: "2999-01-01" },
+      // Begin-charges long past: behaves exactly as before R10.
+      { id: "lease_2", begin_charges_date: "2020-01-01" },
+    ], error: null });
+    const charges = chain({ error: null });
+    const client = db({ settings: settingsChain(["owner_1"]), schedules, charges, leases });
+    createRentalWebhookClient.mockReturnValue(client);
+
+    const response = await GET(request({ authorization: "Bearer " + process.env.CRON_SECRET }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.scheduleCount).toBe(2);
+    expect(client.from).toHaveBeenCalledWith("rental_leases");
+    // lease_1 contributes zero periods; lease_2 contributes the current month
+    // (early_pay_days 0 keeps next month out of the run).
+    expect(body.processed).toBe(1);
+    expect(body.failed).toBe(0);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
+    expect(charges.upsert).toHaveBeenCalledWith(expect.objectContaining({ schedule_id: "schedule_2" }), expect.anything());
+  });
+
+  it("generates normally when the lease lookup has no begin-charges date (pre-R10 behavior)", async () => {
+    const schedules = chain({
+      data: [{ owner_id: "owner_1", id: "schedule_1", lease_id: "lease_1", status: "active", amount_cents: 150000,
+        currency_code: "USD", due_day: 1, effective_start_date: "2020-01-01", effective_end_date: null,
+        created_at: "2020-01-01T00:00:00Z", updated_at: "2020-01-01T00:00:00Z",
+        collection_mode: "forge", collection_provider: null, forge_cutover_date: "2020-01-01", early_pay_days: 0 }],
+      error: null,
+    });
+    const leases = chain({ data: [{ id: "lease_1", begin_charges_date: null }], error: null });
+    const charges = chain({ error: null });
+    createRentalWebhookClient.mockReturnValue(db({ settings: settingsChain(["owner_1"]), schedules, charges, leases }));
+
+    const response = await GET(request({ authorization: "Bearer " + process.env.CRON_SECRET }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.processed).toBe(1);
+    expect(charges.upsert).toHaveBeenCalledTimes(1);
   });
 
   // Regression guards for the rental billing cutover containment: most tenants still pay through

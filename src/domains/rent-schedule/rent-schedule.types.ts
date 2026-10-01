@@ -32,6 +32,11 @@ export type RentSchedule = Readonly<{
   // Days before the due date that next month's charge is generated so the tenant can pay
   // ahead. Defaults to 7. 0 = next month's charge only appears once its month starts.
   earlyPayDays?: number;
+  // Rentec-parity R10: the lease's begin-charges date, attached transiently by
+  // charge-generation callers (the cron joins rental_leases; the DB function
+  // reads it directly). Never persisted on rent_schedules — rental_leases owns
+  // it. Null/omitted = no begin-charges gate (pre-R10 behavior).
+  beginChargesDate?: string | null;
 }>;
 
 function required(value: string, field: string): string {
@@ -77,11 +82,15 @@ export function createRentSchedule(schedule: RentSchedule): RentSchedule {
   const earlyPayDays = schedule.earlyPayDays ?? 7;
   if (!Number.isSafeInteger(earlyPayDays) || earlyPayDays < 0 || earlyPayDays > 31)
     throw new Error("Rent schedule early pay days must be between 0 and 31.");
+  // Transient R10 input: validated when present, defaults to null (no gate).
+  // An empty string counts as absent, matching how form posts omit the field.
+  const rawBeginCharges = typeof schedule.beginChargesDate === "string" ? schedule.beginChargesDate.trim() : schedule.beginChargesDate;
+  const beginChargesDate = rawBeginCharges ? date(rawBeginCharges, "beginChargesDate") : null;
   return Object.freeze({ ...schedule, id: required(schedule.id, "an id"), leaseId: required(schedule.leaseId, "a lease id"),
     amountCents: schedule.amountCents, currencyCode, effectiveStartDate, effectiveEndDate,
     createdAt: timestamp(schedule.createdAt, "createdAt"), updatedAt: timestamp(schedule.updatedAt, "updatedAt"),
     collectionMode, collectionProvider, forgeCutoverDate: forgeCutoverDate === null ? null : date(forgeCutoverDate, "forgeCutoverDate"),
-    earlyPayDays });
+    earlyPayDays, beginChargesDate });
 }
 
 // Pure, single source of truth for "is this schedule allowed to generate/collect a FORGE charge

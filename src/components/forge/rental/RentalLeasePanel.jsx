@@ -137,6 +137,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
         body: JSON.stringify({ operation: "update-lease-terms", terms: { leaseId: lease.id,
           monthlyRentCents: Math.round(Number(form.get("monthlyRent")) * 100), rentDueDay: Number(form.get("dueDay")),
           startDate: form.get("startDate"), endDate: form.get("endDate") || null,
+          beginChargesDate: form.get("beginChargesDate") || null,
           earlyPayDays: Number(form.get("earlyPayDays") ?? 7) } }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Unable to update the lease terms.");
@@ -181,6 +182,7 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       const leaseResponse = await fetch("/api/rental", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ operation: "save-lease", lease: { propertyId, unitId,
           tenantIds: [form.get("tenantId")], status: "draft", startDate: form.get("startDate"), endDate: form.get("endDate") || null,
+          beginChargesDate: form.get("beginChargesDate") || null,
           monthlyRentCents: Math.round(Number(form.get("monthlyRent")) * 100), currencyCode: "USD",
           rentDueDay: Number(form.get("dueDay")), notes: form.get("notes") || null } }) });
       const leaseResult = await leaseResponse.json();
@@ -229,7 +231,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
       <label className="text-sm font-bold text-slate-900 dark:text-white">Property<p className="mt-1 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-950/40 dark:text-slate-300">{selectedUnitPropertyId || "Select a rental unit to set the property."}</p></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Tenant<select name="tenantId" required defaultValue={contextTenantId || (setup.tenants.length === 1 ? setup.tenants[0].id : "")} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white">
         <option value="" disabled>Select a saved tenant</option>{setup.tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.display_name} — {tenant.email}</option>)}</select></label>
-      <label className="text-sm font-bold text-slate-900 dark:text-white">Start date<input name="startDate" type="date" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Move-in date<input name="startDate" type="date" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day they move in.</span></label>
+      <label className="text-sm font-bold text-slate-900 dark:text-white">Begin charges on<input name="beginChargesDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day charges start — e.g. moved in Aug 28 but charges start Sep 1. Leave blank to start charges on the move-in date.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" defaultValue="1" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
@@ -254,7 +257,8 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
     <dl className="mt-5 grid gap-4 sm:grid-cols-2">
       <Detail label="Monthly rent" value={money.format(Number(lease.monthly_rent_cents) / 100)} />
       <Detail label="Due day" value={lease.rent_due_day || "Not recorded"} />
-      <Detail label="Starts" value={lease.start_date} />
+      <Detail label="Move-in date" value={lease.start_date} />
+      <Detail label="Charges begin" value={lease.begin_charges_date || lease.start_date} />
       <Detail label="Ends" value={lease.end_date || "Current"} />
       <Detail label="Property" value={lease.property_id} />
       <Detail label="Lease ID" value={lease.id} />
@@ -266,7 +270,8 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
           <form onSubmit={handleUpdateTerms} className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/40 sm:grid-cols-2">
             <label className="text-sm font-bold text-slate-900 dark:text-white">Monthly rent<input name="monthlyRent" type="number" min="0.01" step="0.01" required defaultValue={(Number(lease.monthly_rent_cents) / 100).toFixed(2)} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">Due day<input name="dueDay" type="number" min="1" max="28" required defaultValue={lease.rent_due_day || 1} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
-            <label className="text-sm font-bold text-slate-900 dark:text-white">Start date<input name="startDate" type="date" required defaultValue={lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Move-in date<input name="startDate" type="date" required defaultValue={lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day they move in.</span></label>
+            <label className="text-sm font-bold text-slate-900 dark:text-white">Begin charges on<input name="beginChargesDate" type="date" required defaultValue={lease.begin_charges_date || lease.start_date} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Day charges start — e.g. moved in Aug 28 but charges start Sep 1. No charge is ever generated for a period due before this date.</span></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">End date<input name="endDate" type="date" defaultValue={lease.end_date || ""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /><span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">Leave blank for an ongoing month-to-month tenancy.</span></label>
             <label className="text-sm font-bold text-slate-900 dark:text-white">Early pay window (days)<input name="earlyPayDays" type="number" min="0" max="31" required defaultValue={schedule.early_pay_days ?? 7} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
             <button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-amber-400 dark:text-slate-950 dark:hover:bg-amber-300 sm:col-span-2">{working ? "Saving…" : "Save terms"}</button>
