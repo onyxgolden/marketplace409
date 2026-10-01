@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
+import StatementEmailDialog from "./StatementEmailDialog";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const CHARGE_TYPE_LABELS = {
@@ -31,7 +32,7 @@ async function fetchCharge(chargeId) {
 // voidable. Payment-history safety: a line's amount can never drop below what
 // has already been applied to the charge; paid charges are amount-final and
 // voided charges are immutable (the API enforces all of this too).
-export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, onClose, onSaved }) {
+export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, tenantEmail, onClose, onSaved }) {
   const [charge, setCharge] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -41,6 +42,7 @@ export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, on
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const [emailInvoiceOpen, setEmailInvoiceOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,6 +168,20 @@ export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, on
     }
   }
 
+  async function sendInvoiceEmail() {
+    const response = await fetch("/api/rental/tenant-statement-email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tenantId, kind: "invoice", chargeId }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "The invoice email could not be sent.");
+    setEmailInvoiceOpen(false);
+    setSavedMessage(body.alreadySent
+      ? `Invoice already emailed to ${body.recipient || tenantEmail || "the tenant"}.`
+      : `Invoice emailed to ${body.recipient || tenantEmail || "the tenant"}.`);
+  }
+
   return (
     <div data-invoice-editor aria-label={`Edit invoice for ${tenantName || "tenant"}`}
       className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -174,10 +190,17 @@ export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, on
           <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Tenants / {tenantName || "Tenant"}</p>
           <h3 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">Edit Invoice</h3>
         </div>
+        <div className="flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => setEmailInvoiceOpen(true)} disabled={!charge || submitting}
+          title="Email this invoice to the tenant"
+          className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-2.5 text-sm font-black text-sky-700 transition hover:bg-sky-100 disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/60">
+          Email invoice
+        </button>
         <button type="button" onClick={deleteInvoice} disabled={submitting}
           className={`rounded-xl px-4 py-2.5 text-sm font-black text-white transition disabled:opacity-50 ${confirmDelete ? "bg-red-700 hover:bg-red-800" : "bg-red-600 hover:bg-red-700"}`}>
           {confirmDelete ? "Confirm delete invoice" : "Delete Invoice"}
         </button>
+        </div>
       </div>
       {confirmDelete && (
         <p role="alert" className="mt-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-900 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200">
@@ -266,6 +289,19 @@ export default function TenantInvoiceEditor({ chargeId, tenantId, tenantName, on
             </button>
           </div>
         </form>
+      )}
+      {emailInvoiceOpen && (
+        <StatementEmailDialog
+          title={`Email invoice — ${tenantName || "tenant"}`}
+          recipientEmail={tenantEmail || ""}
+          summaryLines={[
+            { label: "Invoice", value: charge?.chargeType ? String(charge.chargeType).replaceAll("_", " ") : "Charge" },
+            { label: "Amount", value: `$${(Number(charge?.amountCents || 0) / 100).toFixed(2)}` },
+          ]}
+          confirmLabel="Send invoice"
+          onConfirm={sendInvoiceEmail}
+          onClose={() => setEmailInvoiceOpen(false)}
+        />
       )}
     </div>
   );

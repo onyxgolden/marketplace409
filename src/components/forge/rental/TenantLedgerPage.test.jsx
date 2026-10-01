@@ -6,13 +6,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TenantLedgerPage from "./TenantLedgerPage";
 import { clearSWRCache } from "../../../hooks/swrCache";
 
+// "YYYY-MM" for the current month — keeps date-relative tests stable across
+// calendar rollovers.
+function stubMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 const ledgerPayload = {
   ledger: {
     entries: [
-      { id: "charge:c1", kind: "charge", date: "2026-09-01", amountCents: 127500, balanceEffectCents: 127500,
-        label: "Rent charge", status: "open", method: null, period: "2026-09", leaseId: "l1",
+      // Dates are pinned to the current month so the "last month" date-range
+      // filter always excludes them, no matter when the suite runs.
+      { id: "charge:c1", kind: "charge", date: `${stubMonth()}-01`, amountCents: 127500, balanceEffectCents: 127500,
+        label: "Rent charge", status: "open", method: null, period: stubMonth(), leaseId: "l1",
         propertyLabel: "145 Laxon", unitLabel: "Unit A", reference: "c1", balanceAfterCents: 127500, rentecEvidence: [] },
-      { id: "payment:p1", kind: "payment", date: "2026-09-05", amountCents: 50000, balanceEffectCents: -50000,
+      { id: "payment:p1", kind: "payment", date: `${stubMonth()}-05`, amountCents: 50000, balanceEffectCents: -50000,
         label: "Payment", status: "succeeded", method: "cash", period: null, leaseId: "l1", chargeId: "c1",
         propertyLabel: "145 Laxon", unitLabel: "Unit A", reference: "CHK-101", refundedAmountCents: 0,
         settlement: null, rentecEvidence: [], notes: "Partial September rent", balanceAfterCents: 77500 },
@@ -287,7 +296,7 @@ describe("TenantLedgerPage — reference parity (slice 2)", () => {
   it("filters the table by date range", async () => {
     await renderLedger();
     const range = container.querySelector('select[aria-label="Date range"]');
-    // Both stub entries are September 2026 — "last month" (August 2026) shows none.
+    // Both stub entries are dated this month — "last month" shows none.
     await act(async () => {
       range.value = "lastMonth";
       range.dispatchEvent(new Event("change", { bubbles: true }));
