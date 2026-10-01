@@ -8,6 +8,7 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import PaymentFrequencyPicker, { paymentFrequencyDescription } from "./PaymentFrequencyPicker";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
+import { useRentalTerminology } from "./rentalTerminologyContext";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const STATUS_TEXT_COLORS = { active: "text-emerald-700 dark:text-emerald-400", draft: "text-amber-700 dark:text-amber-400", cancelled: "text-slate-400 line-through dark:text-slate-500", ended: "text-slate-400 dark:text-slate-500", terminated: "text-slate-400 dark:text-slate-500" };
@@ -39,6 +40,8 @@ export function isLeaseExpiringSoon(lease, today = new Date().toISOString().slic
 }
 
 export default function RentalLeasePanel({ initialSetup = { units: [], tenants: [], leases: [], schedules: [], leaseMemberships: [] }, loadOnMount = true, initialShowCreate = null, recordContext = null, initialViewFilter = null }) {
+  // R25 terminology: panel headings resolve through the workspace term map.
+  const { termLabel } = useRentalTerminology();
   // Lease setup: stale-while-revalidate under one global key (skipped entirely
   // when loadOnMount is false). The cached setup renders instantly on return
   // visits and refreshes in the background — the last good data never blanks
@@ -217,8 +220,8 @@ export default function RentalLeasePanel({ initialSetup = { units: [], tenants: 
   }
 
   return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-lease-setup>
-    <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Lease setup</p>
-    <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">Leases and rent schedules</h2>
+    <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{termLabel("lease", { capitalize: true })} setup</p>
+    <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("lease", { plural: true, capitalize: true })} and rent schedules</h2>
     <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review existing leases first. New schedules remain draft until the signed lease is ready. If a tenant is already renting but has no lease on file (their original term expired and was never re-signed, or the record didn&apos;t import), add one below and leave the end date blank for an ongoing month-to-month tenancy.</p>
     {message && <p role="status" className="mt-3 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
     {(loaded || initialSetup) && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved setup.</p> : null}

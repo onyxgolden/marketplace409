@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearSWRCache, fetchWithDedupe, seedCacheEntry } from "../../../hooks/swrCache";
-import RentalApplicationShell, { buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
+import RentalApplicationShell, { applyTerminologyToNavigation, buildRentalSurface, HIDEABLE_SIDEBAR_SECTIONS, RENTAL_FUNCTIONS, RENTAL_NAVIGATION, resolveRentalSectionParam } from "./RentalApplicationShell.jsx";
 import { resolveRentalRecordContextParam } from "./rentalRecordParam.js";
 import { RENTAL_DASHBOARD_PAYLOAD_SWR_KEY } from "./useRentalDashboardPayload.js";
 import RentalSetupWizardPanel, { SETUP_WIZARD_DISMISSAL_STORAGE_KEY } from "./RentalSetupWizardPanel.jsx";
@@ -46,7 +46,7 @@ const EXPECTED_FUNCTION_IDS = [
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "chart-of-accounts", "batch-entry",
   "owners",
   "reports", "owner-statements",
-  "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "setup-guide",
+  "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "setup-guide",
 ];
 
 function mount(ui) {
@@ -389,6 +389,106 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain('data-active-function="financial-setup"');
     expect(markup).toContain("Loading financial setup");
   });
+  it("renders the Terminology settings surface under Settings", () => {
+    const markup = renderToStaticMarkup(buildRentalSurface("terminology"));
+    expect(markup).toContain("data-rental-terminology-panel");
+    expect(markup).toContain("Live preview");
+    expect(markup).toContain("Save terminology");
+  });
+
+  it("keeps terminology a recognized function id so Settings → Terminology navigates instead of falling back to overview", () => {
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toContain("terminology");
+    const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="terminology" onFunctionChange={() => {}} />);
+    expect(markup).toContain('data-active-function="terminology"');
+  });
+});
+
+describe("R25 terminology — applyTerminologyToNavigation", () => {
+  const CUSTOM_TERMS = {
+    tenant: { singular: "resident", plural: "residents" },
+    property: { singular: "unit", plural: "units" },
+    lease: { singular: "rental agreement", plural: "rental agreements" },
+    owner: { singular: "landlord", plural: "landlords" },
+    vendor: { singular: "contractor", plural: "contractors" },
+  };
+
+  it("renames term-aware group and item labels while keeping ids byte-identical", () => {
+    const localized = applyTerminologyToNavigation(RENTAL_NAVIGATION, CUSTOM_TERMS);
+    const tenants = localized.find((group) => group.defaultLabel === "Tenants");
+    expect(tenants.label).toBe("Residents");
+    expect(tenants.items.find((item) => item.id === "tenants").label).toBe("Residents");
+    expect(tenants.items.find((item) => item.id === "leases").label).toBe("Rental agreements");
+    expect(tenants.items.find((item) => item.id === "lease-lifecycle").label).toBe("Rental agreement Changes");
+    expect(tenants.items.find((item) => item.id === "renewal").label).toBe("Renew a rental agreement");
+    expect(tenants.items.find((item) => item.id === "readiness").label).toBe("Prepare a resident");
+    expect(tenants.items.find((item) => item.id === "messages").label).toBe("Landlord Inbox");
+    const properties = localized.find((group) => group.defaultLabel === "Properties");
+    expect(properties.label).toBe("Units");
+    expect(properties.items.find((item) => item.id === "setup").label).toBe("Units");
+    const transactions = localized.find((group) => group.defaultLabel === "Banking");
+    expect(transactions.items.find((item) => item.id === "vendors").label).toBe("Contractors");
+    // Non-term labels are untouched.
+    expect(transactions.items.find((item) => item.id === "charges").label).toBe("Rent & Payments");
+    expect(localized.find((group) => group.defaultLabel === "Summary").label).toBe("Summary");
+    // The static registry is unchanged — ids and default labels are the stable contract.
+    expect(RENTAL_NAVIGATION.find((group) => group.label === "Tenants").items.find((item) => item.id === "tenants").label).toBe("Tenants");
+    expect(RENTAL_FUNCTIONS.map(({ id }) => id)).toEqual(EXPECTED_FUNCTION_IDS);
+  });
+
+  it("falls back to the baseline labels when the term map is unset", () => {
+    const localized = applyTerminologyToNavigation(RENTAL_NAVIGATION, null);
+    expect(localized.map(({ label }) => label)).toEqual(RENTAL_NAVIGATION.map(({ label }) => label));
+  });
+});
+
+describe("R25 terminology — shell nav reflects custom terms", () => {
+  let mounted;
+  afterEach(() => {
+    if (mounted) {
+      act(() => { mounted.root.unmount(); });
+      mounted.container.remove();
+      mounted = null;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("renders custom nav labels and still navigates by stable item ids", async () => {
+    vi.spyOn(window, "fetch").mockImplementation((url) => {
+      if (String(url) === "/api/rental/terminology") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            terms: { tenant: { singular: "resident", plural: "residents" }, property: { singular: "unit", plural: "units" } },
+          }),
+        });
+      }
+      return Promise.reject(new Error("unexpected fetch"));
+    });
+    const visited = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    act(() => { root.render(<RentalApplicationShell activeFunctionId="overview" onFunctionChange={(id) => visited.push(id)} />); });
+    mounted = { container, root };
+    await flush();
+    // Expand every collapsible group, then read the nav labels.
+    let collapsedToggles;
+    do {
+      collapsedToggles = Array.from(container.querySelectorAll('nav[aria-label="Rental Manager functions"] button[aria-expanded="false"]'));
+      collapsedToggles.forEach((toggle) => act(() => { toggle.click(); }));
+    } while (collapsedToggles.length > 0);
+    const nav = container.querySelector('nav[aria-label="Rental Manager functions"]');
+    expect(nav.textContent).toContain("Residents");
+    expect(nav.textContent).toContain("Units");
+    expect(nav.textContent).not.toContain("Tenants");
+    // Ids are untouched: clicking the renamed item still navigates by "tenants".
+    const residentsButton = Array.from(nav.querySelectorAll("button")).find((button) => button.textContent === "Residents");
+    act(() => { residentsButton.click(); });
+    expect(visited).toEqual(["tenants"]);
+  });
+});
+
+describe("RentalApplicationShell help control", () => {
   it("renders a contextual Help control without opening the guide initially", () => {
     const markup = renderToStaticMarkup(<RentalApplicationShell activeFunctionId="maintenance" onFunctionChange={() => {}} />);
     expect(markup).toContain('title="Rental Manager workflows and button guide"');

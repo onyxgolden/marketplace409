@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { ForgeLoadingState } from "@/components/forge/ForgeStates";
+import { useRentalTerminology } from "./rentalTerminologyContext";
 
 // Rentec parity R3 — Vendors: vendor master records + the AP bill subledger.
 // Novice-simple on purpose: one screen, plain words, the bill form pre-fills
@@ -653,6 +654,8 @@ function ReissuePaymentForm({ payment, onDone, onClose }) {
 }
 
 export default function RentalVendorsPanel() {  const [tab, setTab] = useState("vendors");
+  // R25 terminology: panel headings resolve through the workspace term map.
+  const { termLabel } = useRentalTerminology();
   const [vendors, setVendors] = useState([]);
   const [bills, setBills] = useState([]);
   const [expenseAccounts, setExpenseAccounts] = useState([]);
@@ -841,10 +844,10 @@ export default function RentalVendorsPanel() {  const [tab, setTab] = useState("
   const selectedVendor = vendors.find((v) => v.id === selectedVendorId) || null;
 
   return (
-    <section aria-label="Vendors" className="space-y-4">
+    <section aria-label={termLabel("vendor", { plural: true, capitalize: true })} className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-black text-slate-900 dark:text-white">Vendors</h2>
+          <h2 className="text-xl font-black text-slate-900 dark:text-white">{termLabel("vendor", { plural: true, capitalize: true })}</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             {totals.openCount > 0
               ? `${centsToDollars(totals.openCents)} owed across ${totals.openCount} open bill${totals.openCount === 1 ? "" : "s"}`

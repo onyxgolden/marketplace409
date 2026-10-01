@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { resolveActiveFunction } from "@/components/forge/workspace/ApplicationShell";
 import { useSidebarHiddenItems } from "@/components/forge/workspace/useSidebarHiddenItems";
@@ -15,6 +15,9 @@ import RentecPaymentImportPanel from "./RentecPaymentImportPanel";
 import RentecFinancialHistoryImportPanel from "./RentecFinancialHistoryImportPanel";
 import PropertyFinancialSetupPanel from "./PropertyFinancialSetupPanel";
 import RentalHelpModal from "./RentalHelpModal";
+import { RentalTerminologyProvider, useRentalTerminology } from "./rentalTerminologyContext";
+import { termLabel as resolveTermLabel } from "@/domains/rental-terminology/rentalTerminology";
+import RentalTerminologyPanel from "./RentalTerminologyPanel";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 import RentalFirstTenantReadinessPanel from "./guided-workflow/RentalFirstTenantReadinessPanel";
 import RentalLeaseRenewalPanel from "./guided-workflow/RentalLeaseRenewalPanel";
@@ -85,6 +88,7 @@ export const RENTAL_NAVIGATION = Object.freeze([
       { id: "rentec-files", label: "Rentec Files" },
       { id: "rentec-payment-import", label: "Rentec Payment Import" },
       { id: "rentec-financial-history-import", label: "Rentec Financial History Import" },
+      { id: "terminology", label: "Terminology" },
       // R16: the re-runnable setup guide. Listed last so the coverage-ordered
       // help content (rentalHelpContent.js) stays aligned with nav order.
       { id: "setup-guide", label: "Setup guide" },
@@ -92,6 +96,50 @@ export const RENTAL_NAVIGATION = Object.freeze([
   }),
 ]);
 export const RENTAL_FUNCTIONS = Object.freeze(RENTAL_NAVIGATION.flatMap((group) => group.items));
+
+// Rentec parity R25 — terminology customization. Nav item ids are stable
+// (deep links, sidebar hide-prefs, ?section= params never change); only the
+// displayed labels are term-aware. The static RENTAL_NAVIGATION above stays
+// the source of truth for ids and default English labels; this pure function
+// returns a label-localized copy. Each returned group also carries
+// `defaultLabel` (the pre-terminology label) so collapse-persistence keys and
+// the Dashboard exemption in isItemHidden stay stable across renames.
+const GROUP_TERM_LABELS = Object.freeze({
+  Properties: Object.freeze({ key: "property", plural: true }),
+  Tenants: Object.freeze({ key: "tenant", plural: true }),
+});
+const ITEM_TERM_LABELS = Object.freeze({
+  setup: Object.freeze({ key: "property", plural: true }),
+  tenants: Object.freeze({ key: "tenant", plural: true }),
+  leases: Object.freeze({ key: "lease", plural: true }),
+  vendors: Object.freeze({ key: "vendor", plural: true }),
+});
+const ITEM_TERM_TEMPLATES = Object.freeze({
+  "lease-lifecycle": (t) => `${t("lease", { capitalize: true })} Changes`,
+  "lease-preparation": (t) => `${t("lease", { capitalize: true })} Editor`,
+  readiness: (t) => `Prepare a ${t("tenant")}`,
+  renewal: (t) => `Renew a ${t("lease")}`,
+  // The combined owner inbox deliberately merges rental and private-financing
+  // conversations — renaming "Owner" here keeps that meaning, it must never
+  // become a tenant-only label.
+  messages: (t) => `${t("owner", { capitalize: true })} Inbox`,
+});
+export function applyTerminologyToNavigation(navigation, terms) {
+  const t = (key, options) => resolveTermLabel(terms, key, options);
+  return navigation.map((group) => {
+    const groupSpec = GROUP_TERM_LABELS[group.label];
+    const items = group.items.map((item) => {
+      const template = ITEM_TERM_TEMPLATES[item.id];
+      if (template) return { ...item, label: template(t) };
+      const spec = ITEM_TERM_LABELS[item.id];
+      if (!spec) return item;
+      return { ...item, label: t(spec.key, { plural: spec.plural, capitalize: true }) };
+    });
+    const localized = { ...group, defaultLabel: group.label, items };
+    if (groupSpec) localized.label = t(groupSpec.key, { plural: groupSpec.plural, capitalize: true });
+    return localized;
+  });
+}
 
 // Maps a `?section=` URL value to a rental function id so external entry points (notably the
 // /forge/property compatibility redirect) can deep-link a section instead of dumping the user
@@ -131,8 +179,10 @@ export const HIDEABLE_SIDEBAR_SECTIONS = Object.freeze(
 
 // Summary is never filterable, even defensively against a corrupted/stale hidden-ids value --
 // every user needs a landing view regardless of what's stored server-side.
+// Compares against defaultLabel so a terminology rename can't accidentally
+// make Dashboard hideable.
 function isItemHidden(group, itemId, hiddenItemIds) {
-  return group.label !== "Summary" && hiddenItemIds.has(itemId);
+  return (group.defaultLabel ?? group.label) !== "Summary" && hiddenItemIds.has(itemId);
 }
 
 // Surfaces that render a dead end with no record context. Sidebar navigation
@@ -143,11 +193,11 @@ const CONTEXT_CARRY_SURFACES = new Set(["financial-setup"]);
 
 export function buildRentalSurface(id, { onNavigate, recordContext = null, viewFilter = null } = {}) {
   if(recordContext&&["charges","maintenance","inspections","documents","communications"].includes(id))return <RentalContextualSurface surfaceId={id} recordContext={recordContext}/>;
-  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, owners: <RentalOwnersHomePanel onNavigate={onNavigate} />, "owner-statements": <OwnerStatementsPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} initialViewFilter={viewFilter} recordContext={recordContext} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} initialViewFilter={viewFilter} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} initialViewFilter={viewFilter} />, insurance: <><RentalInsurancePanel /><div className="mt-6"><RentalInsuranceAddonsPanel /></div></>, maintenance: <RentalMaintenancePanel recordContext={recordContext} initialViewFilter={viewFilter} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "bank-ledger": <BankLedgerPage onNavigate={onNavigate} />, vendors: <RentalVendorsPanel />, "chart-of-accounts": <ChartOfAccountsPage onNavigate={onNavigate} />, "batch-entry": <BatchExpenseForm />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} onNavigate={onNavigate} />, deposits: <RentalDepositsPanel />, "checks-deposits": <BankingToolsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel />, "setup-guide": <RentalSetupWizardPanel mode="guide" onNavigate={onNavigate} onExit={() => onNavigate?.("overview")} /> };
+  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, owners: <RentalOwnersHomePanel onNavigate={onNavigate} />, "owner-statements": <OwnerStatementsPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} initialViewFilter={viewFilter} recordContext={recordContext} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} initialViewFilter={viewFilter} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} initialViewFilter={viewFilter} />, insurance: <><RentalInsurancePanel /><div className="mt-6"><RentalInsuranceAddonsPanel /></div></>, maintenance: <RentalMaintenancePanel recordContext={recordContext} initialViewFilter={viewFilter} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "bank-ledger": <BankLedgerPage onNavigate={onNavigate} />, vendors: <RentalVendorsPanel />, "chart-of-accounts": <ChartOfAccountsPage onNavigate={onNavigate} />, "batch-entry": <BatchExpenseForm />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} onNavigate={onNavigate} />, deposits: <RentalDepositsPanel />, "checks-deposits": <BankingToolsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel />, terminology: <RentalTerminologyPanel />, "setup-guide": <RentalSetupWizardPanel mode="guide" onNavigate={onNavigate} onExit={() => onNavigate?.("overview")} /> };
   return surfaces[id] || <RentalOverviewPanel onNavigate={onNavigate} />;
 }
 
-export default function RentalApplicationShell({ activeFunctionId, activeRecordContext = null, activeViewFilter = null, onFunctionChange }) {
+function RentalApplicationShellView({ activeFunctionId, activeRecordContext = null, activeViewFilter = null, onFunctionChange }) {
   const activeId = resolveActiveFunction(RENTAL_FUNCTIONS, activeFunctionId);
   const [showHelp, setShowHelp] = useState(false);
   const sidebarPrefs = useSidebarHiddenItems(SIDEBAR_KEY);
@@ -166,6 +216,16 @@ export default function RentalApplicationShell({ activeFunctionId, activeRecordC
     writeSetupWizardDismissal();
     setWizardDismissed(true);
   }
+  // R25 terminology: the whole shell (nav rail, mobile select, customize
+  // checklist, record-context banner) renders through the workspace term map.
+  const { terms, termLabel } = useRentalTerminology();
+  const navigation = useMemo(() => applyTerminologyToNavigation(RENTAL_NAVIGATION, terms), [terms]);
+  const hideableSections = useMemo(
+    () => navigation
+      .filter((group) => (group.defaultLabel ?? group.label) !== "Dashboard")
+      .map((group) => Object.freeze({ sectionLabel: group.label, items: group.items })),
+    [navigation],
+  );
   activeRecordContext = activeRecordContext ? { ...activeRecordContext, recordLabel: activeRecordContext.recordLabel || (activeRecordContext.recordType === "tenant" ? "selected tenant" : activeRecordContext.propertyId || "selected property") } : null;
   // Sidebar / mobile-select navigation passes no record context. Surfaces that
   // are useless without one would land on a dead end, so carry the currently
@@ -196,12 +256,18 @@ export default function RentalApplicationShell({ activeFunctionId, activeRecordC
       </div>
     </header>
     <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-5 p-4 lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-6 lg:p-8">
-      <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => handleFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{RENTAL_NAVIGATION.map((group) => ({ key: group.label, label: group.label, items: group.items.filter((item) => !isItemHidden(group, item.id, sidebarPrefs.hiddenItemIds)) })).filter((entry) => entry.items.length > 0).map((entry) => <optgroup key={entry.key} label={entry.label}>{entry.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
-      <RentalNavSidebar activeId={activeId} onFunctionChange={handleFunctionChange} sidebarPrefs={sidebarPrefs} />
-      <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0">{showFirstRunWizard?<RentalSetupWizardPanel mode="first-run" onNavigate={handleFunctionChange} onExit={handleWizardExit}/>:<>{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? "tenant" : "property"}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to record</button></div>:null}{buildRentalSurface(activeId, { onNavigate: handleFunctionChange, recordContext: activeRecordContext, viewFilter: activeViewFilter })}</>}</main>
+      <label className="lg:hidden"><span className="sr-only">Rental function</span><select value={activeId} onChange={(event) => handleFunctionChange?.(event.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-3 font-bold text-slate-950 dark:text-slate-100">{navigation.map((group) => ({ key: group.defaultLabel ?? group.label, label: group.label, items: group.items.filter((item) => !isItemHidden(group, item.id, sidebarPrefs.hiddenItemIds)) })).filter((entry) => entry.items.length > 0).map((entry) => <optgroup key={entry.key} label={entry.label}>{entry.items.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</optgroup>)}</select></label>
+      <RentalNavSidebar activeId={activeId} onFunctionChange={handleFunctionChange} sidebarPrefs={sidebarPrefs} navigation={navigation} hideableSections={hideableSections} />
+      <main data-active-function-surface={activeId} data-record-context={activeRecordContext?.recordId || undefined} className="min-w-0">{showFirstRunWizard?<RentalSetupWizardPanel mode="first-run" onNavigate={handleFunctionChange} onExit={handleWizardExit}/>:<>{activeRecordContext?<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950 px-4 py-3" role="status"><p className="text-sm font-bold text-sky-950 dark:text-sky-100">Working with {activeRecordContext.recordType === "tenant" ? termLabel("tenant") : termLabel("property")}: {activeRecordContext.recordLabel}</p><button type="button" onClick={()=>onFunctionChange?.(activeRecordContext.recordType === "tenant" ? "tenants" : "setup")} className="text-sm font-black text-sky-800 dark:text-sky-300 underline">Back to record</button></div>:null}{buildRentalSurface(activeId, { onNavigate: handleFunctionChange, recordContext: activeRecordContext, viewFilter: activeViewFilter })}</>}</main>
     </div>
     {showHelp && <RentalHelpModal activeFunctionId={activeId} onClose={() => setShowHelp(false)} />}
   </section>;
+}
+
+// The terminology provider wraps the whole shell so the nav rail, the
+// record-context banner, and every term-aware panel share one workspace map.
+export default function RentalApplicationShell(props) {
+  return <RentalTerminologyProvider><RentalApplicationShellView {...props} /></RentalTerminologyProvider>;
 }
 
 const NAV_COLLAPSE_STORAGE_KEY = "forge-rental-nav-sidebar-collapsed";
@@ -257,10 +323,13 @@ function visibleItems(group, items, hiddenItemIds) {
   return items.filter((item) => !isItemHidden(group, item.id, hiddenItemIds));
 }
 
-function RentalNavSidebar({ activeId, onFunctionChange, sidebarPrefs }) {
+function RentalNavSidebar({ activeId, onFunctionChange, sidebarPrefs, navigation, hideableSections }) {
   const [collapsed, setCollapsed] = useState(() => loadStoredCollapsedNavGroups() ?? defaultCollapsedGroups(activeId));
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const { hiddenItemIds } = sidebarPrefs;
+  // Collapse keys are the pre-terminology group labels (defaultLabel) so a
+  // rename can't orphan the user's stored collapse preferences.
+  const groupKey = (group) => group.defaultLabel ?? group.label;
   const toggleKey = (key) => {
     setCollapsed((current) => {
       const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key];
@@ -281,20 +350,20 @@ function RentalNavSidebar({ activeId, onFunctionChange, sidebarPrefs }) {
           <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
           <span>Customize</span>
         </button>
-        {customizeOpen && <SidebarCustomizePopover sections={HIDEABLE_SIDEBAR_SECTIONS} sidebarPrefs={sidebarPrefs} onClose={() => setCustomizeOpen(false)} />}
+        {customizeOpen && <SidebarCustomizePopover sections={hideableSections} sidebarPrefs={sidebarPrefs} onClose={() => setCustomizeOpen(false)} />}
       </div>
       <nav aria-label="Rental Manager functions" className="space-y-3">
-        {RENTAL_NAVIGATION.map((group) => {
+        {navigation.map((group) => {
           const items = visibleItems(group, group.items, hiddenItemIds);
           if (group.items.length > 0 && items.length === 0) return null;
           const containsActive = items.some((item) => item.id === activeId);
-          const open = !collapsed.includes(group.label) || containsActive;
+          const open = !collapsed.includes(groupKey(group)) || containsActive;
           return (
-            <div key={group.label}>
+            <div key={groupKey(group)}>
               <NavGroupToggle
                 label={group.label}
                 open={open}
-                onToggle={() => toggleKey(group.label)}
+                onToggle={() => toggleKey(groupKey(group))}
                 className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-slate-500 hover:text-slate-950 dark:text-slate-500 dark:hover:text-white"
               />
               {open && (
