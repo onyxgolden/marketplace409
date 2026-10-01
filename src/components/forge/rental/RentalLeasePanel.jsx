@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalViewFilterBanner from "./RentalViewFilterBanner";
 import RentRollImportPanel from "./RentRollImportPanel";
+import CustomFieldsEditor from "./CustomFieldsEditor";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
@@ -263,6 +264,7 @@ export function LeaseDetail({ lease, unit, schedule, working, onActivate, onSave
       <Detail label="Property" value={lease.property_id} />
       <Detail label="Lease ID" value={lease.id} />
     </dl>
+    <CustomFieldsEditor groups={[{ entity: "lease", recordId: lease.id }]} />
     {schedule && lease.status !== "cancelled" && (
       <div className="mt-4">
         <button type="button" disabled={working} onClick={() => setShowEditTerms((value) => !value)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">{showEditTerms ? "Close" : "Edit terms"}</button>

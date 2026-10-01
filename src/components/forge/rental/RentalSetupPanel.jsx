@@ -11,6 +11,8 @@ import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
 import { ForgeErrorState, ForgeLoadingState } from "@/components/forge/ForgeStates";
 import StructuredAddressFields from "./StructuredAddressFields";
+import CustomFieldsSettingsPanel from "./CustomFieldsSettingsPanel";
+import CustomFieldsEditor from "./CustomFieldsEditor";
 import { addressOfUnit, formatAddress, validateAddressFields } from "@/lib/address/validateAddress";
 
 async function submit(operation, key, value) {
@@ -207,6 +209,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   return (
+    <>
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-setup>
       {ledgerUnit ? (
         <PropertyLedgerPage propertyId={ledgerUnit.property_id} propertyLabel={ledgerUnit.label}
@@ -249,7 +252,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
             {archiveCandidateId === unit.id ? <div className="mt-5 rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="font-black text-red-900 dark:text-red-200">Archive {unit.label}?</p><p className="mt-2 text-sm text-red-800 dark:text-red-300">This removes the property/unit from active lists but preserves its financial, lease, and audit history. A property with an active lease cannot be archived.</p><div className="mt-3 flex gap-2"><button type="button" disabled={working} onClick={() => archiveUnit(unit)} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white">Confirm archive</button><button type="button" onClick={() => setArchiveCandidateId(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold dark:border-slate-600 dark:text-slate-300">Cancel</button></div></div>
               : editingId===unit.id ? <UnitEditForm unit={unit} working={working} onCancel={()=>setEditingId(null)} onSave={saveUnit} addressErrors={addressErrors}/>
-              : <dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Address" value={formatAddress(addressOfUnit(unit)) || "Not recorded"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl>}
+              : <><dl className="mt-5 grid gap-4 sm:grid-cols-2"><Detail label="Property" value={unit.property_id} /><Detail label="Status" value={unit.status || "Not set"} /><Detail label="Address" value={formatAddress(addressOfUnit(unit)) || "Not recorded"} /><Detail label="Bedrooms" value={unit.bedrooms ?? "Not recorded"} /><Detail label="Bathrooms" value={unit.bathrooms ?? "Not recorded"} /><Detail label="Square feet" value={unit.square_feet ?? "Not recorded"} /><Detail label="Notes" value={unit.notes || "No notes"} /></dl><CustomFieldsEditor groups={[{ entity: "property", recordId: unit.property_id, title: "Property custom fields" }, { entity: "unit", recordId: unit.id, title: "Unit custom fields" }]} /></>}
           </div>;
         })()}
       </RentalRecordBrowser>}
@@ -274,9 +277,11 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
         </div>)}</div>
       </div>}
       {!showCreate && message && <p role="status" className="mt-4 text-sm font-bold text-slate-700 dark:text-slate-300">{message}</p>}
+      <CustomFieldsSettingsPanel />
       </>
       )}
     </section>
+    </>
   );
 }
 

@@ -4,6 +4,8 @@ import RentalRecordBrowser from "./RentalRecordBrowser";
 import RentalRecordActions, { labelRentalRecordContext } from "./RentalRecordActions";
 import RentalPhotoUpload from "./RentalPhotoUpload";
 import TenantPaymentHistory from "./TenantPaymentHistory";
+import CustomFieldsEditor from "./CustomFieldsEditor";
+import NoticeLogList from "./NoticeLogList";
 import TenantLedgerPage from "./TenantLedgerPage";
 import { useCardContextMenu, CardContextMenu, CARD_REGION_ATTRIBUTE } from "./CardContextMenu";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
@@ -298,6 +300,11 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           details={<>
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
         <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===tenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={tenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride}/>
+        <CustomFieldsEditor groups={[{ entity: "tenant", recordId: tenant.id }]} />
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/60 p-5 dark:border-slate-700 dark:bg-slate-950/30" data-tenant-notice-log>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Generated notices</p>
+          <NoticeLogList tenantId={tenant.id} tenantName={tenant.display_name} compact />
+        </div>
         {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => { setDeleteTarget(tenant); setDeleteConfirmText(""); }} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
         {deleteTarget && <div role="alertdialog" aria-modal="true" aria-labelledby="delete-unused-tenant-title" aria-describedby="delete-unused-tenant-desc"
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
