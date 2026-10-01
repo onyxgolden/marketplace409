@@ -3,6 +3,7 @@ import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/crea
 import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
 import { serializeVendor, validateVendorInput } from "@/application/rental/vendors";
 import { billBalanceCents, serializeVendorBill } from "@/application/rental/vendorBills";
+import { serializeVendorPayment } from "@/application/rental/vendorPayments";
 
 async function requireWriter(authenticated) {
   if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
@@ -13,6 +14,7 @@ async function requireWriter(authenticated) {
 
 const VENDOR_COLUMNS = "id, name, contact_name, email, phone, address, trade, tax_classification, tax_id_last4, notes, is_active, created_at, updated_at";
 const BILL_COLUMNS = "id, vendor_id, property_id, bill_date, due_date, amount_cents, paid_amount_cents, expense_account_code, memo, attachment_reference, status, void_reason, voided_at, created_at, updated_at";
+const PAYMENT_COLUMNS = "id, vendor_id, payment_date, payment_method, amount_cents, bank_account_id, check_number, memo, financial_event_ids, status, void_reason, voided_at, created_at, updated_at";
 
 async function findOwnedVendor(supabaseClient, ownerId, vendorId) {
   const { data, error } = await supabaseClient
@@ -53,11 +55,51 @@ export async function GET(request, { params }) {
       openCents: live.reduce((sum, bill) => sum + billBalanceCents(bill), 0),
     };
 
+    // Payment history for the vendor ledger: every payment with its bill
+    // applications, newest first.
+    const { data: payments, error: paymentsError } = await supabaseClient
+      .from("rental_vendor_payments")
+      .select(PAYMENT_COLUMNS)
+      .eq("owner_id", effectiveOwnerId)
+      .eq("vendor_id", vendor.id)
+      .order("payment_date", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (paymentsError) throw paymentsError;
+    const paymentRows = payments || [];
+    let paymentApplications = [];
+    if (paymentRows.length > 0) {
+      const { data: apps, error: appsError } = await supabaseClient
+        .from("rental_vendor_payment_applications")
+        .select("payment_id, bill_id, amount_cents, rental_vendor_bills!inner(bill_date, due_date, amount_cents)")
+        .eq("owner_id", effectiveOwnerId)
+        .in("payment_id", paymentRows.map((payment) => payment.id));
+      if (appsError) throw appsError;
+      paymentApplications = (apps || []).map((app) => ({
+        payment_id: app.payment_id,
+        bill_id: app.bill_id,
+        amount_cents: app.amount_cents,
+        bill_bill_date: app.rental_vendor_bills?.bill_date || null,
+        bill_due_date: app.rental_vendor_bills?.due_date || null,
+        bill_amount_cents: app.rental_vendor_bills?.amount_cents ?? null,
+      }));
+    }
+    const appsByPayment = new Map();
+    for (const app of paymentApplications) {
+      if (!appsByPayment.has(app.payment_id)) appsByPayment.set(app.payment_id, []);
+      appsByPayment.get(app.payment_id).push(app);
+    }
+
     return NextResponse.json({
       success: true,
       vendor: serializeVendor(vendor),
       bills: (bills || []).map((bill) => serializeVendorBill(bill, vendor.name)),
       totals,
+      payments: paymentRows.map((payment) =>
+        serializeVendorPayment(payment, {
+          applications: appsByPayment.get(payment.id) || [],
+          vendorName: vendor.name,
+        })
+      ),
     });
   } catch (error) {
     console.error("Vendor detail error", error);
