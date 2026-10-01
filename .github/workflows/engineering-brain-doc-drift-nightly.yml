@@ -1,0 +1,133 @@
+# Nightly doc-drift pass for the FORGE Engineering Brain
+# (scripts/engineering-brain/docs/runNightlyDocDrift*.mjs).
+#
+# Trigger: daily schedule — exactly one 1:00 AM America/Chicago execution —
+# plus manual dispatch.
+#
+# GitHub Actions cron is UTC-only: 1:00 AM America/Chicago is 06:00 UTC in
+# CDT (UTC-5, roughly Mar-Nov) and 07:00 UTC in CST (UTC-6, roughly Nov-Mar).
+# A single cron entry fires at BOTH candidate UTC slots, and the
+# "DST-aware schedule guard" step (the job's first step) lets exactly one of
+# them through: it reads the current America/Chicago local hour and no-ops
+# the slot whose local hour is not 01. Manual dispatches always run the pass.
+#
+# What it does:
+#   1. Checks out the triggering ref: scheduled runs resolve github.ref to
+#      main, so the nightly pass heals main's tip; manual branch dispatches
+#      check out the branch so the branch's own code is what actually runs
+#      (AGENTS.md "Workflow checkout pin trap" — a pinned ref: main would
+#      silently test main's code on a branch dispatch).
+#   2. Scans docs/ for drift (Slice 10 detector), takes up to 3 proposable
+#      findings, and runs each through the reviewed prepareFixPr pipeline
+#      with the doc-aware applyAndVerify (branch + PR; never merge).
+#   3. Uploads the per-finding report as an artifact either way.
+#
+# What it never does:
+#   - Never merges, never deploys, never writes production data. The only
+#     mutations are fix-branch pushes and fix-PR creation through the
+#     reviewed Slice 7 pipeline. Review (ChatGPT) and merge (Jason) stay
+#     human, exactly as before.
+#   - Findings with a prior fix PR (open, merged, or human-closed) are
+#     skipped; findings with no deterministic patch are skipped.
+#
+# Secrets: uses only the automatic GITHUB_TOKEN (contents: write for the fix
+# branch push, pull-requests: write for PR creation). No Supabase access,
+# no extra secrets.
+
+name: FORGE Engineering Brain — Nightly Doc Drift
+
+on:
+  schedule:
+    # GitHub Actions cron is UTC-only. 1:00 AM America/Chicago = 06:00 UTC in
+    # CDT (UTC-5) / 07:00 UTC in CST (UTC-6); the DST-aware schedule guard
+    # below lets exactly one of these two daily slots through.
+    - cron: '0 6,7 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: engineering-brain-doc-drift-nightly
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: DST-aware schedule guard
+        id: schedule-guard
+        run: |
+          # GitHub Actions cron is UTC-only, so the schedule above fires at
+          # 06:00 and 07:00 UTC every day. 1:00 AM America/Chicago is 06:00
+          # UTC in CDT (UTC-5) and 07:00 UTC in CST (UTC-6) — exactly one of
+          # the two daily slots has a Chicago local hour of 01. That slot
+          # runs the pass; the other exits 0 as a no-op, so there is exactly
+          # one real execution per day at 1:00 AM Chicago. Manual dispatches
+          # always run (that is the point of a manual dispatch).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — running the pass."
+            echo "run_pass=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          chicago_hour="$(TZ=America/Chicago date +%H)"
+          echo "America/Chicago local hour: $chicago_hour"
+          if [ "$chicago_hour" = "01" ]; then
+            echo "run_pass=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not the 1:00 AM America/Chicago slot — no-op."
+            echo "run_pass=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout triggering ref
+        if: steps.schedule-guard.outputs.run_pass == 'true'
+        uses: actions/checkout@v4
+        with:
+          # Scheduled runs resolve github.ref to main, so the nightly pass
+          # heals main's tip. Manual branch dispatches check out the branch
+          # instead — the AGENTS.md "Workflow checkout pin trap" lesson: a
+          # pinned ref: main would silently run main's code on a branch
+          # dispatch, making branch verification impossible.
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        if: steps.schedule-guard.outputs.run_pass == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.schedule-guard.outputs.run_pass == 'true'
+        run: npm ci
+
+      - name: Configure git identity for fix commits
+        if: steps.schedule-guard.outputs.run_pass == 'true'
+        run: |
+          git config user.name "forge-engineering-brain"
+          git config user.email "forge-engineering-brain@users.noreply.github.com"
+
+      - name: Run the nightly doc-drift pass
+        if: steps.schedule-guard.outputs.run_pass == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # pipefail: the CLI's nonzero exit must fail this step even though
+          # its output is piped through tee. GitHub's default shell does not
+          # enable pipefail, so without this a runner failure would look green.
+          set -o pipefail
+          node scripts/engineering-brain/docs/runNightlyDocDriftCli.mjs \
+            --repo "$GITHUB_WORKSPACE" \
+            --base "$(git rev-parse HEAD)" \
+            --github-actions \
+            --json | tee docdrift-report.json
+
+      - name: Upload doc-drift report
+        if: ${{ always() && steps.schedule-guard.outputs.run_pass == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docdrift-report
+          path: docdrift-report.json
+          if-no-files-found: warn
