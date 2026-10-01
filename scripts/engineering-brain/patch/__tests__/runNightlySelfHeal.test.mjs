@@ -249,7 +249,8 @@ describe("makeGithubActionsDeps", () => {
 
     const pr = deps.openPr({ branch: "engbrain-fix/x", title: "t", body: "b" });
     expect(pr).toEqual({ number: 123, url: "https://github.com/o/r/pull/123" });
-    expect(log[1].env).toEqual({ GH_TOKEN: "tok" });
+    expect(log[1].env.GH_TOKEN).toBe("tok");
+    expect(log[1].env.PATH).toBe(process.env.PATH);
 
     const prs = deps.listFixPrs();
     expect(prs).toEqual([{ number: 5, state: "open", head: "engbrain-fix/build-sig-a-12345678", title: "fix(engineering-brain): build in x from sig-a" }]);

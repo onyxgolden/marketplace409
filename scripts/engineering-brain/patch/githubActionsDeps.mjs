@@ -29,7 +29,9 @@ export function makeGithubActionsDeps({ token, repo, exec = defaultExec } = {}) 
   if (!repo || !repo.includes("/")) throw new Error("github actions deps require repo as \"owner/name\"");
 
   const pushUrl = `https://x-access-token:${token}@github.com/${repo}.git`;
-  const ghEnv = { GH_TOKEN: token };
+  // NB: merge with process.env — a bare { GH_TOKEN } would wipe PATH and
+  // the child could not find `git`/`gh`.
+  const ghEnv = { ...process.env, GH_TOKEN: token };
 
   const pushBranch = ({ worktree, branch }) => {
     if (!worktree || !branch) throw new Error("pushBranch requires worktree and branch");
