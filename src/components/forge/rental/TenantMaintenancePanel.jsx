@@ -1,7 +1,44 @@
 "use client";
 import { useState } from "react";
+import ConversationThread from "./ConversationThread";
 
 const statusLabel = (value) => value.replaceAll("_", " ");
+
+// Message thread attached to one work order (Rentec parity R5). The tenant reads and replies
+// through the existing portal operations; opening the thread marks it read server-side and the
+// landlord gets an email ping on each new tenant message.
+function TenantWorkOrderMessages({ workOrderId }) {
+  const [open, setOpen] = useState(false), [messages, setMessages] = useState([]),
+    [busy, setBusy] = useState(false), [error, setError] = useState(""), [loadedOnce, setLoadedOnce] = useState(false);
+  async function call(operation, extra = {}) {
+    const response = await fetch("/api/rental/portal", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation, workOrderId, ...extra }) });
+    const body = await response.json(); if (!response.ok) throw new Error(body.error); return body;
+  }
+  async function load() {
+    setBusy(true); setError("");
+    try {
+      const body = await call("get-work-order-messages");
+      setMessages((body.messages || []).map((row) => ({ id: row.id, senderType: row.sender_type, body: row.body, createdAt: row.created_at })));
+      setLoadedOnce(true);
+    } catch (reason) { setError(reason.message); } finally { setBusy(false); }
+  }
+  function toggle() { const next = !open; setOpen(next); if (next && !loadedOnce) load(); }
+  async function send(bodyText) {
+    setBusy(true); setError("");
+    try {
+      const result = await call("send-work-order-message", { body: bodyText });
+      setMessages((current) => [...current, { id: result.message.messageId, senderType: "tenant", body: bodyText, createdAt: result.message.createdAt }]);
+    } catch (reason) { setError(reason.message); } finally { setBusy(false); }
+  }
+  return <div className="mt-3 border-t border-amber-200 pt-2">
+    <button type="button" onClick={toggle} className="text-sm font-black text-slate-900">
+      Messages <span className="font-bold text-slate-500">{open ? "Hide" : "Show"}</span>
+    </button>
+    {open ? <div className="mt-2">{busy && !loadedOnce ? <p className="text-sm text-slate-500">Loading messages…</p>
+      : <ConversationThread messages={messages} selfSenderType="tenant" onSend={send} busy={busy} error={error} placeholder="Message your landlord about this work order…" />}</div> : null}
+  </div>;
+}
 export default function TenantMaintenancePanel({ rentals, onSubmitted }) {
   const eligible = rentals.filter(({ lease }) => lease.status === "active");
   const [error, setError] = useState(""); const [message, setMessage] = useState("");
@@ -30,6 +67,6 @@ export default function TenantMaintenancePanel({ rentals, onSubmitted }) {
       <label className="flex items-center gap-3 self-end rounded-lg bg-slate-50 p-3 text-sm font-bold"><input name="permissionToEnter" type="checkbox" /> Landlord or approved vendor may enter</label>
       <button className="rounded-lg bg-slate-950 px-5 py-3 font-bold text-white md:col-span-2">Submit maintenance request</button>
     </form> : <p className="mt-4 text-sm text-slate-600">An active lease is required before submitting a request.</p>}
-    <div className="mt-7 border-t pt-6"><h3 className="font-black">Your requests</h3>{requests.length === 0 ? <p className="mt-2 text-sm text-slate-500">No maintenance requests submitted.</p> : requests.map((request) => <article key={request.id} className="mt-3 rounded-xl border p-4"><div className="flex justify-between gap-4"><strong>{request.title}</strong><span className="text-sm font-bold capitalize">{statusLabel(request.status)}</span></div><p className="mt-2 text-sm text-slate-600">{request.description}</p>{request.ownerNotes ? <p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900"><strong>Landlord update:</strong> {request.ownerNotes}</p> : null}{(request.workOrders||[]).map(order=><div key={order.id} className="mt-3 rounded-lg bg-amber-50 p-3 text-sm"><strong>Work order: {statusLabel(order.status)}</strong>{order.scheduledStart?<p className="mt-1">Appointment: {new Date(order.scheduledStart).toLocaleString()}{order.scheduledEnd?` – ${new Date(order.scheduledEnd).toLocaleString()}`:""}</p>:null}{(order.updates||[]).map(update=><p key={update.id} className="mt-2 border-t border-amber-200 pt-2">{update.publicNote}</p>)}</div>)}</article>)}</div>
+    <div className="mt-7 border-t pt-6"><h3 className="font-black">Your requests</h3>{requests.length === 0 ? <p className="mt-2 text-sm text-slate-500">No maintenance requests submitted.</p> : requests.map((request) => <article key={request.id} className="mt-3 rounded-xl border p-4"><div className="flex justify-between gap-4"><strong>{request.title}</strong><span className="text-sm font-bold capitalize">{statusLabel(request.status)}</span></div><p className="mt-2 text-sm text-slate-600">{request.description}</p>{request.ownerNotes ? <p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900"><strong>Landlord update:</strong> {request.ownerNotes}</p> : null}{(request.workOrders||[]).map(order=><div key={order.id} className="mt-3 rounded-lg bg-amber-50 p-3 text-sm"><strong>Work order: {statusLabel(order.status)}</strong>{order.scheduledStart?<p className="mt-1">Appointment: {new Date(order.scheduledStart).toLocaleString()}{order.scheduledEnd?` – ${new Date(order.scheduledEnd).toLocaleString()}`:""}</p>:null}{(order.updates||[]).map(update=><p key={update.id} className="mt-2 border-t border-amber-200 pt-2">{update.publicNote}</p>)}<TenantWorkOrderMessages workOrderId={order.id}/></div>)}</article>)}</div>
   </section>;
 }

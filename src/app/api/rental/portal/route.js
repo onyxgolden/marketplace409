@@ -3,6 +3,11 @@ import { createAuthenticatedTenantPortalApplication } from "@/lib/supabase/creat
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
+import {
+  buildWorkOrderMessageEventKey,
+  buildWorkOrderMessagePing,
+  queueWorkOrderMessagePing,
+} from "@/domains/rental-maintenance/workOrderMessagePing";
 
 // Server-side IP capture for the ACH mandate's online customer acceptance — what the request
 // actually arrived with, never trusted from the client body (same pattern as sign-lease).
@@ -177,6 +182,33 @@ export async function POST(request) {
     if(body?.operation==="mark-conversation-read"){
       const{error}=await authenticated.supabaseClient.rpc("mark_rental_conversation_read_by_tenant");
       if(error)throw error;return NextResponse.json({success:true});
+    }
+    if(body?.operation==="get-work-order-messages"){
+      if(typeof body.workOrderId!=="string"||!body.workOrderId.trim())return NextResponse.json({error:"workOrderId is required."},{status:400});
+      const{data,error}=await authenticated.supabaseClient.rpc("read_rental_work_order_tenant_messages",{p_work_order_id:body.workOrderId.trim()});
+      if(error)throw error;return NextResponse.json({success:true,messages:data?.messages||[]});
+    }
+    if(body?.operation==="send-work-order-message"){
+      if(typeof body.workOrderId!=="string"||!body.workOrderId.trim())return NextResponse.json({error:"workOrderId is required."},{status:400});
+      if(typeof body.body!=="string"||!body.body.trim())return NextResponse.json({error:"A message body is required."},{status:400});
+      const{data,error}=await authenticated.supabaseClient.rpc("send_rental_work_order_tenant_message",{p_work_order_id:body.workOrderId.trim(),p_body:body.body.trim()});
+      if(error)throw error;
+      // Best-effort ping to the landlord. The message itself is already saved; the ping only
+      // fires when the owner's email resolves. The address is used server-side only -- it is
+      // never forwarded to the client.
+      let pinged=false;
+      try{
+        const{data:ownerEmail}=await authenticated.supabaseClient.rpc("get_rental_owner_notification_email");
+        if(ownerEmail&&typeof ownerEmail==="string"&&ownerEmail.trim()&&data.leaseId){
+          const rendered=buildWorkOrderMessagePing({direction:"tenant_to_owner",tenantName:data.tenantName||null,workOrderScope:null});
+          const pingResult=await queueWorkOrderMessagePing({supabaseClient:authenticated.supabaseClient,
+            ownerId:data.ownerId,tenantId:data.tenantId,leaseId:data.leaseId,
+            eventKey:buildWorkOrderMessageEventKey({messageId:data.messageId}),
+            recipient:ownerEmail.trim(),subject:rendered.subject,bodyText:rendered.bodyText});
+          pinged=!pingResult.deliveryError;
+        }
+      }catch(pingError){console.error("Work-order tenant message ping error",pingError);}
+      return NextResponse.json({success:true,message:{conversationId:data.conversationId,messageId:data.messageId,createdAt:data.createdAt},pinged});
     }
     if (body?.operation !== "submit-maintenance-request")
       return NextResponse.json({ error: "A supported tenant portal operation is required." }, { status: 400 });
