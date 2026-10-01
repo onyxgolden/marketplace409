@@ -49,7 +49,7 @@ describe("buildInsuranceComplianceDashboard", () => {
         policies: [
           { id: "p1", lease_id: "l_expired", carrier_name: "Acme", status: "verified", expiration_date: "2026-09-15" },
           { id: "p2", lease_id: "l_soon", carrier_name: "Acme", status: "verified", expiration_date: "2026-10-20" },
-          { id: "p3", lease_id: "l_valid", carrier_name: "Acme", status: "pending_verification", expiration_date: "2027-09-01" },
+          { id: "p3", lease_id: "l_valid", carrier_name: "Acme", status: "verified", expiration_date: "2027-09-01" },
         ],
         leaseRequirements: [],
         propertyRequirements: [{ property_id: "prop_1", requires_renters_insurance: true, requires_pet_records: false }],
@@ -64,6 +64,105 @@ describe("buildInsuranceComplianceDashboard", () => {
     expect(byLease.l_valid.insurance).toBe("valid");
     expect(dashboard.summary.insuranceExpired).toBe(1);
     expect(dashboard.summary.insuranceExpiringSoon).toBe(1);
+  });
+
+  describe("verification status is resolved before a policy can count as valid", () => {
+    const requiredAt = (leases, policies) =>
+      buildInsuranceComplianceDashboard(
+        {
+          leases,
+          policies,
+          leaseRequirements: [],
+          propertyRequirements: [{ property_id: "prop_1", requires_renters_insurance: true, requires_pet_records: false }],
+          animals: [],
+          depositChoices: [],
+        },
+        { asOf: AS_OF },
+      );
+
+    it("keeps pending_verification with far-future expiry as pending, not valid", () => {
+      const dashboard = requiredAt([lease("l_pending")], [
+        { id: "p1", lease_id: "l_pending", carrier_name: "Acme", status: "pending_verification", expiration_date: "2028-01-01" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("pending");
+      expect(dashboard.rows[0].flags).not.toContain("insurance_missing");
+    });
+
+    it("treats a rejected policy with far-future expiry as missing", () => {
+      const dashboard = requiredAt([lease("l_rejected")], [
+        { id: "p1", lease_id: "l_rejected", carrier_name: "Acme", status: "rejected", expiration_date: "2028-01-01" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("missing");
+      expect(dashboard.rows[0].flags).toContain("insurance_missing");
+    });
+
+    it("keeps a verified policy expiring soon as expiring_soon", () => {
+      const dashboard = requiredAt([lease("l_soon")], [
+        { id: "p1", lease_id: "l_soon", carrier_name: "Acme", status: "verified", expiration_date: "2026-10-20" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("expiring_soon");
+      expect(dashboard.rows[0].flags).toContain("insurance_expiring_soon");
+    });
+
+    it("keeps a verified but expired policy as expired", () => {
+      const dashboard = requiredAt([lease("l_expired")], [
+        { id: "p1", lease_id: "l_expired", carrier_name: "Acme", status: "verified", expiration_date: "2026-09-15" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("expired");
+      expect(dashboard.rows[0].flags).toContain("insurance_expired");
+    });
+  });
+
+  describe("governing-policy selection prefers the current verified policy", () => {
+    const requiredAt = (leases, policies) =>
+      buildInsuranceComplianceDashboard(
+        {
+          leases,
+          policies,
+          leaseRequirements: [],
+          propertyRequirements: [{ property_id: "prop_1", requires_renters_insurance: true, requires_pet_records: false }],
+          animals: [],
+          depositChoices: [],
+        },
+        { asOf: AS_OF },
+      );
+
+    it("does not let a later-expiring rejected submission displace verified coverage", () => {
+      const dashboard = requiredAt([lease("l1")], [
+        { id: "p_verified", lease_id: "l1", carrier_name: "Acme", status: "verified", expiration_date: "2026-11-15" },
+        { id: "p_rejected", lease_id: "l1", carrier_name: "Globex", status: "rejected", expiration_date: "2028-01-01" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("valid");
+      expect(dashboard.rows[0].latestPolicyCarrier).toBe("Acme");
+    });
+
+    it("does not let a later-expiring pending submission displace a verified expiring-soon policy", () => {
+      const dashboard = requiredAt([lease("l1")], [
+        { id: "p_verified", lease_id: "l1", carrier_name: "Acme", status: "verified", expiration_date: "2026-10-20" },
+        { id: "p_pending", lease_id: "l1", carrier_name: "Globex", status: "pending_verification", expiration_date: "2028-01-01" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("expiring_soon");
+      expect(dashboard.rows[0].latestPolicyCarrier).toBe("Acme");
+    });
+
+    it("falls back to the pending submission once the verified policy has expired", () => {
+      const dashboard = requiredAt([lease("l1")], [
+        { id: "p_verified", lease_id: "l1", carrier_name: "Acme", status: "verified", expiration_date: "2026-09-01" },
+        { id: "p_pending", lease_id: "l1", carrier_name: "Globex", status: "pending_verification", expiration_date: "2027-01-01" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("pending");
+      expect(dashboard.rows[0].latestPolicyCarrier).toBe("Globex");
+    });
+
+    it("prefers the furthest verified coverage when several verified policies are current", () => {
+      const dashboard = requiredAt([lease("l1")], [
+        { id: "p_old", lease_id: "l1", carrier_name: "Acme", status: "verified", expiration_date: "2026-11-01" },
+        { id: "p_new", lease_id: "l1", carrier_name: "Globex", status: "verified", expiration_date: "2027-06-01" },
+      ]);
+      expect(dashboard.rows[0].insurance).toBe("valid");
+      expect(dashboard.rows[0].latestPolicyCarrier).toBe("Globex");
+      expect(dashboard.rows[0].latestPolicyExpires).toBe("2027-06-01");
+    });
   });
 
   it("puts expired and expiring-soon policies on the in-app reminder list (no email)", () => {

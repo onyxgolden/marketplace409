@@ -8,10 +8,17 @@
 //
 // Lease flags:
 //   - insurance: "not_required" | "missing" | "expired" | "expiring_soon" | "pending" | "valid"
-//     (missing = required and no policy on file; expired/expiring_soon come
-//     from the latest policy's expiration_date regardless of review status)
+//     (missing = required and no acceptable policy on file — none submitted or the
+//     latest governing policy was rejected; pending = a policy is on file but has
+//     not been verified; expired/expiring_soon/valid come from the governing
+//     policy. Only a verified, unexpired policy ever counts as "valid".)
 //   - petRecords: "not_required" | "missing" | "on_file"
 //   - depositChoice: "traditional_security_deposit" | "deposit_insurance_product" | "unrecorded"
+//
+// Governing-policy selection: the lease's policies are NOT ranked by greatest
+// expiration_date alone. A later-expiring rejected/pending submission must not
+// displace a currently verified policy, so verified-and-unexpired policies rank
+// first (furthest coverage wins among them); everything else keeps expiry order.
 
 export const INSURANCE_EXPIRY_REMINDER_DAYS = 30;
 
@@ -44,7 +51,21 @@ export function buildInsuranceComplianceDashboard(
     list.push(policy);
     policiesByLease.set(policy.lease_id, list);
   }
-  for (const list of policiesByLease.values()) list.sort((a, b) => (a.expiration_date < b.expiration_date ? 1 : -1));
+  // Governing-policy selection (R24 review fix): explicitly prefer the current
+  // verified policy. Verified-and-unexpired policies rank first (furthest
+  // coverage wins among them); a later-expiring rejected or pending submission
+  // must never displace verified coverage. Remaining rows keep expiry order
+  // with a stable id tiebreak.
+  const policyRank = (policy) =>
+    policy.status === "verified" && dateOnly(policy.expiration_date) >= asOf ? 0 : 1;
+  for (const list of policiesByLease.values()) {
+    list.sort((a, b) => {
+      const rank = policyRank(a) - policyRank(b);
+      if (rank !== 0) return rank;
+      if (a.expiration_date !== b.expiration_date) return a.expiration_date < b.expiration_date ? 1 : -1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+  }
 
   const leaseReqByLease = new Map(leaseRequirements.map((row) => [row.lease_id, row]));
   const propertyReqByProperty = new Map(propertyRequirements.map((row) => [row.property_id, row]));
@@ -73,12 +94,17 @@ export function buildInsuranceComplianceDashboard(
       insurance = "not_required";
     } else if (!latestPolicy) {
       insurance = "missing";
-    } else {
+    } else if (latestPolicy.status === "verified") {
+      // Only a verified policy can satisfy the requirement. Resolve the
+      // verification status BEFORE the expiry check: a policy awaiting
+      // verification is "pending" (never "valid"), and a rejected policy leaves
+      // the lease with no acceptable policy on file ("missing").
       const expires = dateOnly(latestPolicy.expiration_date);
       if (expires < asOf) insurance = "expired";
       else if (expires <= cutoff) insurance = "expiring_soon";
-      else if (["verified", "pending_verification"].includes(latestPolicy.status)) insurance = "valid";
-      else insurance = latestPolicy.status === "rejected" ? "missing" : "pending";
+      else insurance = "valid";
+    } else {
+      insurance = latestPolicy.status === "rejected" ? "missing" : "pending";
     }
 
     const leaseAnimals = animalsByLease.get(lease.id) || [];
