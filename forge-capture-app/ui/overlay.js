@@ -30,6 +30,9 @@ const coords = document.getElementById("coords");
 const sel = document.getElementById("sel");
 const dims = document.getElementById("dims");
 const hint = document.getElementById("hint");
+const blankwarn = document.getElementById("blankwarn");
+const bwRetry = document.getElementById("bw-retry");
+const bwProceed = document.getElementById("bw-proceed");
 
 const LOUPE_PX = 148;
 let start = null;
@@ -40,8 +43,10 @@ let backdropReady = false;
 function showAimTools() {
   // Crosshairs stay up while dragging (the OS cursor is hidden); the
   // loupe and readout stand down so the selection stays readable.
-  const cross = backdropReady && !busy;
-  const hover = cross && !start;
+  // The crosshair never depends on the frozen backdrop: even when the
+  // preview is unavailable the drag picker (and Esc) must keep working.
+  const cross = !busy;
+  const hover = backdropReady && cross && !start;
   chV.style.display = cross ? "block" : "none";
   chH.style.display = cross ? "block" : "none";
   loupe.style.display = hover ? "block" : "none";
@@ -116,6 +121,11 @@ async function init() {
   try {
     const ctx = await invoke("overlay_context");
     if (ctx && ctx.dpr) dpr = ctx.dpr;
+    // Blank-frame warning: the frozen frame came back a single solid
+    // color. Retry re-captures with the picker hidden; proceed picks on
+    // the frame as-is (legit for a truly solid-color desktop); Esc still
+    // cancels.
+    if (ctx && ctx.backdrop_blank) blankwarn.style.display = "block";
   } catch {
     /* fall back to window.devicePixelRatio */
   }
@@ -142,14 +152,44 @@ document.addEventListener("mousemove", (e) => {
     drawSelection(rectOf(start, { x: e.clientX, y: e.clientY }));
     return;
   }
-  if (backdropReady) positionAimTools(e.clientX, e.clientY);
+  // The crosshair tracks the cursor even when the frozen preview failed
+  // to load — drawLoupe no-ops without frame pixels and the loupe/readout
+  // stay hidden until backdropReady, but aiming must never freeze.
+  positionAimTools(e.clientX, e.clientY);
   showAimTools();
+});
+
+bwRetry.addEventListener("click", async () => {
+  bwRetry.disabled = true;
+  try {
+    await invoke("retry_region_backdrop");
+    // Re-read the session: the retry stored a fresh frame and an updated
+    // blank flag, so the warning reappears only if still blank.
+    blankwarn.style.display = "none";
+    backdropReady = false;
+    backdrop.removeAttribute("src");
+    await init();
+  } catch (err) {
+    hint.style.display = "block";
+    hint.textContent = `Retry failed: ${err}`;
+  } finally {
+    bwRetry.disabled = false;
+  }
+});
+
+bwProceed.addEventListener("click", () => {
+  blankwarn.style.display = "none";
 });
 
 document.addEventListener("mousedown", (e) => {
   if (busy || e.button !== 0) return;
+  // Clicks on the blank-frame warning buttons are UI clicks, not the
+  // start of a drag-select.
+  if (e.target.closest("#blankwarn")) return;
   start = { x: e.clientX, y: e.clientY };
   hint.style.display = "none";
+  // Starting a drag is an implicit "proceed" on a blank frame.
+  blankwarn.style.display = "none";
   showAimTools();
 });
 

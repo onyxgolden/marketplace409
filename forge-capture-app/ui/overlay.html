@@ -9,7 +9,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: rgba(0, 0, 0, 0.35);
+      background: #000;
       cursor: none;
       user-select: none;
     }
@@ -38,6 +38,37 @@
       pointer-events: none;
       z-index: 30;
     }
+    /* Blank-frame warning: the frozen frame came back a single solid
+       color, which usually means the capture pipeline produced a dead
+       frame — but a genuinely solid-color desktop is legitimate, so the
+       user chooses: retry the capture, proceed anyway, or Esc to cancel. */
+    #blankwarn {
+      position: fixed;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(64, 42, 8, 0.95);
+      border: 1px solid #d99a3d;
+      color: #f5e6c8;
+      font: 13px "Segoe UI", system-ui, sans-serif;
+      padding: 10px 14px;
+      border-radius: 6px;
+      display: none;
+      z-index: 31;
+      text-align: center;
+    }
+    #blankwarn button {
+      margin: 8px 6px 0;
+      font: 13px "Segoe UI", system-ui, sans-serif;
+      padding: 6px 14px;
+      border-radius: 4px;
+      border: 1px solid #d99a3d;
+      background: #2a2d33;
+      color: #e8eaed;
+      cursor: pointer;
+    }
+    #blankwarn button:hover { background: #3a3e46; }
+    #blankwarn #bw-proceed { background: #4a3a12; }
     .crosshair {
       position: fixed;
       background: rgba(217, 154, 61, 0.85);
@@ -94,6 +125,11 @@
 <body>
   <img id="backdrop" alt="" />
   <div id="hint">Drag to select a region — Esc cancels</div>
+  <div id="blankwarn">
+    <div>The captured screen looks blank — the capture may have failed.</div>
+    <button id="bw-retry" type="button">Retry capture</button>
+    <button id="bw-proceed" type="button">Proceed anyway</button>
+  </div>
   <div id="ch-v" class="crosshair"></div>
   <div id="ch-h" class="crosshair"></div>
   <canvas id="loupe" width="148" height="148"></canvas>
