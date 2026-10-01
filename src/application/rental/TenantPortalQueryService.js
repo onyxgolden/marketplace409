@@ -4,6 +4,7 @@ import { mapRentalUnitRowToRentalUnit } from "@/domains/rental-unit/rental-unit.
 import { mapRentScheduleRow } from "@/domains/rent-schedule";
 import { mapRentChargeRow } from "@/domains/rent-charge";
 import { resolveEffectivePaymentPolicy } from "@/domains/rental-payment/paymentPolicy";
+import { resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
 
 export class TenantPortalQueryService {
   constructor(supabaseClient) {
@@ -18,13 +19,18 @@ export class TenantPortalQueryService {
     if (!tenantRow) return null;
 
     const { data: billingSettingsRow, error: billingSettingsError } = await this.supabase
-      .from("rental_billing_settings").select("billing_enabled, payment_policy").eq("owner_id", tenantRow.owner_id).maybeSingle();
+      .from("rental_billing_settings").select("billing_enabled, payment_policy, card_convenience_fee_bps").eq("owner_id", tenantRow.owner_id).maybeSingle();
     if (billingSettingsError) throw billingSettingsError;
     const billingEnabled = billingSettingsRow?.billing_enabled === true;
     // R11: the tenant's effective payment policy (per-tenant override, else the
     // portfolio default) -- the portal explains the rule and the server-side
     // payment-session gate enforces it.
     const paymentPolicy = resolveEffectivePaymentPolicy(tenantRow.payment_policy, billingSettingsRow?.payment_policy);
+    // R12: workspace card convenience fee, in integer basis points (0 = off).
+    // The tenant review screen and autopay consent UI read this rate; the
+    // actual fee math and enforcement live server-side (payment-session /
+    // request-autopay), never in the portal markup.
+    const convenienceFeeBps = resolveFeeBasisPoints(billingSettingsRow?.card_convenience_fee_bps);
 
     const conversation = await this.loadConversation(tenantRow);
 
@@ -32,7 +38,7 @@ export class TenantPortalQueryService {
       .select("owner_id, lease_id, tenant_id").eq("owner_id", tenantRow.owner_id).eq("tenant_id", tenantRow.id);
     if (membershipError) throw membershipError;
     const leaseIds = (memberships || []).map(({ lease_id }) => lease_id);
-    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, paymentPolicy, conversation, rentals: Object.freeze([]) });
+    if (leaseIds.length === 0) return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, paymentPolicy, convenienceFeeBps, conversation, rentals: Object.freeze([]) });
 
     const { data: leases, error: leaseError } = await this.supabase.from("rental_leases").select("*")
       .eq("owner_id", tenantRow.owner_id).in("id", leaseIds).order("start_date", { ascending: false });
@@ -42,7 +48,7 @@ export class TenantPortalQueryService {
         this.supabase.from("rental_units").select("*").eq("owner_id", tenantRow.owner_id).eq("id", leaseRow.unit_id).maybeSingle(),
         this.supabase.from("rent_schedules").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("effective_start_date", { ascending: false }),
         this.supabase.from("rent_charges").select("*").eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("due_date", { ascending: false }),
-        this.supabase.from("rental_payments").select("id, charge_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, failure_message, created_at, succeeded_at, received_at")
+        this.supabase.from("rental_payments").select("id, charge_id, amount_cents, refunded_amount_cents, currency_code, status, payment_method, receipt_reference, failure_message, created_at, succeeded_at, received_at, convenience_fee_cents")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).order("created_at", { ascending: false }),
         this.supabase.from("renters_insurance_requirements").select("required, minimum_liability_cents, purchase_url, jurisdiction_code")
           .eq("owner_id", tenantRow.owner_id).eq("lease_id", leaseRow.id).maybeSingle(),
@@ -54,7 +60,7 @@ export class TenantPortalQueryService {
           .eq("lease_id", leaseRow.id).eq("tenant_id", tenantRow.id).order("created_at", { ascending: false }),
         this.supabase.from("rental_inspections").select("*").eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id)
           .eq("tenant_id",tenantRow.id).in("status",["finalized","acknowledged"]).order("inspection_date",{ascending:false}),
-        this.supabase.from("rental_autopay_enrollments").select("id, status, payment_method_type, charge_day, retry_limit, reminder_days_before, consented_at, cancelled_at")
+        this.supabase.from("rental_autopay_enrollments").select("id, status, payment_method_type, charge_day, retry_limit, reminder_days_before, consented_at, cancelled_at, fee_consent_bps")
           .eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id).eq("tenant_id",tenantRow.id).order("created_at",{ascending:false}),
         this.supabase.from("rental_animals").select("id, name, breed_description, classification, approval_status").eq("owner_id",tenantRow.owner_id).eq("lease_id",leaseRow.id).eq("tenant_id",tenantRow.id).order("created_at",{ascending:false}),
         // Only ever the currently approved preparation -- a draft or superseded one is never shown
@@ -118,7 +124,7 @@ export class TenantPortalQueryService {
         charges: Object.freeze((chargeResult.data || []).map((row)=>Object.freeze({...mapRentChargeRow(row),chargeType:row.charge_type||"rent",relatedChargeId:row.related_charge_id||null}))),
         payments: Object.freeze((paymentResult.data || []).map((row) => Object.freeze({ id: row.id, chargeId: row.charge_id,
           amountCents: Number(row.amount_cents), refundedAmountCents:Number(row.refunded_amount_cents||0), currencyCode: row.currency_code, status: row.status,
-          paymentMethod: row.payment_method, receiptReference: row.receipt_reference,
+          paymentMethod: row.payment_method, convenienceFeeCents: Number(row.convenience_fee_cents || 0), receiptReference: row.receipt_reference,
           failureMessage: row.failure_message, createdAt: row.created_at, succeededAt: row.succeeded_at,
           receivedAt: row.received_at }))),
         credits: Object.freeze((creditResult.data || []).map((row) => Object.freeze({ id: row.id, tenantId: row.tenant_id,
@@ -147,7 +153,7 @@ export class TenantPortalQueryService {
         securityDepositTransactions: Object.freeze(depositTransactions.map((row) => Object.freeze({ id: row.id,
           depositId: row.deposit_id, transactionType: row.transaction_type, amountCents: Number(row.amount_cents),
           occurredAt: row.occurred_at, description: row.description }))),
-        autopayEnrollments:Object.freeze((autopayResult.data||[]).map(row=>Object.freeze({id:row.id,status:row.status,paymentMethodType:row.payment_method_type,chargeDay:row.charge_day,retryLimit:row.retry_limit,reminderDaysBefore:row.reminder_days_before,consentedAt:row.consented_at,cancelledAt:row.cancelled_at}))),
+        autopayEnrollments:Object.freeze((autopayResult.data||[]).map(row=>Object.freeze({id:row.id,status:row.status,paymentMethodType:row.payment_method_type,chargeDay:row.charge_day,retryLimit:row.retry_limit,reminderDaysBefore:row.reminder_days_before,consentedAt:row.consented_at,cancelledAt:row.cancelled_at,feeConsentBps:row.fee_consent_bps ?? 0}))),
         animals:Object.freeze((animalResult.data||[]).map(row=>Object.freeze({id:row.id,name:row.name,breedDescription:row.breed_description,classification:row.classification,approvalStatus:row.approval_status}))),
         inspections:Object.freeze((inspectionResult.data||[]).map(row=>Object.freeze({id:row.id,inspectionType:row.inspection_type,
           inspectionDate:row.inspection_date,status:row.status,generalNotes:row.general_notes,finalizedAt:row.finalized_at,
@@ -173,7 +179,7 @@ export class TenantPortalQueryService {
         }) : null,
       });
     }));
-    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, paymentPolicy, conversation, rentals: Object.freeze(rentals) });
+    return Object.freeze({ tenant: mapRentalTenantRowToRentalTenant(tenantRow), billingEnabled, paymentPolicy, convenienceFeeBps, conversation, rentals: Object.freeze(rentals) });
   }
 
   // One continuous conversation with the owner (not per-lease) -- messaging is a tenant<->owner

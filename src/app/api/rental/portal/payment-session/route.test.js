@@ -215,4 +215,97 @@ describe("tenant payment-session route (provider-mode isolation)", () => {
       expect(createPaymentSession).not.toHaveBeenCalled();
     });
   });
+
+  // R12 card convenience fees: pass-through to the tenant, agreed-to in the
+  // portal, booked as reimbursement (never income). The fee amount is always
+  // computed server-side from the workspace rate; the client only echoes.
+  describe("card convenience fee gate", () => {
+    const readyAccount = { provider_account_id: "acct_kent", status: "enabled", charges_enabled: true, payouts_enabled: true, card_payments_enabled: true };
+    const feeOn = { billing_enabled: true, card_convenience_fee_bps: 295 }; // 2.95% of $1500 = $44.25
+    function feeTables(accountRow = readyAccount, settingsRow = feeOn) {
+      return baseTables(accountRow, { customer_id: "cus_test_1" }, forgeCollectibleSchedule, settingsRow);
+    }
+
+    it("422s a card payment when the tenant has not explicitly agreed to the fee", async () => {
+      tables = feeTables();
+      const response = await POST(request({ chargeId: "charge_1", paymentMethod: "card", feeAgreed: false }));
+      const body = await response.json();
+      expect(response.status).toBe(422);
+      expect(body.error).toContain("check the box");
+      expect(body.error).toContain("$44.25");
+      expect(createPaymentSession).not.toHaveBeenCalled();
+      expect(tables.rental_payments.insert).not.toHaveBeenCalled();
+    });
+
+    it("422s when the echoed fee does not match the server-computed fee (owner changed the rate mid-review)", async () => {
+      tables = feeTables();
+      const response = await POST(request({ chargeId: "charge_1", paymentMethod: "card", feeAgreed: true, expectedFeeCents: 1 }));
+      const body = await response.json();
+      expect(response.status).toBe(422);
+      expect(body.error).toMatch(/changed while you were reviewing/);
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("creates a card-only session charging rent + the server-computed fee, with the fee on the payment row", async () => {
+      tables = feeTables();
+      const response = await POST(request({ chargeId: "charge_1", paymentMethod: "card", feeAgreed: true, expectedFeeCents: 4425 }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.rentCents).toBe(150000);
+      expect(body.convenienceFeeCents).toBe(4425);
+      expect(body.convenienceFeeBps).toBe(295);
+      expect(body.amountCents).toBe(154425);
+      expect(createPaymentSession).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ amountCents: 154425, paymentMethods: ["card"] }),
+      );
+      expect(tables.rental_payments.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ amount_cents: 154425, convenience_fee_cents: 4425, convenience_fee_bps: 295 }),
+      );
+      const inserted = tables.rental_payments.insert.mock.calls[0][0];
+      expect(inserted.fee_agreed_at).toEqual(expect.any(String));
+    });
+
+    it("charges no fee and needs no agreement for ACH, with a bank-only element", async () => {
+      tables = feeTables();
+      const response = await POST(request({ chargeId: "charge_1", paymentMethod: "us_bank_account" }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.convenienceFeeCents).toBe(0);
+      expect(body.amountCents).toBe(150000);
+      expect(createPaymentSession).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ amountCents: 150000, paymentMethods: ["us_bank_account"] }),
+      );
+      expect(tables.rental_payments.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ amount_cents: 150000, convenience_fee_cents: 0, convenience_fee_bps: null, fee_agreed_at: null }),
+      );
+    });
+
+    it("needs no agreement and charges no fee when the workspace fee is off (default)", async () => {
+      tables = feeTables(readyAccount, { billing_enabled: true });
+      const response = await POST(request({ chargeId: "charge_1", paymentMethod: "card" }));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.convenienceFeeCents).toBe(0);
+      expect(body.amountCents).toBe(150000);
+    });
+
+    it("fails closed (400) when the payment method is missing but a fee is enabled", async () => {
+      tables = feeTables();
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(400);
+      expect(createPaymentSession).not.toHaveBeenCalled();
+    });
+
+    it("keeps the legacy both-methods element when the method is missing and the fee is off", async () => {
+      tables = feeTables(readyAccount, { billing_enabled: true });
+      const response = await POST(request({ chargeId: "charge_1" }));
+      expect(response.status).toBe(200);
+      expect(createPaymentSession).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ paymentMethods: ["us_bank_account", "card"] }),
+      );
+    });
+  });
 });

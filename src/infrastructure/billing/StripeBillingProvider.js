@@ -296,6 +296,11 @@ export class StripeBillingProvider {
       balanceTransactionId: typeof charge.balance_transaction === "string"
         ? charge.balance_transaction
         : charge.balance_transaction?.id || null,
+      // R12: the card brand is PCI-scoped until the charge exists -- this is
+      // the only place it becomes knowable server-side. Used to stamp the
+      // convenience-fee row (dispute evidence / per-brand reporting), never
+      // to set the fee rate.
+      cardBrand: charge.payment_method_details?.card?.brand || null,
     });
   }
 

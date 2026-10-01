@@ -66,6 +66,9 @@ async function payNow(container, remainingCents) {
     period: "2026-10", chargeType: "rent", returnUrl: "https://forge.test/return" };
   vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: async () => sessionBody })));
   await clickAndFlush(findButtonByText(container, "Pay now"));
+  // R12: the tenant reviews method + fee before the payment session is created.
+  await clickAndFlush(Array.from(container.querySelectorAll("button"))
+    .find((candidate) => candidate.textContent.startsWith("Continue to payment")));
 }
 
 describe("TenantPortal autopay disclosure notice", () => {

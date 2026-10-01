@@ -13,6 +13,7 @@ function setup() {
     customers: { create: vi.fn(async () => ({ id: "cus_tenant" })) },
     charges: { retrieve: vi.fn(async () => ({
       id: "ch_rent", payment_intent: "pi_rent", balance_transaction: "txn_rent",
+      payment_method_details: { card: { brand: "visa" } },
     })) },
     balanceTransactions: { retrieve: vi.fn(async () => ({
       id: "txn_rent", amount: 2000, fee: 0, net: 2000,
@@ -415,8 +416,18 @@ describe("StripeBillingProvider", () => {
       "ch_rent", {}, { stripeAccount: "acct_kent" },
     );
     expect(result).toEqual({
-      id: "ch_rent", paymentIntentId: "pi_rent", balanceTransactionId: "txn_rent",
+      id: "ch_rent", paymentIntentId: "pi_rent", balanceTransactionId: "txn_rent", cardBrand: "visa",
     });
+  });
+
+  it("reports a null card brand when the charge has no card payment method details", async () => {
+    const { provider, stripeClient } = setup();
+    stripeClient.charges.retrieve.mockResolvedValueOnce({
+      id: "ch_bank", payment_intent: "pi_bank", balance_transaction: "txn_bank",
+      payment_method_details: { us_bank_account: { last4: "6789" } },
+    });
+    const result = await provider.retrieveCharge({ connectedAccountId: "acct_kent" }, "ch_bank");
+    expect(result.cardBrand).toBeNull();
   });
 
   it("passes the connected account as request options when retrieving a balance transaction", async () => {

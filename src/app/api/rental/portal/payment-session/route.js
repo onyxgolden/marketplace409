@@ -4,6 +4,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
 import { validatePublishableKeyMode } from "@/infrastructure/billing/stripeMode";
 import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
+import { checkFeeAgreement, resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
 
 function failure(message, status) { return NextResponse.json({ error: message }, { status }); }
 
@@ -11,7 +12,7 @@ export async function POST(request) {
   const authenticated = await createAuthenticatedForgeApplication();
   if (authenticated.response) return authenticated.response;
   try {
-    const { chargeId } = await request.json();
+    const { chargeId, paymentMethod, feeAgreed, expectedFeeCents } = await request.json();
     if (typeof chargeId !== "string" || chargeId.trim() === "") return failure("chargeId is required.", 400);
     const database = createRentalWebhookClient();
     const provider = createStripeBillingProvider();
@@ -58,7 +59,7 @@ export async function POST(request) {
     // never accept an online rent payment while the owner's rental billing is globally paused,
     // regardless of any individual lease's activation state.
     const { data: billingSettings, error: billingSettingsError } = await database.from("rental_billing_settings")
-      .select("billing_enabled").eq("owner_id", tenant.owner_id).maybeSingle();
+      .select("billing_enabled, card_convenience_fee_bps").eq("owner_id", tenant.owner_id).maybeSingle();
     if (billingSettingsError) throw billingSettingsError;
     if (!billingSettings?.billing_enabled) return failure("Rental online billing is currently paused for this owner.", 404);
 
@@ -103,12 +104,38 @@ export async function POST(request) {
       ownerId: tenant.owner_id, tenantId: tenant.id, amountCents: remainingCents,
     });
     if (!gate.ok) return failure(gate.message, 422);
+    // R12 card convenience fee gate: the server decides the fee from the
+    // workspace rate and the tenant's explicitly chosen method. The client
+    // echoes the reviewed amount; a mismatch means the fee changed mid-review.
+    const cardAvailable = account.card_payments_enabled === true;
+    const feeBps = resolveFeeBasisPoints(billingSettings?.card_convenience_fee_bps);
+    const feeGate = checkFeeAgreement({
+      methodType: paymentMethod,
+      feeBps,
+      feeAgreed,
+      expectedFeeCents,
+      rentCents: remainingCents,
+      cardPaymentsEnabled: cardAvailable,
+    });
+    if (!feeGate.ok) return failure(feeGate.message, feeGate.status);
+    const feeCents = feeGate.feeCents;
+    const totalCents = remainingCents + feeCents;
+    // The tenant chose their method before the session was created, so the
+    // Payment Element offers exactly that method -- no post-confirmation
+    // amount edits are possible. Legacy callers that omit paymentMethod keep
+    // the old both-methods element (only reachable when the fee is off).
+    const elementMethods =
+      paymentMethod === "card" ? ["card"] :
+      paymentMethod === "us_bank_account" ? ["us_bank_account"] :
+      (cardAvailable ? ["us_bank_account", "card"] : ["us_bank_account"]);
     const paymentId = `rental_payment_${crypto.randomUUID()}`;
     const idempotencyKey = `rent:${charge.id}:${paymentId}`;
     const timestamp = new Date().toISOString();
     const inserted = await database.from("rental_payments").insert({ owner_id: tenant.owner_id, id: paymentId,
       charge_id: charge.id, lease_id: charge.lease_id, tenant_id: tenant.id, provider: "stripe", provider_mode: provider.mode,
-      provider_customer_id: customer.customer_id, amount_cents: remainingCents, refunded_amount_cents: 0,
+      provider_customer_id: customer.customer_id, amount_cents: totalCents, refunded_amount_cents: 0,
+      convenience_fee_cents: feeCents, convenience_fee_bps: feeCents > 0 ? feeBps : null,
+      fee_agreed_at: feeCents > 0 ? timestamp : null,
       currency_code: charge.currency_code, status: "created", idempotency_key: idempotencyKey,
       created_at: timestamp, updated_at: timestamp }).select("*").single();
     if (inserted.error) throw inserted.error;
@@ -117,8 +144,8 @@ export async function POST(request) {
     try {
       session = await provider.createPaymentSession({ ownerId: tenant.owner_id, connectedAccountId: account.provider_account_id }, {
         paymentId, chargeId: charge.id, leaseId: charge.lease_id, tenantId: tenant.id, customerId: customer.customer_id,
-        amountCents: remainingCents, currencyCode: charge.currency_code,
-        paymentMethods: account.card_payments_enabled ? ["us_bank_account", "card"] : ["us_bank_account"],
+        amountCents: totalCents, currencyCode: charge.currency_code,
+        paymentMethods: elementMethods,
         successUrl: `${request.nextUrl.origin}/forge/rental/portal?payment=returned`,
         cancelUrl: `${request.nextUrl.origin}/forge/rental/portal`, applicationFeeCents: 0, idempotencyKey,
       });
@@ -132,7 +159,8 @@ export async function POST(request) {
       status: "requires_payment_method", updated_at: new Date().toISOString() }).eq("owner_id", tenant.owner_id).eq("id", paymentId);
     if (updated.error) throw updated.error;
     return NextResponse.json({ success: true, clientSecret: session.clientSecret,
-      connectedAccountId: session.connectedAccountId, paymentId, amountCents: remainingCents,
+      connectedAccountId: session.connectedAccountId, paymentId, amountCents: totalCents,
+      rentCents: remainingCents, convenienceFeeCents: feeCents, convenienceFeeBps: feeBps,
       currencyCode: charge.currency_code, dueDate: charge.due_date, period: charge.period,
       chargeType: charge.charge_type || "rent",
       returnUrl: `${request.nextUrl.origin}/forge/rental/portal?payment=returned` });

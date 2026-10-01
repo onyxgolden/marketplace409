@@ -8,6 +8,7 @@ import {
   buildWorkOrderMessagePing,
   queueWorkOrderMessagePing,
 } from "@/domains/rental-maintenance/workOrderMessagePing";
+import { formatFeePercent, resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
 
 // Server-side IP capture for the ACH mandate's online customer acceptance — what the request
 // actually arrived with, never trusted from the client body (same pattern as sign-lease).
@@ -87,7 +88,28 @@ export async function POST(request) {
       if(!body.leaseId||!["card","us_bank_account"].includes(body.paymentMethodType)||body.consentConfirmed!==true)return NextResponse.json({error:"Lease, payment method, and explicit consent are required."},{status:400});
       const consentText="I authorize recurring rent payments under the displayed schedule, understand Stripe payment-method and mandate setup is required before activation, and may cancel future payments.";
       const provider=createStripeBillingProvider();
-      const{data,error}=await authenticated.supabaseClient.rpc("request_rental_autopay_enrollment",{p_lease_id:body.leaseId,p_payment_method_type:body.paymentMethodType,p_charge_day:Number(body.chargeDay),p_reminder_days_before:Number(body.reminderDaysBefore),p_consent_text:consentText,p_provider_mode:provider.mode});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
+      // R12: a card autopay enrollment carries the convenience fee ONLY with
+      // the tenant's explicit fee consent, snapshotted at the consented rate.
+      // The autopay sweep charges the consented rate capped at the current
+      // workspace rate -- a later owner rate change can never enlarge an
+      // autopay fee, and disabling the fee removes it. ACH enrollments never
+      // carry a fee.
+      let feeConsentBps=null;
+      if(body.paymentMethodType==="card"){
+        const database=createRentalWebhookClient();
+        const leaseLookup=await database.from("rental_lease_tenants").select("owner_id").eq("lease_id",body.leaseId).limit(1).maybeSingle();
+        if(leaseLookup.error)throw leaseLookup.error;
+        if(!leaseLookup.data)return NextResponse.json({error:"Lease, payment method, and explicit consent are required."},{status:400});
+        const settingsLookup=await database.from("rental_billing_settings").select("card_convenience_fee_bps").eq("owner_id",leaseLookup.data.owner_id).maybeSingle();
+        if(settingsLookup.error)throw settingsLookup.error;
+        const workspaceFeeBps=resolveFeeBasisPoints(settingsLookup.data?.card_convenience_fee_bps);
+        if(workspaceFeeBps>0){
+          if(body.feeConsentConfirmed!==true)return NextResponse.json({error:`Card autopay adds a ${formatFeePercent(workspaceFeeBps)} convenience fee to each payment. Check the box agreeing to the fee to continue — or choose bank payments for no fee.`},{status:422});
+          if(Number(body.feeConsentBps)!==workspaceFeeBps)return NextResponse.json({error:"The convenience fee changed while you were reviewing. Please review the updated fee and try again."},{status:409});
+          feeConsentBps=workspaceFeeBps;
+        }
+      }
+      const{data,error}=await authenticated.supabaseClient.rpc("request_rental_autopay_enrollment",{p_lease_id:body.leaseId,p_payment_method_type:body.paymentMethodType,p_charge_day:Number(body.chargeDay),p_reminder_days_before:Number(body.reminderDaysBefore),p_consent_text:consentText,p_provider_mode:provider.mode,p_fee_consent_bps:feeConsentBps});if(error)throw error;return NextResponse.json({success:true,enrollment:data});
     }
     if(body?.operation==="cancel-autopay"){
       if(!body.enrollmentId)return NextResponse.json({error:"enrollmentId is required."},{status:400});const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_autopay_enrollment",{p_enrollment_id:body.enrollmentId,p_reason:body.reason||"Cancelled by tenant"});if(error)throw error;return NextResponse.json({success:true,enrollment:data});

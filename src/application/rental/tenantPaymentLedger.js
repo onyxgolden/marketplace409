@@ -25,6 +25,7 @@
 // the ledger-period balance, not a lifetime account balance.
 
 import { resolveDepositState } from "./paymentDepositState";
+import { formatCents } from "@/domains/rental-payment/convenienceFee";
 const CHARGE_LABELS = {
   rent: "Rent charge",
   proration: "Prorated rent",
@@ -145,6 +146,11 @@ export function buildTenantPaymentLedger({
     const refundedCents = signedCents(payment.refunded_amount_cents);
     const movedMoney = paymentHasBalanceEffect(payment) || REFUNDED_PAYMENT_STATUSES.has(status);
     const settlement = settlementByPaymentId.get(payment.id) || null;
+    // R12: a card payment may include the tenant's convenience fee in its
+    // amount. The fee is labeled on the entry so the ledger shows what the
+    // tenant actually paid; it is NOT a separate ledger row (the fee lives
+    // in the owner's accounting as a reimbursement, never income).
+    const convenienceFeeCents = signedCents(payment.convenience_fee_cents);
     const entry = {
       id: `payment:${payment.id}`,
       sourceId: payment.id,
@@ -153,7 +159,11 @@ export function buildTenantPaymentLedger({
       amountCents,
       // A payment reduces what the tenant owes; a failed/cancelled one moves nothing.
       balanceEffectCents: movedMoney ? -amountCents : 0,
-      label: "Payment",
+      label: convenienceFeeCents > 0
+        ? `Payment — incl. ${formatCents(convenienceFeeCents)} card convenience fee`
+        : "Payment",
+      convenienceFeeCents,
+      convenienceFeeBps: signedCents(payment.convenience_fee_bps),
       status,
       method: payment.payment_method || payment.provider || null,
       period: null,

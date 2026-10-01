@@ -74,6 +74,9 @@ describe("TenantPortal mounts PaymentElement once a session exists and Stripe in
     const { container } = mounted;
 
     await clickAndFlush(findButtonByText(container, "Pay now"));
+    // R12: the tenant reviews method + fee before the payment session is created.
+    await clickAndFlush(Array.from(container.querySelectorAll("button"))
+      .find((candidate) => candidate.textContent.startsWith("Continue to payment")));
 
     expect(container.querySelector('[data-testid="elements-provider"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="payment-element"]')).toBeTruthy();
