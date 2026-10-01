@@ -4,6 +4,7 @@ import {
   correctionTouchesMoney,
   validatePaymentCorrection,
   applyCorrectionDelta,
+  computeCreditAwareCorrection,
   serializePaymentCorrection,
 } from "./paymentCorrections";
 
@@ -160,6 +161,222 @@ describe("applyCorrectionDelta", () => {
     const result = applyCorrectionDelta(charge, 1000);
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/voided/i);
+  });
+});
+
+describe("computeCreditAwareCorrection", () => {
+  // Reviewer's example: $1,600 charge, $1,700 offline payment => charge paid
+  // $1,600 + $100 untouched tenant credit. Correct payment to $1,650:
+  // charge stays $1,600 paid, credit adjusts to $50.
+  it("re-splits a reduced payment between a full charge and untouched credit", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 165000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 0,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      appliedOldCents: 160000,
+      appliedNewCents: 160000,
+      newPaidCents: 160000,
+      newStatus: "paid",
+      oldExcessCents: 10000,
+      newExcessCents: 5000,
+      newCreditRemainingCents: 5000,
+      creditAction: "adjust",
+      balanceDeltaCents: 0,
+    });
+  });
+
+  it("voids untouched credit when the corrected amount removes the excess", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 150000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 0,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      appliedNewCents: 150000,
+      newPaidCents: 150000,
+      newStatus: "partially_paid",
+      newExcessCents: 0,
+      creditAction: "void",
+      balanceDeltaCents: -10000,
+    });
+  });
+
+  it("grows untouched credit when the corrected amount increases", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 180000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 0,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      appliedNewCents: 160000,
+      newPaidCents: 160000,
+      newExcessCents: 20000,
+      newCreditRemainingCents: 20000,
+      creditAction: "adjust",
+      balanceDeltaCents: 0,
+    });
+  });
+
+  it("creates a credit when a correction pushes a payment over the charge", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 150000,
+      newAmountCents: 170000,
+      chargePaidCents: 150000,
+      chargeAmountCents: 160000,
+      chargeStatus: "partially_paid",
+      creditAmountCents: 0,
+      appliedCreditCents: 0,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      appliedOldCents: 150000,
+      appliedNewCents: 160000,
+      newPaidCents: 160000,
+      newStatus: "paid",
+      newExcessCents: 10000,
+      creditAction: "create",
+      balanceDeltaCents: 10000,
+    });
+  });
+
+  it("keeps the legacy no-credit math for payments that sourced no credit", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 160000,
+      newAmountCents: 150000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 0,
+      appliedCreditCents: 0,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      newPaidCents: 150000,
+      newStatus: "partially_paid",
+      creditAction: "none",
+      balanceDeltaCents: -10000,
+    });
+  });
+
+  it("adjusts a partially applied credit when the new excess still covers the applications", () => {
+    // $100 credit, $30 already applied to a later charge; correct $1,700 -> $1,680.
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 168000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 3000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      newExcessCents: 8000,
+      newCreditRemainingCents: 5000,
+      creditAction: "adjust",
+      newPaidCents: 160000,
+    });
+  });
+
+  it("blocks when partially applied credit cannot be covered by the new excess", () => {
+    // $100 credit, $60 already applied; correct $1,700 -> $1,630 leaves $30 excess.
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 163000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 6000,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("CREDIT_APPLICATIONS_APPLIED");
+    expect(result.reason).toMatch(/already been applied/i);
+  });
+
+  it("blocks when fully applied credit cannot be covered by the new excess", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 165000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 10000,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.code).toBe("CREDIT_APPLICATIONS_APPLIED");
+  });
+
+  it("adjusts a fully applied credit when the correction grows the excess", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 175000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 10000,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      newExcessCents: 15000,
+      newCreditRemainingCents: 5000,
+      creditAction: "adjust",
+    });
+  });
+
+  it("accounts for other contributions to the charge when recomputing capacity", () => {
+    // $1,600 charge paid in full: $1,400 applied from the corrected $1,500
+    // payment ($100 excess became credit) plus $200 from another payment.
+    // Correcting $1,500 -> $1,450 must leave the other $200 untouched.
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 150000,
+      newAmountCents: 145000,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+      creditAmountCents: 10000,
+      appliedCreditCents: 0,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      appliedOldCents: 140000,
+      appliedNewCents: 140000,
+      newPaidCents: 160000,
+      newStatus: "paid",
+      newExcessCents: 5000,
+      creditAction: "adjust",
+      balanceDeltaCents: 0,
+    });
+  });
+
+  it("rejects a non-positive corrected amount", () => {
+    const result = computeCreditAwareCorrection({
+      oldAmountCents: 170000,
+      newAmountCents: 0,
+      chargePaidCents: 160000,
+      chargeAmountCents: 160000,
+      chargeStatus: "paid",
+    });
+    expect(result.ok).toBe(false);
   });
 });
 

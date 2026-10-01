@@ -188,6 +188,11 @@ export function validatePaymentCorrection(input, payment) {
  * charge: { amount_cents, paid_amount_cents, status }.
  * deltaCents: new amount minus old amount (may be negative).
  * Returns { ok, reason?, newPaidCents, newStatus }.
+ *
+ * NOTE: this is the legacy no-credit delta — it is only correct when the
+ * payment sourced no overpayment credit. Amount corrections on payments that
+ * created tenant credit must use computeCreditAwareCorrection below (which
+ * the RPC now mirrors); this helper is kept for the raw guard behavior.
  */
 export function applyCorrectionDelta(charge, deltaCents) {
   const amountCents = Number(charge?.amount_cents || 0);
@@ -207,6 +212,104 @@ export function applyCorrectionDelta(charge, deltaCents) {
   const newStatus =
     newPaidCents >= amountCents ? "paid" : newPaidCents > 0 ? "partially_paid" : charge.status;
   return { ok: true, newPaidCents, newStatus };
+}
+
+/**
+ * Credit-aware allocation for an amount correction. Pure — the
+ * correct_rental_payment RPC (via the reconcile_credit_for_payment_correction
+ * helper, same transaction) applies the same rule; this is the test surface.
+ *
+ * A recorded offline payment holds its FULL received amount, but the charge
+ * only ever held the payment's APPLIED portion — any overpayment excess
+ * lives in rental_tenant_credits sourced from the payment. The naive
+ * newAmount-oldAmount delta corrupts both sides (false unpaid charge +
+ * orphan/excess credit), so the correction must re-split the corrected
+ * amount between charge and credit:
+ *
+ *   appliedOld = oldAmount - creditAmount            (what the charge holds
+ *                                                      from this payment)
+ *   others     = chargePaid - appliedOld             (everyone else's share)
+ *   appliedNew = min(newAmount, chargeAmount - others) (what the charge can
+ *                                                      absorb now)
+ *   newExcess  = newAmount - appliedNew              (what the credit holds)
+ *
+ * Credit applications are immutable history: when part of the credit was
+ * already applied to other charges, the new excess must still cover it —
+ * otherwise the correction is blocked (the RPC raises a 409) until those
+ * applications are reversed.
+ *
+ * Input: { oldAmountCents, newAmountCents, chargePaidCents,
+ *          chargeAmountCents, chargeStatus, creditAmountCents = 0,
+ *          appliedCreditCents = 0 }.
+ * Returns { ok: true, appliedOldCents, appliedNewCents, newPaidCents,
+ *           newStatus, oldExcessCents, newExcessCents, appliedCreditCents,
+ *           newCreditRemainingCents, creditAction: "none"|"create"|"adjust"|"void",
+ *           balanceDeltaCents }
+ *      or { ok: false, code?, reason }.
+ */
+export function computeCreditAwareCorrection({
+  oldAmountCents,
+  newAmountCents,
+  chargePaidCents,
+  chargeAmountCents,
+  chargeStatus = null,
+  creditAmountCents = 0,
+  appliedCreditCents = 0,
+}) {
+  const oldAmount = Number(oldAmountCents);
+  const newAmount = Number(newAmountCents);
+  const chargePaid = Number(chargePaidCents);
+  const chargeAmount = Number(chargeAmountCents);
+  const oldExcess = Number(creditAmountCents || 0);
+  const appliedCredit = Number(appliedCreditCents || 0);
+  if (!Number.isInteger(oldAmount) || oldAmount <= 0 || !Number.isInteger(newAmount) || newAmount <= 0) {
+    return { ok: false, reason: "The corrected amount must be positive." };
+  }
+  const appliedOld = oldAmount - oldExcess;
+  if (appliedOld < 0) {
+    return { ok: false, reason: "The payment's recorded credit exceeds the recorded payment amount." };
+  }
+  const others = chargePaid - appliedOld;
+  if (!Number.isInteger(others) || others < 0 || others > chargeAmount) {
+    return { ok: false, reason: "The charge balance is inconsistent with this payment." };
+  }
+  const capacity = chargeAmount - others;
+  const appliedNew = Math.min(newAmount, capacity);
+  const newExcess = newAmount - appliedNew;
+  if (appliedCredit > newExcess) {
+    return {
+      ok: false,
+      code: "CREDIT_APPLICATIONS_APPLIED",
+      reason:
+        "Part of this payment's overpayment credit has already been applied to other charges, " +
+        "and the corrected amount leaves too little excess to cover it. Reverse the credit " +
+        "applications first, or correct to an amount that keeps enough excess.",
+    };
+  }
+  const newPaid = others + appliedNew;
+  if (newPaid < 0 || newPaid > chargeAmount) {
+    return {
+      ok: false,
+      reason: "The corrected amount would push the charge balance below zero or above the charge total.",
+    };
+  }
+  const newStatus =
+    newPaid >= chargeAmount ? "paid" : newPaid > 0 ? "partially_paid" : chargeStatus;
+  const creditAction =
+    oldExcess === 0 ? (newExcess === 0 ? "none" : "create") : newExcess === 0 ? "void" : "adjust";
+  return {
+    ok: true,
+    appliedOldCents: appliedOld,
+    appliedNewCents: appliedNew,
+    newPaidCents: newPaid,
+    newStatus,
+    oldExcessCents: oldExcess,
+    newExcessCents: newExcess,
+    appliedCreditCents: appliedCredit,
+    newCreditRemainingCents: newExcess - appliedCredit,
+    creditAction,
+    balanceDeltaCents: appliedNew - appliedOld,
+  };
 }
 
 /**

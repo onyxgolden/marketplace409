@@ -85,7 +85,7 @@ export async function POST(request, { params }) {
     if (rpcError) {
       const code = rpcError.code;
       const message = typeof rpcError.message === "string" ? rpcError.message : "";
-      if (code === "P0001" && message.toLowerCase().includes("already reconciled")) {
+      if (code === "P0001" && /already reconciled|credit applications/i.test(message)) {
         return NextResponse.json({ error: message }, { status: 409 });
       }
       if (code === "P0002") {

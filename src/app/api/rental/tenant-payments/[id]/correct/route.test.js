@@ -152,4 +152,22 @@ describe("POST /api/rental/tenant-payments/[id]/correct", () => {
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/reconciled/i);
   });
+
+  it("maps the RPC credit-applications guard to 409", async () => {
+    const client = clientFor({
+      rpcResult: null,
+      rpcError: {
+        code: "P0001",
+        message:
+          "Part of this payment's overpayment credit ($60.00) has already been applied to other charges, " +
+          "and the corrected amount leaves only $30.00 of excess to cover it. Correct to an amount that keeps " +
+          "at least $60.00 of excess, or reverse the credit applications first.",
+      },
+    });
+    authAs(client);
+    const response = await post({ amountCents: 163000, reason: "overpaid" });
+    const body = await response.json();
+    expect(response.status).toBe(409);
+    expect(body.error).toMatch(/credit applications/i);
+  });
 });
