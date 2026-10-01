@@ -112,17 +112,36 @@ describe("POST /api/rental/owner-movements", () => {
     expect(body.movement).toMatchObject({ kind: "contribution", amount: 1000 });
   });
 
-  it("records a disbursement within the available balance", async () => {
+  it("records a disbursement within the available balance via the atomic RPC", async () => {
     fetchAllOwnerFinancialEvents.mockResolvedValue([
       { id: "e1", event_date: "2026-09-05", amount: 1600, transaction_kind: "income", property_id: null, status: "active", is_deleted: false },
     ]);
-    const client = { from: vi.fn(() => chainFor({ single: { data: row(), error: null } })) };
+    const rpcRow = { ...row(), property_id: null, movement_date: "2026-09-12", voided_at: null, created_by: "user-1", created_at: "2026-09-12T10:00:00Z" };
+    delete rpcRow.propertyId;
+    delete rpcRow.movementDate;
+    delete rpcRow.voidedAt;
+    delete rpcRow.createdBy;
+    delete rpcRow.createdAt;
+    const rpc = vi.fn(async () => ({ data: { movement: rpcRow, balanceCents: 130000 }, error: null }));
+    const client = { from: vi.fn(() => chainFor()), rpc };
     authed(client);
     const response = await post({ kind: "disbursement", amount: 300, movementDate: "2026-09-12", method: "ach" }, client);
     expect(response.status).toBe(201);
+    expect(rpc).toHaveBeenCalledWith(
+      "record_owner_disbursement",
+      expect.objectContaining({
+        p_owner_id: "owner_1",
+        p_amount: 300,
+        p_movement_date: "2026-09-12",
+        p_method: "ach",
+        p_created_by: "user-1",
+      }),
+    );
+    const body = await response.json();
+    expect(body.movement).toMatchObject({ id: "m1", kind: "disbursement", amount: 300 });
   });
 
-  it("422s when the disbursement exceeds the available balance", async () => {
+  it("422s when the disbursement exceeds the available balance (application precheck)", async () => {
     fetchAllOwnerFinancialEvents.mockResolvedValue([]);
     const client = { from: vi.fn(() => chainFor()) };
     authed(client);
@@ -133,21 +152,51 @@ describe("POST /api/rental/owner-movements", () => {
     expect(body.balanceCents).toBe(0);
   });
 
+  it("422s when the RPC rejects a disbursement that lost a concurrent race", async () => {
+    // The precheck sees a healthy balance (a competitor has not committed
+    // yet), but by the time the RPC runs under the advisory lock the balance
+    // is gone: the RPC is the enforcer and the route maps its rejection to
+    // the same 422 the precheck produces.
+    fetchAllOwnerFinancialEvents.mockResolvedValue([
+      { id: "e1", event_date: "2026-09-05", amount: 1600, transaction_kind: "income", property_id: null, status: "active", is_deleted: false },
+    ]);
+    const rpc = vi.fn(async () => ({
+      data: null,
+      error: {
+        message:
+          "OVER_DISBURSEMENT: The disbursement exceeds the amount due to the owner. Available balance: 100 cents; requested: 160000 cents.",
+        code: "P0001",
+      },
+    }));
+    const client = { from: vi.fn(() => chainFor()), rpc };
+    authed(client);
+    const response = await post({ kind: "disbursement", amount: 1600, movementDate: "2026-09-12" }, client);
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error).toMatch(/exceeds the amount due/i);
+    expect(body.balanceCents).toBe(100);
+    expect(rpc).toHaveBeenCalledWith("record_owner_disbursement", expect.anything());
+  });
+
   it("a voided disbursement frees the balance for a new one", async () => {
     fetchAllOwnerFinancialEvents.mockResolvedValue([
       { id: "e1", event_date: "2026-09-05", amount: 1600, transaction_kind: "income", property_id: null, status: "active", is_deleted: false },
     ]);
+    const rpcRow = { ...row({ amount: 1600 }), property_id: null, movement_date: "2026-09-20", voided_at: null, created_by: "user-1", created_at: "2026-09-20T10:00:00Z" };
+    delete rpcRow.propertyId;
+    delete rpcRow.movementDate;
+    delete rpcRow.voidedAt;
+    delete rpcRow.createdBy;
+    delete rpcRow.createdAt;
+    const rpc = vi.fn(async () => ({ data: { movement: rpcRow, balanceCents: 0 }, error: null }));
     const client = {
-      from: vi.fn(() =>
-        chainFor({
-          list: { data: [row({ status: "voided", amount: 1600 })], error: null },
-          single: { data: row({ amount: 1600 }), error: null },
-        }),
-      ),
+      from: vi.fn(() => chainFor({ list: { data: [row({ status: "voided", amount: 1600 })], error: null } })),
+      rpc,
     };
     authed(client);
     const response = await post({ kind: "disbursement", amount: 1600, movementDate: "2026-09-20" }, client);
     expect(response.status).toBe(201);
+    expect(rpc).toHaveBeenCalledWith("record_owner_disbursement", expect.anything());
   });
 
   it("rejects bad input before any balance work", async () => {

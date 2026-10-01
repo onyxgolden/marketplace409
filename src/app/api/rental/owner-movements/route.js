@@ -143,8 +143,11 @@ export async function POST(request) {
 
     const amountCents = Math.round(amount * 100);
     if (kind === "disbursement") {
-      // The over-disbursement guard runs against the live balance: the
-      // balance reflects voided movements, so a voided draw frees the amount.
+      // Fast UX precheck against the live balance: the balance reflects
+      // voided movements, so a voided draw frees the amount. The database
+      // enforces the invariant — see record_owner_disbursement — so a
+      // concurrent disbursement that lands between this read and the insert
+      // cannot overdraw.
       const [events, movements] = await Promise.all([
         fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
           columns: "id, event_date, amount, transaction_kind, property_id, status, is_deleted",
@@ -154,10 +157,40 @@ export async function POST(request) {
       const balance = buildOwnerBalance({ financialEvents: events, cashMovements: movements });
       const violation = validateNewDisbursement({ amountCents, balanceCents: balance.balanceCents });
       if (violation) return NextResponse.json({ error: violation, balanceCents: balance.balanceCents }, { status: 422 });
-    } else {
-      const violation = validateNewContribution({ amountCents });
-      if (violation) return NextResponse.json({ error: violation }, { status: 400 });
+
+      // Atomic path: one transaction takes a per-owner advisory lock,
+      // recomputes the live balance under the lock, enforces
+      // amount <= balance, and inserts. Competing disbursements for the same
+      // owner are mutually exclusive — the loser recomputes after the
+      // winner's insert and fails the invariant itself.
+      const { data: rpcData, error: rpcError } = await supabaseClient.rpc("record_owner_disbursement", {
+        p_owner_id: effectiveOwnerId,
+        p_property_id: propertyId,
+        p_amount: Math.round(amount * 100) / 100,
+        p_movement_date: movementDate,
+        p_method: method,
+        p_memo: memo,
+        p_created_by: user.id,
+      });
+      if (rpcError) {
+        const message = String(rpcError.message || "");
+        if (message.includes("OVER_DISBURSEMENT")) {
+          const available = /Available balance: (-?\d+) cents/.exec(message)?.[1];
+          const body = { error: "The disbursement exceeds the amount due to the owner." };
+          if (available !== undefined) body.balanceCents = Number(available);
+          return NextResponse.json(body, { status: 422 });
+        }
+        throw rpcError;
+      }
+      const movementRow = rpcData && rpcData.movement;
+      if (!movementRow || !movementRow.id) {
+        throw new Error("record_owner_disbursement returned no movement row.");
+      }
+      return NextResponse.json({ success: true, movement: serialize(movementRow) }, { status: 201 });
     }
+
+    const contributionViolation = validateNewContribution({ amountCents });
+    if (contributionViolation) return NextResponse.json({ error: contributionViolation }, { status: 400 });
 
     const { data, error } = await supabaseClient
       .from("owner_cash_movements")
