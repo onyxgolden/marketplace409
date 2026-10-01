@@ -24,7 +24,7 @@
  * instead — including when they are dragged onto the panel.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FileText, Ruler, Upload } from "lucide-react";
 import { feetInchesLabel } from "@/domains/roomDesigner/designerGeometry";
 
@@ -59,7 +59,7 @@ async function importerModule() {
   return import("@/domains/roomDesigner/importers/pdf/pdfImporter");
 }
 
-export default function PdfImportPanel({ design, dispatch }) {
+export default function PdfImportPanel({ design, dispatch, externalFile = null, onExternalFileHandled = null }) {
   const [stage, setStage] = useState("idle");
   const [file, setFile] = useState(null);
   const [survey, setSurvey] = useState(null);
@@ -68,6 +68,11 @@ export default function PdfImportPanel({ design, dispatch }) {
   const [error, setError] = useState(null);
   const [report, setReport] = useState(null);
   const [dragging, setDragging] = useState(false);
+  // Required by the canvas-drop flow: a vector import's scale starts at a
+  // default preset so there's something to preview, but that default must
+  // never be committable un-confirmed — the user must explicitly touch the
+  // scale control (preset or known-dimension) before Import enables.
+  const [scaleConfirmed, setScaleConfirmed] = useState(false);
 
   // Scale controls (vector mode).
   const [scaleMode, setScaleMode] = useState("preset");
@@ -87,6 +92,7 @@ export default function PdfImportPanel({ design, dispatch }) {
     setPrepared(null);
     setError(null);
     setPhase(null);
+    setScaleConfirmed(false);
   }, []);
 
   const fail = useCallback((err) => {
@@ -126,6 +132,10 @@ export default function PdfImportPanel({ design, dispatch }) {
         });
         setPrepared(result);
         setError(null);
+        // A fresh prepare always starts unconfirmed, even though it previews
+        // at a default scale — the user must explicitly touch the scale
+        // control before Import enables (see the commit button below).
+        setScaleConfirmed(false);
         // A freshly prepared vector page with a measurable run makes the
         // known-dimension path usable straight away.
         if (result.mode === "vector" && !result.longestRun) setScaleMode("preset");
@@ -167,6 +177,24 @@ export default function PdfImportPanel({ design, dispatch }) {
     [gate, runPrepare, fail],
   );
 
+  // Canvas-drop wiring: a file dropped directly on the drawing canvas (not
+  // picked via this panel's own file input) arrives here. Runs the exact
+  // same onFile path as a manual pick/drop, then tells the parent the file
+  // has been consumed so it doesn't get handed in again on every render.
+  useEffect(() => {
+    if (!externalFile) return;
+    // Deferred a tick: onFile's own setState calls must not run synchronously
+    // inside this effect's body (react-hooks/set-state-in-effect).
+    queueMicrotask(() => {
+      void onFile(externalFile);
+      onExternalFileHandled?.();
+    });
+    // Intentionally excludes onFile/onExternalFileHandled: this must fire
+    // once per externalFile identity, not every time those callbacks are
+    // recreated.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalFile]);
+
   /** Re-derive the preview at a different scale or filter — pure, no re-parse. */
   const rescale = useCallback(
     async (next) => {
@@ -187,7 +215,12 @@ export default function PdfImportPanel({ design, dispatch }) {
       setPresetId(id);
       const { findPlotScalePreset } = await import("@/domains/roomDesigner/importers/pdf/pdfScale");
       const preset = findPlotScalePreset(id);
-      if (preset) await rescale({ scaleFactor: preset.factor });
+      if (preset) {
+        await rescale({ scaleFactor: preset.factor });
+        // An explicit choice, even if it lands on the same default-looking
+        // value — the user actively picked it from the dropdown.
+        setScaleConfirmed(true);
+      }
     },
     [rescale],
   );
@@ -203,6 +236,7 @@ export default function PdfImportPanel({ design, dispatch }) {
       // currently previewed.
       const factor = scaleFromKnownDistance(prepared.longestRun.lengthIn, realInches);
       await rescale({ scaleFactor: factor });
+      setScaleConfirmed(true);
     } catch (err) {
       setError(err?.message || "That dimension could not be used.");
     }
@@ -546,10 +580,18 @@ export default function PdfImportPanel({ design, dispatch }) {
 
           {prepared.issues.length > 0 && issueList(prepared.issues)}
 
+          {prepared.mode === "vector" && !scaleConfirmed && (
+            <p className="mt-2 text-[11px] text-amber-300">
+              Choose or confirm the scale above — a PDF knows its paper size but not its real-world
+              scale, so FORGE can&rsquo;t guess it for you.
+            </p>
+          )}
+
           <div className="mt-3 flex gap-2">
             <button
               onClick={commit}
-              className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
+              disabled={prepared.mode === "vector" && !scaleConfirmed}
+              className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-emerald-700"
             >
               {prepared.mode === "raster" ? "Place this page" : "Import this page"}
             </button>

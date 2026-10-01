@@ -96,6 +96,46 @@ describe("DxfImportSection", () => {
   });
 });
 
+describe("externalFile (canvas-drop wiring)", () => {
+  it("processes a file dropped on the canvas exactly like a manually chosen one, then reports it consumed", async () => {
+    const file = new File([DXF], "dropped.dxf");
+    file.arrayBuffer = async () => new TextEncoder().encode(DXF).buffer;
+    const onExternalFileHandled = vi.fn();
+    await act(async () => {
+      root.render(
+        <DxfImportSection
+          dispatch={vi.fn()}
+          design={createEmptyDesign("x")}
+          loadImporter={async () => importer}
+          externalFile={file}
+          onExternalFileHandled={onExternalFileHandled}
+        />,
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(onExternalFileHandled).toHaveBeenCalledTimes(1);
+    expect(byLabel("Role for layer A-WALL")).not.toBeNull();
+  });
+
+  it("does nothing when externalFile is null", async () => {
+    const onExternalFileHandled = vi.fn();
+    await act(async () => {
+      root.render(
+        <DxfImportSection
+          dispatch={vi.fn()}
+          design={createEmptyDesign("x")}
+          loadImporter={async () => importer}
+          externalFile={null}
+          onExternalFileHandled={onExternalFileHandled}
+        />,
+      );
+    });
+    expect(onExternalFileHandled).not.toHaveBeenCalled();
+    expect(byLabel("Choose DXF file")).not.toBeNull();
+  });
+});
+
 describe("IMPORT_DXF_RESULT", () => {
   it("merges the whole import as one undo step", () => {
     const prepared = importer.prepareDxfImport(importer.readDxfDrawing(DXF));

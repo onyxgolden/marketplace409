@@ -148,4 +148,34 @@ describe("VsdxImportSection", () => {
     expect(container.textContent).toContain("Not a zip file");
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  describe("externalFile (canvas-drop wiring)", () => {
+    it("processes a file dropped on the canvas exactly like a manually chosen one, then reports it consumed", async () => {
+      vi.mocked(listVsdxPages).mockResolvedValue([{ id: "p1", name: "Page-1", index: 0 }]);
+      vi.mocked(prepareVsdxImport).mockResolvedValue(preparedFixture());
+      const onExternalFileHandled = vi.fn();
+      const file = new File(["bytes"], "dropped.vsdx");
+      container = document.createElement("div");
+      document.body.appendChild(container);
+      root = createRoot(container);
+      dispatch = vi.fn();
+      await act(async () => {
+        root.render(
+          <VsdxImportSection dispatch={dispatch} externalFile={file} onExternalFileHandled={onExternalFileHandled} />,
+        );
+      });
+      expect(onExternalFileHandled).toHaveBeenCalledTimes(1);
+      expect(container.textContent).toContain("Page 'Page-1'");
+    });
+
+    it("does nothing when externalFile is null", async () => {
+      const onExternalFileHandled = vi.fn();
+      renderSection();
+      await act(async () => {
+        root.render(<VsdxImportSection dispatch={dispatch} externalFile={null} onExternalFileHandled={onExternalFileHandled} />);
+      });
+      expect(onExternalFileHandled).not.toHaveBeenCalled();
+      expect(vi.mocked(listVsdxPages)).not.toHaveBeenCalled();
+    });
+  });
 });

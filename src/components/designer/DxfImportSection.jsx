@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Upload } from "lucide-react";
 import { DXF_UNITS } from "@/domains/roomDesigner/importers/dxf/dxfUnits";
 import { LAYER_ROLES } from "@/domains/roomDesigner/importers/dxf/dxfLayers";
@@ -14,7 +14,7 @@ import { feetInchesLabel } from "@/domains/roomDesigner/designerGeometry";
  *
  * The importer is loaded on demand so it stays out of the main bundle.
  */
-export default function DxfImportSection({ dispatch, design, loadImporter }) {
+export default function DxfImportSection({ dispatch, design, loadImporter, externalFile = null, onExternalFileHandled = null }) {
   const [stage, setStage] = useState("idle"); // idle | reading | preview | done | error
   const [fileName, setFileName] = useState("");
   const [drawing, setDrawing] = useState(null);
@@ -73,6 +73,19 @@ export default function DxfImportSection({ dispatch, design, loadImporter }) {
       setStage("error");
     }
   };
+
+  // Canvas-drop wiring: see PdfImportPanel's identical effect for why
+  // externalFile/onExternalFileHandled aren't in the dep array.
+  useEffect(() => {
+    if (!externalFile) return;
+    // Deferred a tick: onFile's own setState calls must not run synchronously
+    // inside this effect's body (react-hooks/set-state-in-effect).
+    queueMicrotask(() => {
+      void onFile(externalFile);
+      onExternalFileHandled?.();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalFile]);
 
   const commit = () => {
     if (!prepared || prepared.error) return;

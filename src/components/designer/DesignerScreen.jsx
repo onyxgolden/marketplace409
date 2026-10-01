@@ -334,6 +334,25 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const [dxfOpen, setDxfOpen] = useState(false);
   const [glbOpen, setGlbOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // A file dropped on the drawing canvas, routed to the matching import
+  // panel below (PdfImportPanel / DxfImportSection / VsdxImportSection),
+  // which pick it up via their externalFile prop exactly as if the user had
+  // used that panel's own file picker.
+  const [pendingDropFile, setPendingDropFile] = useState(null);
+
+  const onCanvasFileImport = useCallback((file, kind) => {
+    setPendingDropFile({ file, kind });
+    // On a narrow viewport the import panels live in the slide-over drawer,
+    // which starts closed — open it so the user actually sees the staged
+    // preview the drop just triggered. On md+ the panel is already visible
+    // in the docked sidebar, so this is a no-op there in practice.
+    if (typeof window !== "undefined" && !window.matchMedia?.("(min-width: 768px)").matches) {
+      setMobileDrawer("panel");
+      setHousePlansOpen(false);
+    }
+  }, []);
+
+  const onDropFileHandled = useCallback(() => setPendingDropFile(null), []);
 
   // Latest snapshots for saves: a queued save must capture the document and
   // name at the moment it actually sends, not when save() was invoked.
@@ -991,6 +1010,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               zoomRequest={zoomRequest}
               onPlanCenterChange={reportPlanCenter}
               onFloorCenterChange={reportFloorCenter}
+              onFileImport={onCanvasFileImport}
             />
           )}
           </DesignerErrorBoundary>
@@ -1003,10 +1023,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
 
         {/* right panel: docked at md+, slide-over drawer below md */}
         <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-gray-800 bg-gray-900 p-3 md:block">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
+          {/* dropFileForPanel ensures exactly one of this RightPanel and the
+              drawer's copy below ever receives pendingDropFile, even though
+              both are mounted simultaneously whenever the drawer is open —
+              see its own doc comment above RightPanel for why that matters. */}
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "aside")} onDropFileHandled={onDropFileHandled} />
         </aside>
         <MobileDrawer open={mobileDrawer === "panel"} onClose={() => setMobileDrawer(null)} label="Design panels">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "drawer")} onDropFileHandled={onDropFileHandled} />
         </MobileDrawer>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -1128,7 +1152,23 @@ export function toggleExclusiveDrawer(current, which) {
   return current === which ? null : which;
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null }) {
+/**
+ * RightPanel is mounted TWICE simultaneously whenever the mobile drawer is
+ * open: the desktop aside stays mounted (just CSS-hidden below md), and the
+ * drawer mounts its own second copy. A canvas file drop must reach exactly
+ * one of the two mounted import-section trees — never both, or the same
+ * dropped file gets parsed twice by two independent staged-import states
+ * (ChatGPT review of PR #499, finding 1). `panel` is "aside" or "drawer";
+ * exactly one of the two calls (one per panel) ever returns the file.
+ * Exported for unit tests.
+ */
+export function dropFileForPanel(pendingDropFile, mobileDrawer, panel) {
+  const drawerIsVisible = mobileDrawer === "panel";
+  const thisPanelIsVisible = panel === "drawer" ? drawerIsVisible : !drawerIsVisible;
+  return thisPanelIsVisible ? pendingDropFile : null;
+}
+
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null, pendingDropFile = null, onDropFileHandled = null }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingSymbol } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -1300,9 +1340,23 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         Rooms, areas, and wall lengths are available as plain data for future
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
-      <VsdxImportSection dispatch={dispatch} />
-      <DxfImportSection dispatch={dispatch} design={design} />
-      <PdfImportPanel design={design} dispatch={dispatch} />
+      <VsdxImportSection
+        dispatch={dispatch}
+        externalFile={pendingDropFile?.kind === "vsdx" ? pendingDropFile.file : null}
+        onExternalFileHandled={onDropFileHandled}
+      />
+      <DxfImportSection
+        dispatch={dispatch}
+        design={design}
+        externalFile={pendingDropFile?.kind === "dxf" ? pendingDropFile.file : null}
+        onExternalFileHandled={onDropFileHandled}
+      />
+      <PdfImportPanel
+        design={design}
+        dispatch={dispatch}
+        externalFile={pendingDropFile?.kind === "pdf" ? pendingDropFile.file : null}
+        onExternalFileHandled={onDropFileHandled}
+      />
       <UnderlaySection design={design} dispatch={dispatch} />
     </div>
   );
@@ -2398,7 +2452,7 @@ export function LevelTabBar({
   );
 }
 
-export function VsdxImportSection({ dispatch }) {
+export function VsdxImportSection({ dispatch, externalFile = null, onExternalFileHandled = null }) {
   const [stage, setStage] = useState("idle");
   const [file, setFile] = useState(null);
   const [pages, setPages] = useState([]);
@@ -2459,6 +2513,19 @@ export function VsdxImportSection({ dispatch }) {
       fail(err);
     }
   };
+
+  // Canvas-drop wiring: see PdfImportPanel's identical effect for why
+  // externalFile/onExternalFileHandled aren't in the dep array.
+  useEffect(() => {
+    if (!externalFile) return;
+    // Deferred a tick: onFile's own setState calls must not run synchronously
+    // inside this effect's body (react-hooks/set-state-in-effect).
+    queueMicrotask(() => {
+      void onFile(externalFile);
+      onExternalFileHandled?.();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalFile]);
 
   const commit = () => {
     setStage("committing");

@@ -18,10 +18,15 @@
  * categories.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { Upload } from "lucide-react";
 import PlanCanvas from "./PlanCanvas";
 import { readSplitRatio, saveSplitRatio, clampSplitRatio } from "./splitViewLayout";
+import { classifyDroppedFile } from "@/domains/roomDesigner/importers/dropRouter";
+
+/** How long a drop refusal/unsupported-format notice stays on screen. */
+const DROP_NOTICE_MS = 7000;
 
 // Three.js pulls in a sizable, browser-only renderer; kept out of the SSR
 // bundle exactly as it was before this component existed, just relocated
@@ -53,10 +58,79 @@ export default function DesignerCanvasArea({
   zoomRequest,
   onPlanCenterChange = null,
   onFloorCenterChange = null,
+  onFileImport = null,
 }) {
   const [ratio, setRatio] = useState(readSplitRatio);
   const containerRef = useRef(null);
   const draggingRef = useRef(false);
+  const [dropActive, setDropActive] = useState(false);
+  const [dropNotice, setDropNotice] = useState(null);
+  const dragDepthRef = useRef(0);
+  const noticeTimerRef = useRef(null);
+
+  const showDropNotice = useCallback((notice) => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    setDropNotice(notice);
+    noticeTimerRef.current = setTimeout(() => setDropNotice(null), DROP_NOTICE_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+  }, []);
+
+  const hasFiles = useCallback((e) => {
+    const types = e.dataTransfer?.types;
+    return !!types && Array.from(types).includes("Files");
+  }, []);
+
+  const onDragEnter = useCallback(
+    (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepthRef.current += 1;
+      setDropActive(true);
+    },
+    [hasFiles],
+  );
+
+  const onDragOver = useCallback(
+    (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    },
+    [hasFiles],
+  );
+
+  const onDragLeave = useCallback((e) => {
+    if (!hasFiles(e)) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDropActive(false);
+  }, [hasFiles]);
+
+  const onDrop = useCallback(
+    (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setDropActive(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      const result = classifyDroppedFile(file.name);
+      if (result.kind === "refused") {
+        showDropNotice({ kind: "error", text: `${result.label}: ${result.message}` });
+        return;
+      }
+      if (result.kind === "unknown") {
+        showDropNotice({
+          kind: "error",
+          text: `Can't import ".${result.extension || "?"}" files. Supported: PDF, DXF, VSDX.`,
+        });
+        return;
+      }
+      onFileImport?.(file, result.kind);
+    },
+    [hasFiles, onFileImport, showDropNotice],
+  );
 
   const show2d = view !== "3d";
   const show3d = view !== "2d";
@@ -142,7 +216,36 @@ export default function DesignerCanvasArea({
   }, []);
 
   return (
-    <div ref={containerRef} className="relative flex h-full w-full" data-testid="designer-canvas-area">
+    <div
+      ref={containerRef}
+      className="relative flex h-full w-full"
+      data-testid="designer-canvas-area"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dropActive && (
+        <div
+          data-testid="canvas-drop-affordance"
+          className="pointer-events-none absolute inset-2 z-30 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-emerald-400 bg-gray-950/80 text-center"
+        >
+          <Upload className="text-emerald-300" size={28} />
+          <p className="text-sm font-semibold text-white">Drop to import</p>
+          <p className="text-xs text-gray-400">PDF, DXF, or VSDX</p>
+        </div>
+      )}
+      {dropNotice && (
+        <div
+          data-testid="canvas-drop-notice"
+          role="alert"
+          className={`absolute left-1/2 top-3 z-40 max-w-md -translate-x-1/2 rounded px-3 py-2 text-xs shadow-lg ${
+            dropNotice.kind === "error" ? "bg-red-900/90 text-red-100" : "bg-gray-900/90 text-gray-200"
+          }`}
+        >
+          {dropNotice.text}
+        </div>
+      )}
       <div
         data-testid="canvas-pane-2d"
         className="relative h-full min-w-0"
