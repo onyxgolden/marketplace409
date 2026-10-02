@@ -7,6 +7,7 @@ import {
 import { buildRentalDashboardSummary } from "@/application/rental/buildRentalDashboardSummary";
 import { useRentalDashboardPayload } from "./useRentalDashboardPayload";
 import { RentalExceptionAlerts, RentalQuickAccess } from "./RentalExceptionAlerts";
+import { dashboardValueSizeClass } from "./dashboardCardSizing";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -69,9 +70,9 @@ function DashboardCard({ icon: Icon, label, value, detail, destination, viewFilt
     >
       <div className="flex items-center gap-2">
         <Icon size={18} className="shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
-        <p className="truncate text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="min-w-0 truncate text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
       </div>
-      <p className="mt-3 text-4xl font-black tabular-nums tracking-tight text-slate-950 dark:text-white">{value}</p>
+      <p className={`mt-3 ${dashboardValueSizeClass(value)} font-black tabular-nums tracking-tight text-slate-950 dark:text-white`}>{value}</p>
       <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-400">{detail}</p>
     </button>
   );
