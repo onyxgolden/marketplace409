@@ -62,23 +62,47 @@ non-industrial packages they stay empty; the UI keeps them one level down.
 ## Progress (earned, deterministic)
 
 Per-package earned-progress fields. Percent complete is **derived**, never
-hand-entered without a basis:
+hand-entered without a basis, and is always expressed on a **0–100** scale —
+the same scale the scheduling domain uses (`schedule_blocks.percent_complete`,
+and `computeEvm` which divides by 100:
+`src/domains/scheduling/schedulingEvmDcma.js`). The Work Package domain
+**measures** earned progress; the scheduling EVM functions **consume** the
+measured percent complete. EVM does not measure earned quantities from
+progress rules.
 
 - `planned_qty`, `planned_unit`, `planned_manhours`
 - `earned_qty`, `earned_manhours` — credited only by an approved progress
   rule (see below)
 - `actual_manhours` — from time/cost records where available
-- `percent_complete` — derived: `earned_qty / planned_qty` (or
-  `earned_manhours / planned_manhours` when quantity-based credit doesn't
-  apply); null when `planned_qty` is null
+- `percent_complete` — derived per `progress_basis` below, 0–100; `null`
+  means **unknown** (cannot be computed), never zero-by-default
 - `progress_basis` — `quantity | manhours | milestone_weights | manual`
 - `progress_updated_at`, `progress_updated_by`
 
-Progress rules (Rung 4+): quantity-based credit uses the scheduling domain's
-EVM functions (`schedulingEvmDcma.js`) where schedule blocks back the
-package; milestone weights are declared per package template; `manual`
-requires the updater's identity and is flagged in reporting. No opaque
-aggregate score anywhere.
+Calculation per basis (single contract, no exceptions):
+
+| basis | formula | denominator rule |
+|---|---|---|
+| `quantity` | `earned_qty / planned_qty * 100` | `planned_qty` required and > 0; `planned_unit` required |
+| `manhours` | `earned_manhours / planned_manhours * 100` | `planned_manhours` required and > 0 |
+| `milestone_weights` | sum of weights of achieved milestones | weights declared per package/template and sum to 100; a milestone counts as achieved only with evidence |
+| `manual` | rule-credited value, 0–100 | requires updater identity; flagged in reporting |
+
+Unknown / zero-denominator / validation rules:
+
+- If the denominator for the package's declared basis is null or zero,
+  `percent_complete` is `null` (unknown) — never coerced to 0. A package
+  that cannot state a planned quantity declares a different basis; it does
+  not get a free zero.
+- `earned_qty` / `earned_manhours` outside `0..planned` are rejected at write
+  time (no 104% by typo; genuine overruns are recorded as scope change, not
+  as percent complete over 100).
+- Quantity units: `planned_unit` is a short unit label (`each`, `tubes`,
+  `welds`, `m`, `kg`); earned quantities carry the same unit. Mixed units on
+  one package are rejected — split the package instead.
+
+This supersedes the earlier draft, which mixed a 0–1 formula with a 0–100
+lifecycle requirement and contradicted its own null rule.
 
 ## Scope control
 
@@ -103,7 +127,8 @@ domain), drawing bytes (Designer), artifact bytes (Capture), document bytes
 - `planned_finish >= planned_start` when both set.
 - `actual_finish` set only via the Complete transition; `actual_start` via
   the In Progress transition (see `lifecycle.md`).
-- `percent_complete` never hand-set; always derived or rule-credited.
+- `percent_complete` never hand-set; always derived or rule-credited on the
+  0–100 scale (see Progress above).
 - `equipment_tag` + `unit` recommended (not required) for
   `package_type = industrial`; the UI prompts, never blocks, for other types.
 - Status transitions follow `lifecycle.md`; illegal transitions rejected.
