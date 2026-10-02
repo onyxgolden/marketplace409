@@ -21,10 +21,13 @@ rot, diverge, and destroy trust.
   (`object-relationship-contract.md`). Amounts, percents, dates owned by
   another domain are read live at read time, never stored on the package.
 - Existing domains are not refactored to fit this model (program plan
-  non-negotiable rule 3). Where a domain lacks a needed concept (equipment
-  register, inspection workflow, logistics locations, scope freeze), Work
+  non-negotiable rule 3). Where a domain lacks a needed concept, Work
   Management defines the minimal new record — and that record becomes the
-  authority for that concept going forward.
+  authority for that concept going forward. The Rung 1 new authorities are:
+  `forge_work_assets` + `forge_work_asset_components` (asset register),
+  `forge_work_inspection_observations` (inspection workflow),
+  `forge_work_locations` (logistics locations),
+  `forge_work_scope_baselines` + `forge_work_scope_changes` (scope freeze).
 - **Isolation follows the workspace model, not a single-user model.**
   `owner_id` on every new record is the effective workspace owner
   (`resolveEffectiveOwnerId()`); RLS uses `has_workspace_access(owner_id)`;

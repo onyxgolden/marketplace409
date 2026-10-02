@@ -34,30 +34,71 @@ not extension attributes.
 - `status` — lifecycle state (see `lifecycle.md`)
 - `created_by`, `created_at`, `updated_at` — provenance
 
-## Industrial context (first-class)
+## Industrial authority records (new in the WP domain, Rung 1)
+
+The package does not hold free-text equipment identity. It **references**
+records in the asset register the WP domain owns (ADR-001: new authority for
+concepts no existing domain owns). Names and JSON prose alone cannot make
+component inspection evidence resolvable — these records carry the stable
+identities.
+
+`forge_work_assets` — the authoritative asset register:
+  owner_id, id (`forge_wasset_<uuid>`),
+  asset_tag (unique per owner, e.g. `E-1801A`),
+  asset_type (enumerated, extensible: exchanger | vessel | pump | compressor |
+    generator | ups | cooling_unit | electrical | piping | structural |
+    instrumentation | other),
+  name, unit, area, system,
+  parent_asset_id (nullable; hierarchy system → asset → sub-assembly),
+  source (`user_defined | imported`),
+  created_by, created_at, updated_at.
+  RLS: `has_workspace_access(owner_id)`. Primary key `(owner_id, id)`.
+
+`forge_work_asset_components` — stable component breakdown:
+  owner_id, id (`forge_wcomp_<uuid>`), asset_id,
+  component_key (stable within the asset, e.g. `BUNDLE-01`,
+    `CHANNEL-HEAD-A`),
+  name, quantity, unit, weight_kg, length_m, diameter_m, notes.
+  Components have stable IDs: inspection observations and material
+  allocations reference the component id, never array positions in prose.
+
+`forge_work_inspection_observations` — per-component inspection state:
+  owner_id, id (`forge_wobs_<uuid>`),
+  asset_id, component_id (nullable),
+  package_id (the package whose work produced the observation),
+  inspection_method (visual | eddy_current | ultrasonic | radiographic |
+    dye_penetrant | magnetic_particle | hydrotest | other),
+  status (`passed | failed | pending | not_applicable`),
+  quantity_examined, quantity_required,
+  inspected_at, inspector (reference: domain + type + id + display-name
+    snapshot), notes.
+  RLS: `has_workspace_access(owner_id)`.
+  This is the record the inspection-prerequisite gate reads. The field
+  flagging discipline maps onto it directly: passed / failed /
+  not-inspected-or-under-evaluation (= pending).
+
+## Industrial context (references, not free text)
 
 These fields let the package express "work on tagged asset X in unit Y" —
 the shape refinery, chemical plant, and data center work always takes. For
 non-industrial packages they stay empty; the UI keeps them one level down.
 
-- `equipment_tag` — the tagged asset identifier, e.g. `E-1801A`
-  (free text; validated against the asset register when one is linked)
-- `equipment_type` — enumerated, extensible: `exchanger | vessel | pump |
-  compressor | generator | ups | cooling_unit | electrical | piping |
-  structural | instrumentation | other`
-- `unit` — process unit / building, e.g. `Unit 300`
-- `area` — area within the unit
-- `system` — system the asset belongs to, e.g. `cooling water`
-- `location_id` — reference to a logistics location (laydown / staging /
-  workface), defined in `readiness-model.md`
+- `asset_id` — reference to `forge_work_assets`. Until an asset record
+  exists, an unlinked `equipment_tag` text label may be kept as a
+  placeholder; once linked, the asset record is authoritative and the label
+  is not written independently.
+- `unit`, `area`, `system` — denormalized from the linked asset for
+  filtering and display; the asset record is the authority.
+- `location_id` — reference to a logistics location (`forge_work_locations`,
+  defined in `readiness-model.md`)
 - `work_order_ref` — external work order number tying the package to the
   plant/CMMS work order
-- `workscope_code` — short code for the work type, e.g. `NDE`, `BUNDLE_PULL`,
-  `TRAY_REPAIR` (owner-defined vocabulary; seeded with common codes)
-- `components` — JSONB array of component records:
-  `{ name, quantity, unit, weight_kg, length_m, diameter_m, notes }`
-  (feeds lift/rigging planning and material allocation; e.g. channel head,
-  shell, bundle quantities)
+- `workscope_code` — short code for the work type, e.g. `NDE`,
+  `BUNDLE_PULL`, `TRAY_REPAIR` (owner-defined vocabulary; seeded with
+  common codes)
+- `components` — a derived view over `forge_work_asset_components` for the
+  linked asset (feeds lift/rigging planning and material allocation); never
+  a hand-edited JSON blob.
 
 ## Progress (earned, deterministic)
 
@@ -104,15 +145,44 @@ Unknown / zero-denominator / validation rules:
 This supersedes the earlier draft, which mixed a 0–1 formula with a 0–100
 lifecycle requirement and contradicted its own null rule.
 
-## Scope control
+## Scope control (immutable baseline versions)
 
-- `scope_baseline_at` — when the package scope was frozen
-- `scope_baseline_items` — frozen count of scope items
-- `scope_current_items` — current count; delta is reported, never hidden
-- Late work requests are separate records (`late_work_request`: id,
-  package ref, description, requested_by, requested_at, status
-  `proposed | approved | rejected`, disposition) — scope grows only through
-  them. See `readiness-model.md` for the freeze gate.
+Scope freeze is enforced by **immutable baseline versions**, not by a count.
+A count plus a date cannot distinguish substitution from stability — swapping
+one scoped component for another leaves the count unchanged.
+
+`forge_work_scope_baselines` (Rung 1):
+  owner_id, id (`forge_wsb_<uuid>`), package_id,
+  version (per-package sequence, starts at 1),
+  frozen_at, frozen_by (acting user id),
+  membership (JSONB array of `{ key, description, quantity, unit }` — the
+    frozen scope item list),
+  membership_hash (content hash of the canonicalized membership list;
+    substitution is detected by hash change, not by count),
+  superseded_by (nullable ref to the next version).
+  Rows are never updated or deleted. RLS: `has_workspace_access(owner_id)`.
+
+`forge_work_scope_changes` (Rung 1 — the minimum approval record the frozen-
+scope invariant needs):
+  owner_id, id (`forge_wsc_<uuid>`), package_id, baseline_version,
+  change_type (`addition | removal | substitution`),
+  description, requested_by, requested_at,
+  status (`proposed | approved | rejected`), decided_by, decided_at,
+  resulting_baseline_version (set on approval: the new immutable version).
+  Post-freeze scope changes are prohibited unless recorded through this
+  record and approved; an approved change creates a new baseline version that
+  supersedes the old. Rung 9 builds the full late-work-request workflow on
+  top of this record — it does not replace it.
+
+Package fields:
+
+- `scope_baseline_id` — ref to the current (latest non-superseded) baseline
+  version; null until frozen.
+- Scope delta is computed (current baseline membership vs. approved changes),
+  never hand-counted.
+
+This supersedes the earlier count+date draft (`scope_baseline_items` /
+`scope_current_items`), which could not enforce frozen scope.
 
 ## What the package does NOT hold
 
@@ -129,6 +199,7 @@ domain), drawing bytes (Designer), artifact bytes (Capture), document bytes
   the In Progress transition (see `lifecycle.md`).
 - `percent_complete` never hand-set; always derived or rule-credited on the
   0–100 scale (see Progress above).
-- `equipment_tag` + `unit` recommended (not required) for
-  `package_type = industrial`; the UI prompts, never blocks, for other types.
+- `equipment_tag` placeholder (pre-link label) and `unit` are recommended
+  (not required) for `package_type = industrial`; the UI prompts, never
+  blocks, for other types.
 - Status transitions follow `lifecycle.md`; illegal transitions rejected.

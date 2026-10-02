@@ -24,7 +24,7 @@ per gate.
 
 | Gate | Plain language | Satisfied when |
 |---|---|---|
-| scope | "Is the work defined?" | scope text present; scope baseline frozen for industrial packages |
+| scope | "Is the work defined?" | scope text present (author attested); for industrial packages an immutable scope baseline version exists (`scope_baseline_id` set on a non-superseded `forge_work_scope_baselines` row) |
 | design | "Are the drawings ready?" | linked drawing reference current (not `stale`/`broken`) |
 | predecessor | "What must finish first?" | constraining blocks/packages not blocking (from scheduling links) |
 | material | "Are materials on hand?" | required items `received` (or explicitly `not_applicable`) |
