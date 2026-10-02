@@ -111,7 +111,8 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     const result = await createStripeBillingProvider().createOffSessionPayment(
       { connectedAccountId: account.data.provider_account_id },
       { paymentId, chargeId: charge.id, enrollmentId: enrollment.id, customerId: enrollment.provider_customer_id,
-        paymentMethodId: enrollment.provider_payment_method_id, amountCents: totalCents, currencyCode: charge.currency_code },
+        paymentMethodId: enrollment.provider_payment_method_id, mandateId: enrollment.provider_mandate_id,
+        amountCents: totalCents, currencyCode: charge.currency_code },
       key,
     );
     await Promise.all([
@@ -126,11 +127,18 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   } catch (error) {
     const failures = Number(enrollment.consecutive_failures || 0) + 1;
     const pause = failures > Number(enrollment.retry_limit || 0);
+    // Record the real provider error instead of a generic message: Stripe
+    // errors carry code/type/message, and the previous generic text made the
+    // 2026-10-02 sweep failure undiagnosable from the database. Anything
+    // without a provider shape falls back to the previous generic text.
+    const failureCode = error?.code || error?.type || "autopay_failed";
+    const failureMessage = String(error?.message || "Automatic payment requires attention.").slice(0, 500);
     await Promise.all([
-      db.from("rental_payments").update({ status: "failed", failure_code: "autopay_failed",
-        failure_message: "Automatic payment requires attention.", updated_at: new Date().toISOString() })
+      db.from("rental_payments").update({ status: "failed", failure_code: failureCode,
+        failure_message: failureMessage, updated_at: new Date().toISOString() })
         .eq("owner_id", enrollment.owner_id).eq("id", paymentId),
-      db.from("rental_autopay_attempts").update({ status: "failed", failure_message: "Automatic payment requires attention.",
+      db.from("rental_autopay_attempts").update({ status: "failed", failure_code: failureCode,
+        failure_message: failureMessage,
         updated_at: new Date().toISOString() }).eq("owner_id", enrollment.owner_id).eq("id", attempt.data.id),
       db.from("rental_autopay_enrollments").update({ consecutive_failures: failures, status: pause ? "paused" : "active",
         last_attempt_at: new Date().toISOString(), updated_at: new Date().toISOString() })
