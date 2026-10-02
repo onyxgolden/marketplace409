@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Structural contract for 20261001080000_r18_payment_correction_credit_aware.sql.
+// Structural contract for 20261001080001_r18_payment_correction_credit_aware.sql.
 // This test never touches a database: it proves the fix-forward migration
 // carries the credit-aware correction contract the ChatGPT NO-GO review
 // demanded — an amount correction must re-split the corrected amount between
@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 const sql = readFileSync(
   resolve(
     process.cwd(),
-    "supabase/migrations/20261001080000_r18_payment_correction_credit_aware.sql",
+    "supabase/migrations/20261001080001_r18_payment_correction_credit_aware.sql",
   ),
   "utf8",
 ).toLowerCase().replace(/\s+/g, " ");
