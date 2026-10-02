@@ -159,8 +159,23 @@ one scoped component for another leaves the count unchanged.
     frozen scope item list),
   membership_hash (content hash of the canonicalized membership list;
     substitution is detected by hash change, not by count),
-  superseded_by (nullable ref to the next version).
-  Rows are never updated or deleted. RLS: `has_workspace_access(owner_id)`.
+  supersedes_id (nullable ref to the prior version this row replaces;
+    null on the first frozen version).
+  Baseline rows are never updated or deleted. RLS: `has_workspace_access(owner_id)`.
+
+Deriving the current baseline (deterministic, append-only): the current
+version for a package is the baseline row that no other row's
+`supersedes_id` points to — the head of the supersession chain. An approved
+change commits atomically: (1) the `forge_work_scope_changes` record moves
+to `approved` with `resulting_baseline_version` set, (2) the new baseline
+row is inserted with `supersedes_id` pointing at the prior version, and
+(3) the package's `scope_baseline_id` advances to the new row. Step (3)
+carries a concurrency check against the expected prior version
+(`WHERE scope_baseline_id = <expected>` fails the transaction if another
+approval advanced it first), so two concurrent approvals cannot both claim
+the same predecessor. Frozen content (membership, membership_hash,
+frozen_at, frozen_by, version) stays immutable; only the package's
+current-pointer moves.
 
 `forge_work_scope_changes` (Rung 1 — the minimum approval record the frozen-
 scope invariant needs):
@@ -176,8 +191,8 @@ scope invariant needs):
 
 Package fields:
 
-- `scope_baseline_id` — ref to the current (latest non-superseded) baseline
-  version; null until frozen.
+- `scope_baseline_id` — ref to the current baseline version (head of the
+  supersession chain, derived per the rule above); null until frozen.
 - Scope delta is computed (current baseline membership vs. approved changes),
   never hand-counted.
 
