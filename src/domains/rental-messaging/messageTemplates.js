@@ -28,6 +28,13 @@ export const TEMPLATE_FIELDS = [
   { key: "work_order_scope", label: "Work order scope", description: "What the work order covers." },
   { key: "contractor_name", label: "Contractor", description: "Assigned contractor's business name." },
   { key: "scheduled_date", label: "Scheduled date", description: "When the work is scheduled (e.g. Oct 2, 2026)." },
+  // R20 Mailing Manager fields — resolved per tenant when a letter is
+  // composed (see resolveLetterTemplateContext()).
+  { key: "tenant_address", label: "Tenant mailing address", description: "The tenant's mailing address from their unit (multi-line); blank when the unit has no address on file." },
+  { key: "owner_return_address", label: "Owner return address", description: "The sender return address entered when the letter is composed." },
+  { key: "letter_date", label: "Letter date", description: "The date printed on the letter (e.g. Oct 1, 2026)." },
+  { key: "monthly_rent", label: "Monthly rent", description: "The lease's monthly rent, formatted as USD ($1,600.00)." },
+  { key: "lease_end_date", label: "Lease end date", description: "The lease's end date, if set (e.g. Aug 31, 2027)." },
 ];
 
 const FIELD_KEYS = new Set(TEMPLATE_FIELDS.map((field) => field.key));
@@ -130,6 +137,41 @@ export const SYSTEM_TEMPLATES = [
     subject: "Welcome to {{property_label}}",
     body: "Hi {{tenant_name}},\n\nWelcome! Your rent of {{balance_due}} for {{property_label}} is due {{rent_due_date}}.\n\n— {{owner_name}}",
   },
+  // R20 Mailing Manager system catalog: the mailed versions of the core
+  // notices, kind "mailing". The composer prints them for certified mailing
+  // (or sends through a connected provider once Jason approves one).
+  {
+    systemKey: "late_notice_mailing_tenant",
+    name: "Late rent notice (certified mail)",
+    kind: "mailing",
+    audience: "tenant",
+    subject: "Past-due rent — {{property_label}}",
+    body: "Dear {{tenant_name}},\n\nThis letter is to notify you that your rent account for {{property_label}} is past due. As of {{letter_date}}, your outstanding balance is {{balance_due}}.\n\nYour monthly rent is {{monthly_rent}}. If payment has already been made, please disregard this notice. Otherwise, please remit payment immediately to avoid further action, including late fees and potential legal proceedings under your lease.\n\nIf you are experiencing financial difficulty, please contact us right away so we can discuss your options.\n\nSincerely,\n{{owner_name}}",
+  },
+  {
+    systemKey: "lease_violation_mailing_tenant",
+    name: "Lease violation notice (certified mail)",
+    kind: "mailing",
+    audience: "tenant",
+    subject: "Lease violation — {{property_label}}",
+    body: "Dear {{tenant_name}},\n\nThis letter is to notify you of a violation of your lease agreement for {{property_label}}.\n\nYou are required to cure this violation within the time period specified by your lease and applicable law. Failure to do so may result in further action, up to and including termination of your tenancy.\n\nPlease contact us immediately to discuss this matter.\n\nSincerely,\n{{owner_name}}",
+  },
+  {
+    systemKey: "rent_increase_mailing_tenant",
+    name: "Rent increase notice (certified mail)",
+    kind: "mailing",
+    audience: "tenant",
+    subject: "Rent increase — {{property_label}}",
+    body: "Dear {{tenant_name}},\n\nThis letter is to notify you that the monthly rent for {{property_label}} will change, as described below.\n\nYour current monthly rent is {{monthly_rent}}. Please review your lease for the new amount and the effective date, and contact us with any questions.\n\nThank you for being our tenant.\n\nSincerely,\n{{owner_name}}",
+  },
+  {
+    systemKey: "move_out_mailing_tenant",
+    name: "Move-out notice (certified mail)",
+    kind: "mailing",
+    audience: "tenant",
+    subject: "Move-out instructions — {{property_label}}",
+    body: "Dear {{tenant_name}},\n\nThis letter confirms the move-out arrangements for {{property_label}}. Your lease ends {{lease_end_date}}.\n\nPlease return all keys and remotes, remove all personal belongings, and leave the unit in clean condition. Your security deposit will be accounted for and any refund issued according to your lease and applicable law.\n\nPlease contact us to schedule a final walkthrough.\n\nSincerely,\n{{owner_name}}",
+  },
 ];
 
 // Idempotent per-workspace seed of the system catalog. Safe to call on every
@@ -176,8 +218,10 @@ export function validateTemplateInput(input = {}) {
       name,
       kind,
       audience,
-      // Text templates carry no subject — store NULL so the column stays clean.
-      subject: kind === "email" ? subject : null,
+      // Mailing templates keep an optional subject — it prints as the
+      // letter's "Re:" line. Text templates carry no subject, so the column
+      // stays clean.
+      subject: kind === "email" || kind === "mailing" ? subject || null : null,
       body,
     },
   };
