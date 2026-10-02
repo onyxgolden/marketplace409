@@ -57,10 +57,12 @@ export async function resolvePropertyLabel(db, { ownerId, leaseId }) {
   }
 }
 
-// Pure row builder for terminal payment notifications (succeeded/failed),
+// Pure row builder for payment notifications (initiated, succeeded, failed),
 // shared with the cron route's durable reconciler. The reconciler exists so
 // a lost webhook queue write (caught and swallowed here to protect webhook
-// processing) still heals within one cron run.
+// processing) still heals within one cron run — terminal notices via the
+// terminal scan, initiated notices via the durable initiated_at marker the
+// projection RPC stamps in its own transaction.
 export function buildTerminalPaymentNotificationRow({
   payment,
   tenantName,
@@ -227,8 +229,11 @@ export async function queueOwnerPaymentNotificationForWebhookEvent(
     return { queued: true, notificationId: row.id, eventType, status: row.status };
   } catch (error) {
     // Swallow: the webhook pipeline must succeed even when the queue write
-    // fails. The cron's terminal-payment reconciler heals the gap durably —
-    // it does not depend on this path.
+    // fails. The cron's payment reconciler heals the gap durably — its
+    // initiated pass scans the initiated_at marker stamped by the projection
+    // RPC (same transaction as the projection, so it cannot be lost
+    // independently), and its terminal pass scans succeeded/failed payments.
+    // Neither depends on this path.
     console.error("Owner payment notification queue failed", {
       name: error?.name || "Error",
     });
