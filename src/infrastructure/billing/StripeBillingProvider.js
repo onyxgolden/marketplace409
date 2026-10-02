@@ -310,10 +310,10 @@ export class StripeBillingProvider {
 
   // ACH-only autopay activation: collects the tenant's bank account once and stores the
   // resulting payment method + mandate on the autopay enrollment for recurring off-session
-  // debits. `mandate_data` carries online customer acceptance captured server-side (IP +
-  // user agent come from the request itself, never from the client body) — Stripe requires
-  // this for ACH debit mandates. Scoped to the connected account exactly like the other
-  // billing methods.
+  // debits. No `mandate_data` at creation: Stripe rejects mandate_data on a SetupIntent
+  // unless `confirm` is true, and this intent is confirmed client-side — Stripe creates
+  // the ACH mandate at confirmation time from the Payment Element flow. Scoped to the
+  // connected account exactly like the other billing methods.
   async createAutopaySetupIntent(context, input) {
     const intent = await this.stripe.setupIntents.create({
       customer: required(input.customerId, "a connected-account customer id"),
@@ -323,15 +323,6 @@ export class StripeBillingProvider {
         us_bank_account: {
           verification_method: "instant",
           financial_connections: { permissions: ["payment_method"] },
-        },
-      },
-      mandate_data: {
-        customer_acceptance: {
-          type: "online",
-          online: {
-            ip_address: required(input.ipAddress, "an ip address"),
-            user_agent: required(input.userAgent, "a user agent"),
-          },
         },
       },
       metadata: {
