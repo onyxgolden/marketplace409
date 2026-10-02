@@ -351,7 +351,7 @@ describe("StripeBillingProvider", () => {
       };
       return { provider, stripeClient };
     }
-    it("creates an ACH-only SetupIntent with online mandate acceptance, scoped to the connected account", async () => {
+    it("creates an ACH-only SetupIntent without mandate_data (Stripe creates the mandate at client-side confirmation), scoped to the connected account", async () => {
       const { provider, stripeClient } = setupWithSetupIntents();
       const result = await provider.createAutopaySetupIntent({ ownerId: "owner_1", connectedAccountId: "acct_kent" },
         { customerId: "cus_tenant", enrollmentId: "auto_1", leaseId: "lease_1", tenantId: "tenant_1",
@@ -362,8 +362,6 @@ describe("StripeBillingProvider", () => {
         usage: "off_session",
         payment_method_options: { us_bank_account: {
           verification_method: "instant", financial_connections: { permissions: ["payment_method"] } } },
-        mandate_data: { customer_acceptance: { type: "online",
-          online: { ip_address: "203.0.113.5", user_agent: "test-agent/1.0" } } },
         metadata: { forge_autopay_enrollment_id: "auto_1", forge_lease_id: "lease_1",
           forge_tenant_id: "tenant_1", forge_owner_id: "owner_1" },
       }, { stripeAccount: "acct_kent", idempotencyKey: "autopay-setup:auto_1:abc" });
