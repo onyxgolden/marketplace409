@@ -2,7 +2,10 @@
 """fetchGithubSignals.py — collect runtime signals from GitHub Actions.
 
 Read-only. Lists workflow runs on main that concluded with failure in the last
---days days and emits one signal per failed run. A red run on main nobody has
+--days days and emits one signal per failed run whose workflow is still red.
+A failed run whose workflow has since succeeded on main is already addressed
+and is NOT a signal: without this, one transient failure alarms every night
+for 7 days until it ages out of the window. A red run on main nobody has
 asked about is an undiscovered error: the nightly engineering-brain sync going
 red, for example, means the live index silently stops updating.
 
@@ -53,6 +56,64 @@ def is_self_scan_run(run):
     if path:
         return path == SELF_SCAN_WORKFLOW_PATH
     return (run.get("name") or "").strip() == SELF_SCAN_WORKFLOW_NAME
+
+
+def workflow_key(run):
+    """Stable identity for the workflow a run belongs to. Pure.
+
+    Prefers the numeric workflow_id the API always sends; falls back to the
+    workflow file path, then the workflow name. The same function keys the
+    latest-conclusion map and looks failed runs up in it, so both sides agree.
+    """
+    run = run or {}
+    workflow_id = run.get("workflow_id")
+    if workflow_id is not None:
+        return f"workflow_id:{workflow_id}"
+    path = (run.get("path") or "").strip()
+    if path:
+        return f"path:{path}"
+    return f"name:{(run.get('name') or '').strip()}"
+
+
+def is_still_red(failed_run, latest_conclusion_by_workflow):
+    """True when the failed run's workflow has not gone green since. Pure.
+
+    latest_conclusion_by_workflow maps workflow_key(run) -> conclusion of that
+    workflow's latest run on main. Only `success` counts as fixed: a later
+    cancellation, skip, or still-running build leaves the workflow red, and a
+    workflow with no known later run is treated as still red -- fail loud,
+    never silently drop.
+    """
+    return latest_conclusion_by_workflow.get(workflow_key(failed_run)) != "success"
+
+
+def fetch_latest_conclusions(failed_runs):
+    """Map workflow_key -> conclusion of each workflow's latest run on main.
+
+    One targeted API call per distinct workflow (per_page=1, newest first).
+    A workflow that cannot be resolved (no workflow_id, no runs returned)
+    stays absent from the map; the caller treats absence as still red.
+    Raises on request failure -- callers fail loud rather than filter on
+    incomplete data.
+    """
+    latest = {}
+    seen = set()
+    for run in failed_runs or []:
+        key = workflow_key(run)
+        if key in seen:
+            continue
+        seen.add(key)
+        workflow_id = (run or {}).get("workflow_id")
+        if workflow_id is None:
+            continue
+        data = api_get(
+            f"/actions/workflows/{workflow_id}/runs",
+            {"branch": "main", "per_page": 1},
+        )
+        workflow_runs = data.get("workflow_runs") or []
+        if workflow_runs:
+            latest[key] = workflow_runs[0].get("conclusion")
+    return latest
 
 
 def api_get(path, params=None, attempts=4):
@@ -144,7 +205,17 @@ def main():
     # design, and re-reporting it the next night is a self-flagging loop.
     failed = [r for r in runs if r.get("conclusion") == "failure"]
     skipped_self = sum(1 for r in failed if is_self_scan_run(r))
-    signals = [to_signal(r) for r in failed if not is_self_scan_run(r)]
+    reportable = [r for r in failed if not is_self_scan_run(r)]
+    # A failure the workflow already recovered from is not undiscovered: only
+    # signal workflows whose latest run on main has not succeeded since.
+    try:
+        latest_by_workflow = fetch_latest_conclusions(reportable) if reportable else {}
+    except Exception as exc:  # noqa: BLE001 - report and exit 1
+        print(f"error: GitHub API request failed: {exc}", file=sys.stderr)
+        return 1
+    still_red = [r for r in reportable if is_still_red(r, latest_by_workflow)]
+    skipped_fixed = len(reportable) - len(still_red)
+    signals = [to_signal(r) for r in still_red]
     truncated = len(runs) >= MAX_RUNS
 
     payload = {
@@ -158,6 +229,7 @@ def main():
         json.dump(payload, fh, indent=2)
     print(f"Wrote {len(signals)} signals to {args.out}."
           + (f" (skipped {skipped_self} self-scan runs)" if skipped_self else "")
+          + (f" (skipped {skipped_fixed} already-fixed runs)" if skipped_fixed else "")
           + (" (truncated: hit the run cap)" if truncated else ""))
     return 0
 
