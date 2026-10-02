@@ -1296,19 +1296,7 @@ fn open_region_overlay(
         monitor.origin_virtual.0 as i64,
         monitor.origin_virtual.1 as i64,
     );
-    // Created HIDDEN, not shown until the page itself asks to be shown (via
-    // the `overlay_ready` command, called once overlay.js's init() has
-    // actually run) or the short fallback below fires. A WebView2 control
-    // shows its own blank-white pre-paint state for a brief, usually
-    // imperceptible moment between window creation and its first real
-    // paint; showing the window immediately means the user can see that
-    // blank-white flash instead of the intended dark crosshair overlay.
-    // That gap is not reliably imperceptible on every monitor/GPU
-    // configuration — notably reported as a persistent blank white overlay
-    // on a secondary, DPI-scaled monitor (2026-10-01, Jason's hardware) —
-    // so the window now waits for a real paint-ready signal instead of
-    // assuming the gap is always too short to notice.
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         &app,
         "overlay",
         tauri::WebviewUrl::App("overlay.html".into()),
@@ -1320,39 +1308,12 @@ fn open_region_overlay(
     .always_on_top(true)
     .skip_taskbar(true)
     .resizable(false)
-    .visible(false)
     .build()
     .map_err(|e| format!("cannot open overlay: {e}"))?;
-    // Safety net: if the page never calls back (its own JS failed to run at
-    // all, or the IPC round-trip itself is what's broken), the window still
-    // appears after a short wait — behavior never regresses below "shows
-    // immediately" for a session that was never going to signal ready.
-    let fallback_app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(800));
-        if let Some(w) = fallback_app.get_webview_window("overlay") {
-            if matches!(w.is_visible(), Ok(false)) {
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-        }
-    });
+    // Esc / right-click cancel lives in the overlay page, so the window must
+    // own keyboard focus for the escape hatches to work.
+    let _ = window.set_focus();
     spawn_overlay_watchdog(app.clone(), session_id);
-    Ok(())
-}
-
-/// Called by the overlay page once its init() has actually run (the backdrop
-/// image loaded or honestly failed, the blank-frame warning shown if
-/// needed) — the window is shown only now, never before, so the user never
-/// sees WebView2's own pre-paint state instead of the real overlay. Esc /
-/// right-click cancel lives in the overlay page, so the window must own
-/// keyboard focus for those escape hatches to work once shown.
-#[tauri::command]
-fn overlay_ready(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("overlay") {
-        w.show().map_err(|e| format!("cannot show overlay: {e}"))?;
-        let _ = w.set_focus();
-    }
     Ok(())
 }
 
@@ -2961,7 +2922,6 @@ fn main() {
             export_capture,
             begin_region_pick,
             overlay_context,
-            overlay_ready,
             cancel_region_pick,
             region_pick_backdrop,
             retry_region_backdrop,

@@ -144,17 +144,6 @@ async function init() {
     hint.textContent = "Drag to select a region — Esc cancels (preview unavailable)";
   }
   showAimTools();
-  // The window was created hidden specifically so the user never sees
-  // WebView2's own blank-white pre-paint state instead of this page's real
-  // content — now that init() has actually run (backdrop loaded or
-  // honestly failed, blank-frame warning shown if needed), it's safe to
-  // show it. Best-effort: if this invoke itself fails, the Rust side's own
-  // short fallback timer shows the window anyway.
-  try {
-    await invoke("overlay_ready");
-  } catch {
-    /* fallback timer on the Rust side covers this */
-  }
 }
 
 document.addEventListener("mousemove", (e) => {
