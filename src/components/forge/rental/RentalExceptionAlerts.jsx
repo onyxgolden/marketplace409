@@ -1,5 +1,6 @@
 "use client";
 import { ArrowRight, Building2, CalendarClock, CheckCircle2, CreditCard, Plus, Wallet, Wrench } from "lucide-react";
+import { dashboardValueSizeClass } from "./dashboardCardSizing";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -124,7 +125,7 @@ function ExceptionBox({ alert, onNavigate }) {
       >
         <div className="flex items-center gap-2">
           <CheckCircle2 size={18} className="shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-          <p className="truncate text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{alert.label}</p>
+          <p className="min-w-0 truncate text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{alert.label}</p>
         </div>
         <p className="mt-3 text-sm font-black text-emerald-700 dark:text-emerald-400">All clear</p>
         <p className="mt-1 text-sm font-semibold text-slate-500 dark:text-slate-400">{alert.clearDetail}</p>
@@ -141,9 +142,9 @@ function ExceptionBox({ alert, onNavigate }) {
     >
       <div className="flex items-center gap-2">
         <Icon size={18} className={`shrink-0 ${ACTION_ICON_TONES[alert.tone]}`} aria-hidden="true" />
-        <p className={`truncate text-xs font-black uppercase tracking-wide ${ACTION_ICON_TONES[alert.tone]}`}>{alert.label}</p>
+        <p className={`min-w-0 truncate text-xs font-black uppercase tracking-wide ${ACTION_ICON_TONES[alert.tone]}`}>{alert.label}</p>
       </div>
-      <p className={`mt-3 text-4xl font-black tabular-nums tracking-tight ${ACTION_VALUE_TONES[alert.tone]}`}>{alert.displayValue}</p>
+      <p className={`mt-3 ${dashboardValueSizeClass(alert.displayValue)} font-black tabular-nums tracking-tight ${ACTION_VALUE_TONES[alert.tone]}`}>{alert.displayValue}</p>
       <p className="mt-2 text-sm font-semibold text-slate-600 dark:text-slate-400">{alert.actionDetail}</p>
       <p className={`mt-3 inline-flex items-center gap-1 text-sm font-black ${ACTION_ICON_TONES[alert.tone]}`}>
         Review queue <ArrowRight size={14} aria-hidden="true" />
