@@ -42,7 +42,7 @@ afterEach(() => { clearSWRCache(); });
 const EXPECTED_FUNCTION_IDS = [
   "overview",
   "setup", "insurance", "maintenance", "inspections", "documents",
-  "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "messages", "animals",
+  "tenants", "leases", "lease-lifecycle", "lease-preparation", "readiness", "renewal", "communications", "mailing", "messages", "animals",
   "listings", "applications",
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "receipts", "chart-of-accounts", "batch-entry",
   "owners",

@@ -102,7 +102,10 @@ describe("template catalog", () => {
         expect(keys.has(token), `${template.systemKey} uses unknown field {{${token}}}`).toBe(true);
       }
       if (template.kind === "email") expect(template.subject, `${template.systemKey} email needs a subject`).toBeTruthy();
-      else expect(template.subject, `${template.systemKey} text must not carry a subject`).toBeNull();
+      else if (template.kind === "text") expect(template.subject, `${template.systemKey} text must not carry a subject`).toBeNull();
+      // Mailing templates carry an optional subject — it prints as the
+      // letter's "Re:" line (R20).
+      else expect(template.subject == null || template.subject.length <= 200, `${template.systemKey} mailing subject too long`).toBe(true);
     }
   });
 
