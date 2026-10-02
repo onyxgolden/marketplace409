@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { validateTransaction } from "@/application/rental/validateTransaction";
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { createExpenseWithTenantCharge, validateTenantChargeInput } from "@/application/rental/tenantCharges";
 
-async function requireWriter(authenticated) {
-  if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-    return NextResponse.json({ error: "Read-only members cannot change transactions." }, { status: 403 });
-  }
-  return null;
+// R17: granular permission gates replace the old read_only-only check. Recording/editing
+// needs payments.record; deleting (soft-delete) needs payments.void_refund.
+async function requirePaymentRecorder(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.record" });
+  return gate.response;
+}
+
+async function requireVoidRefund(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.void_refund" });
+  return gate.response;
 }
 
 // Resolves the category codes a new posting may accept. Fails closed: a
@@ -45,7 +50,7 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const forbidden = await requireWriter(authenticated);
+    const forbidden = await requirePaymentRecorder(authenticated, request);
     if (forbidden) return forbidden;
 
     const body = await request.json();
@@ -325,7 +330,7 @@ export async function PATCH(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const forbidden = await requireWriter(authenticated);
+    const forbidden = await requirePaymentRecorder(authenticated, request);
     if (forbidden) return forbidden;
 
     const body = await request.json();
@@ -452,7 +457,7 @@ export async function DELETE(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const forbidden = await requireWriter(authenticated);
+    const forbidden = await requireVoidRefund(authenticated, request);
     if (forbidden) return forbidden;
 
     const eventId = new URL(request.url).searchParams.get("eventId");

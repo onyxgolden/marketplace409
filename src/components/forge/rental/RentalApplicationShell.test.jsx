@@ -47,7 +47,7 @@ const EXPECTED_FUNCTION_IDS = [
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "receipts", "chart-of-accounts", "batch-entry",
   "owners",
   "reports", "owner-statements", "tax-1099",
-  "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "setup-guide",
+  "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "team", "setup-guide",
 ];
 
 function mount(ui) {

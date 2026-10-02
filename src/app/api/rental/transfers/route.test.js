@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ authenticate: vi.fn(), getRole: vi.fn() }));
+const mocks = vi.hoisted(() => ({ authenticate: vi.fn(), gate: vi.fn() }));
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: mocks.authenticate,
 }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({
-  getActiveWorkspaceRole: mocks.getRole,
+vi.mock("@/lib/rental/teamAuthorization", () => ({
+  requireRentalPermission: mocks.gate,
 }));
 
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { POST } from "./route";
 
 function fakeClient({ rpcImpl } = {}) {
@@ -21,7 +23,15 @@ function authed(client, role = "owner") {
     supabaseClient: client,
     effectiveOwnerId: "owner-1",
   });
-  mocks.getRole.mockResolvedValue(role);
+  // R17: writes gate through requireRentalPermission; "owner" allows, "read_only" denies.
+  if (role === "read_only") {
+    mocks.gate.mockResolvedValue({
+      response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+      authorization: null,
+    });
+  } else {
+    mocks.gate.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+  }
 }
 
 function postRequest(body) {
@@ -116,5 +126,16 @@ describe("POST /api/rental/transfers", () => {
     const response = await POST(postRequest(validBody));
     expect(response.status).toBe(400);
     expect((await response.json()).error).toContain("was not found");
+  });
+});
+
+describe("R17 permission gating", () => {
+  it("POST requires the transfers.record permission", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: null }));
+    authed(fakeClient({ rpcImpl: rpc }));
+    await POST(postRequest(validBody));
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "transfers.record" })
+    );
   });
 });

@@ -1,17 +1,16 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import {
   buildVendorPaymentId,
   serializeVendorPayment,
   validateVendorPaymentInput,
 } from "@/application/rental/vendorPayments";
 
-async function requireWriter(authenticated) {
-  if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-    return NextResponse.json({ error: "Read-only members cannot record vendor payments." }, { status: 403 });
-  }
-  return null;
+// R17: recording a vendor payment needs vendor_payments.record (was: read_only-only check).
+async function requireVendorPaymentRecorder(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_payments.record" });
+  return gate.response;
 }
 
 const PAYMENT_COLUMNS =
@@ -147,7 +146,7 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const writerError = await requireWriter(authenticated);
+    const writerError = await requireVendorPaymentRecorder(authenticated, request);
     if (writerError) return writerError;
     const { supabaseClient, effectiveOwnerId } = authenticated;
 

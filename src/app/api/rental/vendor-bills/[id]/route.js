@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { getChartAccounts, isChartTableMissing } from "@/application/rental/chartOfAccounts";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import {
@@ -13,11 +13,11 @@ import {
   validateVendorBillEdit,
 } from "@/application/rental/vendorBills";
 
-async function requireWriter(authenticated) {
-  if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-    return NextResponse.json({ error: "Read-only members cannot change vendor bills." }, { status: 403 });
-  }
-  return null;
+// R17: changing vendor bills needs vendor_bills.manage (was: read_only-only check).
+// Voiding a bill is bill management, not a payment void -- it stays under this permission.
+async function requireBillManager(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_bills.manage" });
+  return gate.response;
 }
 
 const BILL_COLUMNS = "id, vendor_id, property_id, bill_date, due_date, amount_cents, paid_amount_cents, expense_account_code, memo, attachment_reference, status, void_reason, voided_at, created_at, updated_at";
@@ -101,7 +101,7 @@ export async function PATCH(request, { params }) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const forbidden = await requireWriter(authenticated);
+    const forbidden = await requireBillManager(authenticated, request);
     if (forbidden) return forbidden;
     const { supabaseClient, effectiveOwnerId } = authenticated;
 
@@ -175,34 +175,38 @@ export async function PATCH(request, { params }) {
           error: `This bill cannot be un-voided — a replacement bill for the same ${bill.bill_date} charge already exists (entered ${String(replacement.created_at || "").slice(0, 10)}). Un-voiding would double the amount owed.`,
         }, { status: 409 });
       }
-      // Write-time guard: still voided and untouched, so a payment landing
-      // between the read and the write cannot be silently resurrected away.
-      const { data, error } = await supabaseClient
-        .from("rental_vendor_bills")
-        .update({ status: "open" })
-        .eq("owner_id", effectiveOwnerId)
-        .eq("id", bill.id)
-        .eq("status", "voided")
-        .eq("paid_amount_cents", 0)
-        .select(BILL_COLUMNS)
-        .single();
-      if (error) {
-        if (error.code === "PGRST116") {
+      // Atomic un-void: the RPC reopens the bill AND appends the audit row in
+      // one transaction, so a staff member authorized for vendor_bills.manage
+      // can never leave a reopened bill without its reason/actor history
+      // (the audit table's INSERT policy requires owner/co-owner workspace
+      // access, which staff lack — the RPC's SECURITY DEFINER covers exactly
+      // this authorized operation). The RPC re-checks the voided+untouched
+      // guard at write time; no rows = the bill changed → 409.
+      const { data: rpcData, error: rpcError } = await supabaseClient
+        .rpc("unvoid_vendor_bill", {
+          p_owner_id: effectiveOwnerId,
+          p_bill_id: bill.id,
+          p_reason: unvoidReason,
+        });
+      if (rpcError) {
+        // P0001 = our "not in a voided, untouched state" raise → the bill
+        // changed between the read and the write.
+        if (rpcError.code === "P0001") {
           return NextResponse.json({ error: "The bill changed while you were editing it. Please review the latest state and try again." }, { status: 409 });
         }
-        throw error;
+        // 42501 = the RPC's own permission check denied the caller.
+        if (rpcError.code === "42501") {
+          return NextResponse.json({ error: "You do not have permission to un-void vendor bills." }, { status: 403 });
+        }
+        throw rpcError;
       }
-      const { error: auditError } = await supabaseClient
-        .from("rental_void_audits")
-        .insert({
-          owner_id: effectiveOwnerId,
-          entity_type: "vendor_bill",
-          entity_id: bill.id,
-          action: "unvoid",
-          reason: unvoidReason.slice(0, 500),
-          actor_id: authenticated.user.id,
-        });
-      if (auditError) throw auditError;
+      const { data, error } = await supabaseClient
+        .from("rental_vendor_bills")
+        .select(BILL_COLUMNS)
+        .eq("owner_id", effectiveOwnerId)
+        .eq("id", bill.id)
+        .single();
+      if (error) throw error;
       const { data: vendor } = await supabaseClient
         .from("rental_vendors").select("name")
         .eq("owner_id", effectiveOwnerId).eq("id", data.vendor_id).maybeSingle();

@@ -2,15 +2,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: vi.fn(),
 }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({
-  getActiveWorkspaceRole: vi.fn(),
+vi.mock("@/lib/rental/teamAuthorization", () => ({
+  requireRentalPermission: vi.fn(),
 }));
 vi.mock("@/application/rental/chartOfAccounts", () => ({
   resolvePostingCategories: vi.fn(),
   ChartUnavailableError: class ChartUnavailableError extends Error {},
 }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+
+// R17: the route gates writes through requireRentalPermission (server-side permission check).
+function allowGate() {
+  requireRentalPermission.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+}
+function denyGate() {
+  requireRentalPermission.mockResolvedValue({
+    response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+    authorization: null,
+  });
+}
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { DELETE, PATCH, POST } from "./route";
 
@@ -74,7 +86,7 @@ function deleteRequest(eventId) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getActiveWorkspaceRole.mockResolvedValue("owner");
+  allowGate();
   // Legacy mode (chart table not yet created): the validator falls back to
   // the built-in list, so existing tests exercise the legacy path.
   resolvePostingCategories.mockResolvedValue(null);
@@ -217,7 +229,7 @@ describe("PATCH /api/rental/transactions", () => {
   });
 
   it("403s for read-only members", async () => {
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
+    denyGate();
     const db = database();
     createAuthenticatedRentalManagerApplication.mockResolvedValue({
       user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
@@ -380,7 +392,7 @@ describe("DELETE /api/rental/transactions", () => {
   });
 
   it("403s for read-only members", async () => {
-    getActiveWorkspaceRole.mockResolvedValue("read_only");
+    denyGate();
     const db = database();
     createAuthenticatedRentalManagerApplication.mockResolvedValue({
       user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
@@ -472,6 +484,52 @@ describe("POST /api/rental/transactions (regression)", () => {
     expect(response.status).toBe(503);
     const body = await response.json();
     expect(body.error).toMatch(/chart of accounts/i);
+    expect(db.client.from).not.toHaveBeenCalledWith("financial_events");
+  });
+});
+
+describe("R17 permission gating", () => {
+  it("POST requires the payments.record permission", async () => {
+    allowGate();
+    const db = database();
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await POST(new Request("https://test/api/rental/transactions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    }));
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "payments.record" })
+    );
+    expect(response.status).not.toBe(403);
+  });
+
+  it("DELETE requires the payments.void_refund permission", async () => {
+    allowGate();
+    const db = database();
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    await DELETE(deleteRequest("evt-1"));
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "payments.void_refund" })
+    );
+  });
+
+  it("a denied gate blocks the write with 403 before any database work", async () => {
+    denyGate();
+    const db = database();
+    createAuthenticatedRentalManagerApplication.mockResolvedValue({
+      user: { id: "user-1" }, effectiveOwnerId: "owner_1", supabaseClient: db.client,
+    });
+    const response = await POST(new Request("https://test/api/rental/transactions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validBody),
+    }));
+    expect(response.status).toBe(403);
     expect(db.client.from).not.toHaveBeenCalledWith("financial_events");
   });
 });

@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { createFundTransfer, validateFundTransferInput } from "@/application/rental/fundTransfers";
 
-async function requireWriter(authenticated) {
-  if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-    return NextResponse.json({ error: "Read-only members cannot move funds." }, { status: 403 });
-  }
-  return null;
+// R17: moving funds needs transfers.record (was: read_only-only check).
+async function requireTransferRecorder(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "transfers.record" });
+  return gate.response;
 }
 
 // POST /api/rental/transfers — move money between two of the owner's bank
@@ -25,7 +24,7 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const forbidden = await requireWriter(authenticated);
+    const forbidden = await requireTransferRecorder(authenticated, request);
     if (forbidden) return forbidden;
 
     const body = await request.json();

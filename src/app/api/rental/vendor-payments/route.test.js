@@ -1,8 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
+vi.mock("@/lib/rental/teamAuthorization", () => ({ requireRentalPermission: vi.fn() }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+
+// R17: writes gate through requireRentalPermission (server-side permission check).
+function gateFor(role) {
+  if (role === "read_only") {
+    requireRentalPermission.mockResolvedValue({
+      response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+      authorization: null,
+    });
+  } else {
+    requireRentalPermission.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+  }
+}
+
 import { GET, POST } from "./route";
 
 const bill = {
@@ -48,7 +62,7 @@ function authAs(client, role = "owner") {
   createAuthenticatedRentalManagerApplication.mockResolvedValue({
     user: { id: "user_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
   });
-  getActiveWorkspaceRole.mockResolvedValue(role);
+  gateFor(role);
 }
 
 const get = (query = "") => GET(new Request(`https://t/${query}`));
@@ -211,5 +225,36 @@ describe("POST /api/rental/vendor-payments", () => {
     authAs(client, "read_only");
     const response = await post(goodBody);
     expect(response.status).toBe(403);
+  });
+});
+
+describe("R17 permission gating", () => {
+  it("POST requires the vendor_payments.record permission", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: { paymentId: paymentRow.id, eventIds: ["event_1"] }, error: null });
+    let paymentReads = 0;
+    const client = {
+      rpc,
+      from: vi.fn((table) => {
+        if (table === "rental_vendor_bills") return listBuilder([bill]);
+        // Pre-check: no existing payment. Post-RPC fetch: the new row.
+        if (table === "rental_vendor_payments") return singleBuilder(++paymentReads === 1 ? null : paymentRow);
+        if (table === "rental_vendor_payment_applications") return listBuilder([]);
+        return listBuilder([{ id: "rental_vendor_1", name: "Acme Plumbing" }]);
+      }),
+    };
+    authAs(client);
+    await post(goodBody);
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "vendor_payments.record" })
+    );
+  });
+
+  it("a staff member without vendor_payments.record gets 403 and nothing is recorded", async () => {
+    const rpc = vi.fn();
+    const client = { rpc, from: vi.fn(() => listBuilder([])) };
+    authAs(client, "read_only");
+    const response = await post(goodBody);
+    expect(response.status).toBe(403);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

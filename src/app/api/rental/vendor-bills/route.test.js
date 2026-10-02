@@ -1,12 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
+vi.mock("@/lib/rental/teamAuthorization", () => ({ requireRentalPermission: vi.fn() }));
 vi.mock("@/application/rental/chartOfAccounts", () => ({
   getChartAccounts: vi.fn(),
   isChartTableMissing: () => false,
 }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+
+// R17: writes gate through requireRentalPermission (server-side permission check).
+function gateFor(role) {
+  if (role === "read_only") {
+    requireRentalPermission.mockResolvedValue({
+      response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+      authorization: null,
+    });
+  } else {
+    requireRentalPermission.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+  }
+}
+
 import { getChartAccounts } from "@/application/rental/chartOfAccounts";
 import { GET, POST } from "./route";
 
@@ -39,7 +53,7 @@ function authAs(client, role = "owner") {
   createAuthenticatedRentalManagerApplication.mockResolvedValue({
     user: { id: "user_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
   });
-  getActiveWorkspaceRole.mockResolvedValue(role);
+  gateFor(role);
 }
 
 const get = (query = "") => GET(new Request(`https://t/${query}`));
@@ -146,5 +160,13 @@ describe("POST /api/rental/vendor-bills", () => {
     expect(row.source_key).toBe(`vendorbill:${row.id}`);
     expect(row.paid_amount_cents).toBe(0);
     expect(row.created_by).toBe("user_1");
+  });
+  it("R17: POST requires the vendor_bills.manage permission", async () => {
+    const { client } = clientForCreate();
+    authAs(client);
+    await post(goodBody);
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "vendor_bills.manage" })
+    );
   });
 });

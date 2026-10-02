@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { resolveActiveFunction } from "@/components/forge/workspace/ApplicationShell";
 import { useSidebarHiddenItems } from "@/components/forge/workspace/useSidebarHiddenItems";
@@ -19,6 +19,8 @@ import RentalHelpModal from "./RentalHelpModal";
 import { RentalTerminologyProvider, useRentalTerminology } from "./rentalTerminologyContext";
 import { termLabel as resolveTermLabel } from "@/domains/rental-terminology/rentalTerminology";
 import RentalTerminologyPanel from "./RentalTerminologyPanel";
+import RentalTeamPanel from "./RentalTeamPanel";
+import RentalPreviewBanner from "./RentalPreviewBanner";
 import RentalTodaysPrioritiesPanel from "./guided-workflow/RentalTodaysPrioritiesPanel";
 import RentalFirstTenantReadinessPanel from "./guided-workflow/RentalFirstTenantReadinessPanel";
 import RentalLeaseRenewalPanel from "./guided-workflow/RentalLeaseRenewalPanel";
@@ -100,6 +102,7 @@ export const RENTAL_NAVIGATION = Object.freeze([
       { id: "rentec-payment-import", label: "Rentec Payment Import" },
       { id: "rentec-financial-history-import", label: "Rentec Financial History Import" },
       { id: "terminology", label: "Terminology" },
+      { id: "team", label: "Team & Permissions" },
       // R16: the re-runnable setup guide. Listed last so the coverage-ordered
       // help content (rentalHelpContent.js) stays aligned with nav order.
       { id: "setup-guide", label: "Setup guide" },
@@ -204,7 +207,7 @@ const CONTEXT_CARRY_SURFACES = new Set(["financial-setup"]);
 
 export function buildRentalSurface(id, { onNavigate, recordContext = null, viewFilter = null } = {}) {
   if(recordContext&&["charges","maintenance","inspections","documents","communications"].includes(id))return <RentalContextualSurface surfaceId={id} recordContext={recordContext}/>;
-  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, owners: <RentalOwnersHomePanel onNavigate={onNavigate} />, "owner-statements": <OwnerStatementsPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} initialViewFilter={viewFilter} recordContext={recordContext} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} initialViewFilter={viewFilter} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} initialViewFilter={viewFilter} />, insurance: <><RentalInsurancePanel /><div className="mt-6"><RentalInsuranceAddonsPanel /></div></>, maintenance: <RentalMaintenancePanel recordContext={recordContext} initialViewFilter={viewFilter} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "bank-ledger": <BankLedgerPage onNavigate={onNavigate} />, vendors: <RentalVendorsPanel />, receipts: <RentalReceiptsPanel />, "chart-of-accounts": <ChartOfAccountsPage onNavigate={onNavigate} />, "batch-entry": <BatchExpenseForm />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "tax-1099": <Tax1099Panel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} onNavigate={onNavigate} />, deposits: <RentalDepositsPanel />, "checks-deposits": <BankingToolsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel />, terminology: <RentalTerminologyPanel />, "setup-guide": <RentalSetupWizardPanel mode="guide" onNavigate={onNavigate} onExit={() => onNavigate?.("overview")} />, listings: <ListingsPanel />, applications: <ApplicationsPanel /> };
+  const surfaces = { guide: <RentalTodaysPrioritiesPanel onNavigate={onNavigate} />, readiness: <RentalFirstTenantReadinessPanel onNavigate={onNavigate} />, renewal: <RentalLeaseRenewalPanel onNavigate={onNavigate} />, owners: <RentalOwnersHomePanel onNavigate={onNavigate} />, "owner-statements": <OwnerStatementsPanel onNavigate={onNavigate} />, setup: <RentalSetupPanel onNavigate={onNavigate} initialViewFilter={viewFilter} recordContext={recordContext} />, tenants: <RentalTenantPanel onNavigate={onNavigate} recordContext={recordContext} />, leases: <RentalLeasePanel recordContext={recordContext} initialViewFilter={viewFilter} />, "rentec-migration": <RentecMigrationPanel />, "rentec-files": <RentecFileInventoryPanel />, charges: <RentalPaymentsPanel recordContext={recordContext} initialViewFilter={viewFilter} />, insurance: <><RentalInsurancePanel /><div className="mt-6"><RentalInsuranceAddonsPanel /></div></>, maintenance: <RentalMaintenancePanel recordContext={recordContext} initialViewFilter={viewFilter} />, documents: <RentalDocumentsPanel recordContext={recordContext} />, communications: <RentalCommunicationsPanel recordContext={recordContext} />, messages: <MessagesPanel />, reconciliation: <RentalReconciliationPanel />, "bank-ledger": <BankLedgerPage onNavigate={onNavigate} />, vendors: <RentalVendorsPanel />, receipts: <RentalReceiptsPanel />, "chart-of-accounts": <ChartOfAccountsPage onNavigate={onNavigate} />, "batch-entry": <BatchExpenseForm />, "rentec-payment-import": <RentecPaymentImportPanel onNavigate={onNavigate} />, "rentec-financial-history-import": <RentecFinancialHistoryImportPanel />, reports: <RentalReportsPanel />, "tax-1099": <Tax1099Panel />, "financial-setup": <PropertyFinancialSetupPanel recordContext={recordContext} onNavigate={onNavigate} />, deposits: <RentalDepositsPanel />, "checks-deposits": <BankingToolsPanel />, inspections: <RentalInspectionsPanel recordContext={recordContext} />, "lease-lifecycle": <RentalLeaseLifecyclePanel />, "lease-preparation": <RentalLeasePreparationPanel />, autopay: <RentalAutopayPanel />, animals: <RentalAnimalsPanel />, support: <RentalSupportPanel />, terminology: <RentalTerminologyPanel />, team: <RentalTeamPanel />, "setup-guide": <RentalSetupWizardPanel mode="guide" onNavigate={onNavigate} onExit={() => onNavigate?.("overview")} />, listings: <ListingsPanel />, applications: <ApplicationsPanel /> };
   return surfaces[id] || <RentalOverviewPanel onNavigate={onNavigate} />;
 }
 
@@ -227,10 +230,37 @@ function RentalApplicationShellView({ activeFunctionId, activeRecordContext = nu
     writeSetupWizardDismissal();
     setWizardDismissed(true);
   }
+  // R17: the Team & Permissions surface is only offered to team.manage holders. The API layer
+  // re-checks server-side, so this is navigation convenience, not a security boundary.
+  const [canManageTeam, setCanManageTeam] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTeamAccess() {
+      try {
+        const response = await fetch("/api/rental/team/permissions", { credentials: "same-origin" });
+        const body = await response.json();
+        if (!cancelled) {
+          setCanManageTeam(Array.isArray(body?.permissions) && body.permissions.includes("team.manage"));
+        }
+      } catch {
+        if (!cancelled) setCanManageTeam(false);
+      }
+    }
+    loadTeamAccess();
+    const refresh = () => loadTeamAccess();
+    window.addEventListener("forge:team-permissions-change", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("forge:team-permissions-change", refresh);
+    };
+  }, []);
   // R25 terminology: the whole shell (nav rail, mobile select, customize
   // checklist, record-context banner) renders through the workspace term map.
   const { terms, termLabel } = useRentalTerminology();
-  const navigation = useMemo(() => applyTerminologyToNavigation(RENTAL_NAVIGATION, terms), [terms]);
+  const sourceNavigation = canManageTeam === false
+    ? RENTAL_NAVIGATION.map((group) => ({ ...group, items: group.items.filter((item) => item.id !== "team") }))
+    : RENTAL_NAVIGATION;
+  const navigation = useMemo(() => applyTerminologyToNavigation(sourceNavigation, terms), [sourceNavigation, terms]);
   const hideableSections = useMemo(
     () => navigation
       .filter((group) => (group.defaultLabel ?? group.label) !== "Dashboard")
@@ -248,6 +278,7 @@ function RentalApplicationShellView({ activeFunctionId, activeRecordContext = nu
     onFunctionChange?.(functionId, carried, viewFilter);
   }
   return <section data-rental-application-shell data-active-function={activeId} className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-950">
+    <RentalPreviewBanner />
     <header className="border-b border-slate-200/70 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-4 text-slate-950 dark:text-slate-100 lg:px-8">
       <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-4">
         <div>

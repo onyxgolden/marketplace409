@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { validateManualFinancialEvent } from "@/application/financial/validateManualFinancialEvent";
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 
@@ -9,13 +9,13 @@ export async function POST(request) {
     const a = await createAuthenticatedForgeApplication();
     if (a.response) return a.response;
 
-    // A read_only workspace member is blocked outright: the role name promises no writes,
-    // so the write must not happen even though scoping alone would only divert it into the
-    // actor's own fallback workspace. Non-members (no membership row) keep the scoping
-    // behavior -- their writes land under their own id and can never touch this workspace.
-    if ((await getActiveWorkspaceRole({ supabaseClient: a.supabaseClient, actorUserId: a.user.id })) === "read_only") {
-      return NextResponse.json({ error: "Read-only members cannot add manual entries." }, { status: 403 });
-    }
+    // R17: recording a manual entry needs payments.record (was: read_only-only check).
+    // A staff member without the permission is blocked outright: their write must not happen
+    // even though scoping alone would only divert it into the actor's own fallback workspace.
+    // Non-members (no membership row) keep the scoping behavior -- their writes land under
+    // their own id and can never touch this workspace.
+    const manualEntryGate = await requireRentalPermission({ authenticated: a, request, permission: "payments.record" });
+    if (manualEntryGate.response) return manualEntryGate.response;
 
     const body = await request.json();
     const { valid, errors } = validateManualFinancialEvent(body);

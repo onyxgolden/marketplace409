@@ -25,19 +25,19 @@ function stubSupabaseClient({ data = null, error = null, captureFilters } = {}) 
 }
 
 describe("resolveEffectiveOwnerId", () => {
-  it("returns the actor's own id when they have no active co_owner membership", async () => {
+  it("returns the actor's own id when they have no active membership", async () => {
     const supabaseClient = stubSupabaseClient({ data: null });
     const result = await resolveEffectiveOwnerId({ supabaseClient, actorUserId: "actor-uuid-1" });
     expect(result).toBe("actor-uuid-1");
   });
 
-  it("returns the workspace owner_id when the actor has an active co_owner membership", async () => {
+  it("returns the workspace owner_id when the actor has an active staff membership (any role)", async () => {
     const supabaseClient = stubSupabaseClient({ data: { owner_id: "owner-uuid-primary" } });
     const result = await resolveEffectiveOwnerId({ supabaseClient, actorUserId: "actor-uuid-2" });
     expect(result).toBe("owner-uuid-primary");
   });
 
-  it("filters on member_user_id, status=active, and role=co_owner -- matching the SQL helper's predicate exactly", async () => {
+  it("filters on member_user_id and status=active only -- matching the SQL helper's predicate exactly (R17: staff roles resolve too)", async () => {
     let capturedFilters;
     const supabaseClient = stubSupabaseClient({
       data: null,
@@ -49,7 +49,6 @@ describe("resolveEffectiveOwnerId", () => {
     expect(capturedFilters).toEqual([
       ["member_user_id", "actor-uuid-3"],
       ["status", "active"],
-      ["role", "co_owner"],
     ]);
   });
 

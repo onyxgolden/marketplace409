@@ -2,15 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
   createAuthenticatedRentalManagerApplication: vi.fn(),
 }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({
-  getActiveWorkspaceRole: vi.fn(),
+vi.mock("@/lib/rental/teamAuthorization", () => ({
+  requireRentalPermission: vi.fn(),
 }));
 vi.mock("@/application/rental/chartOfAccounts", () => ({
   resolvePostingCategories: vi.fn(),
   ChartUnavailableError: class ChartUnavailableError extends Error {},
 }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { POST } from "./route";
 
@@ -39,7 +40,14 @@ function authed(rpcCapture, { role = "owner", rpcResult = null } = {}) {
     effectiveOwnerId: "owner_1",
     supabaseClient: client,
   });
-  getActiveWorkspaceRole.mockResolvedValue(role);
+  if (role === "read_only") {
+    requireRentalPermission.mockResolvedValue({
+      response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+      authorization: null,
+    });
+  } else {
+    requireRentalPermission.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+  }
   return client;
 }
 
@@ -186,5 +194,16 @@ describe("POST /api/rental/transactions/batch", () => {
     expect(response.status).toBe(201);
     expect(body).toMatchObject({ created: 1, errors: [] });
     expect(rpcCapture.calls[0].args.p_events[0].normalizedCategory).toBe("property_repairs");
+  });
+});
+
+describe("R17 permission gating", () => {
+  it("POST requires the payments.record permission", async () => {
+    const rpcCapture = { calls: [] };
+    authed(rpcCapture);
+    await POST(postRequest([row()]));
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "payments.record" })
+    );
   });
 });
