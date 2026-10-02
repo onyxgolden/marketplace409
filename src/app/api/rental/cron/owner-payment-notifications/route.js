@@ -35,7 +35,8 @@ export const runtime = "nodejs";
 //      terminal 'skipped_disabled' when it is off — a disabled-at-detection
 //      event can never be delivered later.
 //   2. Reconcile terminal Stripe payments (succeeded/failed) from the last
-//      few days: any payment without a notification row gets one queued.
+//      few days, plus initiated autopay debits via the durable initiated_at
+//      marker: any payment without its notification row gets one queued.
 //      This is the durable healing path for webhook queue writes that were
 //      caught and swallowed to protect webhook processing.
 //   3. Deliver queued notifications: claim each row BEFORE the provider call
@@ -229,27 +230,43 @@ async function queueUpcomingNotifications(db, pairs, asOfDate, config) {
   return { queued, alreadyQueued, skippedAtDetection, skippedNotAllowlisted };
 }
 
-// Durable reconciler: heals notifications lost when a webhook queue write
-// failed (caught and swallowed to protect webhook processing). Scans Stripe
-// payments that reached a terminal state inside the lookback window — by
-// success/failure transition time, not creation time — and queues a
-// notification for any payment the webhook path never recorded. Does not
-// depend on the webhook path at all.
+// Durable reconciler: heals owner payment notifications lost when a webhook
+// queue write failed (caught and swallowed to protect webhook processing).
+// Two healing passes over ONE payment scan:
 //
-// Activation cutoff (release-safety): payments that reached terminal state
-// BEFORE the explicit PAYMENT_RECEIPTS_ACTIVATED_AT timestamp are never
-// healed — the first post-activation run must not dig up old terminal payments
-// and send stale notifications. When the cutoff is unset, the reconciler heals
-// nothing (fail-closed).
-async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
+//   Terminal pass (pre-existing): payments that reached succeeded/failed
+//   inside the lookback window — by success/failure transition time, not
+//   creation time.
+//
+//   Initiated pass (ChatGPT NO-GO fix on PR #535): payments whose projection
+//   RPC stamped initiated_at on the first payment_intent.processing event.
+//   The marker is written in the RPC's own transaction, so it cannot be lost
+//   independently of the projection, and it is independent of the mutable
+//   status column — so this pass also finds payments that have already
+//   advanced to succeeded/failed. Scanning current processing rows alone
+//   would miss that case. Initiated is autopay-only: only payments with a
+//   matching autopay-attempt row qualify, mirroring the webhook path's
+//   resolvePaymentNotificationEvent.
+//
+// Both passes share the owner/tenant allow-lists, provider mode, activation
+// cutoff, and detection-time disabled disposition, and both use the stable
+// event-specific notification id — so webhook redeliveries, reconciliations,
+// and overlapping cron runs can never double-notify.
+//
+// Activation cutoff (release-safety): payments whose healed transition (or
+// initiation) happened BEFORE the explicit PAYMENT_RECEIPTS_ACTIVATED_AT
+// timestamp are never healed — the first post-activation run must not dig up
+// old payments and send stale notifications. When the cutoff is unset, the
+// reconciler heals nothing (fail-closed).
+async function reconcilePaymentNotifications(db, providerMode, config) {
   if (!config.activatedAt) {
     console.log("Owner payment notification reconciler skipped: PAYMENT_RECEIPTS_ACTIVATED_AT is not set.");
-    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: true };
+    return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: true };
   }
   const since = new Date(Date.now() - TERMINAL_PAYMENT_LOOKBACK_DAYS * 24 * 3600 * 1000).toISOString();
   const payments = await fetchAllPages((page) =>
     db.from("rental_payments")
-      .select("id, owner_id, charge_id, lease_id, tenant_id, amount_cents, failure_code, status, succeeded_at, updated_at")
+      .select("id, owner_id, charge_id, lease_id, tenant_id, amount_cents, failure_code, status, succeeded_at, initiated_at, updated_at")
       .eq("provider", "stripe")
       .eq("provider_mode", providerMode)
       // Terminal-transition filter, NOT creation time: a Stripe payment created
@@ -258,11 +275,14 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
       // notifications. succeeded_at is always set for succeeded rows (DB check
       // constraint); failures stamp updated_at at transition time. Each branch
       // additionally requires the transition at/after the activation cutoff.
-      .or(`and(status.eq.succeeded,succeeded_at.gte.${since},succeeded_at.gte.${config.activatedAt}),and(status.eq.failed,updated_at.gte.${since},updated_at.gte.${config.activatedAt})`)
+      // The initiated branch needs no lookback: initiated_at is durable
+      // evidence written by the projection RPC, and the healed payment may
+      // have completed arbitrarily long after initiation.
+      .or(`and(status.eq.succeeded,succeeded_at.gte.${since},succeeded_at.gte.${config.activatedAt}),and(status.eq.failed,updated_at.gte.${since},updated_at.gte.${config.activatedAt}),and(initiated_at.gte.${config.activatedAt})`)
       .order("updated_at", { ascending: true })
       .range(...pageRange(page)),
   );
-  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: false };
+  if (payments.length === 0) return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted: 0, skippedTenantNotAllowlisted: 0, reconcileSkipped: false };
 
   // Owner allow-list: fail closed — payments for non-allow-listed owners are
   // never turned into notifications.
@@ -279,7 +299,7 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
   );
   const skippedTenantNotAllowlisted = allowlisted.length - tenantAllowlisted.length;
   if (tenantAllowlisted.length === 0) {
-    return { reconciled: 0, alreadyQueued: 0, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
+    return { reconciled: 0, alreadyQueued: 0, reconciledInitiated: 0, alreadyReconciledInitiated: 0, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
   }
 
   const attemptPaymentIds = new Set();
@@ -310,23 +330,61 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     if (label) propertyLabelByLease.set(key, label);
   }
 
-  const rows = tenantAllowlisted.map((payment) => {
-    const hasAutopayAttempt = attemptPaymentIds.has(payment.id);
-    const eventType = resolvePaymentNotificationEvent({
-      stripeOutcome: payment.status === "failed" ? "failed" : "succeeded",
-      hasAutopayAttempt,
-    });
-    return buildTerminalPaymentNotificationRow({
+  const buildRow = (payment, eventType, stripeEventType, occurredAt, isAutopay) =>
+    buildTerminalPaymentNotificationRow({
       payment,
       tenantName: tenantNameById.get(payment.tenant_id) ?? null,
       propertyLabel: propertyLabelByLease.get(`${payment.owner_id}:${payment.lease_id}`) ?? null,
       eventType,
-      isAutopay: hasAutopayAttempt,
-      stripeEventType: payment.status === "failed" ? "payment_intent.payment_failed" : "payment_intent.succeeded",
-      occurredAt: payment.succeeded_at || payment.updated_at,
+      isAutopay,
+      stripeEventType,
+      occurredAt,
       sendingEnabled: config.enabled,
     });
-  });
+
+  // Terminal pass: only payments in a terminal state. The scan's OR filter
+  // can now also return processing payments (via the initiated branch), so
+  // the status partition here is load-bearing, not redundant.
+  const terminalRows = tenantAllowlisted
+    .filter((payment) => payment.status === "succeeded" || payment.status === "failed")
+    .map((payment) => {
+      const hasAutopayAttempt = attemptPaymentIds.has(payment.id);
+      return buildRow(
+        payment,
+        resolvePaymentNotificationEvent({
+          stripeOutcome: payment.status === "failed" ? "failed" : "succeeded",
+          hasAutopayAttempt,
+        }),
+        payment.status === "failed" ? "payment_intent.payment_failed" : "payment_intent.succeeded",
+        payment.succeeded_at || payment.updated_at,
+        hasAutopayAttempt,
+      );
+    });
+
+  // Initiated pass: durable initiated_at marker, autopay-only, any current
+  // status — including payments that already completed. The DB filter already
+  // requires initiated_at at/after the activation cutoff; the Date comparison
+  // below is belt-and-braces against driver timestamp formatting.
+  const activationMs = new Date(config.activatedAt).getTime();
+  const initiatedRows = tenantAllowlisted
+    .filter((payment) => {
+      if (!payment.initiated_at || !attemptPaymentIds.has(payment.id)) return false;
+      const initiatedMs = new Date(payment.initiated_at).getTime();
+      return Number.isFinite(initiatedMs) && initiatedMs >= activationMs;
+    })
+    .map((payment) => buildRow(
+      payment,
+      resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: true }),
+      "payment_intent.processing",
+      payment.initiated_at,
+      true,
+    ))
+    // The resolver returns null only if the autopay-only rule ever changes;
+    // a null row must never reach the outbox.
+    .filter(Boolean);
+
+  const rows = [...terminalRows, ...initiatedRows];
+  const initiatedIds = new Set(initiatedRows.map((row) => row.id));
 
   const existingIds = new Set();
   for (const chunk of chunkArray(rows.map((row) => row.id), ID_CHUNK_SIZE)) {
@@ -336,9 +394,11 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     for (const row of data || []) existingIds.add(row.id);
   }
   const missing = rows.filter((row) => !existingIds.has(row.id));
-  if (missing.length === 0) return { reconciled: 0, alreadyQueued: rows.length, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
+  const missingInitiated = missing.filter((row) => initiatedIds.has(row.id));
+  const missingTerminal = missing.length - missingInitiated.length;
+  if (missing.length === 0) return { reconciled: 0, alreadyQueued: terminalRows.length, reconciledInitiated: 0, alreadyReconciledInitiated: initiatedRows.length, skippedAtDetection: 0, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
 
-  let reconciled = 0, skippedAtDetection = 0;
+  let reconciled = 0, reconciledInitiated = 0, skippedAtDetection = 0;
   for (const chunk of chunkArray(missing, ID_CHUNK_SIZE)) {
     const { data, error } = await db.from("rental_owner_notifications")
       .upsert(chunk, { onConflict: "owner_id,id", ignoreDuplicates: true }).select("id");
@@ -347,14 +407,15 @@ async function reconcileTerminalPaymentNotifications(db, providerMode, config) {
     for (const row of chunk) {
       if (!insertedIds.has(row.id)) continue;
       if (row.status === "queued") {
-        reconciled += 1;
+        if (initiatedIds.has(row.id)) reconciledInitiated += 1;
+        else reconciled += 1;
       } else {
         skippedAtDetection += 1;
         logWouldSendDisabled(config, row.event_type, buildTerminalNotificationFacts(row.payload));
       }
     }
   }
-  return { reconciled, alreadyQueued: rows.length - missing.length, skippedAtDetection, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
+  return { reconciled, alreadyQueued: terminalRows.length - missingTerminal, reconciledInitiated, alreadyReconciledInitiated: initiatedRows.length - missingInitiated.length, skippedAtDetection, skippedNotAllowlisted, skippedTenantNotAllowlisted, reconcileSkipped: false };
 }
 
 // Delivery candidates: fresh queue rows, failed rows under the attempt cap,
@@ -515,12 +576,14 @@ export async function GET(request) {
       wouldSend += detection.skippedAtDetection;
     }
 
-    // 2. Reconcile terminal payments the webhook queue may have lost.
-    let reconciled = 0, alreadyReconciled = 0, skippedTenantNotAllowlistedReconciled = 0, reconcileSkipped = false;
+    // 2. Reconcile terminal + initiated payments the webhook queue may have lost.
+    let reconciled = 0, alreadyReconciled = 0, reconciledInitiated = 0, alreadyReconciledInitiated = 0, skippedTenantNotAllowlistedReconciled = 0, reconcileSkipped = false;
     if (!dryRun) {
-      const healing = await reconcileTerminalPaymentNotifications(db, provider.mode, config);
+      const healing = await reconcilePaymentNotifications(db, provider.mode, config);
       reconciled = healing.reconciled;
       alreadyReconciled = healing.alreadyQueued;
+      reconciledInitiated = healing.reconciledInitiated;
+      alreadyReconciledInitiated = healing.alreadyReconciledInitiated;
       reconcileSkipped = Boolean(healing.reconcileSkipped);
       skippedDisabled += healing.skippedAtDetection;
       skippedNotAllowlisted += healing.skippedNotAllowlisted;
@@ -642,6 +705,7 @@ export async function GET(request) {
       sendingEnabled: config.enabled,
       upcomingDetected: pairs.length, queued, alreadyQueued,
       reconciled, alreadyReconciled,
+      reconciledInitiated, alreadyReconciledInitiated,
       reconcileSkipped,
       sent, wouldSend, failed, skippedDisabled, superseded,
       deferredQuietHours,

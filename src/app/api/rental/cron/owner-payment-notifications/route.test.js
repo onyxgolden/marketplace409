@@ -114,6 +114,19 @@ function initiatedCandidateRow() {
   };
 }
 
+// A payment whose projection RPC stamped initiated_at on the first
+// payment_intent.processing event — the durable initiation evidence the
+// initiated reconciler pass scans for.
+function initiatedPaymentRow(overrides = {}) {
+  return {
+    id: "rental_payment_initiated", owner_id: OWNER, charge_id: "charge_fixture",
+    lease_id: "lease_fixture", tenant_id: "tenant_fixture", amount_cents: 160000,
+    failure_code: null, status: "processing",
+    initiated_at: "2026-09-28T10:00:00Z", updated_at: "2026-09-28T10:00:00Z",
+    ...overrides,
+  };
+}
+
 function upcomingScanSequences() {
   return {
     rental_autopay_enrollments: [qb({ data: [ENROLLMENT], error: null })],
@@ -998,5 +1011,212 @@ describe("owner payment notifications cron", () => {
     expect(body.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
     delete process.env.RENTAL_NOTIFICATION_TENANT_IDS;
+  });
+
+  it("reconciles a lost initiated notice via the durable marker (webhook queue write failed)", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const send = vi.fn().mockResolvedValue({ messageId: "re_init" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    // The webhook path projected the payment, then its queue write failed and
+    // was swallowed ({ queued: false, reason: "error" }). The durable
+    // initiated_at marker survived; the reconciler heals the notice.
+    const reconcileUpsert = qb({ data: [{ id: `opn_${OWNER}_payment_initiated_rental_payment_initiated` }], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [initiatedPaymentRow()], error: null })], // initiated scan: one marked payment
+      rental_autopay_attempts: [qb({ data: [{ payment_id: "rental_payment_initiated" }], error: null })], // autopay attempt exists
+      rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // reconciler: no existing notification row
+        reconcileUpsert,
+        qb({ data: [initiatedCandidateRow()], error: null }), // delivery candidates
+        qb({ data: [{ id: "opn_x" }], error: null }), // claim
+        qb({ data: [{ id: "opn_x" }], error: null }), // outcome
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.reconciledInitiated).toBe(1);
+    expect(body.alreadyReconciledInitiated).toBe(0);
+    expect(body.reconciled).toBe(0);
+    expect(reconcileUpsert.upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `opn_${OWNER}_payment_initiated_rental_payment_initiated`,
+          event_type: "payment_initiated",
+          status: "queued",
+          payment_id: "rental_payment_initiated",
+        }),
+      ]),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+    // The reconciled initiated row is delivered by the same run.
+    expect(body.sent).toBe(1);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: expect.stringContaining("Autopay debit started") }),
+    );
+  });
+
+  it("reconciles initiated notices after payments already completed (redelivery was skipped as duplicate)", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    // Both payments were initiated (marker stamped), then settled. The
+    // webhook queued nothing (redeliveries skipped as settled duplicates), so
+    // only the terminal notices exist — the initiated pair must be healed.
+    const succeeded = initiatedPaymentRow({
+      id: "rental_payment_suc", status: "succeeded",
+      succeeded_at: "2026-09-28T11:00:00Z", updated_at: "2026-09-28T11:00:00Z",
+    });
+    const failed = initiatedPaymentRow({
+      id: "rental_payment_fl", status: "failed", failure_code: "insufficient_funds",
+      updated_at: "2026-09-28T11:30:00Z",
+    });
+    const completedId = `opn_${OWNER}_payment_completed_rental_payment_suc`;
+    const failedId = `opn_${OWNER}_payment_failed_rental_payment_fl`;
+    const upsertNode = qb({
+      data: [
+        { id: `opn_${OWNER}_payment_initiated_rental_payment_suc` },
+        { id: `opn_${OWNER}_payment_initiated_rental_payment_fl` },
+      ],
+      error: null,
+    });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [succeeded, failed], error: null })],
+      rental_autopay_attempts: [qb({ data: [{ payment_id: "rental_payment_suc" }, { payment_id: "rental_payment_fl" }], error: null })],
+      rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [{ id: completedId }, { id: failedId }], error: null }), // terminal notices already exist
+        upsertNode,
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.reconciledInitiated).toBe(2);
+    expect(body.alreadyReconciledInitiated).toBe(0);
+    // Terminal notices are untouched: already present, never re-queued.
+    expect(body.reconciled).toBe(0);
+    expect(body.alreadyReconciled).toBe(2);
+    expect(upsertNode.upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: `opn_${OWNER}_payment_initiated_rental_payment_suc`, event_type: "payment_initiated" }),
+        expect.objectContaining({ id: `opn_${OWNER}_payment_initiated_rental_payment_fl`, event_type: "payment_initiated" }),
+      ]),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+  });
+
+  it("does not re-queue an initiated notice on duplicate recovery", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const upsertNode = qb({ data: [], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [initiatedPaymentRow()], error: null })],
+      rental_autopay_attempts: [qb({ data: [{ payment_id: "rental_payment_initiated" }], error: null })],
+      rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [{ id: `opn_${OWNER}_payment_initiated_rental_payment_initiated` }], error: null }), // already healed
+        upsertNode, // must never be called
+        qb({ data: [], error: null }), // delivery candidates
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.reconciledInitiated).toBe(0);
+    expect(body.alreadyReconciledInitiated).toBe(1);
+    expect(upsertNode.upsert).not.toHaveBeenCalled();
+  });
+
+  it("reconciles initiated notices as skipped_disabled when sending is off", async () => {
+    const reconcileUpsert = qb({ data: [{ id: `opn_${OWNER}_payment_initiated_rental_payment_initiated` }], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [initiatedPaymentRow()], error: null })],
+      rental_autopay_attempts: [qb({ data: [{ payment_id: "rental_payment_initiated" }], error: null })],
+      rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // no existing notification row
+        reconcileUpsert,
+        qb({ data: [], error: null }), // delivery candidates: skipped_disabled rows never deliver
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.reconciledInitiated).toBe(0);
+    expect(body.alreadyReconciledInitiated).toBe(0);
+    expect(body.skippedDisabled).toBe(1);
+    expect(body.wouldSend).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(reconcileUpsert.upsert).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({
+        event_type: "payment_initiated",
+        status: "skipped_disabled",
+      })]),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      "Owner payment notification (sending disabled) would send",
+      expect.objectContaining({ subject: expect.stringContaining("Autopay debit started") }),
+    );
+    logSpy.mockRestore();
+  });
+
+  it("initiated scan requires initiated_at at/after the activation cutoff", async () => {
+    const scanQb = qb({ data: [], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [scanQb], // reconciler scan
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // delivery candidates: none
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reconcileSkipped).toBe(false);
+    // The initiated branch joins the terminal branches in one OR filter.
+    const orFilter = scanQb.or.mock.calls[0][0];
+    expect(orFilter).toContain("initiated_at.gte.2026-09-01T00:00:00.000Z");
+    expect(orFilter).toContain("succeeded_at.gte.2026-09-01T00:00:00.000Z");
+  });
+
+  it("initiated recovery stays silent for manual payments with no autopay attempt", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [initiatedPaymentRow()], error: null })],
+      rental_autopay_attempts: [qb({ data: [], error: null })], // no attempt: manual payment
+      rental_tenants: [qb({ data: [{ id: "tenant_fixture", display_name: "Test Tenant" }], error: null })],
+      rental_owner_notifications: [
+        qb({ data: [], error: null }), // delivery candidates: nothing queued
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    // A manual payment entering processing notifies on success instead — the
+    // initiated pass is autopay-only, mirroring the webhook path.
+    expect(body.reconciledInitiated).toBe(0);
+    expect(body.alreadyReconciledInitiated).toBe(0);
+    expect(body.sent).toBe(0);
+    expect(db.from).toHaveBeenCalledWith("rental_owner_notifications");
   });
 });
