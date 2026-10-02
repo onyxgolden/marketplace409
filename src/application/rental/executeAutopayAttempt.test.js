@@ -135,6 +135,59 @@ describe("executeAutopayAttempt", () => {
     expect(attemptInsert.insert).toHaveBeenCalledWith(expect.objectContaining({ provider_mode: "test" }));
   });
 
+  it("threads the enrollment mandate id through to the off-session payment for ACH debits", async () => {
+    const createOffSessionPayment = vi.fn(async () => ({ paymentIntentId: "pi_1", status: "processing" }));
+    createStripeBillingProvider.mockReturnValue({ createOffSessionPayment });
+    const db = { from: vi.fn() };
+    db.from
+      .mockReturnValueOnce(chain({ data: { ...ENROLLMENT, provider_mandate_id: "mandate_bank_1" }, error: null }))
+      .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+      .mockReturnValueOnce(chain(BILLING_ENABLED))
+      .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+      .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
+      .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
+      .mockReturnValueOnce(chain({ error: null }))
+      .mockReturnValueOnce(chain({ error: null }));
+    await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+    expect(createOffSessionPayment).toHaveBeenCalledWith(expect.anything(),
+      expect.objectContaining({ mandateId: "mandate_bank_1" }), expect.anything());
+  });
+
+  it("records the real provider error code and message on failure instead of a generic message", async () => {
+    const stripeError = Object.assign(new Error("The bank account must be verified before it can be charged."),
+      { code: "payment_method_unactivated", type: "invalid_request_error" });
+    createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: vi.fn(async () => { throw stripeError; }) });
+    const db = { from: vi.fn() };
+    const paymentUpdate = chain({ error: null });
+    const attemptUpdate = chain({ error: null });
+    db.from
+      .mockReturnValueOnce(chain({ data: { ...ENROLLMENT, consecutive_failures: 0, retry_limit: 1 }, error: null }))
+      .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain({ data: null, error: null }))
+      .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+      .mockReturnValueOnce(chain(BILLING_ENABLED))
+      .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+      .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
+      .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
+      .mockReturnValueOnce(paymentUpdate)
+      .mockReturnValueOnce(attemptUpdate)
+      .mockReturnValueOnce(chain({ error: null }));
+    const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+    expect(result.httpStatus).toBe(409);
+    expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed", failure_code: "payment_method_unactivated",
+      failure_message: "The bank account must be verified before it can be charged.",
+    }));
+    expect(attemptUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed", failure_code: "payment_method_unactivated",
+      failure_message: "The bank account must be verified before it can be charged.",
+    }));
+  });
+
   it("pauses the enrollment once the retry limit is exceeded", async () => {
     createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: vi.fn(async () => { throw new Error("card declined"); }) });
     const db = { from: vi.fn() };
