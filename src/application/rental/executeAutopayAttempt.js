@@ -24,7 +24,20 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   const existing = await db.from("rental_autopay_attempts").select("*")
     .eq("owner_id", enrollment.owner_id).eq("enrollment_id", enrollment.id).eq("charge_id", charge.id).maybeSingle();
   if (existing.error) throw existing.error;
-  if (existing.data) return { httpStatus: 200, body: { success: true, duplicate: true, attempt: existing.data } };
+
+  // A failed attempt that never reached Stripe is safe to retry: with no
+  // PaymentIntent ever created (provider_payment_id is null), no money moved,
+  // so a fresh attempt cannot double-charge. Anything else keeps the old
+  // duplicate short-circuit — an attempt that reached Stripe
+  // (provider_payment_id set) or is still in flight
+  // (created/submitted/processing/succeeded/requires_action) must never be
+  // auto-retried. The 2026-10-02 sweep failure died before any PaymentIntent
+  // existed, which is why the next sweep must try again instead of no-op'ing.
+  const retryable = !!existing.data
+    && (existing.data.status === "failed" || existing.data.status === "cancelled")
+    && !existing.data.provider_payment_id;
+  if (existing.data && !retryable)
+    return { httpStatus: 200, body: { success: true, duplicate: true, attempt: existing.data } };
 
   // In-flight payment guard: the tenant portal's manual payment flow refuses to start a
   // second payment while one is pending for the charge — autopay must honor the same rule.
@@ -78,7 +91,12 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   if (account.error || !account.data?.provider_account_id) throw account.error || new Error("Stripe account missing");
 
   const paymentId = `rental_payment_${crypto.randomUUID()}`;
-  const key = `autopay:${enrollment.id}:${charge.id}`;
+  // Retry attempts get their own idempotency key: the original key already
+  // lives on the failed payment row (unique(idempotency_key)), and a fresh
+  // key guarantees Stripe can never replay the dead attempt.
+  const key = retryable
+    ? `autopay:${enrollment.id}:${charge.id}:retry:${crypto.randomUUID().slice(0, 8)}`
+    : `autopay:${enrollment.id}:${charge.id}`;
   const timestamp = new Date().toISOString();
 
   // R12: card autopay carries the convenience fee ONLY with the tenant's
@@ -101,11 +119,36 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   }).select("*").single();
   if (payment.error) throw payment.error;
 
-  const attempt = await db.from("rental_autopay_attempts").insert({
-    owner_id: enrollment.owner_id, id: `rental_autopay_attempt_${crypto.randomUUID()}`, enrollment_id: enrollment.id,
-    charge_id: charge.id, payment_id: paymentId, provider_mode: enrollment.provider_mode, status: "created", idempotency_key: key,
-  }).select("*").single();
-  if (attempt.error) throw attempt.error;
+  // No migration needed: unique(owner_id,enrollment_id,charge_id) forbids a
+  // second attempt row, so a retry transitions the failed row in place. The
+  // old failed payment row keeps the original failure as the audit trail.
+  // The status predicate is an optimistic-concurrency guard — if another
+  // sweep already retried this row, the update matches nothing and we bail
+  // instead of firing a second debit.
+  let attemptId;
+  if (retryable) {
+    const transitioned = await db.from("rental_autopay_attempts").update({
+      payment_id: paymentId, status: "created", idempotency_key: key,
+      failure_code: null, failure_message: null, updated_at: timestamp,
+    }).eq("owner_id", enrollment.owner_id).eq("id", existing.data.id).eq("status", existing.data.status).select();
+    if (transitioned.error) throw transitioned.error;
+    if (!transitioned.data || transitioned.data.length === 0) {
+      // Lost a concurrent race: void the payment row this run just created so
+      // the in-flight guard never mistakes it for a live payment. The winning
+      // run owns the retry; the next sweep sees a clean state.
+      await db.from("rental_payments").update({ status: "cancelled", updated_at: timestamp })
+        .eq("owner_id", enrollment.owner_id).eq("id", paymentId);
+      return { httpStatus: 409, body: { error: "Autopay attempt changed concurrently; not retried." } };
+    }
+    attemptId = existing.data.id;
+  } else {
+    const attempt = await db.from("rental_autopay_attempts").insert({
+      owner_id: enrollment.owner_id, id: `rental_autopay_attempt_${crypto.randomUUID()}`, enrollment_id: enrollment.id,
+      charge_id: charge.id, payment_id: paymentId, provider_mode: enrollment.provider_mode, status: "created", idempotency_key: key,
+    }).select("*").single();
+    if (attempt.error) throw attempt.error;
+    attemptId = attempt.data.id;
+  }
 
   try {
     const result = await createStripeBillingProvider().createOffSessionPayment(
@@ -121,9 +164,9 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
         .eq("owner_id", enrollment.owner_id).eq("id", paymentId),
       db.from("rental_autopay_attempts").update({ provider_payment_id: result.paymentIntentId,
         status: result.status === "succeeded" ? "succeeded" : "submitted", updated_at: new Date().toISOString() })
-        .eq("owner_id", enrollment.owner_id).eq("id", attempt.data.id),
+        .eq("owner_id", enrollment.owner_id).eq("id", attemptId),
     ]);
-    return { httpStatus: 200, body: { success: true, duplicate: false, paymentId, status: result.status } };
+    return { httpStatus: 200, body: { success: true, duplicate: false, retried: retryable, paymentId, status: result.status } };
   } catch (error) {
     const failures = Number(enrollment.consecutive_failures || 0) + 1;
     const pause = failures > Number(enrollment.retry_limit || 0);
@@ -139,11 +182,11 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
         .eq("owner_id", enrollment.owner_id).eq("id", paymentId),
       db.from("rental_autopay_attempts").update({ status: "failed", failure_code: failureCode,
         failure_message: failureMessage,
-        updated_at: new Date().toISOString() }).eq("owner_id", enrollment.owner_id).eq("id", attempt.data.id),
+        updated_at: new Date().toISOString() }).eq("owner_id", enrollment.owner_id).eq("id", attemptId),
       db.from("rental_autopay_enrollments").update({ consecutive_failures: failures, status: pause ? "paused" : "active",
         last_attempt_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq("owner_id", enrollment.owner_id).eq("id", enrollment.id),
     ]);
-    return { httpStatus: 409, body: { error: "Autopay attempt failed.", paused: pause } };
+    return { httpStatus: 409, body: { error: "Autopay attempt failed.", paused: pause, retried: retryable } };
   }
 }
