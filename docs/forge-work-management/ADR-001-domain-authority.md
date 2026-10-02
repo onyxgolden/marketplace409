@@ -25,6 +25,12 @@ rot, diverge, and destroy trust.
   register, inspection workflow, logistics locations, scope freeze), Work
   Management defines the minimal new record — and that record becomes the
   authority for that concept going forward.
+- **Isolation follows the workspace model, not a single-user model.**
+  `owner_id` on every new record is the effective workspace owner
+  (`resolveEffectiveOwnerId()`); RLS uses `has_workspace_access(owner_id)`;
+  the acting user is recorded separately as actor. Capture's owner-only
+  policy is a domain-specific exception, not the pattern to copy. Links
+  never confer access and never cross owners.
 - Cross-domain links carry provenance (`user_confirmed` |
   `deterministic_import` | `ai_proposed`) and a resolver state
   (`active | stale | broken`). Unresolvable targets are surfaced, never

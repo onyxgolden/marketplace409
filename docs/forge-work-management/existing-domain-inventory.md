@@ -8,9 +8,35 @@ code.
 
 Conventions observed across domains:
 
-- **Owner isolation:** `owner_id text` on every row; RLS policy pattern
-  `owner_id = auth.uid()::text`. The Work Package domain must follow this
-  exactly.
+- **Owner isolation and workspace access:** every domain table carries
+  `owner_id text`, and the stored `owner_id` is the **effective workspace
+  owner's** id — never the acting member's id. Acting-user resolution is
+  `resolveEffectiveOwnerId()` (JS:
+  `src/lib/supabase/resolveEffectiveOwnerId.js`) mirroring SQL
+  `resolve_effective_owner_id()`
+  (`supabase/migrations/20260829000100_add_workspace_authorization_helpers.sql`):
+  it returns the actor's own id when they are a primary owner or have no
+  active membership, otherwise the `owner_id` of the single workspace they are
+  an active member of (`workspace_members`; one active workspace per member,
+  DB-enforced). RLS follows the same helper: rental maintenance
+  (`20260829000500_convert_rental_maintenance_policies_to_workspace_access.sql`
+  — work orders, work events, contractors, contractor payments, vendors) and
+  Designer
+  (`20260921080000_convert_designer_projects_policies_to_workspace_access.sql`)
+  use `has_workspace_access(owner_id)`, so active co-owners and members act
+  within the owner's workspace. The Work Package domain must follow this
+  model exactly: `owner_id` = effective workspace owner, RLS via
+  `has_workspace_access(owner_id)`.
+- **Actor attribution is separate from isolation:** `created_by`,
+  `updated_by`, `recorded_by` and similar columns carry the *acting user's*
+  id; `owner_id` carries the workspace's. A package created by a co-owner is
+  owned by the workspace and attributed to the co-owner. Implementing an
+  owner-only rule here would exclude active co-owners from packages attached
+  to their shared workspace, or misattribute new packages to the acting user.
+- **Domain-specific exception:** Capture (`capture_library`,
+  `20260922040007_capture_library.sql`) keeps owner-only policies
+  (`owner_id = auth.uid()::text`). That is a Capture-specific rule, not the
+  universal pattern — Work Management must not copy it as the default.
 - **Composite primary keys:** most tables use `primary key (owner_id, id)`.
 - **Text IDs:** app-generated, prefixed per domain (e.g.
   `rental_tenant_<uuid>`, `rental_work_event_<uuid>`), except Capture which

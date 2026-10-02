@@ -7,7 +7,11 @@ not extension attributes.
 
 ## Identity
 
-- `owner_id` — text, isolation key (`auth.uid()::text` pattern, RLS enforced)
+- `owner_id` — text, isolation key: the **effective workspace owner** id
+  (`resolveEffectiveOwnerId()` / `resolve_effective_owner_id()`; see
+  `existing-domain-inventory.md`). RLS via `has_workspace_access(owner_id)`.
+  The acting user is recorded separately in `created_by` / `updated_by` —
+  attribution is not isolation.
 - `id` — text, `forge_wp_<uuid>`; primary key `(owner_id, id)`
 - `code` — human code, e.g. `WP-0047`; unique per owner; assigned by a
   deterministic per-owner sequence at creation
