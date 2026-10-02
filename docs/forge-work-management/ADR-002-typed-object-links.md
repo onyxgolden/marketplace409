@@ -15,9 +15,13 @@ domain's records, or (b) a small typed-link contract between canonical IDs.
 Option (b). A `forge_work_links` record (specified in
 `object-relationship-contract.md`) stores: the two endpoint identities
 (domain + type + canonical id), the relationship type from an enumerated
-vocabulary, who/what created it and when, provenance
-(`user_confirmed | deterministic_import | ai_proposed`), and resolver state
-(`active | stale | broken` with `resolved_at`).
+vocabulary **with a fixed canonical orientation and allowed endpoint types
+per type**, a typed source locator/version and observed-at where applicable,
+who/what created it and when, provenance (`user_confirmed` |
+`deterministic_import` | `ai_proposed`), an **immutable confirmation history**
+(`forge_work_link_confirmations` — accepting a proposal never rewrites the
+proposal), and resolver state (`unresolved | active | stale | broken` with
+`resolved_at`; new links start `unresolved` until both endpoints validate).
 
 ## Rationale
 

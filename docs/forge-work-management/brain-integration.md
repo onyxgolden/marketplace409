@@ -49,9 +49,11 @@ deterministic application workflow. There is no bulk-accept.
 ## Evidence shape
 
 Brain traverses `forge_work_links` and the source domains, and reports the
-provenance chain: package → link (relationship, confirmed by, at) → domain
-record (canonical id, version/revision where applicable). This reuses the
-engineering-brain manifest pattern (what, from where, at which version).
+provenance chain: package → link (relationship in canonical orientation,
+provenance, full confirmation history — who confirmed, when, from what prior
+state) → domain record (canonical id, source locator/version,
+observed-at). This reuses the engineering-brain manifest pattern (what, from
+where, at which version).
 
 ## Sequencing
 

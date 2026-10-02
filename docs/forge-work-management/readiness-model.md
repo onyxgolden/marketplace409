@@ -22,34 +22,46 @@ per gate.
 
 ## Standard gates
 
-| Gate | Plain language | Satisfied when |
+Each gate is satisfied only by its stated authoritative input or an explicit
+human attestation. "Linked" is never enough on its own: a linked drawing is
+not necessarily an approved drawing, a linked permit is not necessarily an
+issued permit. **Missing approval or source capability evaluates `unknown`,
+never `ready`.**
+
+| Gate | Plain language | Satisfied when (exact input or attestation) |
 |---|---|---|
 | scope | "Is the work defined?" | scope text present (author attested); for industrial packages an immutable scope baseline version exists (`scope_baseline_id` set on a non-superseded `forge_work_scope_baselines` row) |
-| design | "Are the drawings ready?" | linked drawing reference current (not `stale`/`broken`) |
-| predecessor | "What must finish first?" | constraining blocks/packages not blocking (from scheduling links) |
-| material | "Are materials on hand?" | required items `received` (or explicitly `not_applicable`) |
-| crew | "Who does the work?" | responsible party assigned and confirmed |
-| permit | "Permits and inspections covered?" | required permits linked; inspection prerequisites scheduled |
-| site | "Can we get to the work?" | site/access confirmed; logistics location reserved where needed |
-| safety | "Safety prerequisites met?" | safety prerequisites confirmed; isolation/LOTO verified for industrial work on energized systems |
-| evidence | "Do we have what we need on file?" | required documents/evidence present and resolvable |
+| design | "Are the drawings ready?" | `supported_by_drawing` link with `resolved_state = ok` **and** the referenced revision is the source domain's current revision, **or** an explicit human attestation "approved for construction" (attestor identity, at). A merely non-stale reference whose approval state the source cannot report → `unknown`. |
+| predecessor | "What must finish first?" | every linked `constrains` block/package is in a complete state (Complete/Verified, or the source work order's completed state) with its link `resolved_state = ok`, or the constraint is explicitly waived with provenance. "Not blocking" alone is not an executable predicate. |
+| material | "Are materials on hand?" | every required item `received` with received evidence (or explicitly `not_applicable` with provenance). Anything less is `unknown` or `not_ready` with a reason — never ready by absence. |
+| crew | "Who does the work?" | responsible party assigned **and** confirmed (confirmation record or attestation with identity + at). Assignment alone → `unknown`. |
+| permit | "Permits and inspections covered?" | permit document linked **and** attested issued (`permit_number` + `issued_by` + `issued_at`, or explicit human attestation "permit issued" with attestor). Linked-but-unattested → `unknown`. |
+| site | "Can we get to the work?" | site/access attested by a named authority (attestor, at); where the package needs one, a logistics location reserved (reservation record on `forge_work_locations`). |
+| safety | "Safety prerequisites met?" | safety prerequisite checklist attested complete (attestor, at); for industrial work on energized systems, isolation/LOTO verified with verifier identity + at. |
+| evidence | "Do we have what we need on file?" | required documents/evidence present **and** `resolved_state = ok`. |
 
 Package templates declare which gates apply; irrelevant gates are
-`not_applicable` with provenance — never silently skipped.
+`not_applicable` with provenance (attestor + reason) — never silently
+skipped. **Minimal applicable-gate configuration (before the Rung 13
+template UI):** Rung 1 ships a default gate set per `package_type`,
+documented in the Rung 1 spec; per-gate N/A attestation is always available.
 
 ## Industrial gates (from the turnaround field model)
 
-- **equipment_readiness** — "Is the equipment released to us?" The tagged
-  asset is confirmed available (unit down / system isolated per the
-  shutdown sequence); carries the zone/unit and the releasing authority.
-- **inspection_prerequisite** — "Are required inspections done?" Per-component
-  inspection state (`passed | failed | pending | not_applicable`), NDE method
-  and quantity where applicable (e.g. tubes examined / tubes required),
-  inspector or contractor attribution. Mirrors the field flagging discipline:
-  passed / failed / not-inspected-or-under-evaluation.
-- **logistics** — "Where do things go?" Named laydown/staging locations
-  reserved and linked; heavy-lift/rigging needs flagged from component
-  weights in the package's component list.
+- **equipment_readiness** — "Is the equipment released to us?" Satisfied by a
+  release record or explicit attestation: the tagged asset (`forge_work_assets`
+  id), the zone/unit, the releasing authority identity, and at. A shutdown
+  sequence position alone, without the releasing authority, → `unknown`.
+- **inspection_prerequisite** — "Are required inspections done?" Satisfied by
+  `forge_work_inspection_observations` rows covering every required component:
+  per-component status (`passed | failed | pending | not_applicable`), NDE
+  method and quantity examined vs required, inspector attribution. Any required
+  component with no observation → `unknown`. Mirrors the field flagging
+  discipline: passed / failed / not-inspected-or-under-evaluation (= pending).
+- **logistics** — "Where do things go?" Satisfied by reservation records on
+  the named `forge_work_locations` (laydown/staging/workface); rigging needs
+  flagged from component weights in `forge_work_asset_components`. No
+  reservation → `unknown` or `not_ready` with reason.
 
 ## The readiness statement
 
