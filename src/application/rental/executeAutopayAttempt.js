@@ -25,17 +25,29 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     .eq("owner_id", enrollment.owner_id).eq("enrollment_id", enrollment.id).eq("charge_id", charge.id).maybeSingle();
   if (existing.error) throw existing.error;
 
-  // A failed attempt that never reached Stripe is safe to retry: with no
-  // PaymentIntent ever created (provider_payment_id is null), no money moved,
-  // so a fresh attempt cannot double-charge. Anything else keeps the old
-  // duplicate short-circuit — an attempt that reached Stripe
-  // (provider_payment_id set) or is still in flight
-  // (created/submitted/processing/succeeded/requires_action) must never be
-  // auto-retried. The 2026-10-02 sweep failure died before any PaymentIntent
-  // existed, which is why the next sweep must try again instead of no-op'ing.
+  // Retry gate (fail-closed): a failed/cancelled attempt may be retried with
+  // a FRESH idempotency key ONLY when the stored failure is a definitive
+  // pre-creation rejection — a Stripe error type that guarantees no
+  // PaymentIntent was ever created (400 request validation, 401/403 auth,
+  // 429 rate limit). A bare null provider_payment_id is NOT proof: Stripe
+  // can accept the create+confirm request and start the debit while the
+  // response is lost (network drop, 5xx), leaving the local row failed with
+  // no ID — retrying that with a fresh key would double-charge. Those
+  // ambiguous outcomes (connection errors, server errors, card errors,
+  // idempotency errors, unknown/legacy failures) stay blocked for manual
+  // reconciliation. Anything else keeps the old duplicate short-circuit.
+  // (ChatGPT exact-head review 2026-10-02 NO-GO'd the null-ID-only gate on
+  // this exact double-charge path.)
+  const DEFINITIVE_PRE_CREATION_REJECTION = new Set([
+    "StripeInvalidRequestError",
+    "StripeAuthenticationError",
+    "StripePermissionError",
+    "StripeRateLimitError",
+  ]);
   const retryable = !!existing.data
     && (existing.data.status === "failed" || existing.data.status === "cancelled")
-    && !existing.data.provider_payment_id;
+    && !existing.data.provider_payment_id
+    && DEFINITIVE_PRE_CREATION_REJECTION.has(existing.data.failure_code);
   if (existing.data && !retryable)
     return { httpStatus: 200, body: { success: true, duplicate: true, attempt: existing.data } };
 
@@ -170,18 +182,26 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   } catch (error) {
     const failures = Number(enrollment.consecutive_failures || 0) + 1;
     const pause = failures > Number(enrollment.retry_limit || 0);
-    // Record the real provider error instead of a generic message: Stripe
-    // errors carry code/type/message, and the previous generic text made the
-    // 2026-10-02 sweep failure undiagnosable from the database. Anything
-    // without a provider shape falls back to the previous generic text.
-    const failureCode = error?.code || error?.type || "autopay_failed";
+    // Record the real provider error instead of a generic message. The
+    // failure CODE is the Stripe error TYPE (stable across calls and always
+    // present on provider errors) because the retry gate classifies on it:
+    // only definitive pre-creation rejections may be auto-retried. The
+    // specific code and message stay in the message for diagnosis. Anything
+    // without a provider shape fails closed to "autopay_failed" and is never
+    // auto-retried.
+    const failureCode = error?.type || error?.code || "autopay_failed";
     const failureMessage = String(error?.message || "Automatic payment requires attention.").slice(0, 500);
+    // An error that carries a PaymentIntent (e.g. a decline on a confirmed
+    // intent) DID reach Stripe — persist its ID so the row can never be
+    // mistaken for a never-reached-Stripe failure by a future retry gate.
+    const errorPaymentIntentId = error?.payment_intent?.id || error?.paymentIntentId || null;
     await Promise.all([
       db.from("rental_payments").update({ status: "failed", failure_code: failureCode,
-        failure_message: failureMessage, updated_at: new Date().toISOString() })
+        failure_message: failureMessage, provider_payment_id: errorPaymentIntentId,
+        updated_at: new Date().toISOString() })
         .eq("owner_id", enrollment.owner_id).eq("id", paymentId),
       db.from("rental_autopay_attempts").update({ status: "failed", failure_code: failureCode,
-        failure_message: failureMessage,
+        failure_message: failureMessage, provider_payment_id: errorPaymentIntentId,
         updated_at: new Date().toISOString() }).eq("owner_id", enrollment.owner_id).eq("id", attemptId),
       db.from("rental_autopay_enrollments").update({ consecutive_failures: failures, status: pause ? "paused" : "active",
         last_attempt_at: new Date().toISOString(), updated_at: new Date().toISOString() })
