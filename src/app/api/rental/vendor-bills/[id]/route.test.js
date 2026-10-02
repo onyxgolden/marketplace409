@@ -1,12 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
+vi.mock("@/lib/rental/teamAuthorization", () => ({ requireRentalPermission: vi.fn() }));
 vi.mock("@/application/rental/chartOfAccounts", () => ({
   getChartAccounts: vi.fn(),
   isChartTableMissing: () => false,
 }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+
+// R17: writes gate through requireRentalPermission (server-side permission check).
+function gateFor(role) {
+  if (role === "read_only") {
+    requireRentalPermission.mockResolvedValue({
+      response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+      authorization: { role: "read_only", permissions: [] },
+    });
+  } else {
+    requireRentalPermission.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+  }
+}
+
 import { getChartAccounts } from "@/application/rental/chartOfAccounts";
 import { GET, PATCH } from "./route";
 
@@ -27,19 +41,30 @@ function authAs(client, role = "owner") {
   createAuthenticatedRentalManagerApplication.mockResolvedValue({
     user: { id: "user_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
   });
-  getActiveWorkspaceRole.mockResolvedValue(role);
+  gateFor(role);
 }
 
-// Read: from(bills).select.eq.eq.maybeSingle; vendor name lookup on vendors.
-// Write: from(bills).update(patch).eq.eq.eq[.eq].select.single — the extra
-// write-time guards mean zero rows when the bill changed concurrently.
-function clientFor({ billRow = bill, writeResult = "updated" } = {}) {
+// Read: from(bills).select.eq.eq.maybeSingle; vendor name lookup on vendors;
+// R18 audit trail on rental_void_audits.
+// Write (void/edit): from(bills).update(patch).eq.eq.eq[.eq].select.single —
+// the extra write-time guards mean zero rows when the bill changed concurrently.
+// Un-void write: atomic RPC unvoid_vendor_bill (replaces the two-step update +
+// audit insert); the replacement-supersession read is a list query.
+function clientFor({ billRow = bill, writeResult = "updated", candidates = [], rpcResult = null } = {}) {
   let lastPatch = null;
+  const listChain = () => {
+    const b = { select: () => b, eq: () => b, neq: () => b, order: () => b };
+    b.then = (resolve) => resolve({ data: candidates, error: null });
+    return b;
+  };
   const client = {
     from: vi.fn((table) => {
       if (table === "rental_vendor_bills") {
         return {
-          select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: billRow, error: null }) }) }) }),
+          select: () => ({ eq: () => ({ eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: billRow, error: null }),
+            single: () => Promise.resolve({ data: { ...billRow, status: "open" }, error: null }),
+          }) }) }),
           update: (patch) => {
             lastPatch = patch;
             const chain = { eq: () => chain, select: () => ({ single: () => Promise.resolve(writeResult === "updated" ? { data: { ...billRow, ...patch }, error: null } : { data: null, error: { code: "PGRST116" } }) }) };
@@ -47,21 +72,33 @@ function clientFor({ billRow = bill, writeResult = "updated" } = {}) {
           },
         };
       }
-      // Vendors lookup, and any other list read (e.g. the R18 audits query:
-      // select → eq → eq → eq → order, awaited as a list).
-      const listFallback = () => {
-        const b = {
-          select: () => b,
-          eq: () => b,
-          order: () => b,
-          maybeSingle: () => Promise.resolve({ data: { name: "Acme Plumbing" }, error: null }),
-        };
-        b.then = (resolve) => resolve({ data: [], error: null });
-        return b;
-      };
-      return listFallback();
+      if (table === "rental_void_audits") {
+        const chain = { eq: () => chain, order: () => Promise.resolve({ data: [], error: null }) };
+        return { select: () => chain };
+      }
+      return { select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { name: "Acme Plumbing" }, error: null }) }) }) }) };
     }),
+    // R17/R18: atomic un-void RPC. Default resolves with the reopened bill row.
+    rpc: vi.fn(() => Promise.resolve(rpcResult || { data: { id: bill.id, status: "open" }, error: null })),
   };
+  // Tag the bills-table mock so un-void tests can distinguish the list query.
+  const origFrom = client.from;
+  client.from = vi.fn((table) => {
+    const built = origFrom(table);
+    if (table === "rental_vendor_bills") {
+      const origSelect = built.select;
+      built.select = (...args) => {
+        const sel = origSelect(...args);
+        // The supersession check selects a narrow column list (no paid_amount_cents)
+        // and awaits as a list.
+        if (typeof args[0] === "string" && args[0].includes("created_at") && !args[0].includes("paid_amount_cents")) {
+          return listChain();
+        }
+        return sel;
+      };
+    }
+    return built;
+  });
   return { client, lastPatch: () => lastPatch };
 }
 
@@ -163,7 +200,8 @@ describe("PATCH /api/rental/vendor-bills/[id] — void", () => {
   });
 });
 
-// R18 (rentec-parity): un-void a voided bill.
+// R18 (rentec-parity): un-void a voided bill via the atomic unvoid_vendor_bill
+// RPC — the bill reopens and the audit row lands in one transaction.
 describe("PATCH /api/rental/vendor-bills/[id] — un-void", () => {
   const voidedBillRow = {
     ...bill,
@@ -174,90 +212,44 @@ describe("PATCH /api/rental/vendor-bills/[id] — un-void", () => {
     created_at: "2026-09-15T00:00:00Z",
   };
 
-  function unvoidClient({ billRow = voidedBillRow, candidates = [], updateError = null } = {}) {
-    const updated = { ...billRow, status: "open" };
-    return {
-      from: vi.fn((table) => {
-        if (table === "rental_vendor_bills") {
-          const b = {
-            select() { return b; },
-            eq() { return b; },
-            neq() { return b; },
-            update(patch) {
-              const u = {
-                eq() { return u; },
-                select() { return u; },
-                single() {
-                  return updateError
-                    ? Promise.resolve({ data: null, error: updateError })
-                    : Promise.resolve({ data: { ...updated, ...patch }, error: null });
-                },
-              };
-              return u;
-            },
-            maybeSingle() { return Promise.resolve({ data: billRow, error: null }); },
-            then(resolve) { resolve({ data: candidates, error: null }); },
-          };
-          return b;
-        }
-        if (table === "rental_vendors") {
-          const b = {
-            select() { return b; },
-            eq() { return b; },
-            maybeSingle() { return Promise.resolve({ data: { name: "Acme Plumbing" }, error: null }); },
-          };
-          return b;
-        }
-        if (table === "rental_void_audits") {
-          const b = {
-            insert() { return Promise.resolve({ error: null }); },
-            select() { return b; },
-            eq() { return b; },
-            order() { return b; },
-            then(resolve) { resolve({ data: [], error: null }); },
-          };
-          return b;
-        }
-        const b = {
-          select() { return b; },
-          eq() { return b; },
-          then(resolve) { resolve({ data: [], error: null }); },
-        };
-        return b;
-      }),
-    };
-  }
-
-  const unvoid = (body) => PATCH(new Request("https://t/", { method: "PATCH", body: JSON.stringify(body) }), { params: { id: "rental_vendor_bill_1" } });
-
-  it("un-voids a voided bill back to open", async () => {
-    const client = unvoidClient();
+  it("un-voids a voided bill back to open through the atomic RPC", async () => {
+    const { client } = clientFor({ billRow: voidedBillRow });
     authAs(client);
-    const response = await unvoid({ unvoid: true, unvoidReason: "entered in error" });
+    const response = await patch({ unvoid: true, unvoidReason: "entered in error" });
     const body = await response.json();
     expect(response.status).toBe(200);
+    expect(client.rpc).toHaveBeenCalledWith("unvoid_vendor_bill", {
+      p_owner_id: "owner_1",
+      p_bill_id: "rental_vendor_bill_1",
+      p_reason: "entered in error",
+    });
+    // No direct bill-table write for the un-void — the RPC owns it.
+    expect(client.from).not.toHaveBeenCalledWith("rental_void_audits");
     expect(body.bill).toMatchObject({ status: "open", vendorName: "Acme Plumbing" });
   });
 
   it("forbids read-only members from un-voiding", async () => {
-    const client = unvoidClient();
+    const { client } = clientFor({ billRow: voidedBillRow });
     authAs(client, "read_only");
-    expect((await unvoid({ unvoid: true, unvoidReason: "x" })).status).toBe(403);
+    expect((await patch({ unvoid: true, unvoidReason: "x" })).status).toBe(403);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 
   it("requires an un-void reason", async () => {
-    const client = unvoidClient();
+    const { client } = clientFor({ billRow: voidedBillRow });
     authAs(client);
-    expect((await unvoid({ unvoid: true, unvoidReason: "  " })).status).toBe(400);
+    expect((await patch({ unvoid: true, unvoidReason: "  " })).status).toBe(400);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 
   it("refuses to un-void a non-voided bill", async () => {
-    const client = unvoidClient({ billRow: { ...voidedBillRow, status: "open" } });
+    const { client } = clientFor({ billRow: { ...voidedBillRow, status: "open" } });
     authAs(client);
-    const response = await unvoid({ unvoid: true, unvoidReason: "x" });
+    const response = await patch({ unvoid: true, unvoidReason: "x" });
     const body = await response.json();
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/voided bills/i);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 
   it("blocks un-void when a replacement bill was entered after the void", async () => {
@@ -270,20 +262,45 @@ describe("PATCH /api/rental/vendor-bills/[id] — un-void", () => {
       status: "open",
       created_at: "2026-09-25T00:00:00Z",
     };
-    const client = unvoidClient({ candidates: [candidate] });
+    const { client } = clientFor({ billRow: voidedBillRow, candidates: [candidate] });
     authAs(client);
-    const response = await unvoid({ unvoid: true, unvoidReason: "x" });
+    const response = await patch({ unvoid: true, unvoidReason: "x" });
     const body = await response.json();
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/replacement bill/i);
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 
-  it("409s when the bill changed between read and write", async () => {
-    const client = unvoidClient({ updateError: { code: "PGRST116" } });
+  it("409s when the RPC reports the bill changed between read and write", async () => {
+    const { client } = clientFor({
+      billRow: voidedBillRow,
+      rpcResult: { data: null, error: { code: "P0001", message: "bill is not in a voided, untouched state" } },
+    });
     authAs(client);
-    const response = await unvoid({ unvoid: true, unvoidReason: "x" });
+    const response = await patch({ unvoid: true, unvoidReason: "x" });
     const body = await response.json();
     expect(response.status).toBe(409);
     expect(body.error).toMatch(/changed while you were editing/i);
+  });
+
+  it("403s when the RPC's own permission check denies the caller", async () => {
+    const { client } = clientFor({
+      billRow: voidedBillRow,
+      rpcResult: { data: null, error: { code: "42501", message: "permission denied" } },
+    });
+    authAs(client);
+    const response = await patch({ unvoid: true, unvoidReason: "x" });
+    expect(response.status).toBe(403);
+  });
+});
+
+describe("R17 permission gating", () => {
+  it("PATCH requires the vendor_bills.manage permission", async () => {
+    const { client } = clientFor();
+    authAs(client);
+    await patch({ memo: "x" });
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "vendor_bills.manage" })
+    );
   });
 });

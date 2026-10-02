@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { getChartAccounts, isChartTableMissing } from "@/application/rental/chartOfAccounts";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import {
@@ -11,11 +11,10 @@ import {
   VENDOR_BILL_STATUSES,
 } from "@/application/rental/vendorBills";
 
-async function requireWriter(authenticated) {
-  if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-    return NextResponse.json({ error: "Read-only members cannot record vendor bills." }, { status: 403 });
-  }
-  return null;
+// R17: managing vendor bills needs vendor_bills.manage (was: read_only-only check).
+async function requireBillManager(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_bills.manage" });
+  return gate.response;
 }
 
 const BILL_COLUMNS = "id, vendor_id, property_id, bill_date, due_date, amount_cents, paid_amount_cents, expense_account_code, memo, attachment_reference, status, void_reason, voided_at, created_at, updated_at";
@@ -103,7 +102,7 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const forbidden = await requireWriter(authenticated);
+    const forbidden = await requireBillManager(authenticated, request);
     if (forbidden) return forbidden;
     const { supabaseClient, effectiveOwnerId, user } = authenticated;
 

@@ -116,6 +116,7 @@ export const RENTAL_FUNCTION_HELP = Object.freeze({
   "rentec-payment-import": Object.freeze({ title: "Rentec Payment Import", summary: "Preview externally collected Rentec payments for controlled recording in FORGE.", actions: Object.freeze(["Review matched, ambiguous, ignored, and conflict classifications.", "Never approve an ambiguous transaction by guessing."]) }),
   "rentec-financial-history-import": Object.freeze({ title: "Rentec Financial History Import", summary: "Resume historical financial-event import using current Rentec evidence.", actions: Object.freeze(["Preview classifications and resolve conflicts first.", "This records financial history; it does not create rent charges or Stripe payments."]) }),
   terminology: Object.freeze({ title: "Terminology", summary: "Rename tenant, property, lease, owner, and vendor workspace-wide.", actions: Object.freeze(["Enter singular and plural forms, then watch the live preview.", "Renaming never changes records, reports, or portal links — only the words shown."]) }),
+  team: Object.freeze({ title: "Team & Permissions", summary: "Invite team members, assign roles, and fine-tune per-person permissions.", actions: Object.freeze(["Start from a role's defaults, then override individual permissions per person.", "Use View as to verify what a team member experiences -- previewing is read-only.", "Every invite, role change, and preview session is logged."]) }),
   "setup-guide": Object.freeze({ title: "Setup guide", summary: "The ordered first-run tour: settings, banking, owners, managers, properties, then tenants — with the reason each step comes where it does.", actions: Object.freeze(["Work the steps in order; completion is read from your actual records.", "Skip any step you are not ready for — the guide stays under Settings."]) }),
 });
 
@@ -128,7 +129,7 @@ export const RENTAL_HELP_GROUPS = Object.freeze([
   Object.freeze({ title: "Owners", ids: Object.freeze(["owners"]) }),
   Object.freeze({ title: "Reports", ids: Object.freeze(["reports", "owner-statements"]) }),
   Object.freeze({ title: "Tax", ids: Object.freeze(["tax-1099"]) }),
-  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "setup-guide"]) }),
+  Object.freeze({ title: "Settings", ids: Object.freeze(["financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "team", "setup-guide"]) }),
 ]);
 
 export function getRentalFunctionHelp(activeFunctionId) {

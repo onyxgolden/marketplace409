@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 
 // PATCH /api/rental/financial-event — the register's cleared flag.
 // Body: { id, cleared } → sets cleared and cleared_at (now() when clearing,
@@ -12,9 +12,10 @@ export async function PATCH(request) {
     const a = await createAuthenticatedForgeApplication();
     if (a.response) return a.response;
 
-    if ((await getActiveWorkspaceRole({ supabaseClient: a.supabaseClient, actorUserId: a.user.id })) === "read_only") {
-      return NextResponse.json({ error: "Read-only members cannot update transactions." }, { status: 403 });
-    }
+    // R17: toggling the cleared flag needs payments.record (was: read_only-only check),
+    // mirroring the manual-financial-event route's guard.
+    const clearedGate = await requireRentalPermission({ authenticated: a, request, permission: "payments.record" });
+    if (clearedGate.response) return clearedGate.response;
 
     const body = await request.json();
     const id = String(body?.id ?? "").trim();

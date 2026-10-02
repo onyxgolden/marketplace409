@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import {
   canEditPayment,
   canVoidPayment,
@@ -9,11 +9,16 @@ import {
   validateVendorPaymentEdit,
 } from "@/application/rental/vendorPayments";
 
-async function requireWriter(authenticated) {
-  if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-    return NextResponse.json({ error: "Read-only members cannot change vendor payments." }, { status: 403 });
-  }
-  return null;
+// R17: editing a vendor payment needs vendor_payments.record; voiding needs
+// payments.void_refund (was: read_only-only check for both).
+async function requireVendorPaymentRecorder(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_payments.record" });
+  return gate.response;
+}
+
+async function requireVoidRefund(authenticated, request) {
+  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.void_refund" });
+  return gate.response;
 }
 
 const PAYMENT_COLUMNS =
@@ -138,8 +143,6 @@ export async function PATCH(request, { params }) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const writerError = await requireWriter(authenticated);
-    if (writerError) return writerError;
     const { supabaseClient, effectiveOwnerId } = authenticated;
 
     let body = null;
@@ -148,6 +151,12 @@ export async function PATCH(request, { params }) {
     } catch {
       return NextResponse.json({ error: "The request body must be JSON." }, { status: 400 });
     }
+
+    // R17: voiding needs payments.void_refund; editing needs vendor_payments.record.
+    const gate = body?.void === true
+      ? await requireVoidRefund(authenticated, request)
+      : await requireVendorPaymentRecorder(authenticated, request);
+    if (gate) return gate;
 
     const payment = await findOwnedPayment(supabaseClient, effectiveOwnerId, params.id);
     if (!payment) return NextResponse.json({ error: "The payment was not found." }, { status: 404 });

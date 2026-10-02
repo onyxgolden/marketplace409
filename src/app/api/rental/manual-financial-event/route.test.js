@@ -92,16 +92,19 @@ describe("manual financial event route", () => {
   it("rejects a read_only member's write with 403 instead of diverting it into their own workspace", async () => {
     memberRole = "read_only";
     const { createAuthenticatedForgeApplication } = await import("@/lib/supabase/createAuthenticatedForgeApplication");
-    // resolveEffectiveOwnerId falls back to the actor's own id for non-co-owner roles, so
-    // scoping alone would have allowed this write into the actor's own fallback workspace.
-    // The 403 comes from the membership role lookup, not from owner scoping.
+    // The mocked effectiveOwnerId keeps the actor's own id here to prove the point: the 403
+    // comes from the permission gate (missing payments.record), not from owner scoping.
+    // In production, R17's resolve_effective_owner_id() resolves active staff into the owner's
+    // workspace, so the gate -- not scoping -- is what blocks the write.
     createAuthenticatedForgeApplication.mockResolvedValueOnce({
       user: { id: "staff_read_only" }, effectiveOwnerId: "staff_read_only", supabaseClient: { from },
     });
     const response = await POST(request({ ...validBody, propertyId: "property_kent" }));
     const body = await response.json();
     expect(response.status).toBe(403);
-    expect(body.error).toMatch(/read-only/i);
+    // R17: the 403 now comes from the granular permission gate (missing
+    // payments.record), not the old read_only-only check.
+    expect(body.error).toMatch(/does not allow/i);
     expect(from).not.toHaveBeenCalledWith("financial_events");
   });
 

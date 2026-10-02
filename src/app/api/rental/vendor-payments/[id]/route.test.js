@@ -1,8 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/supabase/getActiveWorkspaceRole", () => ({ getActiveWorkspaceRole: vi.fn() }));
+vi.mock("@/lib/rental/teamAuthorization", () => ({ requireRentalPermission: vi.fn() }));
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { NextResponse } from "next/server";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+
+// R17: writes gate through requireRentalPermission (server-side permission check).
+function gateFor(role) {
+  if (role === "read_only") {
+    requireRentalPermission.mockResolvedValue({
+      response: NextResponse.json({ error: "Your team role does not allow this." }, { status: 403 }),
+      authorization: null,
+    });
+  } else {
+    requireRentalPermission.mockResolvedValue({ response: null, authorization: { permissions: [] } });
+  }
+}
+
 import { GET, PATCH } from "./route";
 
 const paymentRow = (overrides = {}) => ({
@@ -35,7 +49,7 @@ function authAs(client, role = "owner") {
   createAuthenticatedRentalManagerApplication.mockResolvedValue({
     user: { id: "user_1" }, effectiveOwnerId: "owner_1", supabaseClient: client,
   });
-  getActiveWorkspaceRole.mockResolvedValue(role);
+  gateFor(role);
 }
 
 const get = () => GET(new Request("https://t/"), { params: { id: "rental_vendor_payment_1" } });
@@ -223,5 +237,33 @@ describe("PATCH /api/rental/vendor-payments/[id] — void", () => {
     const response = await patch({ void: true, voidReason: "again" });
     expect(response.status).toBe(409);
     expect(client.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("R17 permission gating", () => {
+  it("voiding requires the payments.void_refund permission", async () => {
+    authAs(detailClient(paymentRow()));
+    await patch({ void: true, voidReason: "duplicate check" });
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "payments.void_refund" })
+    );
+  });
+
+  it("editing requires the vendor_payments.record permission", async () => {
+    authAs(detailClient(paymentRow()));
+    await patch({ memo: "corrected memo" });
+    expect(requireRentalPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: "vendor_payments.record" })
+    );
+  });
+
+  it("a denied void gate blocks the void RPC with 403", async () => {
+    const rpc = vi.fn();
+    const client = detailClient(paymentRow());
+    client.rpc = rpc;
+    authAs(client, "read_only");
+    const response = await patch({ void: true, voidReason: "duplicate check" });
+    expect(response.status).toBe(403);
+    expect(rpc).not.toHaveBeenCalledWith("void_vendor_payment", expect.anything());
   });
 });

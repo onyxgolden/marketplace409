@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
+import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { validateTransaction } from "@/application/rental/validateTransaction";
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 
@@ -15,9 +15,8 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    if ((await getActiveWorkspaceRole({ supabaseClient: authenticated.supabaseClient, actorUserId: authenticated.user.id })) === "read_only") {
-      return NextResponse.json({ error: "Read-only members cannot post expenses." }, { status: 403 });
-    }
+    const gate = await requireRentalPermission({ authenticated, request, permission: "payments.record" });
+    if (gate.response) return gate.response;
     const { supabaseClient, effectiveOwnerId } = authenticated;
 
     const body = await request.json();
