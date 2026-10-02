@@ -104,6 +104,16 @@ function reconciledCandidateRow() {
   };
 }
 
+function initiatedCandidateRow() {
+  return {
+    owner_id: OWNER, id: `opn_${OWNER}_payment_initiated_rental_payment_fixture`,
+    event_type: "payment_initiated", status: "queued", attempt_count: 0,
+    first_attempted_at: null, last_attempted_at: null, charge_id: "charge_fixture",
+    tenant_id: "tenant_fixture",
+    payload: { tenant_name: "Test Tenant", amount_cents: 160000, is_autopay: true, failure_code: null },
+  };
+}
+
 function upcomingScanSequences() {
   return {
     rental_autopay_enrollments: [qb({ data: [ENROLLMENT], error: null })],
@@ -228,8 +238,61 @@ describe("owner payment notifications cron", () => {
     expect(outcomeNode.update.mock.calls[0][0]).toMatchObject({ status: "sent", claim_token: null });
   });
 
-  it("defers delivery during quiet hours: nothing is claimed or sent, rows stay queued", async () => {
+  it("defers the autopay-debit-started email during quiet hours, delivers it after", async () => {
     process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    // 07:30Z = 02:30 CDT — the autopay sweep hour, inside quiet hours.
+    vi.setSystemTime(new Date("2026-09-28T07:30:00Z"));
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const candidatesNode = qb({ data: [initiatedCandidateRow()], error: null });
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })], // reconciler: nothing to heal
+      rental_owner_notifications: [candidatesNode], // candidates — never claimed
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.deferredQuietHours).toBe(1);
+    expect(body.sent).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect(candidatesNode.update).not.toHaveBeenCalled();
+  });
+
+  it("sends the autopay-debit-started email once quiet hours end", async () => {
+    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
+    // 12:30Z = 07:30 CDT — quiet hours are over.
+    vi.setSystemTime(new Date("2026-09-28T12:30:00Z"));
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const claimNode = qb({ data: [{ id: "opn_x" }], error: null }); // claim: won
+    const outcomeNode = qb({ data: [{ id: "opn_x" }], error: null }); // outcome: recorded
+    const db = sequenceDb({
+      ...emptyScanSequences(),
+      rental_payments: [qb({ data: [], error: null })], // reconciler: nothing to heal
+      rental_owner_notifications: [
+        qb({ data: [initiatedCandidateRow()], error: null }), // candidates
+        claimNode,
+        outcomeNode,
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+
+    expect(body.sendingEnabled).toBe(true);
+    expect(body.sent).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      recipient: "Brandykaymorgan@gmail.com",
+      subject: expect.stringContaining("Autopay debit started"),
+    }));
+  });
+
+  it("defers delivery during quiet hours: nothing is claimed or sent, rows stay queued", async () => {    process.env.OWNER_PAYMENT_NOTIFICATIONS_ENABLED = "true";
     // 04:30Z = 23:30 CDT — inside quiet hours.
     vi.setSystemTime(new Date("2026-09-28T04:30:00Z"));
     const send = vi.fn().mockResolvedValue({ messageId: "re_123" });

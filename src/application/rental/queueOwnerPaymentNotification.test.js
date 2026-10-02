@@ -38,6 +38,8 @@ function mockDb({ payment = PAYMENT, attempt = null, tenantName = "Test Tenant" 
 
 const succeeded = { eventType: "payment_intent.succeeded", paymentId: PAYMENT.id, occurredAt: "2026-09-26T12:00:00Z" };
 const failed = { eventType: "payment_intent.payment_failed", paymentId: PAYMENT.id, occurredAt: "2026-09-26T12:00:00Z" };
+const processing = { eventType: "payment_intent.processing", paymentId: PAYMENT.id, occurredAt: "2026-09-26T12:00:00Z" };
+const OPTS = { sendingEnabled: true, allowedOwnerIds: ["owner_fixture"], allowedTenantIds: ["tenant_fixture"] };
 
 describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
   it("queues payment_completed for a succeeded autopay payment", async () => {
@@ -65,7 +67,38 @@ describe("queueOwnerPaymentNotificationForWebhookEvent", () => {
     expect(result.eventType).toBe("payment_failed");
   });
 
-  it("no-ops for non-terminal, non-rental, and id-less events without touching the outbox", async () => {
+  it("queues payment_initiated when an autopay debit is triggered", async () => {
+    const { db, notifications } = mockDb({ attempt: { id: "attempt_1" } });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, processing, "live", OPTS);
+    expect(result.queued).toBe(true);
+    expect(result.eventType).toBe("payment_initiated");
+    expect(notifications.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: "payment_initiated", payment_id: PAYMENT.id, status: "queued" }),
+      { onConflict: "owner_id,id", ignoreDuplicates: true },
+    );
+  });
+
+  it("does not queue an initiated notice for a manual payment entering processing", async () => {
+    const { db } = mockDb({ attempt: null });
+    const result = await queueOwnerPaymentNotificationForWebhookEvent(db, processing, "live", OPTS);
+    expect(result).toEqual({ queued: false, reason: "unresolved_event" });
+    expect(db.from).not.toHaveBeenCalledWith("rental_owner_notifications");
+  });
+
+  it("keeps the initiated notice idempotent and distinct from the later completed notice", async () => {
+    const first = mockDb({ attempt: { id: "attempt_1" } });
+    const second = mockDb({ attempt: { id: "attempt_1" } });
+    const initiated = await queueOwnerPaymentNotificationForWebhookEvent(first.db, processing, "live", OPTS);
+    const retry = await queueOwnerPaymentNotificationForWebhookEvent(second.db, processing, "live", OPTS);
+    const completed = await queueOwnerPaymentNotificationForWebhookEvent(mockDb({ attempt: { id: "attempt_1" } }).db, succeeded, "live", OPTS);
+    // A retried processing event resolves to the same notification id (the
+    // upsert dedups it); the later succeeded event gets its own id.
+    expect(retry.notificationId).toBe(initiated.notificationId);
+    expect(completed.notificationId).not.toBe(initiated.notificationId);
+    expect(completed.eventType).toBe("payment_completed");
+  });
+
+  it("no-ops for non-payment event types without touching the outbox", async () => {
     const cases = [
       { eventType: "charge.succeeded", paymentId: PAYMENT.id },
       { eventType: "payment_intent.succeeded", paymentId: "pf_payment_1" },

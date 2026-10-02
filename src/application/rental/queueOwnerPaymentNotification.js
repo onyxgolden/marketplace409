@@ -57,7 +57,7 @@ export async function resolvePropertyLabel(db, { ownerId, leaseId }) {
   }
 }
 
-// Pure row builder for terminal payment notifications (succeeded/failed),
+// Pure row builder for payment notifications (initiated, succeeded, failed),
 // shared with the cron route's durable reconciler. The reconciler exists so
 // a lost webhook queue write (caught and swallowed here to protect webhook
 // processing) still heals within one cron run.

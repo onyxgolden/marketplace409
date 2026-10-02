@@ -1,7 +1,8 @@
 // Pure domain logic for Brandy's owner payment notifications.
 //
-// Four events, each notifying exactly once per occurrence:
+// Five events, each notifying exactly once per occurrence:
 //   upcoming_autopay        - autopay will run in UPCOMING_AUTOPAY_LEAD_DAYS days
+//   payment_initiated       - an autopay debit was triggered (payment_intent.processing)
 //   manual_payment_received - a tenant paid voluntarily through the portal
 //   payment_completed       - an autopay payment succeeded
 //   payment_failed          - a payment failed or bounced (autopay or manual)
@@ -9,9 +10,12 @@
 // A succeeded payment is EITHER manual or autopay, never both: a payment with
 // a matching autopay-attempt row is an autopay completion, otherwise it was a
 // voluntary tenant payment. Failures notify the same way regardless of source.
+// The initiated notice is autopay-only: a manual payment entering processing
+// notifies on success instead, so Brandy is not emailed twice for one payment.
 
 export const OWNER_NOTIFICATION_EVENT_TYPE = Object.freeze({
   UPCOMING_AUTOPAY: "upcoming_autopay",
+  PAYMENT_INITIATED: "payment_initiated",
   MANUAL_PAYMENT_RECEIVED: "manual_payment_received",
   PAYMENT_COMPLETED: "payment_completed",
   PAYMENT_FAILED: "payment_failed",
@@ -85,22 +89,28 @@ export function buildProviderIdempotencyKey(notificationId) {
   return `owner-notify-${notificationId}`;
 }
 
-// Classifies a normalized Stripe webhook event: "succeeded" | "failed" for a
-// notifiable rental tenant payment, null for everything else (non-rental
-// payments, non-terminal event types, events without a forge payment id).
+// Classifies a normalized Stripe webhook event: "initiated" when an autopay
+// debit is triggered (payment_intent.processing), "succeeded" | "failed" for
+// terminal outcomes, null for everything else (non-rental payments,
+// non-payment event types, events without a forge payment id).
 export function classifyStripePaymentEvent({ stripeEventType, paymentId }) {
   if (typeof paymentId !== "string" || !paymentId) return null;
   if (NON_RENTAL_PAYMENT_PREFIXES.some((prefix) => paymentId.startsWith(prefix))) return null;
+  if (stripeEventType === "payment_intent.processing") return "initiated";
   if (stripeEventType === "payment_intent.succeeded") return "succeeded";
   if (stripeEventType === "payment_intent.payment_failed") return "failed";
   return null;
 }
 
-// Maps a terminal payment outcome to the owner-notification event. A
-// succeeded payment with an autopay-attempt row is an autopay completion;
-// without one it was a voluntary tenant payment.
+// Maps a payment outcome to the owner-notification event. A succeeded payment
+// with an autopay-attempt row is an autopay completion; without one it was a
+// voluntary tenant payment. The initiated notice is autopay-only: a manual
+// payment entering processing resolves to null and notifies on success.
 export function resolvePaymentNotificationEvent({ stripeOutcome, hasAutopayAttempt }) {
   if (stripeOutcome === "failed") return OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_FAILED;
+  if (stripeOutcome === "initiated") {
+    return hasAutopayAttempt ? OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED : null;
+  }
   if (stripeOutcome === "succeeded") {
     return hasAutopayAttempt
       ? OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_COMPLETED
@@ -138,6 +148,16 @@ export function buildOwnerNotificationEmail({ eventType, facts = {} }) {
           `An automatic rent payment of ${amount} for ${tenant} is scheduled to run on ${when}` +
           `${facts.chargeType ? ` (${facts.chargeType})` : ""}.\n\n` +
           `No action is needed unless the payment details need to change before then.`,
+      };
+    }
+    case OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED: {
+      return {
+        subject: `Autopay debit started: ${amount} for ${tenant}${propertySuffix}`,
+        bodyText:
+          `An automatic payment of ${amount} for ${tenant}${propertyClause} has started` +
+          `${facts.dueDate ? ` for the charge due ${facts.dueDate}` : ""}. ` +
+          `Bank transfers usually land in 1–2 business days — ` +
+          `you'll get another email when it completes.`,
       };
     }
     case OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED: {

@@ -28,8 +28,13 @@ describe("classifyStripePaymentEvent", () => {
       .toBe("failed");
   });
 
-  it("ignores non-terminal and non-payment event types", () => {
-    for (const stripeEventType of ["payment_intent.processing", "payment_intent.created", "charge.succeeded", "payout.paid", "refund.updated", undefined]) {
+  it("maps payment_intent.processing to initiated", () => {
+    expect(classifyStripePaymentEvent({ stripeEventType: "payment_intent.processing", paymentId: "rental_payment_1" }))
+      .toBe("initiated");
+  });
+
+  it("ignores non-payment event types", () => {
+    for (const stripeEventType of ["payment_intent.created", "charge.succeeded", "payout.paid", "refund.updated", undefined]) {
       expect(classifyStripePaymentEvent({ stripeEventType, paymentId: "rental_payment_1" })).toBeNull();
     }
   });
@@ -56,6 +61,15 @@ describe("resolvePaymentNotificationEvent", () => {
       .toBe(OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED);
   });
 
+  it("routes an initiated autopay debit to payment_initiated", () => {
+    expect(resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: true }))
+      .toBe(OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED);
+  });
+
+  it("does not notify when a manual payment enters processing", () => {
+    expect(resolvePaymentNotificationEvent({ stripeOutcome: "initiated", hasAutopayAttempt: false })).toBeNull();
+  });
+
   it("routes failures to payment_failed regardless of source", () => {
     expect(resolvePaymentNotificationEvent({ stripeOutcome: "failed", hasAutopayAttempt: true }))
       .toBe(OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_FAILED);
@@ -78,12 +92,13 @@ describe("buildNotificationId", () => {
   it("differs across event types and subjects — no cross-event dedup collisions", () => {
     const base = { ownerId: OWNER, subjectId: "rental_payment_1" };
     const ids = new Set([
+      buildNotificationId({ ...base, eventType: "payment_initiated" }),
       buildNotificationId({ ...base, eventType: "payment_completed" }),
       buildNotificationId({ ...base, eventType: "manual_payment_received" }),
       buildNotificationId({ ...base, eventType: "payment_failed" }),
       buildNotificationId({ ownerId: OWNER, eventType: "payment_completed", subjectId: "rental_payment_2" }),
     ]);
-    expect(ids.size).toBe(4);
+    expect(ids.size).toBe(5);
   });
 
   it("rejects missing parts", () => {
@@ -139,6 +154,18 @@ describe("buildOwnerNotificationEmail", () => {
     expect(email.bodyText).toContain("$1600.00");
   });
 
+  it("builds the autopay-debit-started notice", () => {
+    const email = buildOwnerNotificationEmail({
+      eventType: OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED,
+      facts: { tenantName: TENANT, amountCents: 160000, propertyLabel: "308 Paula" },
+    });
+    expect(email.subject).toContain("Autopay debit started");
+    expect(email.subject).toContain("$1600.00");
+    expect(email.subject).toContain(TENANT);
+    expect(email.bodyText).toContain("has started");
+    expect(email.bodyText).toContain("another email when it completes");
+  });
+
   it("builds the manual-payment notice", () => {
     const email = buildOwnerNotificationEmail({
       eventType: OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED,
@@ -175,6 +202,7 @@ describe("buildOwnerNotificationEmail", () => {
 
   it("includes the property in payment-event subjects and bodies when provided", () => {
     for (const eventType of [
+      OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_INITIATED,
       OWNER_NOTIFICATION_EVENT_TYPE.MANUAL_PAYMENT_RECEIVED,
       OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_COMPLETED,
       OWNER_NOTIFICATION_EVENT_TYPE.PAYMENT_FAILED,
