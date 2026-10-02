@@ -73,6 +73,256 @@ describe("executeAutopayAttempt", () => {
     expect(result.body).toEqual({ success: true, duplicate: true, attempt: { id: "attempt_existing" } });
   });
 
+  // Failed-attempt retry (2026-10-02 sweep fix): a failed/cancelled attempt
+  // that never reached Stripe (provider_payment_id null — no money moved) is
+  // transitioned in place and retried. Anything that reached Stripe or is
+  // still in flight is never auto-retried.
+  describe("failed-attempt retry", () => {
+    const FAILED_NO_PI = { id: "attempt_1", status: "failed", provider_payment_id: null,
+      failure_code: "StripeInvalidRequestError",
+      failure_message: "The PaymentMethod provided (us_bank_account) is not allowed for this PaymentIntent." };
+
+    // db.from call order on the retry path: enrollment, charge, existing
+    // attempt, in-flight payment, schedule, billing settings, landlord
+    // account, payment insert, attempt transition update, then the
+    // success-path (payment update, attempt update) or failure-path
+    // (payment update, attempt update, enrollment update) writes.
+    function runRetry(existingAttempt, transitionResult = { data: [{ id: "attempt_1" }], error: null }, stripeImpl) {
+      const offSession = vi.fn(stripeImpl || (async () => ({ paymentIntentId: "pi_retry_1", status: "processing" })));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      const paymentInsert = chain({ data: { id: "rental_payment_retry" }, error: null });
+      const transition = chain(transitionResult);
+      const paymentUpdate = chain({ error: null });
+      const attemptUpdate = chain({ error: null });
+      const enrollmentUpdate = chain({ error: null });
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: existingAttempt, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(paymentInsert)
+        .mockReturnValueOnce(transition)
+        .mockReturnValueOnce(paymentUpdate)
+        .mockReturnValueOnce(attemptUpdate)
+        .mockReturnValueOnce(enrollmentUpdate);
+      return { db, offSession, paymentInsert, transition, paymentUpdate, attemptUpdate, enrollmentUpdate,
+        result: executeAutopayAttempt(db, "enrollment_1", "charge_1") };
+    }
+
+    it("retries a failed attempt that never reached Stripe, transitioning the row in place", async () => {
+      const { db, offSession, paymentInsert, transition, attemptUpdate, result } = runRetry(FAILED_NO_PI);
+      const out = await result;
+      expect(out.httpStatus).toBe(200);
+      expect(out.body).toEqual(expect.objectContaining({ success: true, duplicate: false, retried: true }));
+      // A fresh payment row is inserted; the attempt row is transitioned in
+      // place — never inserted again (unique(owner_id,enrollment_id,charge_id)).
+      expect(paymentInsert.insert).toHaveBeenCalledTimes(1);
+      expect(transition.insert).not.toHaveBeenCalled();
+      const [transitionPayload] = transition.update.mock.calls[0];
+      expect(transitionPayload).toEqual(expect.objectContaining({
+        status: "created", failure_code: null, failure_message: null,
+      }));
+      expect(transitionPayload.idempotency_key).toMatch(/^autopay:enrollment_1:charge_1:retry:[0-9a-f]{8}$/);
+      expect(transitionPayload.payment_id).toMatch(/^rental_payment_/);
+      // Payment row and attempt row share the fresh retry key, and Stripe is
+      // called exactly once with it — the dead attempt can never be replayed.
+      const paymentPayload = paymentInsert.insert.mock.calls[0][0];
+      expect(paymentPayload.idempotency_key).toBe(transitionPayload.idempotency_key);
+      expect(offSession).toHaveBeenCalledTimes(1);
+      expect(offSession.mock.calls[0][2]).toBe(transitionPayload.idempotency_key);
+      // Post-Stripe bookkeeping lands on the same transitioned row.
+      expect(attemptUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        provider_payment_id: "pi_retry_1", status: "submitted",
+      }));
+      // Exactly three attempt-table touches: select existing, transition
+      // update, post-Stripe update — no second row.
+      expect(db.from.mock.calls.filter(([t]) => t === "rental_autopay_attempts")).toHaveLength(3);
+    });
+
+    it("never retries a failed attempt that already created a PaymentIntent", async () => {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_x", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: { ...FAILED_NO_PI, provider_payment_id: "pi_deadbeef" }, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(200);
+      expect(result.body.duplicate).toBe(true);
+      expect(offSession).not.toHaveBeenCalled();
+      expect(db.from).toHaveBeenCalledTimes(3);
+    });
+
+    it("retries a cancelled attempt that never reached Stripe", async () => {
+      const { offSession, result } = runRetry({ ...FAILED_NO_PI, status: "cancelled" });
+      const out = await result;
+      expect(out.httpStatus).toBe(200);
+      expect(out.body).toEqual(expect.objectContaining({ success: true, duplicate: false, retried: true }));
+      expect(offSession).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["created", "submitted", "processing", "succeeded", "requires_action"])(
+      "still treats a %s attempt as a duplicate and never retries it", async (status) => {
+        const offSession = vi.fn(async () => ({ paymentIntentId: "pi_x", status: "succeeded" }));
+        createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+        const db = { from: vi.fn() };
+        const attemptRow = { id: "attempt_1", status, provider_payment_id: "pi_1" };
+        db.from
+          .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+          .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+          .mockReturnValueOnce(chain({ data: attemptRow, error: null }));
+        const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+        expect(result.httpStatus).toBe(200);
+        expect(result.body).toEqual({ success: true, duplicate: true, attempt: attemptRow });
+        expect(offSession).not.toHaveBeenCalled();
+        expect(db.from).toHaveBeenCalledTimes(3);
+      });
+
+    it("bails out — voiding its own payment row — when the attempt changed concurrently", async () => {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_x", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      const paymentInsert = chain({ data: { id: "rental_payment_retry" }, error: null });
+      const paymentVoid = chain({ error: null });
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: FAILED_NO_PI, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(paymentInsert)
+        .mockReturnValueOnce(chain({ data: [], error: null }))
+        .mockReturnValueOnce(paymentVoid);
+      const out = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(out.httpStatus).toBe(409);
+      expect(out.body).toEqual({ error: "Autopay attempt changed concurrently; not retried." });
+      expect(offSession).not.toHaveBeenCalled();
+      // The just-created payment row is voided so the in-flight guard never
+      // mistakes it for a live payment on the next sweep.
+      expect(paymentVoid.update).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
+    });
+
+    it("keeps a failed retry retryable when the retry dies before any PaymentIntent", async () => {
+      const stripeError = Object.assign(new Error("us_bank_account is not allowed for this PaymentIntent."),
+        { code: "payment_method_not_allowed", type: "StripeInvalidRequestError" });
+      const { attemptUpdate, enrollmentUpdate, result } =
+        runRetry({ ...FAILED_NO_PI, status: "failed" }, undefined, async () => { throw stripeError; });
+      const out = await result;
+      expect(out.httpStatus).toBe(409);
+      expect(out.body).toEqual(expect.objectContaining({ error: "Autopay attempt failed.", retried: true }));
+      const [attemptPayload] = attemptUpdate.update.mock.calls[0];
+      expect(attemptPayload).toEqual(expect.objectContaining({
+        status: "failed", failure_code: "StripeInvalidRequestError",
+        failure_message: "us_bank_account is not allowed for this PaymentIntent.",
+      }));
+      // provider_payment_id stays null (no intent survived the error): the
+      // next sweep may try again, and the enrollment's failure count keeps
+      // climbing toward pause.
+      expect(attemptPayload.provider_payment_id).toBeNull();
+      expect(enrollmentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({ consecutive_failures: 1 }));
+    });
+
+    // ChatGPT exact-head review 2026-10-02 (NO-GO) regression: Stripe accepts
+    // the create+confirm request but the response is lost (network drop). The
+    // local row lands failed with provider_payment_id null; a null-ID-only
+    // gate would fire a SECOND debit with a fresh key while the first is
+    // still processing. The narrowed gate must refuse the retry.
+    it("does not start a second debit after an accepted request loses its response", async () => {
+      const intents = new Map();
+      const first = runRetry(FAILED_NO_PI, undefined, async (_ctx, _payload, key) => {
+        intents.set(key, "pi_already_processing");
+        throw Object.assign(new Error("Connection closed after request was accepted"), {
+          type: "StripeConnectionError",
+        });
+      });
+      const failed = await first.result;
+      expect(failed.httpStatus).toBe(409);
+      expect(failed.body.paused).toBe(false);
+      expect(first.paymentUpdate.update.mock.calls[0][0].status).toBe("failed");
+      const persistedAttempt = {
+        ...FAILED_NO_PI,
+        ...first.transition.update.mock.calls[0][0],
+        ...first.attemptUpdate.update.mock.calls[0][0],
+      };
+      expect(persistedAttempt.status).toBe("failed");
+      expect(persistedAttempt.provider_payment_id).toBe(null);
+      expect(persistedAttempt.failure_code).toBe("StripeConnectionError");
+      const second = runRetry(persistedAttempt, undefined, async (_ctx, _payload, key) => {
+        intents.set(key, "pi_second_processing");
+        return { paymentIntentId: "pi_second_processing", status: "processing" };
+      });
+      const out = await second.result;
+      expect(out.body.duplicate).toBe(true);
+      expect(second.offSession).not.toHaveBeenCalled();
+      expect(intents.size).toBe(1);
+    });
+
+    it.each([
+      "StripeConnectionError", "StripeAPIError", "StripeCardError", "StripeIdempotencyError",
+      "autopay_failed", "payment_method_not_allowed", null, undefined,
+    ])("never auto-retries an ambiguous failure (%s) — stays blocked for manual reconciliation", async (failureCode) => {
+      const offSession = vi.fn(async () => ({ paymentIntentId: "pi_x", status: "succeeded" }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const db = { from: vi.fn() };
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: { ...FAILED_NO_PI, failure_code: failureCode }, error: null }));
+      const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(result.httpStatus).toBe(200);
+      expect(result.body.duplicate).toBe(true);
+      expect(offSession).not.toHaveBeenCalled();
+      expect(db.from).toHaveBeenCalledTimes(3);
+    });
+
+    it.each([
+      "StripeInvalidRequestError", "StripeAuthenticationError",
+      "StripePermissionError", "StripeRateLimitError",
+    ])("retries a definitive pre-creation rejection (%s) with a fresh key", async (failureCode) => {
+      const { offSession, result } = runRetry({ ...FAILED_NO_PI, failure_code: failureCode });
+      const out = await result;
+      expect(out.httpStatus).toBe(200);
+      expect(out.body).toEqual(expect.objectContaining({ success: true, duplicate: false, retried: true }));
+      expect(offSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("persists the PaymentIntent id carried by an error so the row can never look never-reached-Stripe", async () => {
+      const stripeError = Object.assign(new Error("Your card was declined."),
+        { type: "StripeCardError", code: "card_declined", payment_intent: { id: "pi_declined_1" } });
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: vi.fn(async () => { throw stripeError; }) });
+      const db = { from: vi.fn() };
+      const paymentUpdate = chain({ error: null });
+      const attemptUpdate = chain({ error: null });
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "rental_autopay_attempt_1" }, error: null }))
+        .mockReturnValueOnce(paymentUpdate)
+        .mockReturnValueOnce(attemptUpdate)
+        .mockReturnValueOnce(chain({ error: null }));
+      await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", provider_payment_id: "pi_declined_1",
+      }));
+      expect(attemptUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", failure_code: "StripeCardError", provider_payment_id: "pi_declined_1",
+      }));
+    });
+  });
+
   it("submits a matching due charge to Stripe and records success", async () => {
     createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: vi.fn(async () => ({ paymentIntentId: "pi_1", status: "succeeded" })) });
     const db = { from: vi.fn() };
@@ -158,7 +408,7 @@ describe("executeAutopayAttempt", () => {
 
   it("records the real provider error code and message on failure instead of a generic message", async () => {
     const stripeError = Object.assign(new Error("The bank account must be verified before it can be charged."),
-      { code: "payment_method_unactivated", type: "invalid_request_error" });
+      { code: "payment_method_unactivated", type: "StripeInvalidRequestError" });
     createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: vi.fn(async () => { throw stripeError; }) });
     const db = { from: vi.fn() };
     const paymentUpdate = chain({ error: null });
@@ -179,11 +429,11 @@ describe("executeAutopayAttempt", () => {
     const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
     expect(result.httpStatus).toBe(409);
     expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
-      status: "failed", failure_code: "payment_method_unactivated",
+      status: "failed", failure_code: "StripeInvalidRequestError",
       failure_message: "The bank account must be verified before it can be charged.",
     }));
     expect(attemptUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
-      status: "failed", failure_code: "payment_method_unactivated",
+      status: "failed", failure_code: "StripeInvalidRequestError",
       failure_message: "The bank account must be verified before it can be charged.",
     }));
   });
@@ -207,7 +457,7 @@ describe("executeAutopayAttempt", () => {
       .mockReturnValueOnce(enrollmentUpdate);
     const result = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
     expect(result.httpStatus).toBe(409);
-    expect(result.body).toEqual({ error: "Autopay attempt failed.", paused: true });
+    expect(result.body).toEqual({ error: "Autopay attempt failed.", paused: true, retried: false });
     expect(enrollmentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({ status: "paused", consecutive_failures: 1 }));
   });
 
