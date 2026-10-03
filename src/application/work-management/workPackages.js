@@ -159,7 +159,7 @@ export async function setDesignatedVerifier(db, { ownerId, actor, packageId, ver
     return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
   }
   const { data, error } = await db.rpc("forge_work_set_designated_verifier", {
-    p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
+    p_owner_id: ownerId, p_package_id: packageId,
     p_verifier: verifier || "",
   });
   if (error) throw error;
@@ -241,18 +241,25 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
   const check = validateTransition(pkg, to, serverCtx);
   if (!check.ok) return { ok: false, httpStatus: 409, error: check.error };
 
-  // ---- Atomic claim (P1-2). The RPC claims the package from the expected
-  // status, applies effects, and appends the audit row in ONE transaction.
-  // A concurrent transition wins the claim; the loser gets 409 with nothing
-  // written. A failed audit insert rolls the status change back with it.
+  // ---- Atomic claim (P1-2, hardened). The RPC claims the package from the
+  // expected status AND the expected version, applies effects, and appends
+  // the audit row in ONE transaction. A concurrent transition wins the
+  // claim; a concurrent ordinary-column edit bumps the version, so the
+  // loser gets 409 with nothing written instead of a transition on stale
+  // validation. Authority (owner or designated verifier) and verified_by
+  // attribution are enforced inside the RPC from auth.uid() — the p_actor
+  // parameter is gone because a caller-supplied actor string is forgeable.
   const now = new Date().toISOString();
   const fx = check.effects || {};
   const p_updates = {};
   if (fx.setActualStart) p_updates.actual_start = now.slice(0, 10);
   if (fx.setActualFinish) p_updates.actual_finish = now.slice(0, 10);
   if (fx.clearActualFinish) p_updates.actual_finish = null;
-  if (fx.setVerified) { p_updates.verified_at = now; p_updates.verified_by = actor; }
-  if (fx.clearVerified) { p_updates.verified_at = null; p_updates.verified_by = null; }
+  if (fx.setVerified) { p_updates.verified_at = now; }
+  if (fx.clearVerified) { p_updates.verified_at = null; }
+  // NOTE: verified_by is set server-side inside the RPC to auth.uid() — the
+  // service never supplies it. A verified_at key present with JSON null
+  // clears both columns.
   if (fx.recordBlockedFrom) {
     p_updates.blocked_from = fx.recordBlockedFrom;
     p_updates.blocked_reason = ctx.blockedReason;
@@ -269,8 +276,8 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
   // checklist ships in Rung 10; until then the audit row is the persisted
   // record of what was asserted, by whom, and against what evidence.
   const { data: rpcData, error: rpcError } = await db.rpc("forge_work_transition_package", {
-    p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
-    p_expected_from: pkg.status, p_to: to, p_updates,
+    p_owner_id: ownerId, p_package_id: packageId,
+    p_expected_from: pkg.status, p_to: to, p_expected_version: pkg.version, p_updates,
     p_reason: reason, p_evidence_ref: ctx.evidenceRef || null,
     p_completion_criteria_met: row.requires.includes("completion_criteria")
       ? (ctx.completionCriteriaMet === true) : null,
@@ -366,7 +373,7 @@ export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membe
   // failure can never leave a committed version-1 row with no pointer, and
   // two concurrent freezes cannot both succeed.
   const { data, error } = await db.rpc("forge_work_freeze_scope", {
-    p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
+    p_owner_id: ownerId, p_package_id: packageId,
     p_membership: membership, p_membership_hash: hashScopeMembership(membership),
   });
   if (error) throw error;
@@ -415,7 +422,7 @@ export async function decideScopeChange(db, { ownerId, actor, changeId, approve,
     return { ok: false, httpStatus: 400, error: "Approving a change requires the new membership list." };
   }
   const { data, error } = await db.rpc("forge_work_decide_scope_change", {
-    p_owner_id: ownerId, p_change_id: changeId, p_actor: actor,
+    p_owner_id: ownerId, p_change_id: changeId,
     p_approve: Boolean(approve),
     p_new_membership: approve ? newMembership : [],
     p_membership_hash: approve ? hashScopeMembership(newMembership) : "",

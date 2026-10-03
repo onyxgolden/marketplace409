@@ -90,6 +90,10 @@ create table if not exists forge_work_packages (
   -- override gates, and reopen. Changed only by the owner via
   -- forge_work_set_designated_verifier (guarded by the lifecycle trigger).
   designated_verifier text,
+  -- Optimistic-concurrency version: bumped by trigger on EVERY update
+  -- (direct or RPC). Transition RPCs require the caller to present the
+  -- version they validated against; a concurrent edit yields 'conflict'.
+  version integer not null default 1,
   -- Provenance
   created_by text,
   created_at timestamptz not null default now(),
@@ -487,6 +491,23 @@ create trigger forge_work_packages_lifecycle_guard_trg
   before insert or update on forge_work_packages
   for each row execute function forge_work_packages_lifecycle_guard();
 
+-- Optimistic-concurrency version bump: every UPDATE (direct workspace edit
+-- or lifecycle RPC) increments version exactly once. The transition RPC's
+-- WHERE clause pins the version the service validated against, so a
+-- concurrent edit between validation and transition returns 'conflict'
+-- instead of committing a transition on stale checks.
+alter table forge_work_packages add column if not exists version integer not null default 1;
+create or replace function forge_work_packages_version_bump()
+returns trigger language plpgsql as $$
+begin
+  NEW.version := OLD.version + 1;
+  return NEW;
+end $$;
+drop trigger if exists forge_work_packages_version_bump_trg on forge_work_packages;
+create trigger forge_work_packages_version_bump_trg
+  before update on forge_work_packages
+  for each row execute function forge_work_packages_version_bump();
+
 -- Scope-change decisions go only through forge_work_decide_scope_change.
 -- Proposals are inserted by the API with status = 'proposed' (policy-checked).
 create or replace function forge_work_scope_changes_guard()
@@ -521,21 +542,55 @@ create trigger forge_work_scope_changes_guard_trg
 -- If the audit insert fails, the status change rolls back with it: a failed
 -- transition can never leave a moved package with no audit row.
 --
+-- Authority: the caller is auth.uid() — never a caller-supplied string.
+-- Only the workspace owner or the package's designated verifier may
+-- transition. verified_by is set server-side to the transitioning caller;
+-- designated_verifier changes only through forge_work_set_designated_verifier.
+--
+-- Optimistic concurrency: p_expected_version must match the package's
+-- current version (bumped on every write by the version trigger). A
+-- concurrent edit between the service's validation read and this call
+-- yields { ok: false, error: 'conflict' } instead of a stale transition.
+--
 -- p_updates: jsonb object with any of actual_start, actual_finish,
--- verified_at, verified_by, blocked_reason, blocked_since, blocked_from,
--- designated_verifier. A key present with a JSON null clears the column.
+-- verified_at, blocked_reason, blocked_since, blocked_from. A key present
+-- with a JSON null clears the column. verified_by and designated_verifier
+-- are NOT accepted here (see above).
 -- ---------------------------------------------------------------------------
+-- Drop the pre-fix signatures (p_actor-based) so no stale overload lingers.
+drop function if exists forge_work_transition_package(text, text, text, text, text, jsonb, text, text, boolean, boolean);
+drop function if exists forge_work_freeze_scope(text, text, text, jsonb, text);
+drop function if exists forge_work_decide_scope_change(text, text, text, boolean, jsonb, text);
+drop function if exists forge_work_set_designated_verifier(text, text, text, text);
 create or replace function forge_work_transition_package(
-  p_owner_id text, p_package_id text, p_actor text,
-  p_expected_from text, p_to text,
+  p_owner_id text, p_package_id text,
+  p_expected_from text, p_to text, p_expected_version integer,
   p_updates jsonb, p_reason text, p_evidence_ref text,
   p_completion_criteria_met boolean, p_required_evidence_ok boolean
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
+  -- The one unforgeable identity: the JWT subject of the direct caller.
+  -- SECURITY DEFINER does not change auth.uid(); it still reads the
+  -- caller's request.jwt.claim.sub.
+  v_caller text := nullif(auth.uid()::text, '');
   v_pkg forge_work_packages%rowtype;
 begin
-  if not has_workspace_access(p_owner_id) then
+  if v_caller is null or not has_workspace_access(p_owner_id) then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  -- Lock the package row first: authority is checked against the CURRENT
+  -- row, and the lock serializes this transition with concurrent edits.
+  select * into v_pkg from forge_work_packages
+  where owner_id = p_owner_id and id = p_package_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'not_found');
+  end if;
+  -- Lifecycle authority: workspace owner or the package's designated
+  -- verifier. A workspace member who is neither gets 'forbidden' even
+  -- though they can read and edit ordinary columns.
+  if v_caller <> v_pkg.owner_id
+     and (v_pkg.designated_verifier is null or v_caller <> v_pkg.designated_verifier) then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
   end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
@@ -547,19 +602,20 @@ begin
         then (p_updates ->> 'actual_finish')::date else actual_finish end,
       verified_at = case when p_updates ? 'verified_at'
         then (p_updates ->> 'verified_at')::timestamptz else verified_at end,
-      verified_by = case when p_updates ? 'verified_by'
-        then p_updates ->> 'verified_by' else verified_by end,
+      verified_by = case when p_updates ? 'verified_at'
+        then case when (p_updates ->> 'verified_at') is null then null else v_caller end
+        else verified_by end,
       blocked_reason = case when p_updates ? 'blocked_reason'
         then p_updates ->> 'blocked_reason' else blocked_reason end,
       blocked_since = case when p_updates ? 'blocked_since'
         then (p_updates ->> 'blocked_since')::timestamptz else blocked_since end,
       blocked_from = case when p_updates ? 'blocked_from'
         then p_updates ->> 'blocked_from' else blocked_from end,
-      designated_verifier = case when p_updates ? 'designated_verifier'
-        then p_updates ->> 'designated_verifier' else designated_verifier end,
-      updated_by = p_actor,
+      updated_by = v_caller,
       updated_at = now()
-  where owner_id = p_owner_id and id = p_package_id and status = p_expected_from
+  where owner_id = p_owner_id and id = p_package_id
+    and status = p_expected_from
+    and version = p_expected_version
   returning * into v_pkg;
   if not found then
     return jsonb_build_object('ok', false, 'error', 'conflict');
@@ -568,7 +624,7 @@ begin
     (owner_id, package_id, from_status, to_status, actor, reason, evidence_ref,
      completion_criteria_met, required_evidence_ok)
   values
-    (p_owner_id, p_package_id, p_expected_from, p_to, p_actor, p_reason, p_evidence_ref,
+    (p_owner_id, p_package_id, p_expected_from, p_to, v_caller, p_reason, p_evidence_ref,
      p_completion_criteria_met, p_required_evidence_ok);
   return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
 end $$;
@@ -582,20 +638,21 @@ end $$;
 -- can never leave a committed version-1 row with no package pointer.
 -- ---------------------------------------------------------------------------
 create or replace function forge_work_freeze_scope(
-  p_owner_id text, p_package_id text, p_actor text,
+  p_owner_id text, p_package_id text,
   p_membership jsonb, p_membership_hash text
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
+  v_caller text := nullif(auth.uid()::text, '');
   v_baseline_id text := 'forge_wsb_' || gen_random_uuid()::text;
   v_row forge_work_scope_baselines%rowtype;
 begin
-  if not has_workspace_access(p_owner_id) then
+  if v_caller is null or not has_workspace_access(p_owner_id) then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
   end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
   update forge_work_packages
-  set scope_baseline_id = v_baseline_id, updated_by = p_actor, updated_at = now()
+  set scope_baseline_id = v_baseline_id, updated_by = v_caller, updated_at = now()
   where owner_id = p_owner_id and id = p_package_id and scope_baseline_id is null;
   if not found then
     return jsonb_build_object('ok', false, 'error', 'already_frozen');
@@ -603,7 +660,7 @@ begin
   insert into forge_work_scope_baselines
     (owner_id, id, package_id, version, frozen_by, membership, membership_hash, supersedes_id)
   values
-    (p_owner_id, v_baseline_id, p_package_id, 1, p_actor, p_membership, p_membership_hash, null)
+    (p_owner_id, v_baseline_id, p_package_id, 1, v_caller, p_membership, p_membership_hash, null)
   returning * into v_row;
   return jsonb_build_object('ok', true, 'baseline', row_to_json(v_row));
 end $$;
@@ -618,18 +675,19 @@ end $$;
 -- change approved — all in ONE transaction. Any failure rolls back every row.
 -- ---------------------------------------------------------------------------
 create or replace function forge_work_decide_scope_change(
-  p_owner_id text, p_change_id text, p_actor text,
+  p_owner_id text, p_change_id text,
   p_approve boolean, p_new_membership jsonb, p_membership_hash text
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
+  v_caller text := nullif(auth.uid()::text, '');
   v_change forge_work_scope_changes%rowtype;
   v_head forge_work_scope_baselines%rowtype;
   v_new_id text := 'forge_wsb_' || gen_random_uuid()::text;
   v_new_version integer;
   v_new_baseline forge_work_scope_baselines%rowtype;
 begin
-  if not has_workspace_access(p_owner_id) then
+  if v_caller is null or not has_workspace_access(p_owner_id) then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
   end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
@@ -643,7 +701,7 @@ begin
   end if;
   if not p_approve then
     update forge_work_scope_changes
-    set status = 'rejected', decided_by = p_actor, decided_at = now()
+    set status = 'rejected', decided_by = v_caller, decided_at = now()
     where owner_id = p_owner_id and id = p_change_id
     returning * into v_change;
     return jsonb_build_object('ok', true, 'change', row_to_json(v_change));
@@ -667,7 +725,7 @@ begin
   -- earlier draft inserted the baseline first and returned ok:false on
   -- conflict, which committed an orphan baseline row — never do that.)
   update forge_work_packages
-  set scope_baseline_id = v_new_id, updated_by = p_actor, updated_at = now()
+  set scope_baseline_id = v_new_id, updated_by = v_caller, updated_at = now()
   where owner_id = p_owner_id and id = v_change.package_id
     and scope_baseline_id = v_head.id;
   if not found then
@@ -679,10 +737,10 @@ begin
     (owner_id, id, package_id, version, frozen_by, membership, membership_hash, supersedes_id)
   values
     (p_owner_id, v_new_id, v_change.package_id, v_new_version,
-     p_actor, p_new_membership, p_membership_hash, v_head.id)
+     v_caller, p_new_membership, p_membership_hash, v_head.id)
   returning * into v_new_baseline;
   update forge_work_scope_changes
-  set status = 'approved', decided_by = p_actor, decided_at = now(),
+  set status = 'approved', decided_by = v_caller, decided_at = now(),
       resulting_baseline_version = v_new_version
   where owner_id = p_owner_id and id = p_change_id
   returning * into v_change;
@@ -695,25 +753,29 @@ end $$;
 --
 -- Verification, gate overrides, and reopen authority belong to the workspace
 -- owner or a designated verifier recorded on the package (lifecycle.md).
--- Only the owner (actor = effective owner) may designate or clear one.
+-- Only the owner may designate or clear one. The owner is auth.uid() — a
+-- caller-supplied actor string is never trusted, so a workspace member
+-- cannot self-designate by forging the actor parameter (the old signature
+-- took p_actor and compared it to p_owner_id, which any caller could satisfy).
 -- ---------------------------------------------------------------------------
 create or replace function forge_work_set_designated_verifier(
-  p_owner_id text, p_package_id text, p_actor text, p_verifier text
+  p_owner_id text, p_package_id text, p_verifier text
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
+  v_caller text := nullif(auth.uid()::text, '');
   v_pkg forge_work_packages%rowtype;
 begin
-  if not has_workspace_access(p_owner_id) then
+  if v_caller is null or not has_workspace_access(p_owner_id) then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
   end if;
-  if p_actor <> p_owner_id then
+  if v_caller <> p_owner_id then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
   end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
   update forge_work_packages
   set designated_verifier = nullif(p_verifier, ''),
-      updated_by = p_actor, updated_at = now()
+      updated_by = v_caller, updated_at = now()
   where owner_id = p_owner_id and id = p_package_id
   returning * into v_pkg;
   if not found then
@@ -722,11 +784,11 @@ begin
   return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
 end $$;
 
-revoke all on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text, boolean, boolean) from public, anon, authenticated;
-grant execute on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text) to authenticated, service_role;
-revoke all on function forge_work_freeze_scope(text, text, text, jsonb, text) from public, anon, authenticated;
-grant execute on function forge_work_freeze_scope(text, text, text, jsonb, text) to authenticated, service_role;
-revoke all on function forge_work_decide_scope_change(text, text, text, boolean, jsonb, text) from public, anon, authenticated;
-grant execute on function forge_work_decide_scope_change(text, text, text, boolean, jsonb, text) to authenticated, service_role;
-revoke all on function forge_work_set_designated_verifier(text, text, text, text) from public, anon, authenticated;
-grant execute on function forge_work_set_designated_verifier(text, text, text, text) to authenticated, service_role;
+revoke all on function forge_work_transition_package(text, text, text, text, integer, jsonb, text, text, boolean, boolean) from public, anon, authenticated;
+grant execute on function forge_work_transition_package(text, text, text, text, integer, jsonb, text, text, boolean, boolean) to authenticated, service_role;
+revoke all on function forge_work_freeze_scope(text, text, jsonb, text) from public, anon, authenticated;
+grant execute on function forge_work_freeze_scope(text, text, jsonb, text) to authenticated, service_role;
+revoke all on function forge_work_decide_scope_change(text, text, boolean, jsonb, text) from public, anon, authenticated;
+grant execute on function forge_work_decide_scope_change(text, text, boolean, jsonb, text) to authenticated, service_role;
+revoke all on function forge_work_set_designated_verifier(text, text, text) from public, anon, authenticated;
+grant execute on function forge_work_set_designated_verifier(text, text, text) to authenticated, service_role;

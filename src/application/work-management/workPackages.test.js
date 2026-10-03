@@ -32,7 +32,7 @@ function chain(result = { data: null, error: null }) {
 }
 
 const PKG = { id: "forge_wp_1", owner_id: "owner_1", code: "WP-0007", title: "Turnover",
-  package_type: "rental_turn", priority: "normal", status: "draft",
+  package_type: "rental_turn", priority: "normal", status: "draft", version: 3,
   planned_start: "2026-11-01", planned_finish: "2026-11-10",
   responsible_party: { domain: "vendor", type: "contractor", id: "c1", display_name: "Acme" },
   description: "Full turnover scope.", scope_baseline_id: null,
@@ -126,8 +126,14 @@ describe("transitionWorkPackage", () => {
     expect(result.ok).toBe(true);
     expect(db.rpc).toHaveBeenCalledWith("forge_work_transition_package", expect.objectContaining({
       p_expected_from: "ready", p_to: "in_progress",
+      p_expected_version: 3,
       p_updates: expect.objectContaining({ actual_start: expect.any(String) }),
     }));
+    // No caller-supplied actor: the RPC derives identity from auth.uid().
+    // No client-supplied verified_by: the RPC sets it server-side.
+    const rpcArgs = db.rpc.mock.calls[0][1];
+    expect(rpcArgs).not.toHaveProperty("p_actor");
+    expect(rpcArgs.p_updates).not.toHaveProperty("verified_by");
     // One claim — no separate update + audit insert.
     expect(db.from).toHaveBeenCalledTimes(1);
   });
