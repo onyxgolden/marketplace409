@@ -171,6 +171,19 @@
     <form method="dialog"><button type="submit">Close</button></form>
   </dialog>
 
+  <dialog id="preview-dialog">
+    <h2>Capture preview</h2>
+    <p id="preview-meta" class="dialog-sub"></p>
+    <img id="preview-image" alt="Captured screenshot preview" />
+    <div id="preview-status" class="status" role="status"></div>
+    <div class="dialog-actions">
+      <button id="preview-copy" type="button" class="ghost-btn">Copy</button>
+      <button id="preview-save-as" type="button" class="ghost-btn">Save As…</button>
+      <button id="preview-edit" type="button" class="ghost-btn">Edit</button>
+      <button id="preview-close" type="button" class="primary-btn">Close</button>
+    </div>
+  </dialog>
+
   <dialog id="ai-edit-dialog">
     <h2>AI Edit</h2>
     <p class="dialog-sub">Describe what should change. The original stays untouched — the result arrives as a new versioned copy.</p>

@@ -903,7 +903,31 @@ fn capture(
 
 /// Shared capture path: the `capture` command and the Alt+PrintScreen
 /// hotkey both run through here.
+///
+/// Failures are broadcast app-wide (`capture-failed`), the same way success
+/// already is (`capture-saved`), rather than relying solely on this
+/// function's `Result` reaching back to whichever window originated the
+/// request. For `region-overlay` mode specifically, `build_mode` closes the
+/// overlay window *before* the actual pixel acquisition / disk write below
+/// run — a failure in either of those happens after that window's own IPC
+/// response channel can no longer deliver anything back to it, so a bare
+/// `Err` return would be a capture that fails completely silently: no
+/// screenshot, no error, nothing in the UI. (2026-09-30, root-caused from
+/// Jason's report of a drag-selected region producing no preview and an
+/// empty Captures folder, with no visible error anywhere.)
 fn run_capture(
+    app: &tauri::AppHandle,
+    state: State<AppState>,
+    dto: &CaptureRequestDto,
+) -> Result<ArtifactRefDto, String> {
+    let result = run_capture_inner(app, state, dto);
+    if let Err(message) = &result {
+        let _ = app.emit("capture-failed", message.clone());
+    }
+    result
+}
+
+fn run_capture_inner(
     app: &tauri::AppHandle,
     state: State<AppState>,
     dto: &CaptureRequestDto,
