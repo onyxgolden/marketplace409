@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/rental/cron/autopay-sweep",
-      "schedule": "0 8 * * *"
+      "schedule": "0 9 * * *"
     },
     {
       "path": "/api/rental/cron/settlement-reconciliation",
