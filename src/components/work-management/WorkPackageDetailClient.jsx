@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
+import WorkPackageLinks from "./WorkPackageLinks.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -28,7 +29,7 @@ function Field({ title, value }) {
   );
 }
 
-export default function WorkPackageDetailClient({ initial }) {
+export default function WorkPackageDetailClient({ initial, initialLinks = [] }) {
   const router = useRouter();
   const [pkg, setPkg] = useState(initial.package);
   const [transitions, setTransitions] = useState(initial.transitions);
@@ -300,6 +301,8 @@ export default function WorkPackageDetailClient({ initial }) {
           </ul>
         )}
       </section>
+
+      <WorkPackageLinks packageId={pkg.id} initialLinks={initialLinks} />
 
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-slate-900">Scope baseline</h2>
