@@ -457,13 +457,16 @@ declare
 begin
   if TG_OP = 'INSERT' then
     -- Packages are born in Draft with no lifecycle state. Anything else must
-    -- come through the transition RPC.
+    -- come through the transition RPC. designated_verifier is included: a
+    -- workspace member must not self-designate at insert time and then
+    -- transition freely — verifier designation is owner-only via the RPC.
     if NEW.status <> 'draft'
        or NEW.actual_start is not null or NEW.actual_finish is not null
        or NEW.verified_at is not null or NEW.verified_by is not null
        or NEW.scope_baseline_id is not null
        or NEW.blocked_reason is not null or NEW.blocked_since is not null
-       or NEW.blocked_from is not null then
+       or NEW.blocked_from is not null
+       or NEW.designated_verifier is not null then
       raise exception 'forge_work: packages are created in draft; lifecycle state moves only through the lifecycle RPCs';
     end if;
     return NEW;
@@ -507,6 +510,48 @@ drop trigger if exists forge_work_packages_version_bump_trg on forge_work_packag
 create trigger forge_work_packages_version_bump_trg
   before update on forge_work_packages
   for each row execute function forge_work_packages_version_bump();
+
+-- ---------------------------------------------------------------------------
+-- forge_work_lifecycle_transitions — the legal transition graph, as data.
+--
+-- The service layer validates transitions in JS (validateTransition), but a
+-- caller invoking the RPC directly bypasses JS entirely. The RPC therefore
+-- enforces the graph itself: a (from, to) pair not present here — and not
+-- covered by the two dynamic rules below — returns 'illegal_transition'.
+--
+-- Static edges mirror staticTransitionRows() in the domain layer; a domain
+-- unit test asserts parity so the two can never drift. Two dynamic edges
+-- are enforced inline in the RPC because they depend on row state:
+--   * any non-terminal status -> cancelled
+--   * blocked -> blocked_from (exactly, never forward)
+-- Seed-only table: no write policies for authenticated.
+-- ---------------------------------------------------------------------------
+create table if not exists forge_work_lifecycle_transitions (
+  from_status text not null,
+  to_status text not null,
+  primary key (from_status, to_status)
+);
+insert into forge_work_lifecycle_transitions (from_status, to_status) values
+  ('draft', 'planned'),
+  ('planned', 'readiness_review'),
+  ('readiness_review', 'ready'),
+  ('ready', 'in_progress'),
+  ('draft', 'blocked'),
+  ('planned', 'blocked'),
+  ('readiness_review', 'blocked'),
+  ('ready', 'blocked'),
+  ('in_progress', 'blocked'),
+  ('in_progress', 'complete'),
+  ('complete', 'verified_closed'),
+  ('complete', 'in_progress'),
+  ('verified_closed', 'in_progress'),
+  ('cancelled', 'draft')
+on conflict do nothing;
+alter table forge_work_lifecycle_transitions enable row level security;
+drop policy if exists forge_work_lifecycle_transitions_workspace_select
+  on forge_work_lifecycle_transitions;
+create policy forge_work_lifecycle_transitions_workspace_select
+  on forge_work_lifecycle_transitions for select to authenticated using (true);
 
 -- Scope-change decisions go only through forge_work_decide_scope_change.
 -- Proposals are inserted by the API with status = 'proposed' (policy-checked).
@@ -592,6 +637,21 @@ begin
   if v_caller <> v_pkg.owner_id
      and (v_pkg.designated_verifier is null or v_caller <> v_pkg.designated_verifier) then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  -- Transition graph: the (from, to) pair must be a legal edge. Static
+  -- edges come from forge_work_lifecycle_transitions; the two dynamic
+  -- rules are inline because they depend on row state. Without this, a
+  -- direct RPC caller bypasses the service's validateTransition and can
+  -- jump e.g. draft -> verified_closed, skipping every gate.
+  if not exists (
+    select 1 from forge_work_lifecycle_transitions
+    where from_status = p_expected_from and to_status = p_to
+  ) and not (
+    p_to = 'cancelled' and p_expected_from not in ('verified_closed', 'cancelled')
+  ) and not (
+    p_expected_from = 'blocked' and p_to = v_pkg.blocked_from
+  ) then
+    return jsonb_build_object('ok', false, 'error', 'illegal_transition');
   end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
   update forge_work_packages

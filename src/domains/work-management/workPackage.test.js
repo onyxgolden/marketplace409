@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   WP_STATUS, WP_PACKAGE_TYPES,
   defaultGatesFor, isTerminalStatus, findTransition, allowedTransitionsFrom,
-  validateTransition,
+  validateTransition, staticTransitionEdges,
   derivePercentComplete, validatePackageInput, hashScopeMembership,
   deriveCurrentBaseline,
 } from "./workPackage.js";
@@ -254,5 +254,30 @@ describe("allowedTransitionsFrom", () => {
       .toEqual([WP_STATUS.IN_PROGRESS]);
     expect(allowedTransitionsFrom({ status: WP_STATUS.CANCELLED }))
       .toEqual([WP_STATUS.DRAFT]);
+  });
+});
+
+describe("staticTransitionEdges (DB parity)", () => {
+  // The migration seeds these exact edges into forge_work_lifecycle_transitions
+  // so the RPC enforces the graph for direct callers. If this test fails,
+  // the seed and the domain have drifted — update both.
+  it("matches the seeded lifecycle transition table", () => {
+    const edges = staticTransitionEdges().map(([f, t]) => `${f} -> ${t}`).sort();
+    expect(edges).toEqual([
+      "cancelled -> draft",
+      "complete -> in_progress",
+      "complete -> verified_closed",
+      "draft -> blocked",
+      "draft -> planned",
+      "in_progress -> blocked",
+      "in_progress -> complete",
+      "planned -> blocked",
+      "planned -> readiness_review",
+      "readiness_review -> blocked",
+      "readiness_review -> ready",
+      "ready -> blocked",
+      "ready -> in_progress",
+      "verified_closed -> in_progress",
+    ]);
   });
 });

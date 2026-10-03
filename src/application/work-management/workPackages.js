@@ -290,6 +290,9 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
     if (err === "conflict") {
       return { ok: false, httpStatus: 409, error: `Package moved while transitioning (was ${pkg.status}); refresh and retry.` };
     }
+    if (err === "illegal_transition") {
+      return { ok: false, httpStatus: 409, error: `Illegal transition: ${pkg.status} -> ${to}.` };
+    }
     if (err === "forbidden") {
       return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
     }

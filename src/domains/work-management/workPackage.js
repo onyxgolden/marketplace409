@@ -133,6 +133,13 @@ function dynamicRows(pkg) {
   return rows;
 }
 
+// Static transition edges as [from, to] pairs. The migration seeds the same
+// edges into forge_work_lifecycle_transitions so the RPC enforces the graph
+// for direct callers; the parity test asserts the two can never drift.
+export function staticTransitionEdges() {
+  return staticTransitionRows().map((r) => [r.from, r.to]);
+}
+
 export function findTransition(pkg, to) {
   const all = [...staticTransitionRows(), ...dynamicRows(pkg)];
   return all.find((r) => r.from === pkg.status && r.to === to) || null;
