@@ -123,3 +123,82 @@ begin
       'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_all', t);
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Attribution triggers: the audit trail records the TRUE caller.
+--
+-- created_by / confirmed_by are caller-supplied text. Without these a
+-- workspace member could file links or confirmations under someone else's
+-- identity (the owner, the brain) through direct table writes — and the
+-- application service itself used to honor a caller-supplied created_by.
+-- When a user JWT is present the database stamps auth.uid(); service_role
+-- writes (imports, brain proposals with no JWT) keep their supplied values.
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_links_stamp_attribution()
+returns trigger language plpgsql as $$
+declare v_caller text := nullif(auth.uid()::text, '');
+begin
+  if v_caller is not null then
+    if TG_OP = 'INSERT' then
+      NEW.created_by := v_caller;
+    elsif NEW.confirmed_by is distinct from OLD.confirmed_by then
+      NEW.confirmed_by := v_caller;
+    end if;
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists forge_work_links_attribution_trg on forge_work_links;
+create trigger forge_work_links_attribution_trg
+  before insert or update on forge_work_links
+  for each row execute function forge_work_links_stamp_attribution();
+
+create or replace function forge_work_link_confirmations_stamp_attribution()
+returns trigger language plpgsql as $$
+declare v_caller text := nullif(auth.uid()::text, '');
+begin
+  if v_caller is not null then
+    NEW.confirmed_by := v_caller;
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists forge_work_link_confirmations_attribution_trg
+  on forge_work_link_confirmations;
+create trigger forge_work_link_confirmations_attribution_trg
+  before insert on forge_work_link_confirmations
+  for each row execute function forge_work_link_confirmations_stamp_attribution();
+
+-- ---------------------------------------------------------------------------
+-- Status guard: the documented resolution lifecycle is a database invariant,
+-- not just a JS convention.
+--   unresolved -> active | broken; active -> stale | broken;
+--   stale -> active | broken; broken -> active.
+-- New links are born unresolved (service_role backfills with no JWT may
+-- insert historical states directly).
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_links_status_guard()
+returns trigger language plpgsql as $$
+declare v_caller text := nullif(auth.uid()::text, '');
+begin
+  if TG_OP = 'INSERT' then
+    if v_caller is not null and NEW.status <> 'unresolved' then
+      raise exception 'forge_work: links are created unresolved';
+    end if;
+    return NEW;
+  end if;
+  if NEW.status is distinct from OLD.status then
+    if not (
+      (OLD.status = 'unresolved' and NEW.status in ('active', 'broken')) or
+      (OLD.status = 'active' and NEW.status in ('stale', 'broken')) or
+      (OLD.status = 'stale' and NEW.status in ('active', 'broken')) or
+      (OLD.status = 'broken' and NEW.status = 'active')
+    ) then
+      raise exception 'forge_work: illegal link status transition % -> %',
+        OLD.status, NEW.status;
+    end if;
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists forge_work_links_status_guard_trg on forge_work_links;
+create trigger forge_work_links_status_guard_trg
+  before insert or update on forge_work_links
+  for each row execute function forge_work_links_status_guard();

@@ -92,7 +92,11 @@ export async function createLink(db, { ownerId, actor, input }) {
       error: `relationship_type '${input.relationship_type}' is defined but its endpoints ` +
         `have no verified authoritative table yet; not supported in Rung 2.` };
   }
-  const createdBy = input.created_by ?? actor;
+  // created_by is ALWAYS the acting user — never a caller-supplied value.
+  // A forged created_by ('brain-proposal', the owner's id, ...) would
+  // misattribute the link's provenance. The Brain files proposals as its own
+  // actor; humans file as themselves.
+  const createdBy = actor;
   const provenance = input.provenance ?? LINK_PROVENANCE.USER_CONFIRMED;
   for (const end of ["source", "target"]) {
     const domain = input[`${end}_domain`];
@@ -245,9 +249,10 @@ export async function flagLinkStale(db, { ownerId, linkId, reason }) {
   const transition = validateStatusTransition(link.status, LINK_STATUS.STALE);
   if (!transition.ok) return { ok: false, httpStatus: 409, error: transition.error };
   const now = new Date().toISOString();
+  const staleNote = `[${now}] stale: ${reason.trim()}`;
   const { data: updated, error } = await db.from(TABLES.links).update({
     status: LINK_STATUS.STALE, resolved_at: now, resolved_state: "moved",
-    notes: reason.trim(),
+    notes: link.notes ? `${link.notes}\n${staleNote}` : staleNote,
   }).eq("owner_id", ownerId).eq("id", linkId).select("*").single();
   if (error) throw error;
   return { ok: true, link: updated };

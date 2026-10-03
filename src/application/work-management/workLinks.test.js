@@ -100,12 +100,27 @@ describe("createLink", () => {
     const insertChain = chain({ data: { ...LINK, provenance: "ai_proposed" }, error: null });
     const promoteChain = chain({ data: { ...LINK, provenance: "ai_proposed", status: "active" }, error: null });
     const db = mockDb([exists("forge_wp_1"), exists("forge_wasset_1"), insertChain, promoteChain]);
-    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
-      ...INPUT, created_by: "brain-proposal", provenance: "ai_proposed",
+    const result = await createLink(db, { ownerId: "owner_1", actor: "brain-proposal", input: {
+      ...INPUT, provenance: "ai_proposed",
     }});
     expect(result.ok).toBe(true);
     expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({
       provenance: "ai_proposed", created_by: "brain-proposal", confirmed_by: null,
+    }));
+  });
+  it("ignores a caller-supplied created_by and stamps the actor", async () => {
+    const insertChain = chain({ data: { ...LINK, status: "unresolved" }, error: null });
+    const promoteChain = chain({ data: { ...LINK, status: "active" }, error: null });
+    const db = mockDb([exists("forge_wp_1"), exists("forge_wasset_1"), insertChain, promoteChain]);
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
+      ...INPUT, created_by: "owner_1",
+    }});
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({
+      created_by: "user_1",
+    }));
+    expect(insertChain.insert).not.toHaveBeenCalledWith(expect.objectContaining({
+      created_by: "owner_1",
     }));
   });
 });
@@ -218,6 +233,18 @@ describe("flagLinkStale", () => {
     const result = await flagLinkStale(db, { ownerId: "owner_1", linkId: "forge_wlink_1", reason: " " });
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(400);
+  });
+  it("appends the stale reason to existing notes instead of overwriting", async () => {
+    const withNotes = { ...LINK, notes: "Earlier observation." };
+    const loadChain = chain({ data: withNotes, error: null });
+    const updateChain = chain({ data: { ...withNotes, status: "stale" }, error: null });
+    const db = mockDb([loadChain, updateChain]);
+    const result = await flagLinkStale(db, { ownerId: "owner_1", linkId: "forge_wlink_1",
+      reason: "Drawing revision superseded by rev 4." });
+    expect(result.ok).toBe(true);
+    const notes = updateChain.update.mock.calls[0][0].notes;
+    expect(notes).toMatch(/Earlier observation\./);
+    expect(notes).toMatch(/Drawing revision superseded by rev 4\./);
   });
   it("rejects flagging a broken link stale", async () => {
     const db = mockDb([chain({ data: { ...LINK, status: "broken" }, error: null })]);
