@@ -23,8 +23,12 @@ create table if not exists forge_work_package_sequences (
   updated_at timestamptz not null default now()
 );
 
+-- Package-number sequence. Runs as SECURITY DEFINER (table owner) so the
+-- sequence table needs no grants and no RLS policies for `authenticated`:
+-- the only way to advance it is through this function, and the function is
+-- only callable by authenticated/service_role.
 create or replace function forge_work_next_package_number(p_owner_id text)
-returns integer language plpgsql security invoker set search_path = public as $$
+returns integer language plpgsql security definer set search_path = public as $$
 declare v_n integer;
 begin
   insert into forge_work_package_sequences (owner_id, last_number, updated_at)
@@ -412,13 +416,31 @@ drop policy if exists forge_work_gate_attestations_workspace_insert on forge_wor
 create policy forge_work_gate_attestations_workspace_insert on forge_work_gate_attestations
   for insert to authenticated with check (has_workspace_access(owner_id));
 
--- Ordinary working records keep full workspace access. The package sequence
--- keeps its policy: it is advanced only by forge_work_next_package_number.
+-- The audit trail must record WHO actually attested. The attestor column is
+-- caller-supplied text in the insert, so without this trigger a workspace
+-- member could file an attestation under someone else's identity (e.g. the
+-- owner's) and make a package look owner-attested. When the insert runs with
+-- a user JWT present the database stamps the true caller; service_role
+-- inserts (backfills, seed data with no JWT) keep their supplied value.
+create or replace function forge_work_gate_attestations_attestor()
+returns trigger language plpgsql as $$
+begin
+  if nullif(auth.uid()::text, '') is not null then
+    NEW.attestor := auth.uid()::text;
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists forge_work_gate_attestations_attestor_trg on forge_work_gate_attestations;
+create trigger forge_work_gate_attestations_attestor_trg
+  before insert on forge_work_gate_attestations
+  for each row execute function forge_work_gate_attestations_attestor();
+
+-- Ordinary working records keep full workspace access.
 do $$
 declare t text;
 begin
   foreach t in array array[
-    'forge_work_package_sequences','forge_work_assets',
+    'forge_work_assets',
     'forge_work_asset_components','forge_work_inspection_observations',
     'forge_work_locations']
   loop
@@ -435,6 +457,9 @@ end $$;
 -- transactional RPCs below, which run as SECURITY DEFINER (table owner) and
 -- therefore bypass RLS. This makes the audit log and baselines append-only
 -- at the database boundary even for authenticated table access.
+--
+-- The package sequence table has no policies at all: it is advanced only by
+-- forge_work_next_package_number, which runs as SECURITY DEFINER below.
 
 -- ---------------------------------------------------------------------------
 -- Lifecycle guard triggers + transactional RPCs.
@@ -873,6 +898,7 @@ declare
   v_caller text := nullif(auth.uid()::text, '');
   v_change forge_work_scope_changes%rowtype;
   v_head forge_work_scope_baselines%rowtype;
+  v_verifier text;
   v_new_id text := 'forge_wsb_' || gen_random_uuid()::text;
   v_new_version integer;
   v_new_baseline forge_work_scope_baselines%rowtype;
@@ -885,6 +911,18 @@ begin
   where owner_id = p_owner_id and id = p_change_id for update;
   if not found then
     return jsonb_build_object('ok', false, 'error', 'not_found');
+  end if;
+  -- Approving or rejecting a scope change moves the cost baseline: it needs
+  -- the same owner-or-designated-verifier authority as package transitions.
+  -- Workspace members may PROPOSE changes; only the owner or the designated
+  -- verifier may decide them.
+  select designated_verifier into v_verifier from forge_work_packages
+  where owner_id = p_owner_id and id = v_change.package_id;
+  if v_verifier is null and v_caller <> p_owner_id then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  if v_verifier is not null and v_caller <> p_owner_id and v_caller <> v_verifier then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
   end if;
   if v_change.status <> 'proposed' then
     return jsonb_build_object('ok', false, 'error', 'already_decided');
@@ -982,3 +1020,36 @@ revoke all on function forge_work_decide_scope_change(text, text, boolean, jsonb
 grant execute on function forge_work_decide_scope_change(text, text, boolean, jsonb, text) to authenticated, service_role;
 revoke all on function forge_work_set_designated_verifier(text, text, text) from public, anon, authenticated;
 grant execute on function forge_work_set_designated_verifier(text, text, text) to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- Table-level GRANTs for `authenticated`.
+--
+-- RLS policies alone are NOT enough: PostgreSQL checks table privileges
+-- BEFORE evaluating row-level policies, so without these grants every
+-- authenticated call fails with "permission denied" before RLS is even
+-- reached. The grants are deliberately narrower than the widest policy:
+-- audit/baseline/reference tables are select-only (writes go through the
+-- RPCs), attestations and scope-change proposals are insert-only, and the
+-- package sequence table gets no grants at all (advanced only by the
+-- SECURITY DEFINER sequence function).
+-- ---------------------------------------------------------------------------
+do $$ declare t text; begin
+  foreach t in array array[
+    'forge_work_lifecycle_transitions','forge_work_package_type_gates',
+    'forge_work_package_transitions','forge_work_scope_baselines']
+  loop
+    execute format('grant select on %I to authenticated', t);
+  end loop;
+  foreach t in array array[
+    'forge_work_scope_changes','forge_work_gate_attestations']
+  loop
+    execute format('grant select, insert on %I to authenticated', t);
+  end loop;
+  execute 'grant select, insert, update on forge_work_packages to authenticated';
+  foreach t in array array[
+    'forge_work_assets','forge_work_asset_components',
+    'forge_work_inspection_observations','forge_work_locations']
+  loop
+    execute format('grant select, insert, update, delete on %I to authenticated', t);
+  end loop;
+end $$;
