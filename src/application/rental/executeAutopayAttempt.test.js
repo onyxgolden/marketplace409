@@ -7,7 +7,7 @@ import { executeAutopayAttempt } from "./executeAutopayAttempt.js";
 
 function chain(result = { data: null, error: null }) {
   const node = {
-    select: vi.fn(() => node), eq: vi.fn(() => node), in: vi.fn(() => node),
+    select: vi.fn(() => node), eq: vi.fn(() => node), is: vi.fn(() => node), in: vi.fn(() => node),
     order: vi.fn(() => node), limit: vi.fn(() => node),
     insert: vi.fn(() => node), update: vi.fn(() => node),
     single: vi.fn(async () => result), maybeSingle: vi.fn(async () => result),
@@ -206,6 +206,57 @@ describe("executeAutopayAttempt", () => {
       expect(offSession).not.toHaveBeenCalled();
       // The just-created payment row is voided so the in-flight guard never
       // mistakes it for a live payment on the next sweep.
+      expect(paymentVoid.update).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
+    });
+
+    // ChatGPT re-review 2026-10-02 (NO-GO) regression: overlapping workers.
+    // Worker A reads a safe failed attempt (generation 1) and pauses. Worker B
+    // runs a full cycle — claims gen1, Stripe accepts but the response is
+    // lost — leaving the attempt failed/ambiguous (generation 2: new payment
+    // row, new key, StripeConnectionError, null provider ID). Worker A
+    // resumes with a stale retryable flag. The atomic generation claim must
+    // match no rows (A's predicates name gen1's payment_id/idempotency_key/
+    // failure_code), so A voids its own payment and makes NO Stripe call —
+    // exactly one external debit (B's) exists for the charge.
+    it("does not start a second debit when a stale worker claims after an intervening retry cycle", async () => {
+      const intents = new Map();
+      const offSession = vi.fn(async (_ctx, _payload, key) => {
+        intents.set(key, "pi_external");
+        return { paymentIntentId: "pi_external", status: "processing" };
+      });
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession });
+      const gen1 = { ...FAILED_NO_PI, id: "attempt_1", status: "failed",
+        provider_payment_id: null, failure_code: "StripeInvalidRequestError",
+        payment_id: "rental_payment_gen1", idempotency_key: "autopay:enrollment_1:charge_1" };
+      const db = { from: vi.fn() };
+      const paymentInsert = chain({ data: { id: "rental_payment_workerA" }, error: null });
+      const transition = chain({ data: [], error: null });
+      const paymentVoid = chain({ error: null });
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: gen1, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(paymentInsert)
+        .mockReturnValueOnce(transition)
+        .mockReturnValueOnce(paymentVoid);
+      const out = await executeAutopayAttempt(db, "enrollment_1", "charge_1");
+      expect(out.httpStatus).toBe(409);
+      expect(out.body).toEqual({ error: "Autopay attempt changed concurrently; not retried." });
+      // The claim re-validates the exact generation read: payment_id,
+      // idempotency_key, and the safe failure classification, plus null
+      // provider_payment_id. A stale worker naming gen1 cannot match gen2.
+      const eqCalls = transition.eq.mock.calls;
+      expect(eqCalls).toContainEqual(["payment_id", "rental_payment_gen1"]);
+      expect(eqCalls).toContainEqual(["idempotency_key", "autopay:enrollment_1:charge_1"]);
+      expect(eqCalls).toContainEqual(["failure_code", "StripeInvalidRequestError"]);
+      expect(transition.is.mock.calls).toContainEqual(["provider_payment_id", null]);
+      // No Stripe call from the stale worker; its own payment row is voided.
+      expect(offSession).not.toHaveBeenCalled();
+      expect(intents.size).toBe(0);
       expect(paymentVoid.update).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
     });
 

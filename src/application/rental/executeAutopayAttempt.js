@@ -134,20 +134,34 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
   // No migration needed: unique(owner_id,enrollment_id,charge_id) forbids a
   // second attempt row, so a retry transitions the failed row in place. The
   // old failed payment row keeps the original failure as the audit trail.
-  // The status predicate is an optimistic-concurrency guard — if another
-  // sweep already retried this row, the update matches nothing and we bail
-  // instead of firing a second debit.
+  //
+  // Atomic generation claim (2026-10-02 concurrency fix): the predicate
+  // re-validates the EXACT safe generation read at eligibility time — not
+  // just status. A stale worker (one whose read predates another worker's
+  // full retry cycle) must match no rows: the intervening cycle wrote a new
+  // payment_id/idempotency_key and/or a new failure_code/provider_payment_id,
+  // so predicating on the read values fails the claim. Null-safe for legacy
+  // rows: .is(col, null) still guards, because any interfering claim writes
+  // non-null values.
   let attemptId;
   if (retryable) {
-    const transitioned = await db.from("rental_autopay_attempts").update({
+    const claim = db.from("rental_autopay_attempts").update({
       payment_id: paymentId, status: "created", idempotency_key: key,
       failure_code: null, failure_message: null, updated_at: timestamp,
-    }).eq("owner_id", enrollment.owner_id).eq("id", existing.data.id).eq("status", existing.data.status).select();
+    }).eq("owner_id", enrollment.owner_id).eq("id", existing.data.id).eq("status", existing.data.status)
+      .eq("failure_code", existing.data.failure_code)
+      .is("provider_payment_id", null);
+    if (existing.data.payment_id == null) claim.is("payment_id", null);
+    else claim.eq("payment_id", existing.data.payment_id);
+    if (existing.data.idempotency_key == null) claim.is("idempotency_key", null);
+    else claim.eq("idempotency_key", existing.data.idempotency_key);
+    const transitioned = await claim.select();
     if (transitioned.error) throw transitioned.error;
     if (!transitioned.data || transitioned.data.length === 0) {
-      // Lost a concurrent race: void the payment row this run just created so
-      // the in-flight guard never mistakes it for a live payment. The winning
-      // run owns the retry; the next sweep sees a clean state.
+      // Lost a concurrent race (or the row's classification changed under
+      // us): void the payment row this run just created so the in-flight
+      // guard never mistakes it for a live payment. The winning run owns the
+      // retry; the next sweep sees a clean state. No Stripe call is made.
       await db.from("rental_payments").update({ status: "cancelled", updated_at: timestamp })
         .eq("owner_id", enrollment.owner_id).eq("id", paymentId);
       return { httpStatus: 409, body: { error: "Autopay attempt changed concurrently; not retried." } };
