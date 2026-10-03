@@ -86,23 +86,50 @@ describe("updateWorkPackage", () => {
       packageId: "nope", patch: { title: "New" } });
     expect(result.httpStatus).toBe(404);
   });
+  it("rejects earned_qty overruns against the stored planned_qty", async () => {
+    const db = mockDb([chain({ data: { ...PKG, progress_basis: "quantity",
+      planned_qty: 10, planned_unit: "each", earned_qty: 0 }, error: null })]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { earned_qty: 20 } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/earned_qty/);
+  });
+  it("rejects lowering planned_qty below the stored earned_qty", async () => {
+    const db = mockDb([chain({ data: { ...PKG, progress_basis: "quantity",
+      planned_qty: 10, planned_unit: "each", earned_qty: 8 }, error: null })]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_qty: 5 } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+  });
+  it("returns 409 when the package moved under the edit", async () => {
+    const db = mockDb([
+      chain({ data: { ...PKG, progress_basis: "quantity", planned_qty: 10,
+        planned_unit: "each", earned_qty: 0, updated_at: "2026-10-02T21:00:00.000Z" }, error: null }),
+      chain({ data: null, error: null }),
+    ]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { earned_qty: 5 } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+  });
 });
 
 describe("transitionWorkPackage", () => {
-  it("applies effects and writes the audit row", async () => {
+  it("applies effects and the audit row atomically via RPC", async () => {
     const getChain = chain({ data: { ...PKG, status: "ready" }, error: null });
-    const updateChain = chain({ data: { ...PKG, status: "in_progress" }, error: null });
-    const auditChain = chain({ data: { id: "forge_wtr_1" }, error: null });
-    const db = mockDb([getChain, updateChain, auditChain]);
+    const rpcData = { ok: true, package: { ...PKG, status: "in_progress", actual_start: "2026-10-02" } };
+    const db = mockDb([getChain], async () => ({ data: rpcData, error: null }));
     const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
       packageId: "forge_wp_1", to: "in_progress", ctx: { userConfirmedStart: true } });
     expect(result.ok).toBe(true);
-    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
-      status: "in_progress", actual_start: expect.any(String),
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_transition_package", expect.objectContaining({
+      p_expected_from: "ready", p_to: "in_progress",
+      p_updates: expect.objectContaining({ actual_start: expect.any(String) }),
     }));
-    expect(auditChain.insert).toHaveBeenCalledWith(expect.objectContaining({
-      from_status: "ready", to_status: "in_progress", actor: "user_9",
-    }));
+    // One claim — no separate update + audit insert.
+    expect(db.from).toHaveBeenCalledTimes(1);
   });
   it("rejects illegal transitions with 409", async () => {
     const db = mockDb([chain({ data: PKG, error: null })]);
@@ -110,6 +137,70 @@ describe("transitionWorkPackage", () => {
       packageId: "forge_wp_1", to: "ready", ctx: {} });
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(409);
+  });
+  it("ignores fabricated client attestedGates — readiness needs stored attestations", async () => {
+    const pkg = { ...PKG, status: "readiness_review", package_type: "other", description: "Scope text." };
+    const db = mockDb([
+      chain({ data: pkg, error: null }),
+      chain({ data: [], error: null }),
+    ]);
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", to: "ready", ctx: { attestedGates: ["scope", "crew", "safety"] } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+  it("reaches ready when every applicable gate has a stored attestation", async () => {
+    const pkg = { ...PKG, status: "readiness_review", package_type: "other", description: "Scope text." };
+    const attestations = [
+      { gate: "scope", not_applicable: false, na_reason: null, at: "2026-10-02T10:00:00Z" },
+      { gate: "crew", not_applicable: false, na_reason: null, at: "2026-10-02T10:00:00Z" },
+      { gate: "safety", not_applicable: true, na_reason: "No energized work.", at: "2026-10-02T10:00:00Z" },
+    ];
+    const db = mockDb([
+      chain({ data: pkg, error: null }),
+      chain({ data: attestations, error: null }),
+    ], async () => ({ data: { ok: true, package: { ...pkg, status: "ready" } }, error: null }));
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", to: "ready", ctx: {} });
+    expect(result.ok).toBe(true);
+  });
+  it("rejects forged reopen authority from an ordinary member", async () => {
+    const pkg = { ...PKG, status: "verified_closed", designated_verifier: null };
+    const db = mockDb([chain({ data: pkg, error: null })]);
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", to: "in_progress",
+      ctx: { reopenAuthority: true, reopenReason: "restart" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+  it("allows reopen by the owner and by the designated verifier", async () => {
+    for (const actor of ["owner_1", "user_9"]) {
+      const pkg = { ...PKG, status: "verified_closed",
+        designated_verifier: actor === "owner_1" ? null : "user_9" };
+      const db = mockDb([chain({ data: pkg, error: null })],
+        async () => ({ data: { ok: true, package: { ...pkg, status: "in_progress" } }, error: null }));
+      const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor,
+        packageId: "forge_wp_1", to: "in_progress", ctx: { reopenReason: "restart" } });
+      expect(result.ok).toBe(true);
+    }
+  });
+  it("returns 409 when a concurrent transition wins the claim", async () => {
+    const db = mockDb([chain({ data: { ...PKG, status: "ready" }, error: null })],
+      async () => ({ data: { ok: false, error: "conflict" }, error: null }));
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", to: "in_progress", ctx: { userConfirmedStart: true } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+  });
+  it("propagates an RPC failure with no partial write", async () => {
+    const db = mockDb([chain({ data: { ...PKG, status: "ready" }, error: null })],
+      async () => { throw new Error("audit insert failed"); });
+    await expect(transitionWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", to: "in_progress", ctx: { userConfirmedStart: true } }))
+      .rejects.toThrow("audit insert failed");
+    expect(db.from).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -161,24 +252,33 @@ describe("recordGateAttestation", () => {
       packageId: "p", gate: "permit", statement: "No permit needed.", notApplicable: true });
     expect(r2.httpStatus).toBe(400);
   });
+  it("rejects non-canonical gate keys", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })]);
+    const result = await recordGateAttestation(db, { ownerId: "owner_1", actor: "u",
+      packageId: "p", gate: "scope_frozen", statement: "Scope frozen." });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/gate must be one of/);
+  });
 });
 
 describe("freezeScopeBaseline", () => {
-  it("freezes version 1 with a content hash and advances the pointer", async () => {
+  it("freezes version 1 atomically via RPC", async () => {
     const membership = [{ key: "BUNDLE-01", description: "Pull bundle", quantity: 1, unit: "each" }];
-    const getChain = chain({ data: PKG, error: null });
-    const insertChain = chain({ data: { id: "forge_wsb_1", version: 1 }, error: null });
-    const updateChain = chain({ error: null });
-    const db = mockDb([getChain, insertChain, updateChain]);
+    let seenArgs = null;
+    const db = mockDb([chain({ data: PKG, error: null })],
+      async (fn, args) => {
+        seenArgs = args;
+        return { data: { ok: true, baseline: { id: "forge_wsb_1", version: 1,
+          membership_hash: args.p_membership_hash } }, error: null };
+      });
     const result = await freezeScopeBaseline(db, { ownerId: "owner_1", actor: "user_9",
       packageId: "forge_wp_1", membership });
     expect(result.ok).toBe(true);
-    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({
-      version: 1, supersedes_id: null, membership_hash: expect.stringMatching(/^fnv1a:/),
-    }));
-    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
-      scope_baseline_id: "forge_wsb_1",
-    }));
+    expect(result.baseline.version).toBe(1);
+    expect(result.baseline.membership_hash).toMatch(/^fnv1a:/);
+    expect(seenArgs.p_membership).toEqual(membership);
+    expect(db.from).toHaveBeenCalledTimes(1);
   });
   it("refuses a second freeze — updates go through the change workflow", async () => {
     const db = mockDb([chain({ data: { ...PKG, scope_baseline_id: "forge_wsb_1" }, error: null })]);
@@ -186,12 +286,19 @@ describe("freezeScopeBaseline", () => {
       packageId: "p", membership: [{ key: "a" }] });
     expect(result.httpStatus).toBe(409);
   });
+  it("maps a concurrent freeze to 409 with no partial baseline", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })],
+      async () => ({ data: { ok: false, error: "already_frozen" }, error: null }));
+    const result = await freezeScopeBaseline(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", membership: [{ key: "a" }] });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+  });
 });
 
 describe("proposeScopeChange + decideScopeChange", () => {
   const CHANGE = { id: "forge_wsc_1", owner_id: "owner_1", package_id: "forge_wp_1",
     baseline_version: 1, change_type: "substitution", status: "proposed" };
-  const V1 = { id: "forge_wsb_1", version: 1, supersedes_id: null };
 
   it("proposes a change against a frozen baseline", async () => {
     const db = mockDb([
@@ -205,42 +312,54 @@ describe("proposeScopeChange + decideScopeChange", () => {
     expect(result.change.status).toBe("proposed");
   });
 
-  it("approves by inserting a superseding version and advancing the pointer atomically", async () => {
+  it("approves through the atomic decide RPC", async () => {
     const membership2 = [{ key: "BUNDLE-02", description: "Pull bundle", quantity: 1, unit: "each" }];
-    const db = mockDb([
-      chain({ data: CHANGE, error: null }),
-      chain({ data: [V1], error: null }),
-      chain({ data: { id: "forge_wsb_2", version: 2 }, error: null }),
-      chain({ data: [{ id: "forge_wp_1" }], error: null }),
-      chain({ data: { ...CHANGE, status: "approved", resulting_baseline_version: 2 }, error: null }),
-    ]);
+    let seenFn = null;
+    const db = mockDb([], async (fn) => {
+      seenFn = fn;
+      return { data: { ok: true,
+        change: { ...CHANGE, status: "approved", resulting_baseline_version: 2 },
+        baseline: { id: "forge_wsb_2", version: 2 } }, error: null };
+    });
     const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
       changeId: "forge_wsc_1", approve: true, newMembership: membership2 });
     expect(result.ok).toBe(true);
+    expect(seenFn).toBe("forge_work_decide_scope_change");
     expect(result.baseline.version).toBe(2);
     expect(result.change.resulting_baseline_version).toBe(2);
+    expect(db.from).not.toHaveBeenCalled();
   });
 
-  it("rejects approval when the baseline moved under the proposal", async () => {
-    const v2 = { id: "forge_wsb_2", version: 2, supersedes_id: "forge_wsb_1" };
-    const db = mockDb([
-      chain({ data: CHANGE, error: null }),
-      chain({ data: [V1, v2], error: null }),
-    ]);
+  it("maps baseline_moved to 409", async () => {
+    const db = mockDb([], async () => ({ data: { ok: false, error: "baseline_moved" }, error: null }));
     const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
       changeId: "forge_wsc_1", approve: true, newMembership: [{ key: "x" }] });
     expect(result.httpStatus).toBe(409);
   });
 
-  it("rejects a change outright", async () => {
-    const db = mockDb([
-      chain({ data: CHANGE, error: null }),
-      chain({ data: { ...CHANGE, status: "rejected" }, error: null }),
-    ]);
+  it("maps a racing decision to 409", async () => {
+    const db = mockDb([], async () => ({ data: { ok: false, error: "already_decided" }, error: null }));
+    const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
+      changeId: "forge_wsc_1", approve: true, newMembership: [{ key: "x" }] });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+  });
+
+  it("rejects a change through the atomic decide RPC", async () => {
+    const db = mockDb([], async () => ({ data: { ok: true,
+      change: { ...CHANGE, status: "rejected" } }, error: null }));
     const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
       changeId: "forge_wsc_1", approve: false });
     expect(result.ok).toBe(true);
     expect(result.change.status).toBe("rejected");
+  });
+
+  it("requires the new membership list on approval", async () => {
+    const db = mockDb([]);
+    const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
+      changeId: "forge_wsc_1", approve: true, newMembership: [] });
+    expect(result.httpStatus).toBe(400);
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
 

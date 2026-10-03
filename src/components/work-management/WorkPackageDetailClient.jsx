@@ -2,13 +2,22 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50";
 const btnPrimary = `${btn} bg-slate-900 text-white hover:bg-slate-700`;
 const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`;
+
+// Friendly labels for the canonical gate keys (WP_GATES). The selector is
+// driven by defaultGatesFor(package_type); labels are display-only.
+const GATE_LABELS = {
+  scope: "Scope", design: "Design / drawings", predecessor: "Predecessors",
+  material: "Materials", crew: "Crew", permit: "Permits", site: "Site access",
+  safety: "Safety", evidence: "Evidence", equipment_readiness: "Equipment readiness",
+  inspection_prerequisite: "Inspection prerequisites", logistics: "Logistics",
+};
 
 function Field({ title, value }) {
   return (
@@ -94,7 +103,7 @@ export default function WorkPackageDetailClient({ initial }) {
     const { response, data } = await call(`/api/work-packages/${pkg.id}/attestations`, "POST", attestation);
     if (response.ok) {
       setAttestations((prev) => [data.attestation, ...prev]);
-      setAttestation({ gate: "", statement: "" });
+      setAttestation({ gate: "", statement: "", notApplicable: false, naReason: "" });
     }
   }
 
@@ -224,7 +233,7 @@ export default function WorkPackageDetailClient({ initial }) {
               <div className="flex gap-2">
                 <input
                   className={input}
-                  placeholder='Context as JSON, e.g. {"userConfirmedStart": true}'
+                  placeholder='Context as JSON, e.g. {"userConfirmedStart": true}. Gates, verifier identity, and reopen/override authority are derived server-side.'
                   value={transitionCtx}
                   onChange={(e) => setTransitionCtx(e.target.value)}
                 />
@@ -254,21 +263,37 @@ export default function WorkPackageDetailClient({ initial }) {
         <p className="mt-1 text-xs text-slate-500">
           Human attestations feed the Readiness Review → Ready interim rule (Rung 1).
         </p>
-        <form onSubmit={onAttest} className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <select className={`${input} sm:w-40`} value={attestation.gate} onChange={(e) => setAttestation({ ...attestation, gate: e.target.value })} required>
-            <option value="">Gate…</option>
-            {["scope_frozen", "drawings", "materials", "permits", "crew", "equipment", "access", "safety", "quality", "logistics", "stakeholders", "schedule"].map((g) => (
-              <option key={g} value={g}>{g.replace(/_/g, " ")}</option>
-            ))}
-          </select>
-          <input className={`${input} flex-1`} placeholder="Statement" value={attestation.statement} onChange={(e) => setAttestation({ ...attestation, statement: e.target.value })} required />
+        <form onSubmit={onAttest} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div>
+            <label className={label}>Gate</label>
+            <select className={`${input} sm:w-44`} value={attestation.gate} onChange={(e) => setAttestation({ ...attestation, gate: e.target.value })} required>
+              <option value="">Gate…</option>
+              {defaultGatesFor(pkg.package_type).map((g) => (
+                <option key={g} value={g}>{GATE_LABELS[g] || g}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className={label}>Statement</label>
+            <input className={input} placeholder="Statement" value={attestation.statement} onChange={(e) => setAttestation({ ...attestation, statement: e.target.value })} required />
+          </div>
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            <input type="checkbox" checked={!!attestation.notApplicable} onChange={(e) => setAttestation({ ...attestation, notApplicable: e.target.checked })} />
+            N/A
+          </label>
+          {attestation.notApplicable && (
+            <div className="flex-1">
+              <label className={label}>N/A reason</label>
+              <input className={input} placeholder="Why not applicable" value={attestation.naReason || ""} onChange={(e) => setAttestation({ ...attestation, naReason: e.target.value })} required />
+            </div>
+          )}
           <button type="submit" className={btnPrimary} disabled={busy}>Attest</button>
         </form>
         {attestations.length > 0 && (
           <ul className="mt-3 space-y-1 text-xs text-slate-500">
             {attestations.map((a) => (
               <li key={a.id}>
-                {new Date(a.at).toLocaleString()} — <span className="font-medium">{a.gate.replace(/_/g, " ")}</span>
+                {new Date(a.at).toLocaleString()} — <span className="font-medium">{GATE_LABELS[a.gate] || a.gate}</span>
                 {a.not_applicable ? " (N/A)" : ""} — {a.statement}
               </li>
             ))}

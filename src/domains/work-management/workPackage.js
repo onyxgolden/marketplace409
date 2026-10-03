@@ -107,12 +107,14 @@ function staticTransitionRows() {
       requires: needs(["verifier", "rejection_reason"]),
       effects: { clearActualFinish: true } },
     // Audited reopen from terminal states. Never straight back to Complete.
+    // Both reopen rows clear actual_finish (lifecycle.md): the package is no
+    // longer reported complete once it returns to work.
     { from: WP_STATUS.VERIFIED_CLOSED, to: WP_STATUS.IN_PROGRESS,
       requires: needs(["reopen_authority", "reopen_reason"]),
       effects: { clearVerified: true, clearActualFinish: true } },
     { from: WP_STATUS.CANCELLED, to: WP_STATUS.DRAFT,
       requires: needs(["reopen_authority", "reopen_reason"]),
-      effects: {} },
+      effects: { clearActualFinish: true } },
   ];
 }
 
@@ -169,11 +171,15 @@ function requirementSatisfied(req, pkg, ctx) {
     case "planned_dates": return Boolean(pkg.planned_start && pkg.planned_finish);
     case "responsible_party": return Boolean(pkg.responsible_party);
     case "scope_present":
-      // Industrial packages need a frozen baseline; all packages need scope text.
+      // lifecycle.md: scope text present for ALL packages; industrial and
+      // capital packages additionally need a frozen baseline.
+      if (typeof pkg.description !== "string" || pkg.description.trim().length === 0) {
+        return false;
+      }
       if (pkg.package_type === "industrial" || pkg.package_type === "capital_project") {
         return Boolean(pkg.scope_baseline_id);
       }
-      return typeof pkg.description === "string" && pkg.description.trim().length > 0;
+      return true;
     case "all_applicable_gates_ready": {
       // Interim rule (Rung 3 engine not shipped): gates are satisfied by
       // explicit human attestations recorded per gate. ctx.attestedGates is
@@ -189,8 +195,11 @@ function requirementSatisfied(req, pkg, ctx) {
       return ctx.blockerCleared === true || ctx.overrideAuthorized === true;
     case "completion_basis": {
       // percent_complete = 100 on the package's basis, or an explicit
-      // completion report with reason.
-      if (ctx.explicitCompletionReport === true) return true;
+      // completion report WITH a reason (lifecycle.md: "explicit completion
+      // report with reason"). A bare flag is not a report.
+      if (ctx.explicitCompletionReport === true) {
+        return typeof ctx.completionReason === "string" && ctx.completionReason.trim().length > 0;
+      }
       const pct = derivePercentComplete(pkg);
       return pct === 100;
     }
@@ -277,8 +286,9 @@ export function validatePackageInput(input, { isEdit = false } = {}) {
     }
   }
   // percent_complete is never hand-set on create/edit; it is derived or
-  // rule-credited through the progress path.
-  if (input.percent_complete !== undefined) {
+  // rule-credited through the progress path. (A stored null carried through
+  // a merged edit candidate is not hand-setting.)
+  if (input.percent_complete !== undefined && input.percent_complete !== null) {
     errors.push("percent_complete is derived and cannot be set directly.");
   }
   if (input.status !== undefined) {

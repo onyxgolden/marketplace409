@@ -10,8 +10,8 @@
 // production here; they need Jason's separate word like every migration.
 
 import {
-  WP_STATUS, validatePackageInput, validateTransition, derivePercentComplete,
-  hashScopeMembership, deriveCurrentBaseline, isTerminalStatus,
+  WP_STATUS, WP_GATES, validatePackageInput, validateTransition, findTransition,
+  derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus,
 } from "@/domains/work-management/workPackage.js";
 
 const TABLES = Object.freeze({
@@ -108,54 +108,177 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   for (const key of EDITABLE_FIELDS) {
     if (patch[key] !== undefined) filtered[key] = patch[key];
   }
-  const validation = validatePackageInput({ ...filtered, title: filtered.title ?? pkg.title }, { isEdit: true });
+  // Validate the FULLY MERGED candidate against persisted denominators and
+  // earned amounts — never the patch alone. A patch of { earned_qty: 20 }
+  // against a stored planned_qty of 10 must be rejected, not clamped.
+  // Stored status/code/percent_complete are stripped first: the hand-set
+  // guards target client input, not values already in the row.
+  const merged = { ...pkg, ...filtered };
+  const { status: _s, code: _c, percent_complete: _p, ...validatable } = merged;
+  const validation = validatePackageInput(validatable, { isEdit: true });
   if (!validation.ok) {
     return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   }
+  // designated_verifier is owner-only and travels outside EDITABLE_FIELDS.
+  let verifierChange = null;
+  if (patch.designated_verifier !== undefined) {
+    if (actor !== ownerId) {
+      return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
+    }
+    verifierChange = patch.designated_verifier || null;
+  }
   const now = new Date().toISOString();
-  const merged = { ...pkg, ...filtered, updated_by: actor, updated_at: now };
-  merged.percent_complete = derivePercentComplete(merged);
-  merged.progress_updated_at = now;
-  const { data, error } = await db.from(TABLES.packages).update({
-    ...filtered, percent_complete: merged.percent_complete,
+  const withDerived = { ...merged, updated_by: actor, updated_at: now };
+  withDerived.percent_complete = derivePercentComplete(withDerived);
+  const updatePayload = {
+    ...filtered, percent_complete: withDerived.percent_complete,
     progress_updated_at: now, updated_by: actor, updated_at: now,
-  }).eq("owner_id", ownerId).eq("id", packageId).select("*").single();
+  };
+  // Optimistic concurrency: commit only against the version read. A
+  // concurrent transition (e.g. another request closing the package) moves
+  // updated_at, so this matches zero rows and the edit is rejected with 409
+  // instead of silently landing on a terminal package.
+  let query = db.from(TABLES.packages).update(updatePayload)
+    .eq("owner_id", ownerId).eq("id", packageId);
+  if (pkg.updated_at) query = query.eq("updated_at", pkg.updated_at);
+  const { data, error } = await query.select("*").maybeSingle();
   if (error) throw error;
+  if (!data) {
+    return { ok: false, httpStatus: 409, error: "Package changed while editing; refresh and retry." };
+  }
+  if (verifierChange !== null || patch.designated_verifier !== undefined) {
+    return setDesignatedVerifier(db, { ownerId, actor, packageId, verifier: verifierChange });
+  }
   return { ok: true, package: data };
+}
+
+// Owner-only verifier designation, via the guarded RPC (the lifecycle
+// trigger rejects direct designated_verifier writes).
+export async function setDesignatedVerifier(db, { ownerId, actor, packageId, verifier }) {
+  if (actor !== ownerId) {
+    return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
+  }
+  const { data, error } = await db.rpc("forge_work_set_designated_verifier", {
+    p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
+    p_verifier: verifier || "",
+  });
+  if (error) throw error;
+  if (!data || data.ok !== true) {
+    const err = (data && data.error) || "unknown";
+    if (err === "not_found") return { ok: false, httpStatus: 404, error: "Work package not found." };
+    if (err === "forbidden") return { ok: false, httpStatus: 403, error: "Only the workspace owner may designate a verifier." };
+    throw new Error(`forge_work_set_designated_verifier: ${err}`);
+  }
+  return { ok: true, package: data.package };
+}
+
+// Latest stored attestation per gate. A gate counts as satisfied when its
+// latest attestation is a plain attestation or an N/A with a reason
+// (lifecycle.md: N/A with provenance counts as satisfied). Absence is never
+// evidence — this is the Rung 1 interim readiness input, read from the
+// database, never from client JSON.
+async function getAttestedGates(db, ownerId, packageId) {
+  const { data, error } = await db.from(TABLES.attestations)
+    .select("gate,not_applicable,na_reason,at")
+    .eq("owner_id", ownerId).eq("package_id", packageId)
+    .order("at", { ascending: false });
+  if (error) throw error;
+  const seen = new Set();
+  const satisfied = [];
+  for (const row of data || []) {
+    if (seen.has(row.gate)) continue;
+    seen.add(row.gate);
+    if (!row.not_applicable || row.na_reason) satisfied.push(row.gate);
+  }
+  return satisfied;
+}
+
+// Verification, gate overrides, and reopen belong to the workspace owner or
+// a designated verifier recorded on the package (lifecycle.md). Derived
+// from actor identity — never from a client boolean.
+function hasVerifierAuthority(pkg, actor, ownerId) {
+  if (actor === ownerId) return true;
+  return Boolean(pkg.designated_verifier && actor === pkg.designated_verifier);
 }
 
 export async function transitionWorkPackage(db, { ownerId, actor, packageId, to, ctx = {} }) {
   const pkg = await getPackage(db, ownerId, packageId);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
-  const check = validateTransition(pkg, to, ctx);
+
+  // ---- Server-side authoritative context (P1-1). The route forwards the
+  // caller's JSON, but attestedGates, reopenAuthority, overrideAuthorized,
+  // and verifier identity are re-derived here from stored rows and the
+  // authenticated actor. Client booleans are requests, not proof.
+  const authority = hasVerifierAuthority(pkg, actor, ownerId);
+  const serverCtx = {
+    userConfirmedStart: ctx.userConfirmedStart === true,
+    blockedReason: ctx.blockedReason,
+    blockedSource: ctx.blockedSource,
+    blockerCleared: ctx.blockerCleared === true,
+    overrideAuthorized: authority,
+    explicitCompletionReport: ctx.explicitCompletionReport === true,
+    completionReason: ctx.completionReason,
+    // Interim per lifecycle.md (Rung 10 ships the real checklist): the
+    // verifier's recorded assertion, audited — but only an authorized
+    // verifier can make it.
+    completionCriteriaMet: ctx.completionCriteriaMet === true,
+    requiredEvidenceOk: ctx.requiredEvidenceOk === true,
+    verifier: authority ? actor : undefined,
+    rejectionReason: ctx.rejectionReason,
+    reopenAuthority: authority,
+    reopenReason: ctx.reopenReason,
+    cancelReason: ctx.cancelReason,
+    evidenceRef: ctx.evidenceRef,
+  };
+  const row = findTransition(pkg, to);
+  if (!row) {
+    return { ok: false, httpStatus: 409, error: `Illegal transition: ${pkg.status} -> ${to}.` };
+  }
+  if (row.requires.includes("all_applicable_gates_ready")) {
+    serverCtx.attestedGates = await getAttestedGates(db, ownerId, packageId);
+  }
+  const check = validateTransition(pkg, to, serverCtx);
   if (!check.ok) return { ok: false, httpStatus: 409, error: check.error };
+
+  // ---- Atomic claim (P1-2). The RPC claims the package from the expected
+  // status, applies effects, and appends the audit row in ONE transaction.
+  // A concurrent transition wins the claim; the loser gets 409 with nothing
+  // written. A failed audit insert rolls the status change back with it.
   const now = new Date().toISOString();
-  const updates = { status: to, updated_by: actor, updated_at: now };
   const fx = check.effects || {};
-  if (fx.setActualStart) updates.actual_start = now.slice(0, 10);
-  if (fx.setActualFinish) updates.actual_finish = now.slice(0, 10);
-  if (fx.clearActualFinish) updates.actual_finish = null;
-  if (fx.setVerified) { updates.verified_at = now; updates.verified_by = actor; }
-  if (fx.clearVerified) { updates.verified_at = null; updates.verified_by = null; }
+  const p_updates = {};
+  if (fx.setActualStart) p_updates.actual_start = now.slice(0, 10);
+  if (fx.setActualFinish) p_updates.actual_finish = now.slice(0, 10);
+  if (fx.clearActualFinish) p_updates.actual_finish = null;
+  if (fx.setVerified) { p_updates.verified_at = now; p_updates.verified_by = actor; }
+  if (fx.clearVerified) { p_updates.verified_at = null; p_updates.verified_by = null; }
   if (fx.recordBlockedFrom) {
-    updates.blocked_from = fx.recordBlockedFrom;
-    updates.blocked_reason = ctx.blockedReason;
-    updates.blocked_since = now;
+    p_updates.blocked_from = fx.recordBlockedFrom;
+    p_updates.blocked_reason = ctx.blockedReason;
+    p_updates.blocked_since = now;
   }
   if (fx.returnFromBlocked) {
-    updates.blocked_reason = null; updates.blocked_since = null; updates.blocked_from = null;
+    p_updates.blocked_reason = null; p_updates.blocked_since = null; p_updates.blocked_from = null;
   }
-  const { data: updated, error: updateError } = await db.from(TABLES.packages)
-    .update(updates).eq("owner_id", ownerId).eq("id", packageId).select("*").single();
-  if (updateError) throw updateError;
-  const { error: auditError } = await db.from(TABLES.transitions).insert({
-    owner_id: ownerId, id: newId("forge_wtr"), package_id: packageId,
-    from_status: pkg.status, to_status: to, actor, at: now,
-    reason: ctx.blockedReason || ctx.reopenReason || ctx.rejectionReason || ctx.cancelReason || null,
-    evidence_ref: ctx.evidenceRef || null,
+  const reason = ctx.blockedReason || ctx.reopenReason || ctx.rejectionReason
+    || ctx.cancelReason || ctx.completionReason || null;
+  const { data: rpcData, error: rpcError } = await db.rpc("forge_work_transition_package", {
+    p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
+    p_expected_from: pkg.status, p_to: to, p_updates,
+    p_reason: reason, p_evidence_ref: ctx.evidenceRef || null,
   });
-  if (auditError) throw auditError;
-  return { ok: true, package: updated };
+  if (rpcError) throw rpcError;
+  if (!rpcData || rpcData.ok !== true) {
+    const err = (rpcData && rpcData.error) || "conflict";
+    if (err === "conflict") {
+      return { ok: false, httpStatus: 409, error: `Package moved while transitioning (was ${pkg.status}); refresh and retry.` };
+    }
+    if (err === "forbidden") {
+      return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
+    }
+    throw new Error(`forge_work_transition_package: ${err}`);
+  }
+  return { ok: true, package: rpcData.package };
 }
 
 export async function getWorkPackageDetail(db, { ownerId, packageId }) {
@@ -196,6 +319,12 @@ export async function listWorkPackages(db, { ownerId, status, packageType }) {
 export async function recordGateAttestation(db, { ownerId, actor, packageId, gate, statement, notApplicable, naReason }) {
   const pkg = await getPackage(db, ownerId, packageId);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
+  // Gate keys come from the canonical set (WP_GATES) — the UI drives its
+  // selector from defaultGatesFor(package_type), and the server rejects
+  // anything else before the database CHECK does.
+  if (!WP_GATES.includes(gate)) {
+    return { ok: false, httpStatus: 400, error: `gate must be one of: ${WP_GATES.join(", ")}.` };
+  }
   if (typeof statement !== "string" || statement.trim().length === 0) {
     return { ok: false, httpStatus: 400, error: "An attestation statement is required." };
   }
@@ -222,19 +351,26 @@ export async function freezeScopeBaseline(db, { ownerId, actor, packageId, membe
   if (pkg.scope_baseline_id) {
     return { ok: false, httpStatus: 409, error: "Scope is already frozen; post-freeze changes go through the scope-change workflow." };
   }
-  const now = new Date().toISOString();
-  const row = {
-    owner_id: ownerId, id: newId("forge_wsb"), package_id: packageId, version: 1,
-    frozen_at: now, frozen_by: actor, membership,
-    membership_hash: hashScopeMembership(membership), supersedes_id: null,
-  };
-  const { data: baseline, error: bError } = await db.from(TABLES.baselines).insert(row).select("*").single();
-  if (bError) throw bError;
-  const { error: pError } = await db.from(TABLES.packages)
-    .update({ scope_baseline_id: baseline.id, updated_by: actor, updated_at: now })
-    .eq("owner_id", ownerId).eq("id", packageId);
-  if (pError) throw pError;
-  return { ok: true, baseline };
+  // Atomic freeze (P1-3): the RPC inserts version 1 and advances the pointer
+  // in ONE transaction, conditional on the pointer still being null. A
+  // failure can never leave a committed version-1 row with no pointer, and
+  // two concurrent freezes cannot both succeed.
+  const { data, error } = await db.rpc("forge_work_freeze_scope", {
+    p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
+    p_membership: membership, p_membership_hash: hashScopeMembership(membership),
+  });
+  if (error) throw error;
+  if (!data || data.ok !== true) {
+    const err = (data && data.error) || "unknown";
+    if (err === "already_frozen") {
+      return { ok: false, httpStatus: 409, error: "Scope is already frozen; post-freeze changes go through the scope-change workflow." };
+    }
+    if (err === "forbidden") {
+      return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
+    }
+    throw new Error(`forge_work_freeze_scope: ${err}`);
+  }
+  return { ok: true, baseline: data.baseline };
 }
 
 export async function proposeScopeChange(db, { ownerId, actor, packageId, baselineVersion, changeType, description }) {
@@ -259,58 +395,40 @@ export async function proposeScopeChange(db, { ownerId, actor, packageId, baseli
   return { ok: true, change: data };
 }
 
-// Approve/reject a scope change. Approval commits atomically per the spec:
-// change -> approved, new baseline row with supersedes_id, package pointer
-// advances with a concurrency check against the expected prior version.
+// Approve/reject a scope change. The decision is atomic per the spec: the
+// RPC claims the change (proposed -> decided), inserts the superseding
+// baseline, advances the package pointer, and marks the change — all in ONE
+// transaction. Any failure rolls back every row; a racing rejection and
+// approval cannot both land.
 export async function decideScopeChange(db, { ownerId, actor, changeId, approve, newMembership }) {
-  const { data: change, error: cError } = await db.from(TABLES.changes).select("*")
-    .eq("owner_id", ownerId).eq("id", changeId).maybeSingle();
-  if (cError) throw cError;
-  if (!change) return { ok: false, httpStatus: 404, error: "Scope change not found." };
-  if (change.status !== "proposed") {
-    return { ok: false, httpStatus: 409, error: `Change is already ${change.status}.` };
-  }
-  const now = new Date().toISOString();
-  if (!approve) {
-    const { data, error } = await db.from(TABLES.changes)
-      .update({ status: "rejected", decided_by: actor, decided_at: now })
-      .eq("owner_id", ownerId).eq("id", changeId).select("*").single();
-    if (error) throw error;
-    return { ok: true, change: data };
-  }
-  if (!Array.isArray(newMembership) || newMembership.length === 0) {
+  if (approve && (!Array.isArray(newMembership) || newMembership.length === 0)) {
     return { ok: false, httpStatus: 400, error: "Approving a change requires the new membership list." };
   }
-  const { data: baselines, error: bError } = await db.from(TABLES.baselines).select("*")
-    .eq("owner_id", ownerId).eq("package_id", change.package_id).order("version", { ascending: true });
-  if (bError) throw bError;
-  const current = deriveCurrentBaseline(baselines || []);
-  if (!current || current.version !== change.baseline_version) {
-    return { ok: false, httpStatus: 409, error: "The baseline moved while this change was proposed; re-propose against the current version." };
+  const { data, error } = await db.rpc("forge_work_decide_scope_change", {
+    p_owner_id: ownerId, p_change_id: changeId, p_actor: actor,
+    p_approve: Boolean(approve),
+    p_new_membership: approve ? newMembership : [],
+    p_membership_hash: approve ? hashScopeMembership(newMembership) : "",
+  });
+  if (error) throw error;
+  if (!data || data.ok !== true) {
+    const err = (data && data.error) || "unknown";
+    if (err === "not_found") return { ok: false, httpStatus: 404, error: "Scope change not found." };
+    if (err === "already_decided") {
+      return { ok: false, httpStatus: 409, error: "Change was already decided by a concurrent request." };
+    }
+    if (err === "baseline_moved") {
+      return { ok: false, httpStatus: 409, error: "The baseline moved while this change was proposed; re-propose against the current version." };
+    }
+    if (err === "conflict") {
+      return { ok: false, httpStatus: 409, error: "Concurrent approval advanced the baseline first; re-propose." };
+    }
+    if (err === "forbidden") {
+      return { ok: false, httpStatus: 403, error: "No workspace access for this change." };
+    }
+    throw new Error(`forge_work_decide_scope_change: ${err}`);
   }
-  const newVersion = current.version + 1;
-  const baselineRow = {
-    owner_id: ownerId, id: newId("forge_wsb"), package_id: change.package_id, version: newVersion,
-    frozen_at: now, frozen_by: actor, membership: newMembership,
-    membership_hash: hashScopeMembership(newMembership), supersedes_id: current.id,
-  };
-  const { data: newBaseline, error: nbError } = await db.from(TABLES.baselines).insert(baselineRow).select("*").single();
-  if (nbError) throw nbError;
-  // Concurrency check: only advance if the pointer still aims at the version
-  // this approval was proposed against.
-  const { data: advanced, error: pError } = await db.from(TABLES.packages)
-    .update({ scope_baseline_id: newBaseline.id, updated_by: actor, updated_at: now })
-    .eq("owner_id", ownerId).eq("id", change.package_id).eq("scope_baseline_id", current.id)
-    .select("id");
-  if (pError) throw pError;
-  if (!advanced || advanced.length === 0) {
-    return { ok: false, httpStatus: 409, error: "Concurrent approval advanced the baseline first; re-propose." };
-  }
-  const { data: decided, error: dError } = await db.from(TABLES.changes)
-    .update({ status: "approved", decided_by: actor, decided_at: now, resulting_baseline_version: newVersion })
-    .eq("owner_id", ownerId).eq("id", changeId).select("*").single();
-  if (dError) throw dError;
-  return { ok: true, change: decided, baseline: newBaseline };
+  return { ok: true, change: data.change, baseline: data.baseline || null };
 }
 
 export async function createAsset(db, { ownerId, actor, input }) {

@@ -84,7 +84,9 @@ describe("validateTransition", () => {
     expect(validateTransition(pkg, WP_STATUS.COMPLETE).ok).toBe(true);
     const partial = { ...pkg, earned_qty: 4 };
     expect(validateTransition(partial, WP_STATUS.COMPLETE).ok).toBe(false);
-    expect(validateTransition(partial, WP_STATUS.COMPLETE, { explicitCompletionReport: true }).ok).toBe(true);
+    expect(validateTransition(partial, WP_STATUS.COMPLETE, { explicitCompletionReport: true }).ok).toBe(false);
+    expect(validateTransition(partial, WP_STATUS.COMPLETE,
+      { explicitCompletionReport: true, completionReason: "punch list verified" }).ok).toBe(true);
   });
   it("rework clears actual_finish on Complete -> In Progress", () => {
     const pkg = { ...BASE_PKG, status: WP_STATUS.COMPLETE, actual_finish: "2026-11-20" };
@@ -125,6 +127,29 @@ describe("validateTransition", () => {
     expect(validateTransition(pkg, WP_STATUS.READINESS_REVIEW).ok).toBe(false);
     expect(validateTransition({ ...pkg, scope_baseline_id: "forge_wsb_1" },
       WP_STATUS.READINESS_REVIEW).ok).toBe(true);
+  });
+  it("requires scope text for industrial packages even with a frozen baseline", () => {
+    const pkg = { ...BASE_PKG, status: WP_STATUS.PLANNED, package_type: "industrial",
+      description: "  ", scope_baseline_id: "forge_wsb_1" };
+    expect(validateTransition(pkg, WP_STATUS.READINESS_REVIEW).ok).toBe(false);
+    expect(validateTransition({ ...pkg, description: "Exchanger bundle pull." },
+      WP_STATUS.READINESS_REVIEW).ok).toBe(true);
+  });
+  it("requires a reason on an explicit completion report", () => {
+    const pkg = { ...BASE_PKG, status: WP_STATUS.IN_PROGRESS, progress_basis: "quantity",
+      planned_qty: 10, planned_unit: "each", earned_qty: 40 };
+    expect(validateTransition(pkg, WP_STATUS.COMPLETE,
+      { explicitCompletionReport: true }).ok).toBe(false);
+    const r = validateTransition(pkg, WP_STATUS.COMPLETE,
+      { explicitCompletionReport: true, completionReason: "Field-verified complete." });
+    expect(r.ok).toBe(true);
+  });
+  it("clears actual_finish when Cancelled reopens to Draft", () => {
+    const pkg = { ...BASE_PKG, status: WP_STATUS.CANCELLED };
+    const r = validateTransition(pkg, WP_STATUS.DRAFT,
+      { reopenAuthority: true, reopenReason: "reinstated" });
+    expect(r.ok).toBe(true);
+    expect(r.effects.clearActualFinish).toBe(true);
   });
 });
 

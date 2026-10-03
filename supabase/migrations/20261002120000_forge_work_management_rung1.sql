@@ -86,6 +86,10 @@ create table if not exists forge_work_packages (
   -- Verification
   verified_at timestamptz,
   verified_by text,
+  -- Designated verifier: a workspace member the owner authorizes to verify,
+  -- override gates, and reopen. Changed only by the owner via
+  -- forge_work_set_designated_verifier (guarded by the lifecycle trigger).
+  designated_verifier text,
   -- Provenance
   created_by text,
   created_at timestamptz not null default now(),
@@ -321,6 +325,26 @@ create index if not exists forge_work_gate_attestations_pkg_idx
 -- RLS: shared-workspace model. Every table carries owner_id = the effective
 -- workspace owner; has_workspace_access(owner_id) admits active members.
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- RLS: shared-workspace model. Every table carries owner_id = the effective
+-- workspace owner; has_workspace_access(owner_id) admits active members.
+--
+-- Lifecycle integrity is enforced at the database boundary, not just in the
+-- API:
+--   * forge_work_package_transitions and forge_work_scope_baselines are
+--     append-only: workspace members can SELECT; rows are written only by the
+--     transactional RPCs below (SECURITY DEFINER, bypass RLS as table owner).
+--     No direct INSERT/UPDATE/DELETE policy exists for `authenticated`.
+--   * forge_work_packages lifecycle columns (status, scope_baseline_id,
+--     actual_*, verified_*, blocked_*, designated_verifier) change only
+--     through the RPCs — enforced by the forge_work_packages_lifecycle_guard
+--     trigger. Ordinary columns stay directly editable by workspace members.
+--   * forge_work_scope_changes: proposals are inserted by the API
+--     (status must be 'proposed'); decisions (approve/reject) go only through
+--     forge_work_decide_scope_change — enforced by trigger.
+--   * forge_work_gate_attestations are append-only evidence: INSERT + SELECT
+--     for workspace members, no UPDATE/DELETE.
+-- ---------------------------------------------------------------------------
 alter table forge_work_package_sequences enable row level security;
 alter table forge_work_packages enable row level security;
 alter table forge_work_package_transitions enable row level security;
@@ -342,10 +366,352 @@ begin
     'forge_work_locations','forge_work_scope_baselines',
     'forge_work_scope_changes','forge_work_gate_attestations']
   loop
+    -- Drop the old uniform FOR ALL policy and any policy this block creates,
+    -- so the migration is safely re-runnable.
     execute format('drop policy if exists %I on %I',
       'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_all', t);
+    execute format('drop policy if exists %I on %I',
+      'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_select', t);
     execute format(
-      'create policy %I on %I for all to authenticated using (has_workspace_access(owner_id)) with check (has_workspace_access(owner_id))',
-      'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_all', t);
+      'create policy %I on %I for select to authenticated using (has_workspace_access(owner_id))',
+      'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_select', t);
   end loop;
 end $$;
+
+-- forge_work_packages: direct INSERT + UPDATE of ordinary columns for
+-- workspace members. Lifecycle columns are trigger-guarded (see below).
+drop policy if exists forge_work_packages_workspace_insert on forge_work_packages;
+create policy forge_work_packages_workspace_insert on forge_work_packages
+  for insert to authenticated with check (has_workspace_access(owner_id));
+drop policy if exists forge_work_packages_workspace_update on forge_work_packages;
+create policy forge_work_packages_workspace_update on forge_work_packages
+  for update to authenticated
+  using (has_workspace_access(owner_id))
+  with check (has_workspace_access(owner_id));
+
+-- forge_work_scope_changes: the API inserts proposals only. Decisions are
+-- RPC-only (trigger-guarded); there is deliberately no UPDATE/DELETE policy.
+drop policy if exists forge_work_scope_changes_workspace_insert on forge_work_scope_changes;
+create policy forge_work_scope_changes_workspace_insert on forge_work_scope_changes
+  for insert to authenticated
+  with check (has_workspace_access(owner_id) and status = 'proposed');
+
+-- forge_work_gate_attestations: append-only human evidence.
+drop policy if exists forge_work_gate_attestations_workspace_insert on forge_work_gate_attestations;
+create policy forge_work_gate_attestations_workspace_insert on forge_work_gate_attestations
+  for insert to authenticated with check (has_workspace_access(owner_id));
+
+-- Ordinary working records keep full workspace access. The package sequence
+-- keeps its policy: it is advanced only by forge_work_next_package_number.
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'forge_work_package_sequences','forge_work_assets',
+    'forge_work_asset_components','forge_work_inspection_observations',
+    'forge_work_locations']
+  loop
+    execute format('drop policy if exists %I on %I',
+      'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_write', t);
+    execute format(
+      'create policy %I on %I for all to authenticated using (has_workspace_access(owner_id)) with check (has_workspace_access(owner_id))',
+      'forge_work_' || replace(t, 'forge_work_', '') || '_workspace_write', t);
+  end loop;
+end $$;
+
+-- NOTE: forge_work_package_transitions and forge_work_scope_baselines have
+-- NO direct-write policies for `authenticated`: they are written only by the
+-- transactional RPCs below, which run as SECURITY DEFINER (table owner) and
+-- therefore bypass RLS. This makes the audit log and baselines append-only
+-- at the database boundary even for authenticated table access.
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle guard triggers + transactional RPCs.
+--
+-- The application service performs validation in JS (gates from stored
+-- attestations, verifier authority from actor identity). These database
+-- objects provide the two things JS cannot: atomic multi-row claims and
+-- boundary enforcement against direct table writes.
+--
+-- Bypass mechanism: each RPC sets the transaction-local
+-- forge_work.lifecycle_rpc flag before writing. The triggers allow lifecycle
+-- column movement only when the flag is set. The flag is transaction-local
+-- (set_config(..., true)), so it can never leak into another transaction.
+-- ---------------------------------------------------------------------------
+
+create or replace function forge_work_packages_lifecycle_guard()
+returns trigger language plpgsql as $$
+declare
+  v_bypass boolean := coalesce(current_setting('forge_work.lifecycle_rpc', true) = 'on', false);
+begin
+  if TG_OP = 'INSERT' then
+    -- Packages are born in Draft with no lifecycle state. Anything else must
+    -- come through the transition RPC.
+    if NEW.status <> 'draft'
+       or NEW.actual_start is not null or NEW.actual_finish is not null
+       or NEW.verified_at is not null or NEW.verified_by is not null
+       or NEW.scope_baseline_id is not null
+       or NEW.blocked_reason is not null or NEW.blocked_since is not null
+       or NEW.blocked_from is not null then
+      raise exception 'forge_work: packages are created in draft; lifecycle state moves only through the lifecycle RPCs';
+    end if;
+    return NEW;
+  end if;
+  if v_bypass then
+    return NEW;
+  end if;
+  if NEW.status is distinct from OLD.status
+     or NEW.scope_baseline_id is distinct from OLD.scope_baseline_id
+     or NEW.actual_start is distinct from OLD.actual_start
+     or NEW.actual_finish is distinct from OLD.actual_finish
+     or NEW.verified_at is distinct from OLD.verified_at
+     or NEW.verified_by is distinct from OLD.verified_by
+     or NEW.blocked_reason is distinct from OLD.blocked_reason
+     or NEW.blocked_since is distinct from OLD.blocked_since
+     or NEW.blocked_from is distinct from OLD.blocked_from
+     or NEW.designated_verifier is distinct from OLD.designated_verifier then
+    raise exception 'forge_work: lifecycle columns change only through the lifecycle RPCs';
+  end if;
+  return NEW;
+end $$;
+
+drop trigger if exists forge_work_packages_lifecycle_guard_trg on forge_work_packages;
+create trigger forge_work_packages_lifecycle_guard_trg
+  before insert or update on forge_work_packages
+  for each row execute function forge_work_packages_lifecycle_guard();
+
+-- Scope-change decisions go only through forge_work_decide_scope_change.
+-- Proposals are inserted by the API with status = 'proposed' (policy-checked).
+create or replace function forge_work_scope_changes_guard()
+returns trigger language plpgsql as $$
+declare
+  v_bypass boolean := coalesce(current_setting('forge_work.lifecycle_rpc', true) = 'on', false);
+begin
+  if TG_OP = 'INSERT' then
+    if NEW.status <> 'proposed' then
+      raise exception 'forge_work: scope changes are proposed, never pre-decided';
+    end if;
+    return NEW;
+  end if;
+  if v_bypass then
+    return NEW;
+  end if;
+  raise exception 'forge_work: scope change decisions go through forge_work_decide_scope_change';
+end $$;
+
+drop trigger if exists forge_work_scope_changes_guard_trg on forge_work_scope_changes;
+create trigger forge_work_scope_changes_guard_trg
+  before insert or update on forge_work_scope_changes
+  for each row execute function forge_work_scope_changes_guard();
+
+-- ---------------------------------------------------------------------------
+-- forge_work_transition_package — atomic lifecycle transition.
+--
+-- Claims the package from the expected from-status, applies the lifecycle
+-- column updates, and appends the transition audit row in ONE transaction.
+-- If the package is not in the expected status (concurrent transition won),
+-- nothing is written and { ok: false, error: 'conflict' } is returned.
+-- If the audit insert fails, the status change rolls back with it: a failed
+-- transition can never leave a moved package with no audit row.
+--
+-- p_updates: jsonb object with any of actual_start, actual_finish,
+-- verified_at, verified_by, blocked_reason, blocked_since, blocked_from,
+-- designated_verifier. A key present with a JSON null clears the column.
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_transition_package(
+  p_owner_id text, p_package_id text, p_actor text,
+  p_expected_from text, p_to text,
+  p_updates jsonb, p_reason text, p_evidence_ref text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_pkg forge_work_packages%rowtype;
+begin
+  if not has_workspace_access(p_owner_id) then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  perform set_config('forge_work.lifecycle_rpc', 'on', true);
+  update forge_work_packages
+  set status = p_to,
+      actual_start = case when p_updates ? 'actual_start'
+        then (p_updates ->> 'actual_start')::date else actual_start end,
+      actual_finish = case when p_updates ? 'actual_finish'
+        then (p_updates ->> 'actual_finish')::date else actual_finish end,
+      verified_at = case when p_updates ? 'verified_at'
+        then (p_updates ->> 'verified_at')::timestamptz else verified_at end,
+      verified_by = case when p_updates ? 'verified_by'
+        then p_updates ->> 'verified_by' else verified_by end,
+      blocked_reason = case when p_updates ? 'blocked_reason'
+        then p_updates ->> 'blocked_reason' else blocked_reason end,
+      blocked_since = case when p_updates ? 'blocked_since'
+        then (p_updates ->> 'blocked_since')::timestamptz else blocked_since end,
+      blocked_from = case when p_updates ? 'blocked_from'
+        then p_updates ->> 'blocked_from' else blocked_from end,
+      designated_verifier = case when p_updates ? 'designated_verifier'
+        then p_updates ->> 'designated_verifier' else designated_verifier end,
+      updated_by = p_actor,
+      updated_at = now()
+  where owner_id = p_owner_id and id = p_package_id and status = p_expected_from
+  returning * into v_pkg;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'conflict');
+  end if;
+  insert into forge_work_package_transitions
+    (owner_id, package_id, from_status, to_status, actor, reason, evidence_ref)
+  values
+    (p_owner_id, p_package_id, p_expected_from, p_to, p_actor, p_reason, p_evidence_ref);
+  return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- forge_work_freeze_scope — atomic initial scope freeze.
+--
+-- Inserts baseline version 1 and advances the package pointer in ONE
+-- transaction. The pointer advance is conditional on scope_baseline_id still
+-- being null, so two concurrent freezes cannot both succeed and a failure
+-- can never leave a committed version-1 row with no package pointer.
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_freeze_scope(
+  p_owner_id text, p_package_id text, p_actor text,
+  p_membership jsonb, p_membership_hash text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_baseline_id text := 'forge_wsb_' || gen_random_uuid()::text;
+  v_row forge_work_scope_baselines%rowtype;
+begin
+  if not has_workspace_access(p_owner_id) then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  perform set_config('forge_work.lifecycle_rpc', 'on', true);
+  update forge_work_packages
+  set scope_baseline_id = v_baseline_id, updated_by = p_actor, updated_at = now()
+  where owner_id = p_owner_id and id = p_package_id and scope_baseline_id is null;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'already_frozen');
+  end if;
+  insert into forge_work_scope_baselines
+    (owner_id, id, package_id, version, frozen_by, membership, membership_hash, supersedes_id)
+  values
+    (p_owner_id, v_baseline_id, p_package_id, 1, p_actor, p_membership, p_membership_hash, null)
+  returning * into v_row;
+  return jsonb_build_object('ok', true, 'baseline', row_to_json(v_row));
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- forge_work_decide_scope_change — atomic scope-change decision.
+--
+-- Claims the change row (FOR UPDATE) and requires status = 'proposed', so a
+-- rejection and an approval racing each other cannot both land: the loser
+-- sees already_decided. Approval inserts the superseding baseline, advances
+-- the package pointer conditionally on the expected head, and marks the
+-- change approved — all in ONE transaction. Any failure rolls back every row.
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_decide_scope_change(
+  p_owner_id text, p_change_id text, p_actor text,
+  p_approve boolean, p_new_membership jsonb, p_membership_hash text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_change forge_work_scope_changes%rowtype;
+  v_head forge_work_scope_baselines%rowtype;
+  v_new_id text := 'forge_wsb_' || gen_random_uuid()::text;
+  v_new_version integer;
+  v_new_baseline forge_work_scope_baselines%rowtype;
+begin
+  if not has_workspace_access(p_owner_id) then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  perform set_config('forge_work.lifecycle_rpc', 'on', true);
+  select * into v_change from forge_work_scope_changes
+  where owner_id = p_owner_id and id = p_change_id for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'not_found');
+  end if;
+  if v_change.status <> 'proposed' then
+    return jsonb_build_object('ok', false, 'error', 'already_decided');
+  end if;
+  if not p_approve then
+    update forge_work_scope_changes
+    set status = 'rejected', decided_by = p_actor, decided_at = now()
+    where owner_id = p_owner_id and id = p_change_id
+    returning * into v_change;
+    return jsonb_build_object('ok', true, 'change', row_to_json(v_change));
+  end if;
+  -- Head of the supersession chain for this package (matches the
+  -- deriveCurrentBaseline rule: the row no other row's supersedes_id
+  -- points to).
+  select b.* into v_head from forge_work_scope_baselines b
+  where b.owner_id = p_owner_id and b.package_id = v_change.package_id
+    and not exists (
+      select 1 from forge_work_scope_baselines s
+      where s.owner_id = p_owner_id and s.supersedes_id = b.id)
+  order by b.version desc limit 1;
+  if v_head is null or v_head.id is null or v_head.version <> v_change.baseline_version then
+    return jsonb_build_object('ok', false, 'error', 'baseline_moved');
+  end if;
+  v_new_version := v_head.version + 1;
+  insert into forge_work_scope_baselines
+    (owner_id, id, package_id, version, frozen_by, membership, membership_hash, supersedes_id)
+  values
+    (p_owner_id, v_new_id, v_change.package_id, v_new_version,
+     p_actor, p_new_membership, p_membership_hash, v_head.id)
+  returning * into v_new_baseline;
+  -- Advance the pointer only if it still aims at the head this change was
+  -- proposed against. A concurrent approval wins; this one rolls back.
+  update forge_work_packages
+  set scope_baseline_id = v_new_id, updated_by = p_actor, updated_at = now()
+  where owner_id = p_owner_id and id = v_change.package_id
+    and scope_baseline_id = v_head.id;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'conflict');
+  end if;
+  update forge_work_scope_changes
+  set status = 'approved', decided_by = p_actor, decided_at = now(),
+      resulting_baseline_version = v_new_version
+  where owner_id = p_owner_id and id = p_change_id
+  returning * into v_change;
+  return jsonb_build_object('ok', true, 'change', row_to_json(v_change),
+    'baseline', row_to_json(v_new_baseline));
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- forge_work_set_designated_verifier — owner-only verifier designation.
+--
+-- Verification, gate overrides, and reopen authority belong to the workspace
+-- owner or a designated verifier recorded on the package (lifecycle.md).
+-- Only the owner (actor = effective owner) may designate or clear one.
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_set_designated_verifier(
+  p_owner_id text, p_package_id text, p_actor text, p_verifier text
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_pkg forge_work_packages%rowtype;
+begin
+  if not has_workspace_access(p_owner_id) then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  if p_actor <> p_owner_id then
+    return jsonb_build_object('ok', false, 'error', 'forbidden');
+  end if;
+  perform set_config('forge_work.lifecycle_rpc', 'on', true);
+  update forge_work_packages
+  set designated_verifier = nullif(p_verifier, ''),
+      updated_by = p_actor, updated_at = now()
+  where owner_id = p_owner_id and id = p_package_id
+  returning * into v_pkg;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'not_found');
+  end if;
+  return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
+end $$;
+
+revoke all on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text) from public, anon, authenticated;
+grant execute on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text) to authenticated, service_role;
+revoke all on function forge_work_freeze_scope(text, text, text, jsonb, text) from public, anon, authenticated;
+grant execute on function forge_work_freeze_scope(text, text, text, jsonb, text) to authenticated, service_role;
+revoke all on function forge_work_decide_scope_change(text, text, text, boolean, jsonb, text) from public, anon, authenticated;
+grant execute on function forge_work_decide_scope_change(text, text, text, boolean, jsonb, text) to authenticated, service_role;
+revoke all on function forge_work_set_designated_verifier(text, text, text, text) from public, anon, authenticated;
+grant execute on function forge_work_set_designated_verifier(text, text, text, text) to authenticated, service_role;
