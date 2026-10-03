@@ -204,6 +204,47 @@ describe("transitionWorkPackage", () => {
   });
 });
 
+describe("completion assertion persistence (P1-1)", () => {
+  it("persists the verifier's completion assertion in the audit row when required", async () => {
+    const pkg = { ...PKG, status: "complete", package_type: "other", description: "Scope text." };
+    let seenArgs = null;
+    const db = mockDb([chain({ data: pkg, error: null })],
+      async (fn, args) => {
+        seenArgs = args;
+        return { data: { ok: true, package: { ...pkg, status: "verified_closed" } }, error: null };
+      });
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", to: "verified_closed",
+      ctx: { completionCriteriaMet: true, requiredEvidenceOk: true, evidenceRef: "EV-123" } });
+    expect(result.ok).toBe(true);
+    expect(seenArgs.p_completion_criteria_met).toBe(true);
+    expect(seenArgs.p_required_evidence_ok).toBe(true);
+    expect(seenArgs.p_evidence_ref).toBe("EV-123");
+  });
+  it("persists NULL assertion columns when the transition requires no completion check", async () => {
+    let seenArgs = null;
+    const db = mockDb([chain({ data: { ...PKG, status: "ready" }, error: null })],
+      async (fn, args) => {
+        seenArgs = args;
+        return { data: { ok: true, package: { ...PKG, status: "in_progress" } }, error: null };
+      });
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", to: "in_progress", ctx: { userConfirmedStart: true } });
+    expect(result.ok).toBe(true);
+    expect(seenArgs.p_completion_criteria_met).toBeNull();
+    expect(seenArgs.p_required_evidence_ok).toBeNull();
+  });
+  it("blocks verification when the completion assertion is missing", async () => {
+    const pkg = { ...PKG, status: "complete", package_type: "other", description: "Scope text." };
+    const db = mockDb([chain({ data: pkg, error: null })]);
+    const result = await transitionWorkPackage(db, { ownerId: "owner_1", actor: "owner_1",
+      packageId: "forge_wp_1", to: "verified_closed", ctx: {} });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+});
+
 describe("getWorkPackageDetail", () => {
   it("loads the package with transitions, attestations, baselines, changes, observations", async () => {
     const db = mockDb([
@@ -343,6 +384,18 @@ describe("proposeScopeChange + decideScopeChange", () => {
       changeId: "forge_wsc_1", approve: true, newMembership: [{ key: "x" }] });
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(409);
+  });
+
+  it("maps a pointer-claim conflict to 409 with no orphan baseline", async () => {
+    // The SQL advances the package pointer BEFORE inserting the new baseline,
+    // so a conflict return happens before any row is written: no partial
+    // baseline can survive a lost race. The service only needs to map it.
+    const db = mockDb([], async () => ({ data: { ok: false, error: "conflict" }, error: null }));
+    const result = await decideScopeChange(db, { ownerId: "owner_1", actor: "user_9",
+      changeId: "forge_wsc_1", approve: true, newMembership: [{ key: "x" }] });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(result.error).toMatch(/Concurrent approval/);
   });
 
   it("rejects a change through the atomic decide RPC", async () => {

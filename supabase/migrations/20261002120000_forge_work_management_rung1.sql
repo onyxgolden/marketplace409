@@ -134,6 +134,13 @@ create table if not exists forge_work_package_transitions (
   at timestamptz not null default now(),
   reason text,
   evidence_ref text,
+  -- Persisted completion assertion (P1-1): what the authorized verifier
+  -- asserted at transition time. NULL when the transition did not require
+  -- a completion check. The per-criterion checklist itself ships in Rung 10;
+  -- until then the audit row records the assertion, the actor, and the
+  -- evidence reference together.
+  completion_criteria_met boolean,
+  required_evidence_ok boolean,
   primary key (owner_id, id)
 );
 create index if not exists forge_work_package_transitions_pkg_idx
@@ -521,7 +528,8 @@ create trigger forge_work_scope_changes_guard_trg
 create or replace function forge_work_transition_package(
   p_owner_id text, p_package_id text, p_actor text,
   p_expected_from text, p_to text,
-  p_updates jsonb, p_reason text, p_evidence_ref text
+  p_updates jsonb, p_reason text, p_evidence_ref text,
+  p_completion_criteria_met boolean, p_required_evidence_ok boolean
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
@@ -557,9 +565,11 @@ begin
     return jsonb_build_object('ok', false, 'error', 'conflict');
   end if;
   insert into forge_work_package_transitions
-    (owner_id, package_id, from_status, to_status, actor, reason, evidence_ref)
+    (owner_id, package_id, from_status, to_status, actor, reason, evidence_ref,
+     completion_criteria_met, required_evidence_ok)
   values
-    (p_owner_id, p_package_id, p_expected_from, p_to, p_actor, p_reason, p_evidence_ref);
+    (p_owner_id, p_package_id, p_expected_from, p_to, p_actor, p_reason, p_evidence_ref,
+     p_completion_criteria_met, p_required_evidence_ok);
   return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
 end $$;
 
@@ -651,14 +661,11 @@ begin
     return jsonb_build_object('ok', false, 'error', 'baseline_moved');
   end if;
   v_new_version := v_head.version + 1;
-  insert into forge_work_scope_baselines
-    (owner_id, id, package_id, version, frozen_by, membership, membership_hash, supersedes_id)
-  values
-    (p_owner_id, v_new_id, v_change.package_id, v_new_version,
-     p_actor, p_new_membership, p_membership_hash, v_head.id)
-  returning * into v_new_baseline;
-  -- Advance the pointer only if it still aims at the head this change was
-  -- proposed against. A concurrent approval wins; this one rolls back.
+  -- Advance the pointer FIRST, conditional on it still aiming at the head
+  -- this change was proposed against. The conflict return below happens
+  -- before ANY row is written, so a loser leaves nothing behind. (An
+  -- earlier draft inserted the baseline first and returned ok:false on
+  -- conflict, which committed an orphan baseline row — never do that.)
   update forge_work_packages
   set scope_baseline_id = v_new_id, updated_by = p_actor, updated_at = now()
   where owner_id = p_owner_id and id = v_change.package_id
@@ -666,6 +673,14 @@ begin
   if not found then
     return jsonb_build_object('ok', false, 'error', 'conflict');
   end if;
+  -- The pointer claimed the new id; the insert now cannot orphan. Any
+  -- failure from here raises and rolls the pointer advance back with it.
+  insert into forge_work_scope_baselines
+    (owner_id, id, package_id, version, frozen_by, membership, membership_hash, supersedes_id)
+  values
+    (p_owner_id, v_new_id, v_change.package_id, v_new_version,
+     p_actor, p_new_membership, p_membership_hash, v_head.id)
+  returning * into v_new_baseline;
   update forge_work_scope_changes
   set status = 'approved', decided_by = p_actor, decided_at = now(),
       resulting_baseline_version = v_new_version
@@ -707,7 +722,7 @@ begin
   return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
 end $$;
 
-revoke all on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text) from public, anon, authenticated;
+revoke all on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text, boolean, boolean) from public, anon, authenticated;
 grant execute on function forge_work_transition_package(text, text, text, text, text, jsonb, text, text) to authenticated, service_role;
 revoke all on function forge_work_freeze_scope(text, text, text, jsonb, text) from public, anon, authenticated;
 grant execute on function forge_work_freeze_scope(text, text, text, jsonb, text) to authenticated, service_role;

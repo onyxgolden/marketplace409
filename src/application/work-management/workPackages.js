@@ -218,9 +218,10 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
     overrideAuthorized: authority,
     explicitCompletionReport: ctx.explicitCompletionReport === true,
     completionReason: ctx.completionReason,
-    // Interim per lifecycle.md (Rung 10 ships the real checklist): the
-    // verifier's recorded assertion, audited — but only an authorized
-    // verifier can make it.
+    // Interim per lifecycle.md (Rung 10 ships the real per-criterion
+    // checklist): the verifier's recorded assertion, authority-gated AND
+    // persisted into the transition audit row by the RPC below — never a
+    // bare in-memory boolean.
     completionCriteriaMet: ctx.completionCriteriaMet === true,
     requiredEvidenceOk: ctx.requiredEvidenceOk === true,
     verifier: authority ? actor : undefined,
@@ -262,10 +263,19 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
   }
   const reason = ctx.blockedReason || ctx.reopenReason || ctx.rejectionReason
     || ctx.cancelReason || ctx.completionReason || null;
+  // Persist the verifier's completion assertion in the audit row (P1-1):
+  // NULL when the transition did not require the check, true when the
+  // check was required and passed validation above. The per-criterion
+  // checklist ships in Rung 10; until then the audit row is the persisted
+  // record of what was asserted, by whom, and against what evidence.
   const { data: rpcData, error: rpcError } = await db.rpc("forge_work_transition_package", {
     p_owner_id: ownerId, p_package_id: packageId, p_actor: actor,
     p_expected_from: pkg.status, p_to: to, p_updates,
     p_reason: reason, p_evidence_ref: ctx.evidenceRef || null,
+    p_completion_criteria_met: row.requires.includes("completion_criteria")
+      ? (ctx.completionCriteriaMet === true) : null,
+    p_required_evidence_ok: row.requires.includes("required_evidence")
+      ? (ctx.requiredEvidenceOk === true) : null,
   });
   if (rpcError) throw rpcError;
   if (!rpcData || rpcData.ok !== true) {
