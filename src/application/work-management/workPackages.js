@@ -280,6 +280,18 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
     if (err === "blocked_reason_required") {
       return { ok: false, httpStatus: 409, error: "Blocking a package requires a reason." };
     }
+    if (err === "requirements_not_met") {
+      return { ok: false, httpStatus: 409, error: `Package does not meet the requirements for ${pkg.status} -> ${to}.` };
+    }
+    if (err === "gates_not_ready") {
+      return { ok: false, httpStatus: 409, error: "Readiness gates are not all attested." };
+    }
+    if (err === "evidence_required") {
+      return { ok: false, httpStatus: 409, error: "Verification requires affirmative completion assertions and an evidence reference." };
+    }
+    if (err === "reason_required") {
+      return { ok: false, httpStatus: 409, error: "This transition requires a recorded reason." };
+    }
     if (err === "forbidden") {
       return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
     }

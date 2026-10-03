@@ -281,3 +281,27 @@ describe("staticTransitionEdges (DB parity)", () => {
     ]);
   });
 });
+
+describe("defaultGatesFor (DB parity)", () => {
+  // The migration seeds these exact sets into forge_work_package_type_gates
+  // so the RPC can require attestation coverage. If this test fails, the
+  // seed and the domain have drifted — update both.
+  it("matches the seeded gate sets per package type", () => {
+    const sets = {};
+    for (const t of ["industrial", "capital_project", "new_construction_phase",
+                     "remodel", "rental_turn", "maintenance_repair",
+                     "engineering", "other"]) {
+      sets[t] = [...defaultGatesFor(t)].sort();
+    }
+    expect(sets).toEqual({
+      industrial: ["crew", "design", "equipment_readiness", "evidence", "inspection_prerequisite", "logistics", "material", "permit", "predecessor", "safety", "scope", "site"],
+      capital_project: ["crew", "design", "equipment_readiness", "evidence", "inspection_prerequisite", "logistics", "material", "permit", "predecessor", "safety", "scope", "site"],
+      new_construction_phase: ["crew", "design", "evidence", "material", "permit", "predecessor", "safety", "scope", "site"],
+      remodel: ["crew", "design", "evidence", "material", "permit", "safety", "scope", "site"],
+      rental_turn: ["crew", "design", "evidence", "material", "permit", "safety", "scope", "site"],
+      maintenance_repair: ["crew", "design", "evidence", "material", "permit", "safety", "scope", "site"],
+      engineering: ["crew", "design", "evidence", "safety", "scope"],
+      other: ["crew", "safety", "scope"],
+    });
+  });
+});

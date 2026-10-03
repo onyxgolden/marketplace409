@@ -553,6 +553,53 @@ drop policy if exists forge_work_lifecycle_transitions_workspace_select
 create policy forge_work_lifecycle_transitions_workspace_select
   on forge_work_lifecycle_transitions for select to authenticated using (true);
 
+-- ---------------------------------------------------------------------------
+-- forge_work_package_type_gates — applicable readiness gates per package
+-- type, as data. Mirrors defaultGatesFor() in the domain layer; a domain
+-- unit test asserts parity so the two can never drift. The transition RPC
+-- requires a satisfying latest attestation for every applicable gate
+-- before readiness_review -> ready. Seed-only table.
+-- ---------------------------------------------------------------------------
+create table if not exists forge_work_package_type_gates (
+  package_type text not null,
+  gate text not null,
+  primary key (package_type, gate)
+);
+insert into forge_work_package_type_gates (package_type, gate) values
+  ('industrial', 'scope'), ('industrial', 'crew'), ('industrial', 'safety'),
+  ('industrial', 'design'), ('industrial', 'material'), ('industrial', 'permit'),
+  ('industrial', 'site'), ('industrial', 'evidence'),
+  ('industrial', 'predecessor'), ('industrial', 'equipment_readiness'),
+  ('industrial', 'inspection_prerequisite'), ('industrial', 'logistics'),
+  ('capital_project', 'scope'), ('capital_project', 'crew'), ('capital_project', 'safety'),
+  ('capital_project', 'design'), ('capital_project', 'material'), ('capital_project', 'permit'),
+  ('capital_project', 'site'), ('capital_project', 'evidence'),
+  ('capital_project', 'predecessor'), ('capital_project', 'equipment_readiness'),
+  ('capital_project', 'inspection_prerequisite'), ('capital_project', 'logistics'),
+  ('new_construction_phase', 'scope'), ('new_construction_phase', 'crew'),
+  ('new_construction_phase', 'safety'), ('new_construction_phase', 'design'),
+  ('new_construction_phase', 'material'), ('new_construction_phase', 'permit'),
+  ('new_construction_phase', 'site'), ('new_construction_phase', 'evidence'),
+  ('new_construction_phase', 'predecessor'),
+  ('remodel', 'scope'), ('remodel', 'crew'), ('remodel', 'safety'),
+  ('remodel', 'design'), ('remodel', 'material'), ('remodel', 'permit'),
+  ('remodel', 'site'), ('remodel', 'evidence'),
+  ('rental_turn', 'scope'), ('rental_turn', 'crew'), ('rental_turn', 'safety'),
+  ('rental_turn', 'design'), ('rental_turn', 'material'), ('rental_turn', 'permit'),
+  ('rental_turn', 'site'), ('rental_turn', 'evidence'),
+  ('maintenance_repair', 'scope'), ('maintenance_repair', 'crew'), ('maintenance_repair', 'safety'),
+  ('maintenance_repair', 'design'), ('maintenance_repair', 'material'), ('maintenance_repair', 'permit'),
+  ('maintenance_repair', 'site'), ('maintenance_repair', 'evidence'),
+  ('engineering', 'scope'), ('engineering', 'design'), ('engineering', 'crew'),
+  ('engineering', 'evidence'), ('engineering', 'safety'),
+  ('other', 'scope'), ('other', 'crew'), ('other', 'safety')
+on conflict do nothing;
+alter table forge_work_package_type_gates enable row level security;
+drop policy if exists forge_work_package_type_gates_workspace_select
+  on forge_work_package_type_gates;
+create policy forge_work_package_type_gates_workspace_select
+  on forge_work_package_type_gates for select to authenticated using (true);
+
 -- Scope-change decisions go only through forge_work_decide_scope_change.
 -- Proposals are inserted by the API with status = 'proposed' (policy-checked).
 create or replace function forge_work_scope_changes_guard()
@@ -622,6 +669,7 @@ declare
   -- caller's request.jwt.claim.sub.
   v_caller text := nullif(auth.uid()::text, '');
   v_pkg forge_work_packages%rowtype;
+  v_missing integer;
 begin
   if v_caller is null or not has_workspace_access(p_owner_id) then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
@@ -658,6 +706,64 @@ begin
   -- Entering blocked requires a reason (mirrors the domain requirement).
   if p_to = 'blocked' and (p_blocked_reason is null or p_blocked_reason = '') then
     return jsonb_build_object('ok', false, 'error', 'blocked_reason_required');
+  end if;
+  -- Stored-data requirements, enforced at the boundary so a direct RPC
+  -- caller cannot walk an empty package through the lifecycle. Only facts
+  -- about stored data are checked here — human-judgment assertions
+  -- (confirmations, clearances, criteria truth) stay in the service layer,
+  -- which records them in the audit row.
+  if p_expected_from = 'draft' and p_to = 'planned' then
+    if nullif(trim(v_pkg.title), '') is null
+       or v_pkg.planned_start is null or v_pkg.planned_finish is null
+       or v_pkg.responsible_party is null then
+      return jsonb_build_object('ok', false, 'error', 'requirements_not_met');
+    end if;
+  end if;
+  if p_expected_from = 'planned' and p_to = 'readiness_review' then
+    if nullif(trim(coalesce(v_pkg.description, '')), '') is null
+       or ((v_pkg.package_type in ('industrial', 'capital_project'))
+           and v_pkg.scope_baseline_id is null) then
+      return jsonb_build_object('ok', false, 'error', 'requirements_not_met');
+    end if;
+  end if;
+  if p_expected_from = 'readiness_review' and p_to = 'ready' then
+    -- Every applicable gate needs a satisfying latest attestation: a plain
+    -- attestation, or N/A with a reason. Mirrors the domain's
+    -- all_applicable_gates_ready against defaultGatesFor().
+    select count(*) into v_missing
+    from forge_work_package_type_gates g
+    where g.package_type = v_pkg.package_type
+      and not exists (
+        select 1 from forge_work_gate_attestations a
+        where a.owner_id = p_owner_id and a.package_id = p_package_id
+          and a.gate = g.gate
+          and a.at = (
+            select max(at) from forge_work_gate_attestations
+            where owner_id = p_owner_id and package_id = p_package_id and gate = g.gate
+          )
+          and (a.not_applicable = false
+               or (a.not_applicable = true
+                   and nullif(trim(coalesce(a.na_reason, '')), '') is not null))
+      );
+    if v_missing > 0 then
+      return jsonb_build_object('ok', false, 'error', 'gates_not_ready');
+    end if;
+  end if;
+  if p_to = 'verified_closed' then
+    -- The domain requires affirmative completion assertions; the DB cannot
+    -- verify their truth, but it refuses null/false assertions and demands
+    -- the evidence pointer — no more "true with zero evidence".
+    if p_completion_criteria_met is not true or p_required_evidence_ok is not true
+       or nullif(trim(coalesce(p_evidence_ref, '')), '') is null then
+      return jsonb_build_object('ok', false, 'error', 'evidence_required');
+    end if;
+  end if;
+  if (p_to = 'cancelled'
+      or (p_to = 'in_progress' and p_expected_from in ('complete', 'verified_closed'))
+      or (p_to = 'draft' and p_expected_from = 'cancelled'))
+     and nullif(trim(coalesce(p_reason, '')), '') is null then
+    -- Cancel, rework, and reopen require a recorded reason.
+    return jsonb_build_object('ok', false, 'error', 'reason_required');
   end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
   -- Effects are DERIVED FROM THE EDGE, never supplied by the caller. The
