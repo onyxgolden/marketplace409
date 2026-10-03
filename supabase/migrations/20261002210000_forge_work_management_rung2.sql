@@ -139,6 +139,13 @@ returns trigger language plpgsql as $$
 declare v_caller text := nullif(auth.uid()::text, '');
 begin
   if TG_OP = 'INSERT' then
+    -- Only the trusted Brain (service_role, no user JWT) may mint
+    -- ai_proposed links. A human-authenticated INSERT claiming ai_proposed
+    -- is a fake brain proposal — rejected here even though the service
+    -- layer also rejects it, because direct writes bypass the service.
+    if NEW.provenance = 'ai_proposed' and v_caller is not null then
+      raise exception 'forge_work: only the brain may create ai_proposed links';
+    end if;
     if v_caller is not null then
       -- The creator is whoever actually called. A forged created_by is
       -- replaced, and a forged (non-null) confirmed_by is stamped to the
@@ -150,6 +157,14 @@ begin
       end if;
     end if;
     return NEW;
+  end if;
+  -- Converting an existing link TO ai_proposed is the same forgery through
+  -- an UPDATE — rejected for human callers. Confirming (ai_proposed ->
+  -- user_confirmed) and editing other fields of a proposal are unaffected.
+  if NEW.provenance = 'ai_proposed'
+     and OLD.provenance is distinct from 'ai_proposed'
+     and v_caller is not null then
+    raise exception 'forge_work: only the brain may create ai_proposed links';
   end if;
   -- The original creator is immutable: no update may reattribute the link
   -- to someone else, with or without a JWT.
