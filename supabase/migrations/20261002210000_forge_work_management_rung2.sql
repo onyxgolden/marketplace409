@@ -138,12 +138,24 @@ create or replace function forge_work_links_stamp_attribution()
 returns trigger language plpgsql as $$
 declare v_caller text := nullif(auth.uid()::text, '');
 begin
-  if v_caller is not null then
-    if TG_OP = 'INSERT' then
+  if TG_OP = 'INSERT' then
+    if v_caller is not null then
+      -- The creator is whoever actually called. A forged created_by is
+      -- replaced, and a forged (non-null) confirmed_by is stamped to the
+      -- true caller. A null confirmed_by (unconfirmed / ai_proposed) stays
+      -- null — only a real confirmation sets it.
       NEW.created_by := v_caller;
-    elsif NEW.confirmed_by is distinct from OLD.confirmed_by then
-      NEW.confirmed_by := v_caller;
+      if NEW.confirmed_by is not null then
+        NEW.confirmed_by := v_caller;
+      end if;
     end if;
+    return NEW;
+  end if;
+  -- The original creator is immutable: no update may reattribute the link
+  -- to someone else, with or without a JWT.
+  NEW.created_by := OLD.created_by;
+  if v_caller is not null and NEW.confirmed_by is distinct from OLD.confirmed_by then
+    NEW.confirmed_by := v_caller;
   end if;
   return NEW;
 end $$;

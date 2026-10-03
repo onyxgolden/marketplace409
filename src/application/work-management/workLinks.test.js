@@ -108,6 +108,16 @@ describe("createLink", () => {
       provenance: "ai_proposed", created_by: "brain-proposal", confirmed_by: null,
     }));
   });
+  it("rejects a human filing a fake brain proposal", async () => {
+    const db = mockDb([]);
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
+      ...INPUT, created_by: "brain-proposal", provenance: "ai_proposed",
+    }});
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/Only 'brain-proposal' may create 'ai_proposed' links/);
+    expect(db.from).not.toHaveBeenCalled();
+  });
   it("ignores a caller-supplied created_by and stamps the actor", async () => {
     const insertChain = chain({ data: { ...LINK, status: "unresolved" }, error: null });
     const promoteChain = chain({ data: { ...LINK, status: "active" }, error: null });

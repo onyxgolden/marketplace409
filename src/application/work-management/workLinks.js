@@ -83,7 +83,11 @@ function unsupportedMessage(domain, type) {
 // unresolved and promoted by their first resolution in the same call — an
 // unchecked link never defaults to active.
 export async function createLink(db, { ownerId, actor, input }) {
-  const validation = validateLinkInput({ ...input, created_by: input.created_by ?? actor });
+  // Validate what will actually be stored: created_by is ALWAYS the actor.
+  // Validating a caller-supplied created_by first would let a human pass
+  // created_by 'brain-proposal' + provenance 'ai_proposed' and inject a
+  // fake brain proposal they can then confirm themselves.
+  const validation = validateLinkInput({ ...input, created_by: actor });
   if (!validation.ok) {
     return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   }
