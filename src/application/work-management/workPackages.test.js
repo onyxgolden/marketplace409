@@ -127,13 +127,13 @@ describe("transitionWorkPackage", () => {
     expect(db.rpc).toHaveBeenCalledWith("forge_work_transition_package", expect.objectContaining({
       p_expected_from: "ready", p_to: "in_progress",
       p_expected_version: 3,
-      p_updates: expect.objectContaining({ actual_start: expect.any(String) }),
+      p_blocked_reason: null,
     }));
-    // No caller-supplied actor: the RPC derives identity from auth.uid().
-    // No client-supplied verified_by: the RPC sets it server-side.
+    // No caller-supplied effects bag: the RPC derives all lifecycle effects
+    // from the edge. No p_actor either — identity comes from auth.uid().
     const rpcArgs = db.rpc.mock.calls[0][1];
     expect(rpcArgs).not.toHaveProperty("p_actor");
-    expect(rpcArgs.p_updates).not.toHaveProperty("verified_by");
+    expect(rpcArgs).not.toHaveProperty("p_updates");
     // One claim — no separate update + audit insert.
     expect(db.from).toHaveBeenCalledTimes(1);
   });

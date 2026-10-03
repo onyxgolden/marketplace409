@@ -602,15 +602,17 @@ create trigger forge_work_scope_changes_guard_trg
 -- with a JSON null clears the column. verified_by and designated_verifier
 -- are NOT accepted here (see above).
 -- ---------------------------------------------------------------------------
--- Drop the pre-fix signatures (p_actor-based) so no stale overload lingers.
+-- Drop the pre-fix signatures (p_actor-based, then p_updates-based) so no
+-- stale overload lingers.
 drop function if exists forge_work_transition_package(text, text, text, text, text, jsonb, text, text, boolean, boolean);
+drop function if exists forge_work_transition_package(text, text, text, text, integer, jsonb, text, text, boolean, boolean);
 drop function if exists forge_work_freeze_scope(text, text, text, jsonb, text);
 drop function if exists forge_work_decide_scope_change(text, text, text, boolean, jsonb, text);
 drop function if exists forge_work_set_designated_verifier(text, text, text, text);
 create or replace function forge_work_transition_package(
   p_owner_id text, p_package_id text,
   p_expected_from text, p_to text, p_expected_version integer,
-  p_updates jsonb, p_reason text, p_evidence_ref text,
+  p_blocked_reason text, p_reason text, p_evidence_ref text,
   p_completion_criteria_met boolean, p_required_evidence_ok boolean
 ) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -653,24 +655,46 @@ begin
   ) then
     return jsonb_build_object('ok', false, 'error', 'illegal_transition');
   end if;
+  -- Entering blocked requires a reason (mirrors the domain requirement).
+  if p_to = 'blocked' and (p_blocked_reason is null or p_blocked_reason = '') then
+    return jsonb_build_object('ok', false, 'error', 'blocked_reason_required');
+  end if;
   perform set_config('forge_work.lifecycle_rpc', 'on', true);
+  -- Effects are DERIVED FROM THE EDGE, never supplied by the caller. The
+  -- old p_updates bag let a direct caller forge blocked_from (e.g. draft
+  -- -> blocked with blocked_from='complete', then blocked -> complete ->
+  -- verified_closed, skipping every gate). blocked_from is now always the
+  -- actual from-status; dates are always now(); verified_by is the caller.
   update forge_work_packages
   set status = p_to,
-      actual_start = case when p_updates ? 'actual_start'
-        then (p_updates ->> 'actual_start')::date else actual_start end,
-      actual_finish = case when p_updates ? 'actual_finish'
-        then (p_updates ->> 'actual_finish')::date else actual_finish end,
-      verified_at = case when p_updates ? 'verified_at'
-        then (p_updates ->> 'verified_at')::timestamptz else verified_at end,
-      verified_by = case when p_updates ? 'verified_at'
-        then case when (p_updates ->> 'verified_at') is null then null else v_caller end
+      actual_start = case
+        when p_to = 'in_progress' and p_expected_from = 'ready' then now()::date
+        else actual_start end,
+      actual_finish = case
+        when p_to = 'complete' then now()::date
+        when p_to = 'in_progress' and p_expected_from in ('complete', 'verified_closed') then null
+        when p_to = 'draft' and p_expected_from = 'cancelled' then null
+        else actual_finish end,
+      verified_at = case
+        when p_to = 'verified_closed' then now()
+        when p_to = 'in_progress' and p_expected_from = 'verified_closed' then null
+        else verified_at end,
+      verified_by = case
+        when p_to = 'verified_closed' then v_caller
+        when p_to = 'in_progress' and p_expected_from = 'verified_closed' then null
         else verified_by end,
-      blocked_reason = case when p_updates ? 'blocked_reason'
-        then p_updates ->> 'blocked_reason' else blocked_reason end,
-      blocked_since = case when p_updates ? 'blocked_since'
-        then (p_updates ->> 'blocked_since')::timestamptz else blocked_since end,
-      blocked_from = case when p_updates ? 'blocked_from'
-        then p_updates ->> 'blocked_from' else blocked_from end,
+      blocked_reason = case
+        when p_to = 'blocked' then p_blocked_reason
+        when p_expected_from = 'blocked' then null
+        else blocked_reason end,
+      blocked_since = case
+        when p_to = 'blocked' then now()
+        when p_expected_from = 'blocked' then null
+        else blocked_since end,
+      blocked_from = case
+        when p_to = 'blocked' then p_expected_from
+        when p_expected_from = 'blocked' then null
+        else blocked_from end,
       updated_by = v_caller,
       updated_at = now()
   where owner_id = p_owner_id and id = p_package_id
@@ -844,8 +868,8 @@ begin
   return jsonb_build_object('ok', true, 'package', row_to_json(v_pkg));
 end $$;
 
-revoke all on function forge_work_transition_package(text, text, text, text, integer, jsonb, text, text, boolean, boolean) from public, anon, authenticated;
-grant execute on function forge_work_transition_package(text, text, text, text, integer, jsonb, text, text, boolean, boolean) to authenticated, service_role;
+revoke all on function forge_work_transition_package(text, text, text, text, integer, text, text, text, boolean, boolean) from public, anon, authenticated;
+grant execute on function forge_work_transition_package(text, text, text, text, integer, text, text, text, boolean, boolean) to authenticated, service_role;
 revoke all on function forge_work_freeze_scope(text, text, jsonb, text) from public, anon, authenticated;
 grant execute on function forge_work_freeze_scope(text, text, jsonb, text) to authenticated, service_role;
 revoke all on function forge_work_decide_scope_change(text, text, boolean, jsonb, text) from public, anon, authenticated;

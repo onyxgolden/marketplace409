@@ -246,28 +246,11 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
   // the audit row in ONE transaction. A concurrent transition wins the
   // claim; a concurrent ordinary-column edit bumps the version, so the
   // loser gets 409 with nothing written instead of a transition on stale
-  // validation. Authority (owner or designated verifier) and verified_by
-  // attribution are enforced inside the RPC from auth.uid() — the p_actor
-  // parameter is gone because a caller-supplied actor string is forgeable.
-  const now = new Date().toISOString();
-  const fx = check.effects || {};
-  const p_updates = {};
-  if (fx.setActualStart) p_updates.actual_start = now.slice(0, 10);
-  if (fx.setActualFinish) p_updates.actual_finish = now.slice(0, 10);
-  if (fx.clearActualFinish) p_updates.actual_finish = null;
-  if (fx.setVerified) { p_updates.verified_at = now; }
-  if (fx.clearVerified) { p_updates.verified_at = null; }
-  // NOTE: verified_by is set server-side inside the RPC to auth.uid() — the
-  // service never supplies it. A verified_at key present with JSON null
-  // clears both columns.
-  if (fx.recordBlockedFrom) {
-    p_updates.blocked_from = fx.recordBlockedFrom;
-    p_updates.blocked_reason = ctx.blockedReason;
-    p_updates.blocked_since = now;
-  }
-  if (fx.returnFromBlocked) {
-    p_updates.blocked_reason = null; p_updates.blocked_since = null; p_updates.blocked_from = null;
-  }
+  // validation. Authority (owner or designated verifier), the transition
+  // graph, and ALL lifecycle effects are enforced/derived inside the RPC —
+  // the service supplies only inputs (reasons, evidence), never effects.
+  // blocked_from is always the actual from-status server-side, so a direct
+  // caller cannot forge it to jump the graph.
   const reason = ctx.blockedReason || ctx.reopenReason || ctx.rejectionReason
     || ctx.cancelReason || ctx.completionReason || null;
   // Persist the verifier's completion assertion in the audit row (P1-1):
@@ -277,7 +260,8 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
   // record of what was asserted, by whom, and against what evidence.
   const { data: rpcData, error: rpcError } = await db.rpc("forge_work_transition_package", {
     p_owner_id: ownerId, p_package_id: packageId,
-    p_expected_from: pkg.status, p_to: to, p_expected_version: pkg.version, p_updates,
+    p_expected_from: pkg.status, p_to: to, p_expected_version: pkg.version,
+    p_blocked_reason: to === "blocked" ? (ctx.blockedReason || null) : null,
     p_reason: reason, p_evidence_ref: ctx.evidenceRef || null,
     p_completion_criteria_met: row.requires.includes("completion_criteria")
       ? (ctx.completionCriteriaMet === true) : null,
@@ -292,6 +276,9 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
     }
     if (err === "illegal_transition") {
       return { ok: false, httpStatus: 409, error: `Illegal transition: ${pkg.status} -> ${to}.` };
+    }
+    if (err === "blocked_reason_required") {
+      return { ok: false, httpStatus: 409, error: "Blocking a package requires a reason." };
     }
     if (err === "forbidden") {
       return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
