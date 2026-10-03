@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { PACKAGE_TYPES, PRIORITIES } from "@/domains/work-management/workPackage.js";
+import { WP_PACKAGE_TYPES, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -69,13 +69,13 @@ export default function WorkPackageCreateForm() {
           <div>
             <label className={label} htmlFor="package_type">Type</label>
             <select id="package_type" className={input} value={form.package_type} onChange={set("package_type")}>
-              {PACKAGE_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+              {WP_PACKAGE_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
             </select>
           </div>
           <div>
             <label className={label} htmlFor="priority">Priority</label>
             <select id="priority" className={input} value={form.priority} onChange={set("priority")}>
-              {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+              {WP_PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div>

@@ -136,6 +136,14 @@ export function findTransition(pkg, to) {
   return all.find((r) => r.from === pkg.status && r.to === to) || null;
 }
 
+// Every legal target status from the package's current state, including the
+// dynamic rows (return-from-Blocked to blocked_from, Cancelled from any
+// non-terminal state). Drives the UI's transition buttons.
+export function allowedTransitionsFrom(pkg) {
+  const rows = [...staticTransitionRows(), ...dynamicRows(pkg)];
+  return [...new Set(rows.filter((r) => r.from === pkg.status).map((r) => r.to))];
+}
+
 // Validate a transition's requirements against the package + context.
 // ctx: { attestationsByGate, evidenceHealth, completionCriteria, ... }
 // Returns { ok: true, effects } or { ok: false, error }.

@@ -1,4 +1,4 @@
-import { ok, serverError, workAuth } from "../_lib/auth.js";
+import { ok, serverError, workAuth } from "../../work-packages/_lib/auth.js";
 
 // GET: asset with its stable component breakdown.
 export async function GET(request, { params }) {

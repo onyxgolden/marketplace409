@@ -1,5 +1,5 @@
 import { createAssetComponent } from "@/application/work-management/workPackages";
-import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
+import { ok, fail, serverError, workAuth, readJson } from "../../../work-packages/_lib/auth.js";
 
 // POST { component_key, name?, quantity?, unit?, weight_kg?, length_m?,
 //         diameter_m?, notes? } — stable component breakdown per asset.

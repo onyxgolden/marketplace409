@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   WP_STATUS, WP_PACKAGE_TYPES,
-  defaultGatesFor, isTerminalStatus, findTransition, validateTransition,
+  defaultGatesFor, isTerminalStatus, findTransition, allowedTransitionsFrom,
+  validateTransition,
   derivePercentComplete, validatePackageInput, hashScopeMembership,
   deriveCurrentBaseline,
 } from "./workPackage.js";
@@ -206,5 +207,27 @@ describe("findTransition", () => {
   });
   it("exposes the package types list", () => {
     expect(WP_PACKAGE_TYPES).toContain("industrial");
+  });
+});
+
+describe("allowedTransitionsFrom", () => {
+  it("lists the static targets for a draft package, including cancel", () => {
+    const targets = allowedTransitionsFrom({ status: WP_STATUS.DRAFT });
+    expect(targets).toContain(WP_STATUS.PLANNED);
+    expect(targets).toContain(WP_STATUS.BLOCKED);
+    expect(targets).toContain(WP_STATUS.CANCELLED);
+    expect(targets).not.toContain(WP_STATUS.VERIFIED_CLOSED);
+  });
+  it("returns the blocked_from state for a blocked package", () => {
+    const targets = allowedTransitionsFrom({
+      status: WP_STATUS.BLOCKED, blocked_from: WP_STATUS.IN_PROGRESS,
+    });
+    expect(targets).toContain(WP_STATUS.IN_PROGRESS);
+  });
+  it("offers only the audited reopen from terminal states", () => {
+    expect(allowedTransitionsFrom({ status: WP_STATUS.VERIFIED_CLOSED }))
+      .toEqual([WP_STATUS.IN_PROGRESS]);
+    expect(allowedTransitionsFrom({ status: WP_STATUS.CANCELLED }))
+      .toEqual([WP_STATUS.DRAFT]);
   });
 });

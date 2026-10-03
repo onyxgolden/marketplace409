@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { WP_STATUS, PACKAGE_TYPES, PRIORITIES, allowedTransitionsFrom, findTransition } from "@/domains/work-management/workPackage.js";
+import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition } from "@/domains/work-management/workPackage.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -36,8 +36,8 @@ export default function WorkPackageDetailClient({ initial }) {
   const [baselineItems, setBaselineItems] = useState("");
   const [changeForm, setChangeForm] = useState({ changeType: "addition", description: "" });
 
-  const allowed = allowedTransitionsFrom(pkg.status);
-  const target = transitionTarget ? findTransition(pkg.status, transitionTarget) : null;
+  const allowed = allowedTransitionsFrom(pkg);
+  const target = transitionTarget ? findTransition(pkg, transitionTarget) : null;
 
   async function call(path, method, body) {
     setBusy(true);
@@ -217,7 +217,7 @@ export default function WorkPackageDetailClient({ initial }) {
             </div>
             {target?.requires && (
               <p className="text-xs text-slate-500">
-                Requires: {Object.entries(target.requires).map(([k, v]) => `${k} (${v})`).join(", ")}
+                Requires: {target.requires.join(", ")}
               </p>
             )}
             {transitionTarget && (

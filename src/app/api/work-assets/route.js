@@ -1,5 +1,5 @@
 import { createAsset } from "@/application/work-management/workPackages";
-import { ok, fail, serverError, workAuth, readJson } from "../_lib/auth.js";
+import { ok, fail, serverError, workAuth, readJson } from "../work-packages/_lib/auth.js";
 
 export async function GET() {
   try {
