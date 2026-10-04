@@ -179,6 +179,7 @@ describe("RentalTenantPanel tenant ledger access", () => {
     const menu = container.querySelector('[role="menu"]');
     expect(menu).not.toBeNull();
     expect(menu.textContent).toContain("View Ledger");
+    expect(menu.textContent).not.toContain("Tenant Details");
   });
 
   it("choosing View Ledger from the menu opens the full-page ledger", async () => {

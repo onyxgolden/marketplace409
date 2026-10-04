@@ -144,9 +144,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     );
     return items;
   }, [openFullLedger, goToTenantRecord, onNavigate, leases, leaseMemberships, units]);
-  const openTenantMenuBelow = useCallback((buttonElement, tenant, context) => {
+  const openTenantMenuBelow = useCallback((buttonElement, tenant, context, options = {}) => {
     const rect = buttonElement?.getBoundingClientRect?.();
-    openContextMenuAt(rect ? rect.left : 120, rect ? rect.bottom + 6 : 120, tenantMenuItems(tenant, context));
+    openContextMenuAt(rect ? rect.left : 120, rect ? rect.bottom + 6 : 120, tenantMenuItems(tenant, context, options));
   }, [openContextMenuAt, tenantMenuItems]);
   // Mutations revalidate the cached master dataset; selection is preserved because
   // refresh() never blanks the list.
@@ -321,7 +321,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           </div>
           <div className="flex items-center gap-2">
             <button type="button" aria-label={`More actions for ${tenant.display_name}`} aria-haspopup="menu" title="More actions"
-              onClick={(event) => openTenantMenuBelow(event.currentTarget, tenant, context)}
+              onClick={(event) => openTenantMenuBelow(event.currentTarget, tenant, context, { inRecord: true })}
               className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button>
             <RentalRecordActions label="Tenant actions" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/>
           </div>
@@ -382,7 +382,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     {isLoading && <div className="mt-4"><ForgeLoadingState label="Loading tenants…" /></div>}
     {isRefreshing && tenants.length > 0 && <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
     {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
-    {recordTenantId && <p role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">That tenant record wasn&apos;t found. Showing the full tenant list.</p>}
+    {recordTenantId && data && <p role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">That tenant record wasn&apos;t found. Showing the full tenant list.</p>}
     {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={null}
       onSelect={(id) => goToTenantRecord(tenants.find((item) => item.id === id))}
       getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
