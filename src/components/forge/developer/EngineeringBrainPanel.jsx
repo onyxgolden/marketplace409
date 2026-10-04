@@ -31,6 +31,49 @@ function shortSha(sha) {
   return sha ? sha.slice(0, 12) : "";
 }
 
+// Pure presentational section: renders the API's related_fixes array.
+// Exported for unit tests; the panel wires it to response.related_fixes.
+export function RelatedFixesSection({ fixes }) {
+  if (!fixes || fixes.length === 0) return null;
+  return (
+    <section className="mt-6">
+      <h2 className="text-sm font-black uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+        Related past fixes
+      </h2>
+      <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+        Fixes from the repository&apos;s own history that touched similar ground — ranked by keyword overlap,
+        newest first on ties.
+      </p>
+      <ul className="mt-3 flex flex-col gap-3">
+        {fixes.map((fix) => {
+          const r = fix.record || {};
+          return (
+            <li key={r.sha || fix.score} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <p className="text-sm font-bold text-slate-950 dark:text-white">{r.subject}</p>
+              <p className="mt-1 font-mono text-xs text-slate-400 dark:text-slate-500">
+                commit {shortSha(r.sha)}
+                {r.pr ? ` · PR #${r.pr}` : ""}
+                {r.date ? ` · ${new Date(r.date).toLocaleDateString()}` : ""}
+                {r.class ? ` · ${r.class}` : ""}
+              </p>
+              {fix.matched_terms?.length > 0 ? (
+                <p className="mt-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  matched: {fix.matched_terms.join(", ")}
+                </p>
+              ) : null}
+              {r.files?.length > 0 ? (
+                <p className="mt-1 font-mono text-xs text-slate-400 dark:text-slate-500">
+                  {r.files.slice(0, 4).join(", ")}{r.files.length > 4 ? ` +${r.files.length - 4} more` : ""}
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 // The search query lives in the SWR key so the submitted query + filters drive
 // a background revalidate while the previous result set stays on screen.
 const EMPTY_PARAMS = { queryText: "", sourceType: "", authorityLevel: "" };
@@ -195,6 +238,7 @@ export default function EngineeringBrainPanel() {
             ))}
           </ul>
         ) : null}
+        {resultsVisible ? <RelatedFixesSection fixes={response?.related_fixes} /> : null}
         {resultsVisible && !response?.insufficient_evidence && (!response?.results || response.results.length === 0) ? (
           <div className="mt-4">
             <ForgeEmptyState
