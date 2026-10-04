@@ -294,8 +294,10 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         onContextMenu(event, tenantMenuItems(tenant, { recordType: "tenant", recordId: tenant.id }));
       }}
       columns={[
-        { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenantInviteLabel(tenant)}</span></> },
-        { header: "Property", render: (tenant) => { const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units); return propertyLabel || <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>; } },
+        { header: "Tenant", render: (tenant) => <strong className="block truncate text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong> },
+        { header: "Email", render: (tenant) => <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{tenant.email}</span> },
+        { header: "Invite", render: (tenant) => <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{tenantInviteLabel(tenant)}</span> },
+        { header: "Property", render: (tenant) => { const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units); return propertyLabel ? <span className="block truncate">{propertyLabel}</span> : <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>; } },
         { header: "Status", render: (tenant) => { const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id); const movedIn = leases.some((lease) => leaseIds.includes(lease.id) && lease.status === "active"); return movedIn
           ? <span className="font-bold text-emerald-700 dark:text-emerald-400">Moved In</span>
           : <span className="font-bold text-slate-500 dark:text-slate-400">Inactive</span>; } },
