@@ -147,6 +147,21 @@ describe("TenantLedgerPage", () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
+  it("opens the transaction detail on row double-click (Rentec parity)", async () => {
+    ({ container, root } = renderPage());
+    await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
+    const paymentRow = container.querySelectorAll("[data-ledger-table] tbody tr")[1];
+    await act(async () => {
+      paymentRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("Transaction detail");
+    expect(dialog.textContent).toContain("CHK-101");
+    await act(async () => dialog.querySelector('button[aria-label="Close transaction detail"]').click());
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it("toggles the Post Income form from the toolbar", async () => {
     ({ container, root } = renderPage());
     await act(async () => root.render(<TenantLedgerPage tenantId="t1" tenantName="Paula" onClose={() => {}} />));
@@ -244,6 +259,15 @@ describe("TenantLedgerPage — reference parity (slice 2)", () => {
     await act(async () => editButton.click());
     expect(container.querySelector("[data-invoice-editor]")).not.toBeNull();
   }
+
+  it("double-clicking a charge row opens the invoice editor (Rentec parity)", async () => {
+    await renderLedger();
+    const chargeRow = container.querySelectorAll("[data-ledger-table] tbody tr")[0];
+    await act(async () => {
+      chargeRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(container.querySelector("[data-invoice-editor]")).not.toBeNull();
+  });
 
   it("shows the breadcrumb, Ledger heading, and the Post Income / Post Charge / On Deposit actions", async () => {
     await renderLedger();
