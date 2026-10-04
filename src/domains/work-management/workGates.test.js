@@ -40,25 +40,6 @@ describe("evaluateGate", () => {
     expect(r.verdict).toBe("unknown");
   });
 
-  it("flags contradiction between attestation and material signal", () => {
-    const r = evaluateGate({
-      gate: "material",
-      attestation: { statement: "All good.", not_applicable: false },
-      signals: { linkedMaterialReceived: false },
-    });
-    expect(r.verdict).toBe("not_ready");
-    expect(r.reason).toMatch(/not received/i);
-  });
-
-  it("does not contradict when the signal is absent", () => {
-    const r = evaluateGate({
-      gate: "material",
-      attestation: { statement: "All good.", not_applicable: false },
-      signals: {},
-    });
-    expect(r.verdict).toBe("ready");
-  });
-
   it("rejects unknown gates", () => {
     expect(() => evaluateGate({ gate: "teleport", attestation: null })).toThrow(/unknown gate/i);
   });
@@ -123,6 +104,12 @@ describe("isPackageReady", () => {
     });
     expect(r.ready).toBe(false);
     expect(r.blocking).toEqual(["permit"]);
+  });
+
+  it("refuses to report ready with zero gates (bogus package type)", () => {
+    expect(() =>
+      isPackageReady({ applicableGates: [], getGateState: state })
+    ).toThrow(/zero gates/i);
   });
 });
 

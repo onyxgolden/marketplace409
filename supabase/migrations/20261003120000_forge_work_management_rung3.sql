@@ -64,26 +64,28 @@ create index if not exists forge_work_gate_overrides_pkg_idx
   on forge_work_gate_overrides (owner_id, package_id, gate, expires_at desc);
 
 -- ---------------------------------------------------------------------------
--- RLS: shared-workspace model (mirrors Rung 1).
+-- RLS: workspace-scoped (mirrors Rung 1). has_workspace_access(owner_id)
+-- admits the workspace owner and active members; cross-workspace reads and
+-- writes are rejected at the database layer.
 -- ---------------------------------------------------------------------------
 alter table forge_work_gate_evaluations enable row level security;
 alter table forge_work_gate_overrides enable row level security;
 
 drop policy if exists forge_work_gate_evaluations_workspace_select on forge_work_gate_evaluations;
 create policy forge_work_gate_evaluations_workspace_select on forge_work_gate_evaluations
-  for select to authenticated using (true);
+  for select to authenticated using (has_workspace_access(owner_id));
 
 drop policy if exists forge_work_gate_evaluations_workspace_insert on forge_work_gate_evaluations;
 create policy forge_work_gate_evaluations_workspace_insert on forge_work_gate_evaluations
-  for insert to authenticated with check (true);
+  for insert to authenticated with check (has_workspace_access(owner_id));
 
 drop policy if exists forge_work_gate_overrides_workspace_select on forge_work_gate_overrides;
 create policy forge_work_gate_overrides_workspace_select on forge_work_gate_overrides
-  for select to authenticated using (true);
+  for select to authenticated using (has_workspace_access(owner_id));
 
 drop policy if exists forge_work_gate_overrides_workspace_insert on forge_work_gate_overrides;
 create policy forge_work_gate_overrides_workspace_insert on forge_work_gate_overrides
-  for insert to authenticated with check (true);
+  for insert to authenticated with check (has_workspace_access(owner_id));
 
 -- ---------------------------------------------------------------------------
 -- Append-only: evaluations are never updated or deleted. Overrides are
@@ -122,10 +124,56 @@ create trigger forge_work_gate_overrides_no_update_trg
 create or replace function forge_work_gate_evaluations_stamp()
 returns trigger language plpgsql as $$
 declare v_caller text := nullif(auth.uid()::text, '');
+declare v_att record;
+declare v_computed text;
+declare v_reason text;
+declare v_has_attestation boolean;
 begin
   if v_caller is not null then
     NEW.evaluated_by := v_caller;
   end if;
+  -- Fabricated future timestamps would let a verdict govern before its
+  -- evidence exists. Evaluations are recorded at evaluation time.
+  if NEW.evaluated_at > now() + interval '5 minutes' then
+    raise exception 'forge_work: evaluation timestamp cannot be in the future';
+  end if;
+  -- The verdict is COMPUTED here, not accepted from the writer. The ONLY
+  -- trusted input is the attestation record. Caller-supplied signals in
+  -- evidence.signals are IGNORED entirely: they are writer-controlled and
+  -- cannot serve as the basis for a trusted calculation. (When
+  -- authoritative material/crew/permit/predecessor tables land in later
+  -- rungs, this trigger will derive signals from those records directly.)
+  --
+  -- A direct write claiming "ready" is rewritten to whatever the
+  -- attestation supports. There is no path to a fabricated ready.
+  select * into v_att from forge_work_gate_attestations
+    where owner_id = NEW.owner_id
+      and package_id = NEW.package_id
+      and gate = NEW.gate
+    order by at desc limit 1;
+  -- FOUND is the correct test for SELECT INTO; "v_att is not null" does
+  -- not work for record variables (it tests field nullness, not row presence).
+  v_has_attestation := FOUND;
+  if not v_has_attestation then
+    v_computed := 'unknown';
+    v_reason := 'No attestation recorded for this gate.';
+  elsif v_att.not_applicable then
+    if v_att.na_reason is not null and btrim(v_att.na_reason) <> '' then
+      v_computed := 'ready';
+      v_reason := 'Gate waived: ' || btrim(v_att.na_reason);
+    else
+      v_computed := 'unknown';
+      v_reason := 'Gate marked not-applicable without a reason.';
+    end if;
+  else
+    v_computed := 'ready';
+    v_reason := coalesce(v_att.statement, 'Attested ready.');
+  end if;
+  NEW.verdict := v_computed;
+  NEW.reason := v_reason;
+  -- Sanitized evidence records whether an attestation actually exists.
+  -- Caller-supplied evidence is stripped; the flag reflects the lookup.
+  NEW.evidence := jsonb_build_object('attested', v_has_attestation);
   return NEW;
 end $$;
 
@@ -142,6 +190,17 @@ begin
     raise exception 'forge_work: gate overrides require a human actor';
   end if;
   NEW.override_by := v_caller;
+  -- The application layer validates these too, but direct writes bypass
+  -- the application: the database enforces them independently.
+  if NEW.reason is null or btrim(NEW.reason) = '' then
+    raise exception 'forge_work: gate override requires a reason';
+  end if;
+  if NEW.expires_at <= now() then
+    raise exception 'forge_work: gate override expiry must be in the future';
+  end if;
+  if NEW.expires_at > now() + interval '30 days' then
+    raise exception 'forge_work: gate override expiry cannot exceed 30 days';
+  end if;
   return NEW;
 end $$;
 

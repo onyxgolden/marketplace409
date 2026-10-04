@@ -64,15 +64,12 @@ function assertVerdict(verdict) {
 }
 
 /**
- * Compute a gate verdict from the latest attestation and supporting evidence.
+ * Compute a gate verdict from the latest attestation.
  *
  * @param {object} input
  * @param {string} input.gate — one of WORK_GATES
  * @param {object|null} input.attestation — latest attestation row or null.
  *   Shape: { statement, not_applicable, na_reason }.
- * @param {object} input.signals — computed signals, e.g.
- *   { linkedMaterialReceived: bool, crewAssigned: bool, ... }.
- *   Gates with no signal support rely on attestation alone.
  * @returns {{ verdict, reason }} — reason is human-readable.
  *
  * Rules:
@@ -81,10 +78,16 @@ function assertVerdict(verdict) {
  * - Attestation marked not_applicable WITHOUT a reason -> unknown
  *   (a bare waiver explains nothing).
  * - No attestation at all -> unknown (absence is never evidence).
- * - Attestation present -> ready, unless a gate-specific signal contradicts
- *   it, in which case not_ready with the contradiction named.
+ * - Attestation present -> ready.
+ *
+ * Note: signal-contradiction checks (material not received, crew not
+ * assigned, etc.) are intentionally absent. Those signals have no
+ * authoritative tables yet; caller-supplied signals are writer-controlled
+ * and cannot serve as the basis for a trusted verdict. When the
+ * material/crew/permit/predecessor tables land, the database trigger will
+ * derive signals from those records directly.
  */
-export function evaluateGate({ gate, attestation = null, signals = {} }) {
+export function evaluateGate({ gate, attestation = null }) {
   assertGate(gate);
 
   if (!attestation) {
@@ -107,42 +110,10 @@ export function evaluateGate({ gate, attestation = null, signals = {} }) {
     };
   }
 
-  // Gate-specific signal checks. A signal set to false contradicts a
-  // positive attestation; a missing signal is not a contradiction.
-  const contradiction = checkGateSignals(gate, signals);
-  if (contradiction) {
-    return { verdict: "not_ready", reason: contradiction };
-  }
-
   return {
     verdict: "ready",
     reason: attestation.statement || `Attested ready for ${gate}.`,
   };
-}
-
-// Per-gate signal rules. Returns a reason string on contradiction, null otherwise.
-// Signals are optional — a gate with no signals evaluates on attestation alone.
-function checkGateSignals(gate, signals) {
-  const rules = {
-    material: () =>
-      signals.linkedMaterialReceived === false
-        ? "Attestation claims materials ready, but linked material items are not received."
-        : null,
-    crew: () =>
-      signals.crewAssigned === false
-        ? "Attestation claims crew ready, but no crew is assigned."
-        : null,
-    predecessor: () =>
-      signals.predecessorsComplete === false
-        ? "Attestation claims predecessors complete, but linked predecessor packages are not complete."
-        : null,
-    permit: () =>
-      signals.permitsOnFile === false
-        ? "Attestation claims permits in hand, but no permit records are linked."
-        : null,
-  };
-  const check = rules[gate];
-  return check ? check() : null;
 }
 
 /**
@@ -201,6 +172,11 @@ export function isGateSatisfied({ latestEvaluation = null, activeOverrides = [] 
  * @returns {{ ready: bool, gates: Record<gate, gateResult>, blocking: Array<string> }}
  */
 export function isPackageReady({ applicableGates, getGateState }) {
+  if (!applicableGates || applicableGates.length === 0) {
+    throw new Error(
+      "No applicable gates for this package type — refusing to report ready with zero gates."
+    );
+  }
   const gates = {};
   const blocking = [];
   for (const gate of applicableGates) {

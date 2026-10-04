@@ -46,6 +46,17 @@ async function getLatestAttestations(db, ownerId, packageId) {
   return latest;
 }
 
+// Package type is derived from the stored package record — never from the
+// caller. A caller-supplied type could select the wrong gate set.
+async function getStoredPackageType(db, ownerId, packageId) {
+  const { data, error } = await db.from(TABLES.packages)
+    .select("package_type").eq("owner_id", ownerId).eq("id", packageId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`Package not found: ${packageId}`);
+  return data.package_type || "other";
+}
+
 // Gates applicable to a package type (Rung 1 seed table).
 async function getApplicableGates(db, packageType) {
   const { data, error } = await db.from(TABLES.packageTypeGates)
@@ -86,29 +97,39 @@ async function getActiveOverrides(db, ownerId, packageId, nowIso) {
  * Run the readiness engine for a package: evaluate every applicable gate
  * and append one evaluation row per gate. Returns the per-gate verdicts.
  */
-export async function runGateEvaluations(db, { ownerId, packageId, packageType, signals = {}, nowIso }) {
+export async function runGateEvaluations(db, { ownerId, packageId, nowIso }) {
+  const packageType = await getStoredPackageType(db, ownerId, packageId);
   const gates = await getApplicableGates(db, packageType);
+  if (gates.length === 0) {
+    throw new Error(
+      `Unknown package type "${packageType}" — no applicable gates. Refusing to evaluate zero gates.`
+    );
+  }
   const attestations = await getLatestAttestations(db, ownerId, packageId);
   const results = [];
   for (const gate of gates) {
-    const { verdict, reason } = evaluateGate({
+    // The application computes the expected verdict for the API response,
+    // but the database trigger recomputes authoritatively from the
+    // attestation record alone and overwrites whatever is inserted.
+    // We read back the stored row so the response reflects the trusted
+    // calculation path.
+    const { verdict: expected } = evaluateGate({
       gate,
       attestation: attestations[gate] || null,
-      signals: signals[gate] || {},
     });
     const row = {
       id: newId("forge_wge"),
       owner_id: ownerId,
       package_id: packageId,
       gate,
-      verdict,
-      reason,
-      evidence: { attested: !!attestations[gate], signals: signals[gate] || {} },
+      verdict: expected,
+      reason: "computed by trigger",
+      evidence: { attested: !!attestations[gate] },
       evaluated_at: nowIso,
     };
-    const { error } = await db.from(TABLES.evaluations).insert(row);
+    const { data, error } = await db.from(TABLES.evaluations).insert(row).select().single();
     if (error) throw error;
-    results.push({ gate, verdict, reason });
+    results.push({ gate, verdict: data.verdict, reason: data.reason });
   }
   return results;
 }
@@ -116,7 +137,8 @@ export async function runGateEvaluations(db, { ownerId, packageId, packageType, 
 /**
  * Current readiness of a package: per-gate satisfaction + overall verdict.
  */
-export async function getPackageReadiness(db, { ownerId, packageId, packageType, nowIso }) {
+export async function getPackageReadiness(db, { ownerId, packageId, nowIso }) {
+  const packageType = await getStoredPackageType(db, ownerId, packageId);
   const gates = await getApplicableGates(db, packageType);
   const evaluations = await getLatestEvaluations(db, ownerId, packageId);
   const overrides = await getActiveOverrides(db, ownerId, packageId, nowIso);

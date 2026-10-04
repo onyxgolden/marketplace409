@@ -26,38 +26,37 @@ function chain(result = { data: null, error: null }) {
 }
 
 const NOW = "2026-10-03T12:00:00Z";
-const CTX = { ownerId: "owner_1", packageId: "forge_wp_1", packageType: "industrial", nowIso: NOW };
+const CTX = { ownerId: "owner_1", packageId: "forge_wp_1", nowIso: NOW };
+// First chain in every mock: the stored package lookup (package_type derived
+// from the record, never from the caller).
+const PKG = () => chain({ data: { package_type: "industrial" }, error: null });
 
 describe("runGateEvaluations", () => {
   it("evaluates each applicable gate and appends one row per gate", async () => {
     const db = mockDb([
+      PKG(),
       chain({ data: [{ gate: "scope" }, { gate: "crew" }], error: null }), // packageTypeGates
       chain({ data: [{ gate: "scope", statement: "Scope signed.", not_applicable: false, at: NOW }], error: null }), // attestations
-      chain({ data: null, error: null }), // insert scope eval
-      chain({ data: null, error: null }), // insert crew eval
+      // Insert returns the DB-computed row (trigger is authoritative).
+      chain({ data: { gate: "scope", verdict: "ready", reason: "Scope signed." }, error: null }),
+      chain({ data: { gate: "crew", verdict: "unknown", reason: "No attestation recorded." }, error: null }),
     ]);
-    const results = await runGateEvaluations(db, { ...CTX, signals: {} });
+    const results = await runGateEvaluations(db, CTX);
     expect(results).toHaveLength(2);
     expect(results[0]).toMatchObject({ gate: "scope", verdict: "ready" });
     expect(results[1]).toMatchObject({ gate: "crew", verdict: "unknown" });
   });
 
-  it("records not_ready when a signal contradicts the attestation", async () => {
-    const db = mockDb([
-      chain({ data: [{ gate: "material" }], error: null }),
-      chain({ data: [{ gate: "material", statement: "Ready.", not_applicable: false, at: NOW }], error: null }),
-      chain({ data: null, error: null }),
-    ]);
-    const results = await runGateEvaluations(db, {
-      ...CTX, signals: { material: { linkedMaterialReceived: false } },
-    });
-    expect(results[0].verdict).toBe("not_ready");
+  it("throws when the package does not exist", async () => {
+    const db = mockDb([chain({ data: null, error: null })]);
+    await expect(runGateEvaluations(db, CTX)).rejects.toThrow(/not found/i);
   });
 });
 
 describe("getPackageReadiness", () => {
   it("combines evaluations and overrides into per-gate satisfaction", async () => {
     const db = mockDb([
+      PKG(),
       chain({ data: [{ gate: "scope" }, { gate: "permit" }], error: null }), // gates
       chain({ data: [{ gate: "scope", verdict: "ready", reason: "ok", evaluated_at: NOW }], error: null }), // evals
       chain({ data: [{ gate: "permit", override_by: "jason", reason: "Expedited.", expires_at: "2026-10-10T00:00:00Z" }], error: null }), // overrides
@@ -70,6 +69,7 @@ describe("getPackageReadiness", () => {
 
   it("lists blocking gates", async () => {
     const db = mockDb([
+      PKG(),
       chain({ data: [{ gate: "scope" }, { gate: "safety" }], error: null }),
       chain({ data: [{ gate: "scope", verdict: "ready", reason: "ok", evaluated_at: NOW }], error: null }),
       chain({ data: [], error: null }),

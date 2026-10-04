@@ -2,22 +2,26 @@ import { getPackageReadiness, runGateEvaluations } from "@/application/work-mana
 import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
 
 // GET: current readiness of the package — per-gate satisfaction + overall.
-// POST { packageType, signals? }: run the engine; appends one evaluation per
-// applicable gate and returns the verdicts.
+// The package type is derived from the stored package record, never from
+// the caller.
+// POST: run the engine; appends one evaluation per applicable gate and
+// returns the verdicts. No signals accepted — the database computes
+// verdicts from attestations alone (see migration).
 export async function GET(request, { params }) {
   try {
     const auth = await workAuth();
     if (auth.error) return auth.error;
     const { packageId } = await params;
-    const { searchParams } = new URL(request.url);
-    const packageType = searchParams.get("packageType");
-    if (!packageType) return fail({ error: "packageType query param is required", httpStatus: 400 });
     const readiness = await getPackageReadiness(auth.db, {
-      ownerId: auth.ownerId, packageId, packageType,
+      ownerId: auth.ownerId, packageId,
       nowIso: new Date().toISOString(),
     });
     return ok(readiness);
   } catch (error) {
+    const msg = error && error.message ? error.message : "";
+    if (/zero gates|not found/i.test(msg)) {
+      return fail({ error: msg, httpStatus: 400 });
+    }
     return serverError("Gate readiness error", error);
   }
 }
@@ -27,16 +31,16 @@ export async function POST(request, { params }) {
     const auth = await workAuth();
     if (auth.error) return auth.error;
     const { packageId } = await params;
-    const body = await readJson(request);
-    if (!body.packageType) return fail({ error: "packageType is required", httpStatus: 400 });
     const results = await runGateEvaluations(auth.db, {
       ownerId: auth.ownerId, packageId,
-      packageType: body.packageType,
-      signals: body.signals || {},
       nowIso: new Date().toISOString(),
     });
     return ok({ success: true, evaluations: results }, 201);
   } catch (error) {
+    const msg = error && error.message ? error.message : "";
+    if (/zero gates|unknown package type|not found/i.test(msg)) {
+      return fail({ error: msg, httpStatus: 400 });
+    }
     return serverError("Gate evaluation error", error);
   }
 }
