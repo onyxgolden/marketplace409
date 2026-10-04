@@ -28,18 +28,13 @@ describe("RentalTenantPanel tenant selection", () => {
     root = createRoot(container);
     await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} />));
 
-    // Rentec-parity R8: the record leads with the ledger tab; profile fields are one click away.
-    const openDetailsTab = async () => {
-      await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
-    };
-    await openDetailsTab();
+    // Details-first (Rentec parity): the record opens on the details tab; profile fields are visible immediately.
     expect(container.querySelector('input[name="portalEmail"]').value).toBe("ashley@example.com");
     const justinRow = [...container.querySelectorAll('tr[role="button"]')].find((row) => row.textContent.includes("Justin Graham"));
     act(() => justinRow.click());
 
-    // Switching records resets to the ledger-first tab.
-    expect(container.querySelector('[data-record-tab="ledger"]').getAttribute("aria-selected")).toBe("true");
-    await openDetailsTab();
+    // Switching records resets to the details-first tab.
+    expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector('input[name="portalEmail"]').value).toBe("justin@example.com");
     expect(container.querySelector('input[name="portalEmail"]').getAttribute("aria-label")).toBe("Portal email for Justin Graham");
   });
@@ -66,8 +61,7 @@ describe("RentalTenantPanel tenant selection", () => {
     container.querySelector('input[name="email"]').value = "paula@example.com";
     await act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(container.textContent).toContain("New tenant added: Paula Welch");
-    // The new record opens ledger-first; the profile fields are on the details tab.
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
+    // The new record opens details-first; the profile fields are already visible.
     expect(container.querySelector('input[name="portalEmail"]').value).toBe("paula@example.com");
     expect(container.querySelector('input[name="displayName"]')).toBeNull();
   });

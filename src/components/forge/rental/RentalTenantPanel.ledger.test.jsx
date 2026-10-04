@@ -59,32 +59,29 @@ describe("RentalTenantPanel tenant ledger access", () => {
     return container;
   }
 
-  it("opens the tenant record on the Ledger tab first, with tenant details one click away", async () => {
+  it("opens the tenant record on the Tenant details tab first, with the ledger one click away", async () => {
     await mount();
-    // Ledger-first (Rentec-parity R8): the ledger renders on record open, not the profile card.
+    // Details-first (Rentec parity): the info panel renders on record open, not the ledger.
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
-    expect(tabs).toEqual(["Ledger", "Tenant details"]);
+    expect(tabs).toEqual(["Tenant details", "Ledger"]);
+    expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
+    expect(container.textContent).toContain("Primary tenant");
+    // The ledger lives on the second tab.
+    expect(container.querySelector("[data-tenant-ledger-page]")).toBeNull();
+    await act(async () => { container.querySelector('[data-record-tab="ledger"]').click(); });
     expect(container.querySelector('[data-record-tab="ledger"]').getAttribute("aria-selected")).toBe("true");
     const ledger = container.querySelector("[data-tenant-ledger-page]");
     expect(ledger).not.toBeNull();
     expect(ledger.textContent).toContain("Paula");
-    // The profile card lives on the Tenant details tab.
-    expect(container.textContent).not.toContain("Primary tenant");
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
-    expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
-    expect(container.textContent).toContain("Primary tenant");
     // The ledger tab's breadcrumb returns to the details tab.
-    await act(async () => { container.querySelector('[data-record-tab="ledger"]').click(); });
-    const ledgerPage = container.querySelector("[data-tenant-ledger-page]");
-    const crumb = [...ledgerPage.querySelectorAll("button")].find((b) => b.textContent === "Tenant details");
+    const crumb = [...ledger.querySelectorAll("button")].find((b) => b.textContent === "Tenant details");
     expect(crumb).not.toBeUndefined();
     await act(async () => { crumb.click(); });
     expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
   });
 
-  it("renders the tenant balance as a link in the details tab that opens the full-page ledger", async () => {
+  it("renders the tenant balance as a link in the list that opens the full-page ledger", async () => {
     await mount();
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
     const balanceLink = container.querySelector('button[aria-label^="View the full ledger"]');
     expect(balanceLink).not.toBeNull();
     expect(balanceLink.textContent).toContain("$1,275.00");
@@ -92,11 +89,26 @@ describe("RentalTenantPanel tenant ledger access", () => {
     await act(async () => balanceLink.click());
     expect(container.querySelector("[data-tenant-ledger-page]")).not.toBeNull();
     expect(container.querySelector("[data-tenant-ledger-page]").textContent).toContain("Paula");
-    // The Tenants breadcrumb returns to the tenant record, ledger tab first.
+    // The Tenants breadcrumb returns to the tenant record, details tab first.
     const back = [...container.querySelectorAll("button")].find((b) => b.textContent === "Tenants");
     await act(async () => back.click());
     expect(container.querySelector("[data-rental-tenant-detail]")).not.toBeNull();
-    expect(container.querySelector('[data-record-tab="ledger"]').getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("right-clicking a tenant row selects it and opens the row menu with ledger, details, property and posting actions", async () => {
+    await mount();
+    // Paula (t1) has an active lease on unit u1, so View Property appears.
+    const row = [...container.querySelectorAll('tr[role="button"]')].find((r) => r.textContent.includes("Paula"));
+    expect(row).not.toBeUndefined();
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 90 });
+    act(() => row.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    const menu = container.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    for (const label of ["View Ledger", "Tenant Details", "View Property", "Post Income", "Post Charge", "Print Statement"]) {
+      expect(menu.textContent).toContain(label);
+    }
   });
 
   it("right-clicking the tenant card opens the custom menu with all four actions and suppresses the native menu", async () => {
@@ -134,7 +146,7 @@ describe("RentalTenantPanel tenant ledger access", () => {
 
   it("the details tab's own Open full ledger button opens the full-page ledger", async () => {
     await mount();
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
+    // Details is the default tab; its payment history carries an Open full ledger button.
     const inline = [...container.querySelectorAll("button")].find((b) => b.textContent === "Open full ledger");
     expect(inline).not.toBeUndefined();
     await act(async () => inline.click());

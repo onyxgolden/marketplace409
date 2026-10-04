@@ -1,6 +1,7 @@
 "use client";
+import { CARD_REGION_ATTRIBUTE } from "./CardContextMenu";
 
-export default function RentalRecordBrowser({ title, records, selectedId, onSelect, getTitle, getSubtitle, getThumbnail, columns, children, emptyMessage, listSize = "compact" }) {
+export default function RentalRecordBrowser({ title, records, selectedId, onSelect, getTitle, getSubtitle, getThumbnail, columns, children, emptyMessage, listSize = "compact", onRowContextMenu = null }) {
   const layoutClassName = listSize === "wide"
     ? "lg:grid-cols-[minmax(520px,1.4fr)_minmax(320px,1fr)]"
     : "lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.5fr)]";
@@ -10,16 +11,21 @@ export default function RentalRecordBrowser({ title, records, selectedId, onSele
       {records.length === 0 ? <p className="p-4 text-sm text-slate-500 dark:text-slate-400">{emptyMessage}</p> : columns ? <div className="lg:overflow-y-auto">
         <table className="w-full table-fixed text-left text-sm">
           <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800"><tr>{getThumbnail && <th className="w-20 px-3 py-2" aria-hidden="true" />}{columns.map((column) => <th key={column.header} className="px-2 py-2 text-xs font-black uppercase tracking-wide text-slate-500 first:pl-4 dark:text-slate-400">{column.header}</th>)}</tr></thead>
-          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">{records.map((record) => {
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">{records.map((record, rowIndex) => {
             const active = record.id === selectedId;
             const thumbnail = getThumbnail?.(record);
+            // Zebra striping (Rentec parity): every other row gets a faint wash so dense
+            // tables stay scannable. The selected row's highlight always wins.
+            const zebraClass = active ? "" : rowIndex % 2 === 1 ? "bg-slate-100/70 dark:bg-slate-800/40" : "";
+            const rowMenuProps = onRowContextMenu ? { [CARD_REGION_ATTRIBUTE]: "", onContextMenu: (event) => onRowContextMenu(event, record) } : {};
             return <tr key={record.id} aria-current={active ? "true" : undefined} role="button" tabIndex={0}
+              {...rowMenuProps}
               onClick={() => onSelect(record.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(record.id); } }}
-              className={`cursor-pointer transition ${active ? "bg-sky-50 shadow-[inset_4px_0_0_#0369a1] dark:bg-sky-950/60 dark:shadow-[inset_4px_0_0_#38bdf8]" : "hover:bg-slate-50 dark:hover:bg-slate-800"}`}>
-              {getThumbnail && <td className="w-20 px-3 py-3">{thumbnail
-                ? <img src={thumbnail} alt="" className="h-14 w-14 min-h-14 min-w-14 rounded-lg object-cover" />
-                : <span className="block h-14 w-14 min-h-14 min-w-14 rounded-lg bg-slate-100 dark:bg-slate-800" aria-hidden="true" />}</td>}
-              {columns.map((column, index) => <td key={column.header} className={`px-2 py-3 align-top text-slate-800 dark:text-slate-200 ${index === 0 && !getThumbnail ? "pl-4" : ""}`}>{column.render(record)}</td>)}
+              className={`cursor-pointer transition ${zebraClass} ${active ? "bg-sky-50 shadow-[inset_4px_0_0_#0369a1] dark:bg-sky-950/60 dark:shadow-[inset_4px_0_0_#38bdf8]" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}>
+              {getThumbnail && <td className="w-16 px-3 py-2">{thumbnail
+                ? <img src={thumbnail} alt="" className="h-10 w-10 min-h-10 min-w-10 rounded-lg object-cover" />
+                : <span className="block h-10 w-10 min-h-10 min-w-10 rounded-lg bg-slate-100 dark:bg-slate-800" aria-hidden="true" />}</td>}
+              {columns.map((column, index) => <td key={column.header} className={`px-2 py-2 align-top text-slate-800 dark:text-slate-200 ${index === 0 && !getThumbnail ? "pl-4" : ""}`}>{column.render(record)}</td>)}
             </tr>;
           })}</tbody>
         </table>

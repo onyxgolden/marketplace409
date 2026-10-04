@@ -348,7 +348,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredEntries.map((entry) => {
+                  {filteredEntries.map((entry, entryIndex) => {
                     const isCharge = entry.kind === "charge";
                     const isPayment = entry.kind === "payment";
                     const isCreditMemo = entry.kind === "credit" || entry.kind === "credit_application";
@@ -356,7 +356,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                     const editable = isCharge && entry.status !== "void";
                     const rowPad = compactRows ? "py-1" : "py-2.5";
                     return (
-                      <tr key={entry.id} data-ledger-entry={entry.kind} className="border-b border-slate-100 dark:border-slate-800">
+                      <tr key={entry.id} data-ledger-entry={entry.kind} className={`border-b border-slate-100 dark:border-slate-800 ${entryIndex % 2 === 1 ? "bg-slate-100/70 dark:bg-slate-800/40" : ""}`}>
                         <td className={`${rowPad} pr-3 font-bold text-slate-700 dark:text-slate-300`}>{formatDate(entry.date)}</td>
                         <td className={`${rowPad} pr-3`}>
                           {isCharge ? (

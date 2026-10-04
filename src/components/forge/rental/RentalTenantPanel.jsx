@@ -112,12 +112,28 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const onNavigate = useCallback((target, context) => navigate?.(target, labelRentalRecordContext(context, tenants, "display_name")), [navigate, tenants]);
   // Rentec's triple-redundant ledger access: right-click menu, ⋮ button, and the
   // balance itself as a link — every path opens the same full-page ledger.
-  const tenantMenuItems = useCallback((tenant, context) => (tenant ? [
-    { label: "View Ledger", onSelect: () => openFullLedger(tenant) },
-    { label: "Post Income", onSelect: () => openFullLedger(tenant, "post-income") },
-    { label: "Post Charge", onSelect: () => onNavigate("charges", context) },
-    { label: "Print Statement", onSelect: () => openFullLedger(tenant, "print") },
-  ] : []), [openFullLedger, onNavigate]);
+  // Row right-click (Brandy's workflow): View Ledger, Tenant Details, View Property,
+  // Post Income, Post Charge, Print Statement.
+  const tenantMenuItems = useCallback((tenant, context) => {
+    if (!tenant) return [];
+    const items = [
+      { label: "View Ledger", onSelect: () => openFullLedger(tenant) },
+      { label: "Tenant Details", onSelect: () => setSelectedId(tenant.id) },
+    ];
+    const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id);
+    const lease = leases.find((item) => leaseIds.includes(item.id) && item.status === "active")
+      || leases.find((item) => leaseIds.includes(item.id));
+    const unit = units.find((item) => item.id === lease?.unit_id);
+    if (unit) {
+      items.push({ label: "View Property", onSelect: () => onNavigate("setup", { recordType: "property", recordId: unit.id, recordLabel: unit.label }) });
+    }
+    items.push(
+      { label: "Post Income", onSelect: () => openFullLedger(tenant, "post-income") },
+      { label: "Post Charge", onSelect: () => onNavigate("charges", context) },
+      { label: "Print Statement", onSelect: () => openFullLedger(tenant, "print") },
+    );
+    return items;
+  }, [openFullLedger, onNavigate, leases, leaseMemberships, units]);
   const openTenantMenuBelow = useCallback((buttonElement, tenant, context) => {
     const rect = buttonElement?.getBoundingClientRect?.();
     openContextMenuAt(rect ? rect.left : 120, rect ? rect.bottom + 6 : 120, tenantMenuItems(tenant, context));
@@ -272,9 +288,17 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     {isRefreshing && tenants.length > 0 && <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
     {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
     {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={selectedId} onSelect={setSelectedId} getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
+      onRowContextMenu={(event, tenant) => {
+        // Rentec behavior: right-click selects the row, then opens the menu.
+        setSelectedId(tenant.id);
+        onContextMenu(event, tenantMenuItems(tenant, { recordType: "tenant", recordId: tenant.id }));
+      }}
       columns={[
         { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenantInviteLabel(tenant)}</span></> },
         { header: "Property", render: (tenant) => { const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units); return propertyLabel || <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>; } },
+        { header: "Status", render: (tenant) => { const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id); const movedIn = leases.some((lease) => leaseIds.includes(lease.id) && lease.status === "active"); return movedIn
+          ? <span className="font-bold text-emerald-700 dark:text-emerald-400">Moved In</span>
+          : <span className="font-bold text-slate-500 dark:text-slate-400">Inactive</span>; } },
         { header: "Active balance", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
           ? <span className="text-slate-500 dark:text-slate-400">—</span>
           : <button type="button" onClick={() => openFullLedger(tenant)}
@@ -343,11 +367,13 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   </section>;
 }
 
-// Rentec-parity R8: the tenant record leads with the ledger -- the money view is
-// the record home, and the profile/details card is the second tab. Keyed by tenant
-// id by the caller so switching records always resets to the ledger tab.
+// Rentec-parity: the tenant record leads with the details -- the info view is
+// the record home (contact, lease, deposit, activity), and the ledger is the
+// second tab. Matches Rentec's tenant detail panel; the full-page ledger
+// remains one click away via View Ledger. Keyed by tenant id by the caller so
+// switching records always resets to the details tab.
 function TenantRecordTabs({ tenantId, tenantName, unitLabel, onOpenPropertyLedger, onOpenBankLedger, details }) {
-  const [recordTab, setRecordTab] = useState("ledger");
+  const [recordTab, setRecordTab] = useState("details");
   const tabClass = (active) => `rounded-t-xl px-4 py-2.5 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
     active
       ? "bg-white text-slate-950 shadow-[inset_0_-2px_0_0_#0284c7] dark:bg-slate-900 dark:text-white"
@@ -355,19 +381,19 @@ function TenantRecordTabs({ tenantId, tenantName, unitLabel, onOpenPropertyLedge
   }`;
   return <>
     <div role="tablist" aria-label={`Record views for ${tenantName}`} className="mt-5 flex gap-1 border-b border-slate-200 dark:border-slate-700">
-      <button type="button" role="tab" aria-selected={recordTab === "ledger"} data-record-tab="ledger"
-        onClick={() => setRecordTab("ledger")} className={tabClass(recordTab === "ledger")}>Ledger</button>
       <button type="button" role="tab" aria-selected={recordTab === "details"} data-record-tab="details"
         onClick={() => setRecordTab("details")} className={tabClass(recordTab === "details")}>Tenant details</button>
+      <button type="button" role="tab" aria-selected={recordTab === "ledger"} data-record-tab="ledger"
+        onClick={() => setRecordTab("ledger")} className={tabClass(recordTab === "ledger")}>Ledger</button>
     </div>
-    {recordTab === "ledger" ? (
+    {recordTab === "details" ? (
+      <div role="tabpanel" aria-label="Tenant details" className="mt-4">{details}</div>
+    ) : (
       <div role="tabpanel" aria-label="Tenant ledger" className="mt-4">
         <TenantLedgerPage tenantId={tenantId} tenantName={tenantName} unitLabel={unitLabel}
           closeLabel="Tenant details" onClose={() => setRecordTab("details")}
           onOpenPropertyLedger={onOpenPropertyLedger} onOpenBankLedger={onOpenBankLedger} />
       </div>
-    ) : (
-      <div role="tabpanel" aria-label="Tenant details" className="mt-4">{details}</div>
     )}
   </>;
 }
