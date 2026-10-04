@@ -297,11 +297,15 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         { header: "Tenant", render: (tenant) => <strong className="block truncate text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong> },
         { header: "Email", render: (tenant) => <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{tenant.email}</span> },
         { header: "Invite", render: (tenant) => <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{tenantInviteLabel(tenant)}</span> },
-        { header: "Property", render: (tenant) => { const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units); return propertyLabel ? <span className="block truncate">{propertyLabel}</span> : <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>; } },
+        { header: "Property", render: (tenant) => { const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id); const lease = leases.find((item) => leaseIds.includes(item.id) && item.status === "active") || leases.find((item) => leaseIds.includes(item.id)); const unit = units.find((item) => item.id === lease?.unit_id); const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units);
+          if (!propertyLabel) return <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>;
+          return unit
+            ? <button type="button" onClick={(event) => { event.stopPropagation(); onNavigate("setup", { recordType: "property", recordId: unit.id, recordLabel: unit.label }); }} title={`View property ${unit.label}`} className="block truncate text-left font-bold text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">{propertyLabel}</button>
+            : <span className="block truncate">{propertyLabel}</span>; } },
         { header: "Status", render: (tenant) => { const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id); const movedIn = leases.some((lease) => leaseIds.includes(lease.id) && lease.status === "active"); return movedIn
           ? <span className="font-bold text-emerald-700 dark:text-emerald-400">Moved In</span>
           : <span className="font-bold text-slate-500 dark:text-slate-400">Inactive</span>; } },
-        { header: "Active balance", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
+        { header: "Active balance", align: "right", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
           ? <span className="text-slate-500 dark:text-slate-400">—</span>
           : <button type="button" onClick={() => openFullLedger(tenant)}
               title={`View the full ledger for ${tenant.display_name}`}
