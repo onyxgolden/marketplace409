@@ -21,6 +21,7 @@
 name: Rental Cron Sweeps
 
 on:
+
   schedule:
     - cron: '0 6 * * *'
     - cron: '0 7 * * *'
@@ -99,3 +100,29 @@ jobs:
             echo "::error::$ENDPOINT returned HTTP $HTTP_CODE"
             exit 1
           fi
+          # HTTP 200 is not enough: endpoints report per-item failures in the
+          # JSON body (e.g. { success: true, failed: 2 }). A green Action
+          # with failed payments or charges is a lie — fail on those too.
+          FAILED=$(python3 -c "
+          import json, sys
+          try:
+              body = json.load(open('/tmp/sweep-response.json'))
+          except Exception as e:
+              print('JSON_PARSE_ERROR'); sys.exit(0)
+          if body.get('success') is False:
+              print('SUCCESS_FALSE'); sys.exit(0)
+          print(int(body.get('failed') or 0))
+          ")
+          if [ "$FAILED" = "JSON_PARSE_ERROR" ]; then
+            echo "::error::$ENDPOINT returned non-JSON body"
+            exit 1
+          fi
+          if [ "$FAILED" = "SUCCESS_FALSE" ]; then
+            echo "::error::$ENDPOINT returned success:false"
+            exit 1
+          fi
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$ENDPOINT reported $FAILED failed item(s)"
+            exit 1
+          fi
+          echo "$ENDPOINT OK (failed=0)"
