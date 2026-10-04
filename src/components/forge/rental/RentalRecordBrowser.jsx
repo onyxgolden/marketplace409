@@ -2,15 +2,20 @@
 import { CARD_REGION_ATTRIBUTE } from "./CardContextMenu";
 
 export default function RentalRecordBrowser({ title, records, selectedId, onSelect, getTitle, getSubtitle, getThumbnail, columns, children, emptyMessage, listSize = "compact", onRowContextMenu = null }) {
-  const layoutClassName = listSize === "wide"
-    ? "lg:grid-cols-[minmax(560px,1.6fr)_minmax(280px,0.9fr)]"
-    : "lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.5fr)]";
+  // No detail child (e.g. the Tenants index): the list takes the full width.
+  // With a detail child the list/detail split applies.
+  const hasDetail = Boolean(children);
+  const layoutClassName = !hasDetail
+    ? ""
+    : listSize === "wide"
+      ? "lg:grid-cols-[minmax(520px,1.4fr)_minmax(280px,0.9fr)]"
+      : "lg:grid-cols-[minmax(260px,0.75fr)_minmax(0,1.5fr)]";
   return <div className={`mt-6 grid gap-4 ${layoutClassName}`} data-rental-record-browser data-list-size={listSize}>
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 lg:sticky lg:top-6 lg:flex lg:max-h-[calc(100vh-3rem)] lg:flex-col">
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800"><h3 className="font-black text-slate-950 dark:text-white">{title}</h3><p className="text-xs text-slate-500 dark:text-slate-400">{records.length} record{records.length === 1 ? "" : "s"}</p></div>
       {records.length === 0 ? <p className="p-4 text-sm text-slate-500 dark:text-slate-400">{emptyMessage}</p> : columns ? <div className="lg:overflow-y-auto">
         <table className="w-full table-fixed text-left text-sm">
-          <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800"><tr>{getThumbnail && <th className="w-16 px-3 py-2" aria-hidden="true" />}{columns.map((column) => <th key={column.header} className={`px-2 py-2 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400 ${column.align === "right" ? "text-right" : "text-left"}`}>{column.header}</th>)}</tr></thead>
+          <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800"><tr>{getThumbnail && <th className="w-16 px-3 py-2" aria-hidden="true" />}{columns.map((column) => <th key={column.header} style={column.width ? { width: column.width } : undefined} className={`px-2 py-2 text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400 ${column.align === "right" ? "text-right" : "text-left"}`}>{column.header}</th>)}</tr></thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-700">{records.map((record, rowIndex) => {
             const active = record.id === selectedId;
             const thumbnail = getThumbnail?.(record);

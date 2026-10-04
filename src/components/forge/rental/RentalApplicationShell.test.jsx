@@ -287,6 +287,30 @@ describe("RentalPageClient record-context URL sync", () => {
     mounted = mount(<RentalPageClient />);
     expect(window.location.search).toBe("");
   });
+
+  it("pushes a history entry on navigation so the Back button restores the previous surface", async () => {
+    mounted = mount(<RentalPageClient />);
+    expect(mounted.container.querySelector('[data-active-function-surface="overview"]')).not.toBeNull();
+    const nav = 'nav[aria-label="Rental Manager functions"]';
+    // Nav groups start collapsed (persisted per browser): expand the Tenants group if needed, then click the item.
+    const groupToggle = [...mounted.container.querySelectorAll(`${nav} button[aria-expanded]`)].find((button) => button.textContent.includes("Tenants"));
+    if (groupToggle.getAttribute("aria-expanded") !== "true") {
+      await act(async () => { groupToggle.click(); });
+    }
+    const tenantsButton = [...mounted.container.querySelectorAll(`${nav} button:not([aria-expanded])`)]
+      .find((button) => button.textContent.trim() === "Tenants");
+    expect(tenantsButton).not.toBeUndefined();
+    await act(async () => { tenantsButton.click(); });
+    expect(window.location.search).toContain("section=tenants");
+    expect(mounted.container.querySelector('[data-active-function-surface="tenants"]')).not.toBeNull();
+    // Browser Back: the popstate handler re-derives the section from the URL.
+    // (The traversal itself is the browser's job; the handler is ours.)
+    await act(async () => {
+      window.history.replaceState(null, "", "/");
+      window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    });
+    expect(mounted.container.querySelector('[data-active-function-surface="overview"]')).not.toBeNull();
+  });
 });
 
 describe("RentalApplicationShell retired-id fallback", () => {
@@ -322,7 +346,7 @@ describe("RentalApplicationShell", () => {
   });
   it("renders a preview-only Rentec migration surface",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-migration"));expect(markup).toContain("Import from Rentec Direct");expect(markup).toContain("cannot write Rentec or FORGE records");});
   it("renders a metadata-only Rentec file inventory",()=>{const markup=renderToStaticMarkup(buildRentalSurface("rentec-files"));expect(markup).toContain("Rentec files and renter photos");expect(markup).toContain("Inspect Rentec files");expect(markup).toContain("file names and contents are not returned");});
-  it("preserves selected-record context while navigating between rental surfaces",()=>{const markup=renderToStaticMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to record")});
+  it("preserves selected-record context while navigating between rental surfaces",()=>{const markup=renderToStaticMarkup(<RentalApplicationShell activeFunctionId="charges" activeRecordContext={{recordType:"tenant",recordId:"tenant_1",recordLabel:"Test Tenant"}} onFunctionChange={()=>{}}/>);expect(markup).toContain('data-record-context="tenant_1"');expect(markup).toContain("Working with tenant: Test Tenant");expect(markup).toContain("Back to tenants")});
   it("requires persisted unit and tenant selections instead of manual ids", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("leases"));
     expect(markup).toContain("Select a saved unit");

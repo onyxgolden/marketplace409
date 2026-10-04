@@ -50,17 +50,56 @@ describe("RentalTenantPanel tenant ledger access", () => {
     vi.unstubAllGlobals();
   });
 
-  async function mount() {
+  async function mount({ recordContext = null, onNavigate = null } = {}) {
     stubFetch();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} recordContext={recordContext} onNavigate={onNavigate} />));
     return container;
   }
 
-  it("opens the tenant record on the Tenant details tab first, with the ledger one click away", async () => {
+  it("renders the index as a pure list with no tenant preview panel", async () => {
     await mount();
+    // Index mode: the tenant table is the whole surface; record data lives on
+    // the dedicated record page, never in a preview sidebar.
+    expect(container.querySelector("[data-rental-tenant-setup]")).not.toBeNull();
+    expect(container.querySelector("[data-rental-tenant-record]")).toBeNull();
+    expect(container.querySelector("[data-rental-tenant-detail]")).toBeNull();
+    const rows = [...container.querySelectorAll('tr[role="button"]')].filter((r) => r.textContent.includes("Paula"));
+    expect(rows.length).toBe(1);
+  });
+
+  it("clicking a tenant row navigates to the dedicated tenant record page", async () => {
+    const onNavigate = vi.fn();
+    await mount({ onNavigate });
+    const row = [...container.querySelectorAll('tr[role="button"]')].find((r) => r.textContent.includes("Paula"));
+    act(() => row.click());
+    expect(onNavigate).toHaveBeenCalledWith("tenants", expect.objectContaining({
+      recordType: "tenant", recordId: "t1", recordLabel: "Paula",
+    }));
+  });
+
+  it("the record page shows a back link to the tenant list", async () => {
+    const onNavigate = vi.fn();
+    await mount({ recordContext: { recordType: "tenant", recordId: "t1" }, onNavigate });
+    expect(container.querySelector("[data-rental-tenant-record]")).not.toBeNull();
+    expect(container.querySelector("[data-rental-tenant-detail]")).not.toBeNull();
+    const back = [...container.querySelectorAll("button")].find((b) => b.textContent === "← Tenants");
+    expect(back).not.toBeUndefined();
+    act(() => back.click());
+    expect(onNavigate).toHaveBeenCalledWith("tenants");
+  });
+
+  it("an unknown tenant record id falls back to the index with a notice", async () => {
+    await mount({ recordContext: { recordType: "tenant", recordId: "nope" } });
+    expect(container.querySelector("[data-rental-tenant-setup]")).not.toBeNull();
+    expect(container.querySelector("[data-rental-tenant-record]")).toBeNull();
+    expect(container.textContent).toContain("wasn't found");
+  });
+
+  it("opens the tenant record on the Tenant details tab first, with the ledger one click away", async () => {
+    await mount({ recordContext: { recordType: "tenant", recordId: "t1" } });
     // Details-first (Rentec parity): the info panel renders on record open, not the ledger.
     const tabs = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
     expect(tabs).toEqual(["Tenant details", "Ledger"]);
@@ -89,15 +128,16 @@ describe("RentalTenantPanel tenant ledger access", () => {
     await act(async () => balanceLink.click());
     expect(container.querySelector("[data-tenant-ledger-page]")).not.toBeNull();
     expect(container.querySelector("[data-tenant-ledger-page]").textContent).toContain("Paula");
-    // The Tenants breadcrumb returns to the tenant record, details tab first.
+    // The Tenants breadcrumb closes the overlay back to the tenant index.
     const back = [...container.querySelectorAll("button")].find((b) => b.textContent === "Tenants");
     await act(async () => back.click());
-    expect(container.querySelector("[data-rental-tenant-detail]")).not.toBeNull();
-    expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector("[data-tenant-ledger-page]")).toBeNull();
+    expect(container.querySelector("[data-rental-tenant-setup]")).not.toBeNull();
   });
 
-  it("right-clicking a tenant row selects it and opens the row menu with ledger, details, property and posting actions", async () => {
-    await mount();
+  it("right-clicking a tenant row opens the row menu with ledger, details, property and posting actions", async () => {
+    const onNavigate = vi.fn();
+    await mount({ onNavigate });
     // Paula (t1) has an active lease on unit u1, so View Property appears.
     const row = [...container.querySelectorAll('tr[role="button"]')].find((r) => r.textContent.includes("Paula"));
     expect(row).not.toBeUndefined();
@@ -109,10 +149,14 @@ describe("RentalTenantPanel tenant ledger access", () => {
     for (const label of ["View Ledger", "Tenant Details", "View Property", "Post Income", "Post Charge", "Print Statement"]) {
       expect(menu.textContent).toContain(label);
     }
+    // Tenant Details navigates to the dedicated record page.
+    const details = [...container.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent === "Tenant Details");
+    await act(async () => details.click());
+    expect(onNavigate).toHaveBeenCalledWith("tenants", expect.objectContaining({ recordType: "tenant", recordId: "t1" }));
   });
 
-  it("right-clicking the tenant card opens the custom menu with all four actions and suppresses the native menu", async () => {
-    await mount();
+  it("right-clicking the tenant record opens the custom menu without a Tenant Details item and suppresses the native menu", async () => {
+    await mount({ recordContext: { recordType: "tenant", recordId: "t1" } });
     const card = container.querySelector("[data-rental-tenant-detail]");
     expect(card).not.toBeNull();
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 90 });
@@ -123,10 +167,12 @@ describe("RentalTenantPanel tenant ledger access", () => {
     for (const label of ["View Ledger", "Post Income", "Post Charge", "Print Statement"]) {
       expect(menu.textContent).toContain(label);
     }
+    // Already on the record: no self-link.
+    expect(menu.textContent).not.toContain("Tenant Details");
   });
 
   it("the ⋮ button opens the same menu", async () => {
-    await mount();
+    await mount({ recordContext: { recordType: "tenant", recordId: "t1" } });
     const dots = container.querySelector('button[aria-label^="More actions"]');
     expect(dots).not.toBeNull();
     await act(async () => dots.click());
@@ -136,7 +182,7 @@ describe("RentalTenantPanel tenant ledger access", () => {
   });
 
   it("choosing View Ledger from the menu opens the full-page ledger", async () => {
-    await mount();
+    await mount({ recordContext: { recordType: "tenant", recordId: "t1" } });
     const card = container.querySelector("[data-rental-tenant-detail]");
     act(() => card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 90 })));
     const viewLedger = [...container.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent === "View Ledger");
@@ -145,7 +191,7 @@ describe("RentalTenantPanel tenant ledger access", () => {
   });
 
   it("the details tab's own Open full ledger button opens the full-page ledger", async () => {
-    await mount();
+    await mount({ recordContext: { recordType: "tenant", recordId: "t1" } });
     // Details is the default tab; its payment history carries an Open full ledger button.
     const inline = [...container.querySelectorAll("button")].find((b) => b.textContent === "Open full ledger");
     expect(inline).not.toBeUndefined();
