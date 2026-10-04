@@ -58,6 +58,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
     .reduce((sum, credit) => sum + Number(credit.remaining_cents || 0), 0);
   const heldCents = Number(deposits?.heldCents || 0);
   const [detailEntry, setDetailEntry] = useState(null);
+  const [correctEntry, setCorrectEntry] = useState(null);
   const [invoiceCharge, setInvoiceCharge] = useState(null);
   const [showPostIncome, setShowPostIncome] = useState(initialView === "post-income");
   const [showAddCharge, setShowAddCharge] = useState(false);
@@ -357,12 +358,18 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
                     const rowPad = compactRows ? "py-1" : "py-2.5";
                     return (
                       <tr key={entry.id} data-ledger-entry={entry.kind}
-                        // Rentec parity: double-clicking a transaction opens it --
-                        // the invoice editor for charges, the detail dialog (with
-                        // Correct payment) for payments. Posted payments are never
-                        // rewritten in place; corrections post compensating entries.
-                        onDoubleClick={() => { if (isCharge && editable) openInvoice(entry); else setDetailEntry(entry); }}
-                        title={isCharge && editable ? "Double-click to edit this charge" : "Double-click to view transaction detail"}
+                        // Rentec parity: double-clicking a transaction edits it --
+                        // the invoice editor for charges, the Correct payment
+                        // dialog for succeeded payments (amount, date, method,
+                        // reference, notes -- corrections post compensating
+                        // entries, the original is never rewritten). Anything
+                        // else opens the read-only detail dialog.
+                        onDoubleClick={() => {
+                          if (isCharge && editable) openInvoice(entry);
+                          else if (isPayment && entry.status === "succeeded") setCorrectEntry(entry);
+                          else setDetailEntry(entry);
+                        }}
+                        title={isCharge && editable ? "Double-click to edit this charge" : isPayment && entry.status === "succeeded" ? "Double-click to correct this payment" : "Double-click to view transaction detail"}
                         className={`border-b border-slate-100 dark:border-slate-800 ${entryIndex % 2 === 1 ? "bg-slate-100/70 dark:bg-slate-800/40" : ""}`}>
                         <td className={`${rowPad} pr-3 font-bold text-slate-700 dark:text-slate-300`}>{formatDate(entry.date)}</td>
                         <td className={`${rowPad} pr-3`}>
@@ -493,6 +500,7 @@ export default function TenantLedgerPage({ tenantId, tenantName, unitLabel, onCl
       )}
 
       {detailEntry && <TransactionDetailModal entry={detailEntry} onClose={() => setDetailEntry(null)} onCorrected={refresh} />}
+      {correctEntry && <CorrectPaymentDialog paymentId={correctEntry.sourceId} onClose={() => setCorrectEntry(null)} onDone={() => { setCorrectEntry(null); refresh(); }} />}
       {emailStatementOpen && (
         <StatementEmailDialog
           title={`Email statement — ${tenantName || "tenant"}`}

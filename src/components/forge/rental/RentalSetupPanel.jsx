@@ -88,6 +88,7 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const openFullExpenses = useCallback((unit) => {
     window.dispatchEvent(new CustomEvent(PROPERTY_EXPENSES_OPEN_EVENT, { detail: { propertyId: unit?.property_id } }));
   }, []);
+
   // Adopt freshly fetched data the same way the original mount fetch did:
   // keep the current selection when still active, otherwise select the first
   // active unit; show the create form only when everything is inactive.
@@ -118,6 +119,25 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
   const tenants = result?.tenants || [];
   const openCharges = result?.openCharges || [];
   const onNavigate = (target, context) => navigate?.(target, labelRentalRecordContext(context, units, "label"));
+  // Rentec parity (same as the tenant rows): one menu drives the row
+  // right-click, the detail-card right-click, and the ⋮ actions button —
+  // every path reaches the same property actions.
+  const unitMenuItems = useCallback((unit) => {
+    if (!unit) return [];
+    const context = { recordType: "unit", recordId: unit.id, propertyId: unit.property_id };
+    return [
+      { label: "View ledger", onSelect: () => setLedgerUnit(unit) },
+      { label: "Open full expenses ledger", onSelect: () => openFullExpenses(unit) },
+      { label: "Edit property details", onSelect: () => { setArchiveCandidateId(null); setEditingId(unit.id); setAddressErrors({}); } },
+      { label: "Manage lease", onSelect: () => onNavigate?.("leases", context) },
+      { label: "Rent & payments", onSelect: () => onNavigate?.("charges", context) },
+      { label: "Financial setup", onSelect: () => onNavigate?.("financial-setup", context) },
+      { label: "Work orders", onSelect: () => onNavigate?.("maintenance", context) },
+      { label: "Inspections", onSelect: () => onNavigate?.("inspections", context) },
+      { label: "File library", onSelect: () => onNavigate?.("documents", context) },
+      { label: "Archive duplicate / inactive property", destructive: true, onSelect: () => { setEditingId(null); setArchiveCandidateId(unit.id); } },
+    ];
+  }, [onNavigate, openFullExpenses]);
   // A property record context (e.g. "Open property ledger" from a tenant
   // ledger) deep-links straight into that property's ledger once the units
   // have loaded. The consumed ref keeps it one-shot: closing the ledger does
@@ -228,10 +248,17 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
       {result && loadError ? <p role="status" className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Could not refresh — showing the last saved units.</p> : null}
       {result && isRefreshing ? <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p> : null}
       {units.length > 0 && !showCreate && <RentalRecordBrowser title="Rental properties" records={visibleUnits} selectedId={selectedId} onSelect={(id) => { setSelectedId(id); setEditingId(null); setArchiveCandidateId(null); }} getThumbnail={(unit) => unit.photo_url} listSize="wide"
+        onRowContextMenu={(event, unit) => onContextMenu(event, unitMenuItems(unit))}
         columns={[
-          { header: "Property address", render: (unit) => { const structured = formatAddress(addressOfUnit(unit)); return <><strong className="block text-sm text-slate-950 dark:text-white">{unit.label}</strong>{structured ? <span className="mt-1 block text-xs font-bold text-slate-700 dark:text-slate-300">{structured}</span> : null}<span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{unit.property_id} · {unit.status || "Status not set"}</span></>; } },
-          { header: "Tenant", render: (unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return tenantLabel || <button type="button" onClick={(event) => { event.stopPropagation(); onNavigate?.("tenants", { recordType: "unit", recordId: unit.id, propertyId: unit.property_id, openCreateTenant: true }); }} className="font-black text-sky-700 underline decoration-2 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Add tenant</button>; } },
-          { header: "Active balance", render: (unit) => { const balanceCents = activeBalanceCentsForUnit(unit, leases, openCharges); return balanceCents === null
+          // One-line spreadsheet rows (same as the tenant index): every cell is a
+          // single truncated line; full text rides on title for hover.
+          { header: "Property", width: "200px", render: (unit) => <strong className="block truncate text-sm text-slate-950 dark:text-white" title={unit.label}>{unit.label}</strong> },
+          { header: "Address", render: (unit) => { const structured = formatAddress(addressOfUnit(unit)); return <span className="block truncate text-xs text-slate-500 dark:text-slate-400" title={structured || ""}>{structured || "—"}</span>; } },
+          { header: "Tenant", width: "200px", render: (unit) => { const tenantLabel = tenantLabelForUnit(unit, leases, leaseMemberships, tenants); return tenantLabel
+            ? <span className="block truncate font-bold text-slate-700 dark:text-slate-300" title={tenantLabel}>{tenantLabel}</span>
+            : <button type="button" onClick={(event) => { event.stopPropagation(); onNavigate?.("tenants", { recordType: "unit", recordId: unit.id, propertyId: unit.property_id, openCreateTenant: true }); }} title={`Add a tenant to ${unit.label}`} className="block truncate text-left font-black text-sky-700 underline decoration-2 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200">Add tenant</button>; } },
+          { header: "Status", width: "110px", render: (unit) => <span className="block truncate text-xs font-bold text-slate-500 dark:text-slate-400" title={unit.status || "Status not set"}>{unit.status || "Status not set"}</span> },
+          { header: "Active balance", width: "130px", align: "right", render: (unit) => { const balanceCents = activeBalanceCentsForUnit(unit, leases, openCharges); return balanceCents === null
             ? <span className="text-slate-500 dark:text-slate-400">—</span>
             : <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>; } },
         ]}>
@@ -239,14 +266,11 @@ export default function RentalSetupPanel({ initialUnits = [], onNavigate: naviga
           const unit = visibleUnits.find((item) => item.id === selectedId) || visibleUnits[0];
           const context = { recordType: "unit", recordId: unit?.id, propertyId: unit?.property_id };
           return unit && <div data-rental-unit-detail
-            onContextMenu={(event) => onContextMenu(event, [
-              { label: "View Ledger", onSelect: () => setLedgerUnit(unit) },
-              { label: "Open full expenses ledger", onSelect: () => openFullExpenses(unit) },
-            ])}
-            title="Right-click for ledger options">
+            onContextMenu={(event) => onContextMenu(event, unitMenuItems(unit))}
+            title="Right-click for property options">
             <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Selected unit</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{unit.label}</h3></div>
-              <RentalRecordActions label="Property actions" actions={[{label:"View ledger",onSelect:()=>setLedgerUnit(unit)},{label:"Edit property details",onSelect:()=>{setArchiveCandidateId(null);setEditingId(unit.id);setAddressErrors({});}},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Financial setup",onSelect:()=>onNavigate?.("financial-setup",context)},{label:"Work orders",onSelect:()=>onNavigate?.("maintenance",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)},{label:"Archive duplicate / inactive property",destructive:true,onSelect:()=>{setEditingId(null);setArchiveCandidateId(unit.id);}}]}/>
+              <RentalRecordActions label="Property actions" actions={unitMenuItems(unit)}/>
             </div>
             <div className="mt-4"><RentalPhotoUpload entityType="unit" entityId={unit.id} photoUrl={unit.photo_url} onUploaded={refreshUnits} /></div>
             <PropertyExpenseHistory key={unit.id} propertyId={unit.property_id} propertyLabel={unit.label} />
