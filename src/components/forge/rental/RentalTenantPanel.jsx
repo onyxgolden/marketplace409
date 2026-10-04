@@ -276,11 +276,11 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         onOpenBankLedger={() => navigate?.("bank-ledger")} />
     </section>;
   }
-  return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-setup>
+  return <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-setup>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{termLabel("tenant", { capitalize: true })} setup</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("tenant", { plural: true, capitalize: true })}</h2>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p></div>
+        <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("tenant", { plural: true, capitalize: true })}</h2>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p></div>
       {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
     </div>
     {message && <p role="status" className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
@@ -315,7 +315,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         onContextMenu={(event) => onContextMenu(event, tenantMenuItems(tenant, context))}
         title="Right-click for tenant actions">
         <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
-        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Tenant household</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{household.unit?.label || "No active property"}</h3></div><div className="flex items-center gap-2"><button type="button" aria-label={`More actions for ${tenant.display_name}`} aria-haspopup="menu" title="More actions"
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Tenant household</p><h3 className="mt-1 text-xl font-black text-slate-950 dark:text-white">{household.unit?.label || "No active property"}</h3></div><div className="flex items-center gap-2"><button type="button" aria-label={`More actions for ${tenant.display_name}`} aria-haspopup="menu" title="More actions"
           onClick={(event) => openTenantMenuBelow(event.currentTarget, tenant, context)}
           className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button><RentalRecordActions label="Tenant actions" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div></div>
         <LeaseSummary lease={household.lease} unit={household.unit}/>
@@ -400,7 +400,7 @@ function TenantRecordTabs({ tenantId, tenantName, unitLabel, onOpenPropertyLedge
   </>;
 }
 
-function LeaseSummary({lease,unit}) { return <div className="mt-5 grid gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30 sm:grid-cols-2 lg:grid-cols-4"><Info label="Property" value={unit?.label||lease?.property_id}/><Info label="Lease status" value={lease?.status}/><Info label="Lease dates" value={lease?`${lease.start_date} to ${lease.end_date||"Open-ended"}`:null}/><Info label="Monthly rent" value={lease?money.format(Number(lease.monthly_rent_cents||0)/100):null}/></div> }
+function LeaseSummary({lease,unit}) { return <div className="mt-4 grid gap-2 rounded-2xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30 sm:grid-cols-2 lg:grid-cols-4"><Info label="Property" value={unit?.label||lease?.property_id}/><Info label="Lease status" value={lease?.status}/><Info label="Lease dates" value={lease?`${lease.start_date} to ${lease.end_date||"Open-ended"}`:null}/><Info label="Monthly rent" value={lease?money.format(Number(lease.monthly_rent_cents||0)/100):null}/></div> }
 function Info({label,value}) { return <div><p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p><p className="mt-1 font-bold text-slate-950 dark:text-white">{value||"Not recorded"}</p></div> }
 function Field({label,name,defaultValue="",type="text",step}) { return <label className="text-sm font-bold text-slate-900 dark:text-white">{label}<input name={name} type={type} step={step} defaultValue={defaultValue??""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label> }
 function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId,lateFeeOverride,saveLateFeeOverride,workspacePaymentPolicy,paymentPolicyOverride,savePaymentPolicyOverride}) {
