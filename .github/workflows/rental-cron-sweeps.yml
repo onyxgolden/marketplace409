@@ -1,0 +1,127 @@
+# Rental + Private-Financing cron sweeps via GitHub Actions.
+#
+# Why this exists: the 11 cron entries in vercel.json never fire on the
+# Vercel Hobby/free-team plan (verified 2026-10-04: zero attempts, zero
+# auto-generated charges across all 11 jobs). GitHub Actions runs them
+# instead — free tier, 2000 min/month, already in use by this repo.
+#
+# Each schedule entry maps to exactly one endpoint via the SCHEDULE_MAP
+# below (github.event.schedule carries the cron expression that fired).
+# The job curls the production endpoint with the CRON_SECRET bearer token
+# (repository secret CRON_SECRET — must match Vercel's CRON_SECRET env).
+# The endpoints are idempotent: safe to re-run, safe if Vercel ever fires
+# one too (double-execution is a no-op by design).
+#
+# Schedules are UTC, copied verbatim from vercel.json (which is UTC-only).
+# CDT = UTC-5, so 0 7 * * * UTC = 2:00 AM CDT.
+#
+# What this never does: never merges, never deploys, never writes data
+# except through the endpoints themselves (which is their job).
+
+name: Rental Cron Sweeps
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+    - cron: '0 7 * * *'
+    - cron: '30 7 * * *'
+    - cron: '0 8 * * *'
+    - cron: '0 9 * * *'
+    - cron: '0 10 * * *'
+    - cron: '0 11 * * *'
+    - cron: '0 14 * * *'
+    - cron: '0 15 * * *'
+    - cron: '0 16 * * *'
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Endpoint path to hit (e.g. /api/rental/cron/autopay-sweep). Required for manual runs.'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve endpoint from schedule
+        id: resolve
+        env:
+          TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_ENDPOINT: ${{ inputs.endpoint }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            ENDPOINT="$MANUAL_ENDPOINT"
+          else
+            case "$TRIGGER_SCHEDULE" in
+              "0 6 * * *")  ENDPOINT="/api/rental/cron/generate-charges" ;;
+              "0 7 * * *")  ENDPOINT="/api/rental/cron/autopay-sweep" ;;
+              "30 7 * * *") ENDPOINT="/api/private-financing/cron/autopay-sweep" ;;
+              "0 8 * * *")  ENDPOINT="/api/rental/cron/settlement-reconciliation" ;;
+              "0 9 * * *")  ENDPOINT="/api/private-financing/cron/payment-due-reminders" ;;
+              "0 10 * * *") ENDPOINT="/api/rental/cron/rent-due-reminders" ;;
+              "0 11 * * *") ENDPOINT="/api/rental/cron/late-fee-posting" ;;
+              "0 14 * * *") ENDPOINT="/api/rental/cron/owner-payment-notifications" ;;
+              "0 15 * * *") ENDPOINT="/api/rental/cron/tenant-invite" ;;
+              "0 16 * * *") ENDPOINT="/api/private-financing/cron/payment-receipt-notifications" ;;
+              "0 18 * * *") ENDPOINT="/api/rental/cron/tenant-payment-receipts" ;;
+              *) echo "::error::Unknown schedule: $TRIGGER_SCHEDULE"; exit 1 ;;
+            esac
+          fi
+          case "$ENDPOINT" in
+            /api/rental/cron/*|/api/private-financing/cron/*) ;;
+            *) echo "::error::Refusing to hit non-cron endpoint: $ENDPOINT"; exit 1 ;;
+          esac
+          echo "endpoint=$ENDPOINT" >> "$GITHUB_OUTPUT"
+          echo "Resolved endpoint: $ENDPOINT"
+
+      - name: Trigger sweep endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          ENDPOINT: ${{ steps.resolve.outputs.endpoint }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repository secret is not set."
+            exit 1
+          fi
+          echo "Hitting $ENDPOINT ..."
+          HTTP_CODE=$(curl -s -o /tmp/sweep-response.json -w "%{http_code}" \
+            --max-time 120 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://www.409marketplace.online$ENDPOINT")
+          echo "HTTP $HTTP_CODE"
+          cat /tmp/sweep-response.json
+          echo ""
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::$ENDPOINT returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+          # HTTP 200 is not enough: endpoints report per-item failures in the
+          # JSON body (e.g. { success: true, failed: 2 }). A green Action
+          # with failed payments or charges is a lie — fail on those too.
+          FAILED=$(python3 -c "
+          import json, sys
+          try:
+              body = json.load(open('/tmp/sweep-response.json'))
+          except Exception as e:
+              print('JSON_PARSE_ERROR'); sys.exit(0)
+          if body.get('success') is False:
+              print('SUCCESS_FALSE'); sys.exit(0)
+          print(int(body.get('failed') or 0))
+          ")
+          if [ "$FAILED" = "JSON_PARSE_ERROR" ]; then
+            echo "::error::$ENDPOINT returned non-JSON body"
+            exit 1
+          fi
+          if [ "$FAILED" = "SUCCESS_FALSE" ]; then
+            echo "::error::$ENDPOINT returned success:false"
+            exit 1
+          fi
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$ENDPOINT reported $FAILED failed item(s)"
+            exit 1
+          fi
+          echo "$ENDPOINT OK (failed=0)"
