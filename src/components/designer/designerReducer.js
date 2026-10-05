@@ -21,6 +21,7 @@ import {
   deleteSheet,
   addDeck,
   setDeckDrop,
+  setDeckMaterial,
   deleteDeck,
   deleteSymbol,
   deleteWall,
@@ -364,6 +365,8 @@ export function designerReducer(state, action) {
       const deck = design.decks[design.decks.length - 1];
       return { ...touch(state, design), selection: { kind: "deck", id: deck.id } };
     }
+    case "SET_DECK_MATERIAL":
+      return touch(state, setDeckMaterial(state.design, action.deckId, action.material));
     case "SET_DECK_DROP":
       return touch(state, setDeckDrop(state.design, action.deckId, action.dropIn), action.coalesce);
     case "MOVE_WALL_ENDPOINT":

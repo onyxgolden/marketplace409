@@ -105,7 +105,7 @@ import {
 } from "@/domains/roomDesigner/homeProject";
 import { FURNITURE_CATALOG, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { DECK_MAX_DROP_IN, ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, decksOf, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign, zoomExtentsRect } from "@/domains/roomDesigner/designerDocument";
+import { DECK_MATERIALS, DECK_MAX_DROP_IN, ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, decksOf, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign, zoomExtentsRect } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import {
   feetInchesLabel,
@@ -170,7 +170,7 @@ export const TOOL_DEFS = [
   { id: "select", label: "Select", icon: MousePointer2, hint: "Click to select · drag endpoints & furniture · double-click furniture to rotate" },
   { id: "wall", label: "Wall", icon: Square, hint: "Drag on the plan to draw a wall (snaps to the grid)" },
   { id: "wallrect", label: "Wall rect", icon: SquareDashed, hint: "Drag on the plan to draw a rectangular wall outline (snaps to the grid)" },
-  { id: "deck", label: "Deck", icon: LayoutGrid, hint: "Drag on the plan to draw a deck. Its top sits 4″ below the door threshold (set in the panel)." },
+  { id: "deck", label: "Deck", icon: LayoutGrid, hint: "Drag on the plan to draw a deck (wood platform or concrete pad, set in the panel). Its top sits 4″ below the door threshold." },
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening. Select it afterward to set its width." },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening. Select it afterward to set its width." },
   // Pre-shaped rooms: one palette entry per template. Selecting one arms
@@ -3171,6 +3171,22 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
     if (!deck) return null;
     return (
       <PanelShell title="Deck" onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+        <div className="mb-2" role="group" aria-label="Deck material">
+          <span className="block text-xs text-gray-400">Material</span>
+          <div className="mt-1 flex gap-1">
+            {Object.entries(DECK_MATERIALS).map(([key, spec]) => (
+              <button
+                key={key} type="button" aria-pressed={deck.material === key}
+                onClick={() => dispatch({ type: "SET_DECK_MATERIAL", deckId: deck.id, material: key })}
+                className={`flex-1 rounded border px-2 py-1 text-xs ${deck.material === key
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
+              >
+                {spec.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="block text-xs text-gray-400">
           Top below door threshold (inches)
           <input

@@ -13,7 +13,7 @@ import {
   wallDirection,
   wallLength,
 } from "./designerGeometry";
-import { decksOf, findWall, pieceSize } from "./designerDocument";
+import { DECK_MATERIALS, decksOf, findWall, pieceSize } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
@@ -386,13 +386,18 @@ export function buildThreeScene(design) {
     .filter(Boolean);
   const stairs = stairsDescriptors(design);
   const equipment = equipmentDescriptors(design);
-  const decks = decksOf(design).map((d) => ({
-    minX: Math.min(d.a.x, d.b.x),
-    maxX: Math.max(d.a.x, d.b.x),
-    minZ: Math.min(d.a.y, d.b.y),
-    maxZ: Math.max(d.a.y, d.b.y),
-    topYIn: -d.dropIn,
-  }));
+  const decks = decksOf(design).map((d) => {
+    const spec = DECK_MATERIALS[d.material] || DECK_MATERIALS.wood;
+    return {
+      minX: Math.min(d.a.x, d.b.x),
+      maxX: Math.max(d.a.x, d.b.x),
+      minZ: Math.min(d.a.y, d.b.y),
+      maxZ: Math.max(d.a.y, d.b.y),
+      topYIn: -d.dropIn,
+      thicknessIn: spec.thicknessIn,
+      color: spec.color,
+    };
+  });
 
   let floor = null;
   const xs = [];

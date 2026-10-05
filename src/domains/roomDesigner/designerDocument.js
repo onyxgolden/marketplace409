@@ -1514,7 +1514,7 @@ function clampDeckDrop(dropIn) {
   return Math.min(DECK_MAX_DROP_IN, Math.max(0, value));
 }
 
-export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN } = {}) {
+export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN, material = "wood" } = {}) {
   assertDesign(design);
   if (!isValidPoint(a) || !isValidPoint(b)) {
     throw new Error("Deck corners must be valid points.");
@@ -1522,8 +1522,32 @@ export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN } = {}) {
   if (Math.abs(b.x - a.x) < DECK_MIN_SIDE_IN || Math.abs(b.y - a.y) < DECK_MIN_SIDE_IN) {
     throw new Error(`Deck is too small (each side must be at least ${DECK_MIN_SIDE_IN} inches).`);
   }
-  const deck = { id: nextId("deck"), a: clonePoint(a), b: clonePoint(b), dropIn: clampDeckDrop(dropIn) };
+  const deck = {
+    id: nextId("deck"),
+    a: clonePoint(a),
+    b: clonePoint(b),
+    dropIn: clampDeckDrop(dropIn),
+    material: cleanDeckMaterial(material),
+  };
   return { ...design, decks: [...decksOf(design), deck] };
+}
+
+export const DECK_MATERIALS = Object.freeze({
+  wood: { label: "Wood platform", thicknessIn: 5.5, color: "#a0744a" },
+  concrete: { label: "Concrete pad", thicknessIn: 4, color: "#b5b3ab" },
+});
+
+function cleanDeckMaterial(material) {
+  return Object.prototype.hasOwnProperty.call(DECK_MATERIALS, material) ? material : "wood";
+}
+
+export function setDeckMaterial(design, deckId, material) {
+  assertDesign(design);
+  const clean = cleanDeckMaterial(material);
+  return {
+    ...design,
+    decks: decksOf(design).map((d) => (d.id === deckId ? { ...d, material: clean } : d)),
+  };
 }
 
 export function setDeckDrop(design, deckId, dropIn) {

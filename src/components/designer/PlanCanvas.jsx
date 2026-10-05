@@ -43,6 +43,7 @@ import {
   getRoomTemplate,
   pieceSize,
   sheetPlanBounds,
+  DECK_MATERIALS,
   decksOf,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
@@ -1175,7 +1176,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <rect x={x} y={y} width={Math.abs(b.x - a.x)} height={Math.abs(b.y - a.y)}
           fill="rgba(160,116,74,0.12)" stroke={color} strokeWidth={thicknessPx} strokeDasharray="10 6" />
         <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color}>
-          {`Deck, top ${deck.dropIn}″ below threshold`}
+          {`${DECK_MATERIALS[deck.material]?.label || "Deck"}, top ${deck.dropIn}″ below threshold`}
         </text>
       </g>
     );
