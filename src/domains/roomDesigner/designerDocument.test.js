@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   addOpening,
+  OPENING_DEFAULTS,
   addRoomFromTemplate,
   addWall,
   addWallRect,
@@ -29,6 +30,7 @@ import {
   resizeOpening,
   rotateFurniture,
   serializeDesign,
+  setDoorSwing,
   setFurnitureUnitCost,
   setRoomFinish,
   setRoomFloorImage,
@@ -829,5 +831,39 @@ describe("zoomExtentsRect", () => {
     const rect = zoomExtentsRect(d);
     expect(rect.widthIn).toBeGreaterThan(0);
     expect(rect.heightIn).toBeGreaterThan(0);
+  });
+});
+
+describe("closet and passage openings", () => {
+  it("adds a closet with its own default width and cuts the wall", () => {
+    const d = wallDesign();
+    const wallId = d.walls[0].id;
+    const next = addOpening(d, wallId, { type: "closet", offsetIn: 24 });
+    expect(next.openings).toHaveLength(1);
+    expect(next.openings[0].type).toBe("closet");
+    expect(next.openings[0].widthIn).toBe(OPENING_DEFAULTS.closet.widthIn);
+  });
+
+  it("adds a passage with its own default width (wider than a door)", () => {
+    const d = wallDesign();
+    const wallId = d.walls[0].id;
+    const next = addOpening(d, wallId, { type: "passage", offsetIn: 24 });
+    expect(next.openings[0].type).toBe("passage");
+    expect(next.openings[0].widthIn).toBe(OPENING_DEFAULTS.passage.widthIn);
+    expect(OPENING_DEFAULTS.passage.widthIn).toBeGreaterThan(OPENING_DEFAULTS.door.widthIn);
+  });
+
+  it("still rejects unknown opening types, and names every valid one", () => {
+    const d = wallDesign();
+    const wallId = d.walls[0].id;
+    expect(() => addOpening(d, wallId, { type: "archway" })).toThrow(/closet/);
+    expect(() => addOpening(d, wallId, { type: "archway" })).toThrow(/passage/);
+  });
+
+  it("only doors take a hinge and swing; closets and passages do not", () => {
+    let d = wallDesign();
+    const wallId = d.walls[0].id;
+    d = addOpening(d, wallId, { type: "closet", offsetIn: 24 });
+    expect(() => setDoorSwing(d, d.openings[0].id, { hinge: "end" })).toThrow();
   });
 });

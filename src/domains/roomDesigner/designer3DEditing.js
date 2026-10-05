@@ -184,7 +184,7 @@ export function sizeFieldsForSelection(selection, design) {
     const opening = (design.openings || []).find((o) => o.id === selection.id);
     if (!opening) return null;
     return {
-      title: opening.type === "door" ? "Door" : "Window",
+      title: { door: "Door", window: "Window", closet: "Closet", passage: "Passage" }[opening.type] || "Opening",
       fields: [{ key: "widthIn", label: "Width", valueIn: opening.widthIn }],
     };
   }

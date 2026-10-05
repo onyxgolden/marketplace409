@@ -122,7 +122,7 @@ function projectOpening(opening, points, u, levelBaseIn, assumptions) {
   const u0 = p0x * u.x + p0y * u.y;
   const u1 = p1x * u.x + p1y * u.y;
 
-  const type = opening.type === "door" ? "door" : "window";
+  const type = opening.type === "window" ? "window" : "door";
   const heightIn =
     isFiniteNumber(opening.heightIn) && opening.heightIn > 0
       ? opening.heightIn

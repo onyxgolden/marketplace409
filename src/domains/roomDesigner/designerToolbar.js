@@ -31,7 +31,7 @@ export function orderToolbarTools(toolDefs) {
 // registerToolCategory() instead of editing this file. Categories may also
 // be passed directly to groupToolsByCategory() as a second argument.
 export const TOOL_CATEGORIES = [
-  { id: "house", label: "House", toolIds: ["wall", "wallrect", "door", "window"] },
+  { id: "house", label: "House", toolIds: ["wall", "wallrect", "door", "window", "closet", "passage"] },
   {
     id: "rooms",
     label: "Rooms",

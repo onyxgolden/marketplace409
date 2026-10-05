@@ -160,6 +160,17 @@ function PrintOpenings({ design }) {
             </g>
           );
         }
+        if (o.type === "passage" || o.type === "closet") {
+          return (
+            <g key={o.id} stroke={INK} strokeWidth={1} fill="none">
+              <line x1={gp1.x - n.x * 3} y1={gp1.y - n.y * 3} x2={gp1.x + n.x * 3} y2={gp1.y + n.y * 3} />
+              <line x1={gp2.x - n.x * 3} y1={gp2.y - n.y * 3} x2={gp2.x + n.x * 3} y2={gp2.y + n.y * 3} />
+              {o.type === "closet" && (
+                <line x1={gp1.x} y1={gp1.y} x2={gp2.x} y2={gp2.y} strokeDasharray="4 2" stroke={HAIRLINE} />
+              )}
+            </g>
+          );
+        }
         // Door, same geometry as the screen (stored hinge side / swing face):
         // closed leaf across the gap + 90° arc from the latch to the open leaf.
         const f = doorSwingFrame(wall, o);
