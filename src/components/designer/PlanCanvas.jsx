@@ -44,6 +44,7 @@ import {
   pieceSize,
   sheetPlanBounds,
   DECK_MATERIALS,
+  DECK_MIN_SIDE_IN,
   decksOf,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
@@ -1048,10 +1049,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
     }
     if (drag?.kind === "draw-deck" && drawPreview) {
-      try {
+      const width = Math.abs(drawPreview.b.x - drawPreview.a.x);
+      const depth = Math.abs(drawPreview.b.y - drawPreview.a.y);
+      if (width >= DECK_MIN_SIDE_IN && depth >= DECK_MIN_SIDE_IN) {
         dispatch({ type: "ADD_DECK", a: drawPreview.a, b: drawPreview.b });
-      } catch {
-        // too small — ignore
       }
     }
     setDrag(null);

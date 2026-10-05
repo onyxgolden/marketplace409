@@ -1502,7 +1502,7 @@ export function deleteSheet(design, sheetId) {
 // the finished floor (the door threshold, y = 0 in 3D).
 export const DECK_DEFAULT_DROP_IN = 4;
 export const DECK_MAX_DROP_IN = 24;
-const DECK_MIN_SIDE_IN = 12;
+export const DECK_MIN_SIDE_IN = 12;
 
 export function decksOf(design) {
   return design?.decks || [];
