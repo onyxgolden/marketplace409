@@ -1,3 +1,5 @@
+import { FURNITURE_CATALOG, FURNITURE_CATEGORIES } from "./furnitureCatalog";
+
 // Toolbar ordering for the room Designer.
 //
 // Select, Erase and Pan are pinned as the first three tools, in that exact
@@ -30,8 +32,36 @@ export function orderToolbarTools(toolDefs) {
 // process-engineering catalog) register their own categories at runtime via
 // registerToolCategory() instead of editing this file. Categories may also
 // be passed directly to groupToolsByCategory() as a second argument.
+// Fixtures and cabinets shown under House, one collapsible group per
+// furniture-catalog category. Their palette tool ids are "furniture-<catalogId>".
+const FURNITURE_CATEGORY_LABELS = Object.freeze({
+  seating: "Seating",
+  tables: "Tables",
+  bedroom: "Bedroom",
+  kitchen: "Kitchen",
+  cabinets: "Cabinets",
+  bath: "Bath",
+  laundry: "Laundry",
+  storage: "Storage",
+  lighting: "Lighting",
+});
+
+export const HOUSE_FIXTURE_CATEGORIES = Object.freeze(
+  FURNITURE_CATEGORIES.map((category) => ({
+    id: `house-${category}`,
+    label: `House: ${FURNITURE_CATEGORY_LABELS[category] || category}`,
+    category,
+  })),
+);
+
+export const FIXTURE_TOOL_PREFIX = "furniture-";
+
+const fixtureToolIds = (category) =>
+  FURNITURE_CATALOG.filter((item) => item.category === category).map((item) => `${FIXTURE_TOOL_PREFIX}${item.id}`);
+
 export const TOOL_CATEGORIES = [
-  { id: "house", label: "House", toolIds: ["wall", "wallrect", "door", "window"] },
+  { id: "house", label: "House", toolIds: ["wall", "wallrect", "door", "window", "closet", "passage"] },
+  ...HOUSE_FIXTURE_CATEGORIES.map(({ id, label, category }) => ({ id, label, toolIds: fixtureToolIds(category) })),
   {
     id: "rooms",
     label: "Rooms",
