@@ -1,5 +1,5 @@
 import { freezeBaseline } from "@/application/work-management/workScheduling";
-import { ok, fail, serverError, workAuth, readJson } from "../../_lib/auth.js";
+import { ok, fail, serverError, workAuth, readJson } from "../../../_lib/auth.js";
 
 // POST { baseline: { start, finish, hours, cost } }: freeze a new baseline
 // version. Baselines are immutable — this always inserts a new version.
