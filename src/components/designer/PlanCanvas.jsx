@@ -43,6 +43,7 @@ import {
   getRoomTemplate,
   pieceSize,
   sheetPlanBounds,
+  decksOf,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
 import {
@@ -328,6 +329,22 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           }
         }
       }
+      for (let i = decksOf(design).length - 1; i >= 0; i -= 1) {
+        const deck = decksOf(design)[i];
+        const x0 = Math.min(deck.a.x, deck.b.x);
+        const x1 = Math.max(deck.a.x, deck.b.x);
+        const y0 = Math.min(deck.a.y, deck.b.y);
+        const y1 = Math.max(deck.a.y, deck.b.y);
+        const edges = [
+          [{ x: x0, y: y0 }, { x: x1, y: y0 }],
+          [{ x: x1, y: y0 }, { x: x1, y: y1 }],
+          [{ x: x1, y: y1 }, { x: x0, y: y1 }],
+          [{ x: x0, y: y1 }, { x: x0, y: y0 }],
+        ];
+        if (edges.some(([p, q]) => distancePointToSegment(plan, p, q) < tolIn + 4)) {
+          return { kind: "deck", id: deck.id };
+        }
+      }
       // openings (gaps on walls) beat the wall line they sit on, so a
       // placed door or window stays selectable; wall endpoint handles are
       // checked before hit-testing, so wall stretching is unaffected.
@@ -442,7 +459,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         label: pendingCustomShape.name,
       };
     }
-    if (tool === "wall" || tool === "wallrect") {
+    if (tool === "wall" || tool === "wallrect" || tool === "deck") {
       const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
       return { kind: "anchor", x: point.x, y: point.y };
     }
@@ -506,6 +523,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const exclude = new Set();
       const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
       setDrag({ kind: "draw-wall-rect", a: point, exclude });
+      setDrawPreview({ kind: "wall-rect", a: point, b: point });
+      return;
+    }
+    if (tool === "deck") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
+      setDrag({ kind: "draw-deck", a: point });
       setDrawPreview({ kind: "wall-rect", a: point, b: point });
       return;
     }
@@ -701,6 +724,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
       return;
     }
+    if (hit?.kind === "deck") {
+      dispatch({ type: "SELECT", selection: hit });
+      return;
+    }
     // Placed opening — click to select, drag along its wall to reposition.
     if (hit?.kind === "opening") {
       const opening = design.openings.find((o) => o.id === hit.id);
@@ -832,6 +859,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         snapMidpoints: midpointTargetsExcluding(drag.exclude),
         snapRadiusIn: 9,
       });
+      setDrawPreview({ kind: "wall-rect", a: drag.a, b: point });
+      return;
+    }
+    if (drag.kind === "draw-deck") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       setDrawPreview({ kind: "wall-rect", a: drag.a, b: point });
       return;
     }
@@ -1014,6 +1046,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         }
       }
     }
+    if (drag?.kind === "draw-deck" && drawPreview) {
+      try {
+        dispatch({ type: "ADD_DECK", a: drawPreview.a, b: drawPreview.b });
+      } catch {
+        // too small — ignore
+      }
+    }
     setDrag(null);
     setDrawPreview(null);
   };
@@ -1123,6 +1162,24 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const p = (i * minorPx).toFixed(2);
     minorGridPath += `M ${p} 0 L ${p} ${majorPx.toFixed(2)} M 0 ${p} L ${majorPx.toFixed(2)} ${p} `;
   }
+
+  const renderDeck = (deck) => {
+    const a = toScreen(deck.a);
+    const b = toScreen(deck.b);
+    const selected = selection?.kind === "deck" && selection.id === deck.id;
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    const color = selected ? "#f59e0b" : "#a0744a";
+    return (
+      <g key={deck.id} pointerEvents="none">
+        <rect x={x} y={y} width={Math.abs(b.x - a.x)} height={Math.abs(b.y - a.y)}
+          fill="rgba(160,116,74,0.12)" stroke={color} strokeWidth={thicknessPx} strokeDasharray="10 6" />
+        <text x={x + 6} y={y + 16} fontSize={13} fontWeight={600} fill={color}>
+          {`Deck, top ${deck.dropIn}″ below threshold`}
+        </text>
+      </g>
+    );
+  };
 
   const renderWall = (wall) => {
     const isSelected = selection?.kind === "wall" && selection?.id === wall.id;
@@ -1653,7 +1710,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     return null;
   };
   const cursorForTool = {
-    select: "default", wall: "crosshair", wallrect: "crosshair", room: "copy", door: "crosshair",
+    select: "default", wall: "crosshair", wallrect: "crosshair", deck: "crosshair", room: "copy", door: "crosshair",
     window: "crosshair", furniture: "copy", pipe: "crosshair", piping: "copy",
     orgchart: "copy", "custom-shape": "copy",
     erase: "not-allowed", pan: spaceDown ? "grabbing" : "grab",
@@ -1850,6 +1907,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           transform={`translate(${view.ox % majorPx} ${view.oy % majorPx})`} />
         {design.rooms.map(renderRoom)}
         {renderAnnotations()}
+        {decksOf(design).map(renderDeck)}
         {design.walls.map(renderWall)}
         {(design.pipes || []).map(renderPipe)}
         {design.furniture.map(renderFurniture)}

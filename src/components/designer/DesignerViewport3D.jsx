@@ -1350,6 +1350,24 @@ export default function DesignerViewport3D({
         group.add(floorMesh);
       }
 
+      // decks: boards + joists, top at the drop below the threshold
+      const deckMaterial = stdMaterial({ color: "#a0744a", roughness: 0.8 });
+      const deckThicknessIn = 5.5;
+      for (const deck of built.decks || []) {
+        const mesh = shadowed(
+          new THREE.Mesh(
+            new THREE.BoxGeometry(deck.maxX - deck.minX, deckThicknessIn, deck.maxZ - deck.minZ),
+            deckMaterial,
+          ),
+        );
+        mesh.position.set(
+          (deck.minX + deck.maxX) / 2,
+          deck.topYIn - deckThicknessIn / 2,
+          (deck.minZ + deck.maxZ) / 2,
+        );
+        group.add(mesh);
+      }
+
       // walls (+ window sills/headers)
       const wallMaterial = tier.textured
         ? stdMaterial({ color: "#ffffff", map: plasterTexture(3, 1.5), roughness: 0.95 })

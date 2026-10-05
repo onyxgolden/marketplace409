@@ -19,6 +19,9 @@ import {
   deletePipeRun,
   deleteRoom,
   deleteSheet,
+  addDeck,
+  setDeckDrop,
+  deleteDeck,
   deleteSymbol,
   deleteWall,
   findOrgChart,
@@ -94,6 +97,7 @@ export const TOOLS = Object.freeze([
   "select",
   "wall",
   "wallrect",
+  "deck",
   "room",
   "door",
   "window",
@@ -139,7 +143,7 @@ export function createInitialState(design) {
 
 /** Designs saved before piping/org-charts/sheets/annotations existed lack the new arrays; default them. */
 function withPipeDefaults(design) {
-  return { pipes: [], symbols: [], orgCharts: [], sheets: [], annotations: [], ...design };
+  return { pipes: [], symbols: [], orgCharts: [], sheets: [], decks: [], annotations: [], ...design };
 }
 
 /**
@@ -355,6 +359,13 @@ export function designerReducer(state, action) {
       return touch(state, addWall(state.design, action.a, action.b));
     case "ADD_WALL_RECT":
       return touch(state, addWallRect(state.design, action.a, action.b));
+    case "ADD_DECK": {
+      const design = addDeck(state.design, action.a, action.b);
+      const deck = design.decks[design.decks.length - 1];
+      return { ...touch(state, design), selection: { kind: "deck", id: deck.id } };
+    }
+    case "SET_DECK_DROP":
+      return touch(state, setDeckDrop(state.design, action.deckId, action.dropIn), action.coalesce);
     case "MOVE_WALL_ENDPOINT":
       return touch(
         state,
@@ -435,6 +446,7 @@ export function designerReducer(state, action) {
       else if (target.kind === "symbol") design = deleteSymbol(design, target.id);
       else if (target.kind === "orgchart") design = deleteOrgChart(design, target.id);
       else if (target.kind === "sheet") design = deleteSheet(design, target.id);
+      else if (target.kind === "deck") design = deleteDeck(design, target.id);
       return { ...touch(state, design), selection: null, multiSelection: pruneMulti(design, state.multiSelection) };
     }
     case "DELETE_SELECTION": {
@@ -450,6 +462,7 @@ export function designerReducer(state, action) {
         else if (sel.kind === "symbol") design = deleteSymbol(design, sel.id);
         else if (sel.kind === "orgchart") design = deleteOrgChart(design, sel.id);
         else if (sel.kind === "sheet") design = deleteSheet(design, sel.id);
+        else if (sel.kind === "deck") design = deleteDeck(design, sel.id);
       }
       for (const m of state.multiSelection) {
         if (design.furniture.some((f) => f.id === m.id)) design = deleteFurniture(design, m.id);
