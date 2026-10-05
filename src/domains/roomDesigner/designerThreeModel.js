@@ -426,8 +426,7 @@ export function buildThreeScene(design) {
 /**
  * Decks sit below the floor plane, so each deck's footprint inside the floor
  * rectangle is cut out of the floor, letting the deck show at its elevation.
- * A deck overlapping an earlier hole is not cut (two overlapping rectangles
- * cannot both be holes), so the overlap stays covered by the floor.
+ * Decks never overlap (addDeck rejects that), so the holes never overlap.
  */
 export function deckHolesInFloor(floor, decks) {
   const holes = [];
@@ -437,10 +436,7 @@ export function deckHolesInFloor(floor, decks) {
     const minZ = Math.max(d.minZ, floor.minZ);
     const maxZ = Math.min(d.maxZ, floor.maxZ);
     if (maxX <= minX || maxZ <= minZ) continue;
-    const overlapsHole = holes.some(
-      (h) => h.minX < maxX && minX < h.maxX && h.minZ < maxZ && minZ < h.maxZ,
-    );
-    if (!overlapsHole) holes.push({ minX, maxX, minZ, maxZ });
+    holes.push({ minX, maxX, minZ, maxZ });
   }
   return holes;
 }

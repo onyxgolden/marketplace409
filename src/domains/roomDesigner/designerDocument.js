@@ -1514,6 +1514,21 @@ function clampDeckDrop(dropIn) {
   return Math.min(DECK_MAX_DROP_IN, Math.max(0, value));
 }
 
+/** True when two rectangles share interior area (touching edges do not count). */
+export function rectsOverlap(p, q) {
+  const [px0, px1] = [Math.min(p.a.x, p.b.x), Math.max(p.a.x, p.b.x)];
+  const [py0, py1] = [Math.min(p.a.y, p.b.y), Math.max(p.a.y, p.b.y)];
+  const [qx0, qx1] = [Math.min(q.a.x, q.b.x), Math.max(q.a.x, q.b.x)];
+  const [qy0, qy1] = [Math.min(q.a.y, q.b.y), Math.max(q.a.y, q.b.y)];
+  return px0 < qx1 && qx0 < px1 && py0 < qy1 && qy0 < py1;
+}
+
+/** Whether a new deck rectangle would overlap any deck already in the design. */
+export function deckOverlapsExisting(design, a, b) {
+  const candidate = { a, b };
+  return decksOf(design).some((d) => rectsOverlap(d, candidate));
+}
+
 export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN, material = "wood" } = {}) {
   assertDesign(design);
   if (!isValidPoint(a) || !isValidPoint(b)) {
@@ -1521,6 +1536,9 @@ export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN, material 
   }
   if (Math.abs(b.x - a.x) < DECK_MIN_SIDE_IN || Math.abs(b.y - a.y) < DECK_MIN_SIDE_IN) {
     throw new Error(`Deck is too small (each side must be at least ${DECK_MIN_SIDE_IN} inches).`);
+  }
+  if (deckOverlapsExisting(design, a, b)) {
+    throw new Error("Deck overlaps another deck; place it beside it instead.");
   }
   const deck = {
     id: nextId("deck"),

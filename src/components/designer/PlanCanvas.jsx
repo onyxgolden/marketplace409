@@ -46,6 +46,7 @@ import {
   DECK_MATERIALS,
   DECK_MIN_SIDE_IN,
   decksOf,
+  deckOverlapsExisting,
 } from "@/domains/roomDesigner/designerDocument";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
 import {
@@ -1051,7 +1052,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (drag?.kind === "draw-deck" && drawPreview) {
       const width = Math.abs(drawPreview.b.x - drawPreview.a.x);
       const depth = Math.abs(drawPreview.b.y - drawPreview.a.y);
-      if (width >= DECK_MIN_SIDE_IN && depth >= DECK_MIN_SIDE_IN) {
+      if (
+        width >= DECK_MIN_SIDE_IN &&
+        depth >= DECK_MIN_SIDE_IN &&
+        !deckOverlapsExisting(design, drawPreview.a, drawPreview.b)
+      ) {
         dispatch({ type: "ADD_DECK", a: drawPreview.a, b: drawPreview.b });
       }
     }

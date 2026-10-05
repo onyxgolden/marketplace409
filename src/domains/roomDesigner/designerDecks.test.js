@@ -96,10 +96,14 @@ describe("deck holes in the floor plane", () => {
     expect(scene.floor.deckHoles).toEqual([{ minX: 150, maxX: 230, minZ: 150, maxZ: 230 }]);
   });
 
-  it("does not cut a second deck that overlaps the first hole", () => {
-    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
-    design = addDeck(design, { x: 48, y: -24 }, { x: 144, y: -12 });
-    design = addDeck(design, { x: 96, y: -24 }, { x: 192, y: -12 });
-    expect(buildThreeScene(design).floor.deckHoles).toHaveLength(1);
+  it("rejects a deck that overlaps an existing deck", () => {
+    let design = addDeck(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 96, y: 96 });
+    expect(() => addDeck(design, { x: 48, y: 48 }, { x: 144, y: 144 })).toThrow(/overlaps/);
+  });
+
+  it("accepts a deck that only touches an existing deck along an edge", () => {
+    let design = addDeck(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 96, y: 96 });
+    design = addDeck(design, { x: 96, y: 0 }, { x: 192, y: 96 });
+    expect(design.decks).toHaveLength(2);
   });
 });
