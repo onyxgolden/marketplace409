@@ -6,6 +6,7 @@ import {
   percentComplete,
   earnedValue,
   plannedValue,
+  plannedPercentComplete,
   costVariance,
   scheduleVariance,
   costPerformanceIndex,
@@ -109,8 +110,35 @@ describe("forecasting", () => {
   it("ETC is 0 when work is complete", () => {
     expect(estimateToComplete(1000, 1000, 0.5)).toBe(0);
   });
+  it("ETC with undefined CPI (zero actuals) forecasts remaining at plan", () => {
+    // Reviewer finding, PR #549: zero actuals must not throw.
+    expect(estimateToComplete(1000, 250, Infinity)).toBe(750);
+    expect(estimateToComplete(1000, 250, -Infinity)).toBe(750);
+  });
+  it("ETC still rejects a non-numeric CPI", () => {
+    expect(() => estimateToComplete(1000, 250, "x")).toThrow(/cpi/);
+    expect(() => estimateToComplete(1000, 250, NaN)).toThrow(/cpi/);
+  });
   it("EAC is actual plus ETC", () => {
     expect(estimateAtCompletion(300, 1500)).toBe(1800);
+  });
+});
+
+describe("plannedPercentComplete", () => {
+  it("derives planned % from elapsed / duration", () => {
+    expect(plannedPercentComplete("2026-10-01", "2026-10-11", "2026-10-06")).toBe(50);
+  });
+  it("is 0 before the baseline start", () => {
+    expect(plannedPercentComplete("2026-10-01", "2026-10-11", "2026-09-30")).toBe(0);
+    expect(plannedPercentComplete("2026-10-01", "2026-10-11", "2026-10-01")).toBe(0);
+  });
+  it("is 100 on/after the baseline finish", () => {
+    expect(plannedPercentComplete("2026-10-01", "2026-10-11", "2026-10-11")).toBe(100);
+    expect(plannedPercentComplete("2026-10-01", "2026-10-11", "2026-12-01")).toBe(100);
+  });
+  it("rejects invalid or inverted dates", () => {
+    expect(() => plannedPercentComplete("nope", "2026-10-11", "2026-10-06")).toThrow();
+    expect(() => plannedPercentComplete("2026-10-11", "2026-10-01", "2026-10-06")).toThrow();
   });
 });
 

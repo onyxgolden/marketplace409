@@ -20,7 +20,7 @@ export async function POST(request, { params }) {
       plannedCount: body.plannedCount,
       completedCount: body.completedCount,
       nonCompletionReasons: body.nonCompletionReasons,
-      recordedBy: auth.userId,
+      recordedBy: auth.actor,
     });
     return ok({ success: true, commitment: result }, 201);
   } catch (error) {

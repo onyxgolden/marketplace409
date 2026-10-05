@@ -98,11 +98,30 @@ export function earnedValue(pctComplete, budgetAtCompletion) {
 
 // Planned value at a status date: baseline budget × planned %.
 // Planned % comes from the baseline schedule (time elapsed / duration),
-// computed by the caller — this function is the pure multiplication.
+// computed by plannedPercentComplete below — never caller-supplied.
 export function plannedValue(plannedPct, budgetAtCompletion) {
   assertPct(plannedPct, "plannedPct");
   assertFinite(budgetAtCompletion, "budgetAtCompletion");
   return (plannedPct / 100) * budgetAtCompletion;
+}
+
+// Planned % complete at a status date from the FROZEN baseline schedule:
+// linear time-elapsed / duration, clamped 0..100. Before the baseline
+// start nothing is planned (0%); on/after the baseline finish the whole
+// budget is planned (100%). Date-only arithmetic — no timezones, no clocks.
+export function plannedPercentComplete(baselineStart, baselineFinish, statusDate) {
+  const start = new Date(`${baselineStart}T00:00:00Z`);
+  const finish = new Date(`${baselineFinish}T00:00:00Z`);
+  const status = new Date(`${statusDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime())) throw new Error("scheduling: baselineStart must be a valid date");
+  if (Number.isNaN(finish.getTime())) throw new Error("scheduling: baselineFinish must be a valid date");
+  if (Number.isNaN(status.getTime())) throw new Error("scheduling: statusDate must be a valid date");
+  if (finish < start) throw new Error("scheduling: baselineFinish must be >= baselineStart");
+  if (status <= start) return 0;
+  if (status >= finish) return 100;
+  const durationMs = finish - start;
+  if (durationMs <= 0) return 100;
+  return ((status - start) / durationMs) * 100;
 }
 
 // Cost/schedule variances and indices (standard EVM).
@@ -131,13 +150,21 @@ export function schedulePerformanceIndex(earned, planned) {
 
 // Estimate to complete / estimate at completion (typical EVM forecast:
 // remaining work at current CPI).
+//
+// Zero-actual semantics (reviewer finding, PR #549): when no cost has been
+// incurred yet, CPI is undefined (costPerformanceIndex returns Infinity).
+// Forecasting the remaining work at planned efficiency (CPI = 1) is the
+// standard atypical-variance treatment — ETC is the remaining budget, EAC
+// is actuals plus remaining — instead of throwing on the nonfinite index.
 export function estimateToComplete(budgetAtCompletion, earned, cpi) {
   assertFinite(budgetAtCompletion, "budgetAtCompletion");
   assertFinite(earned, "earned");
-  assertFinite(cpi, "cpi");
+  if (typeof cpi !== "number" || Number.isNaN(cpi)) {
+    throw new Error("scheduling: cpi must be a number");
+  }
   const remaining = budgetAtCompletion - earned;
   if (remaining <= 0) return 0;
-  if (cpi <= 0) return remaining;
+  if (!Number.isFinite(cpi) || cpi <= 0) return remaining;
   return remaining / cpi;
 }
 export function estimateAtCompletion(actual, etc) {

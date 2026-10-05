@@ -16,7 +16,7 @@ export async function POST(request, { params }) {
     const result = await freezeBaseline(auth.db, {
       ownerId: auth.ownerId, packageId,
       baseline: { start: b.start, finish: b.finish, hours: b.hours, cost: b.cost },
-      frozenBy: auth.userId,
+      frozenBy: auth.actor,
     });
     return ok({ success: true, baseline: result }, 201);
   } catch (error) {

@@ -24,7 +24,7 @@ export async function POST(request, { params }) {
       plannedManhours: body.plannedManhours,
       estimatedManhours: body.estimatedManhours,
       actualManhours: body.actualManhours,
-      recordedBy: auth.userId,
+      recordedBy: auth.actor,
     });
     return ok({ success: true, manpower: result }, 201);
   } catch (error) {
