@@ -2953,6 +2953,55 @@ export function RoomNameField({ room, dispatch }) {
 }
 
 /**
+ * Width editor for a door/window opening: one tap picks a standard size,
+ * or type any width in inches. Drag-resize stays on the plan itself (the
+ * opening's end handles); this panel is the exact-size path.
+ */
+const STANDARD_OPENING_WIDTHS = {
+  door: [24, 28, 30, 32, 36],
+  window: [24, 36, 48, 60, 72],
+};
+
+export function OpeningWidthFields({ opening, dispatch }) {  const presets = STANDARD_OPENING_WIDTHS[opening.type] || STANDARD_OPENING_WIDTHS.door;
+  const commitTypedWidth = (raw) => {
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) return;
+    dispatch({ type: "RESIZE_OPENING", openingId: opening.id, widthIn: value });
+  };
+  const chipClass = (active) =>
+    `rounded border px-2 py-1 text-xs ${active
+      ? "border-emerald-600 bg-emerald-600 text-white"
+      : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"}`;
+  return (
+    <div className="mb-2">
+      <span className="block text-xs text-gray-400">Width ({opening.widthIn}″)</span>
+      <div className="mt-1 flex flex-wrap gap-1" role="group" aria-label="Standard widths">
+        {presets.map((size) => (
+          <button key={size} type="button" aria-pressed={opening.widthIn === size}
+            title={`Set width to ${size} inches`} className={chipClass(opening.widthIn === size)}
+            onClick={() => dispatch({ type: "RESIZE_OPENING", openingId: opening.id, widthIn: size })}>
+            {size}″
+          </button>
+        ))}
+      </div>
+      <label className="mt-1.5 flex items-center gap-2 text-xs text-gray-400">
+        Custom
+        <input
+          key={opening.id}
+          type="number" min={6} step={1} defaultValue={opening.widthIn}
+          aria-label="Custom width in inches"
+          onBlur={(e) => commitTypedWidth(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") commitTypedWidth(e.target.value); }}
+          className="w-20 rounded border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-100"
+        />
+        ″
+      </label>
+      <p className="mt-1 text-[11px] text-gray-500">Tip: drag the opening&apos;s end handles on the plan to resize by hand.</p>
+    </div>
+  );
+}
+
+/**
  * Plain-language companion to the ⇄/⇅ on-canvas door handles, for anyone
  * who wouldn't recognize those icons. Deliberately neutral geometric
  * wording ("Start edge" / "End edge", "Side A" / "Side B") rather than
@@ -3084,14 +3133,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
     if (!opening) return null;
     return (
       <PanelShell title={opening.type === "door" ? "Door" : "Window"} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
-        <label className="mb-2 block text-xs text-gray-400">
-          Width ({opening.widthIn}″)
-          <input
-            type="range" min={18} max={96} step={2} value={opening.widthIn}
-            onChange={(e) => dispatch({ type: "RESIZE_OPENING", openingId: opening.id, widthIn: Number(e.target.value) })}
-            className="w-full"
-          />
-        </label>
+        <OpeningWidthFields opening={opening} dispatch={dispatch} />
         <label className="block text-xs text-gray-400">
           Position along wall ({Math.round(opening.offsetIn)}″)
           <input
