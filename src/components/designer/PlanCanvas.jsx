@@ -226,6 +226,40 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     return true;
   }, []);
 
+  // Repeated clicks at the same spot cycle through a placed opening and the
+  // wall it sits in, so either one can be picked without moving the cursor.
+  const stackCycleRef = useRef(null);
+  const cycleStackedHit = useCallback(
+    (plan, hit) => {
+      const stack = [];
+      if (hit?.kind === "opening" || hit?.kind === "wall") {
+        const tolIn = HIT_TOLERANCE_PX / view.scale;
+        const opening = design.openings.find((o) => o.id === hit.id);
+        const openingSpan = opening && openingEndpoints(opening, design.walls);
+        if (openingSpan) {
+          stack.push({ kind: "opening", id: opening.id });
+          const wall = openingSpan.wall;
+          if (distancePointToSegment(plan, wall.a, wall.b) < tolIn) stack.push({ kind: "wall", id: wall.id });
+        } else if (hit.kind === "wall") {
+          const wall = design.walls.find((w) => w.id === hit.id);
+          if (wall) stack.push({ kind: "wall", id: wall.id });
+        }
+      }
+      if (stack.length < 2) {
+        stackCycleRef.current = null;
+        return hit;
+      }
+      const key = stack.map((s) => `${s.kind}:${s.id}`).join("|");
+      const prev = stackCycleRef.current;
+      const tolIn = HIT_TOLERANCE_PX / view.scale;
+      const sameSpot = prev && prev.key === key && Math.hypot(prev.x - plan.x, prev.y - plan.y) < tolIn;
+      const index = sameSpot ? (prev.index + 1) % stack.length : 0;
+      stackCycleRef.current = { key, x: plan.x, y: plan.y, index };
+      return stack[index];
+    },
+    [design, view.scale],
+  );
+
   const hitTest = useCallback(
     (plan) => {
       const tolIn = HIT_TOLERANCE_PX / view.scale;
@@ -294,17 +328,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           }
         }
       }
-      // walls (CAD priority: a wall hit beats an opening hit on the
-      // shared wall line, so wall editing is never shadowed by openings)
-      let best = null;
-      let bestD = tolIn;
-      for (const wall of design.walls) {
-        const d = distancePointToSegment(plan, wall.a, wall.b);
-        if (d < bestD) { bestD = d; best = wall; }
-      }
-      if (best) return { kind: "wall", id: best.id };
-      // openings (gaps on walls): the nearest opening wins. Beats room
-      // interiors below, loses to wall hits above.
+      // openings (gaps on walls) beat the wall line they sit on, so a
+      // placed door or window stays selectable; wall endpoint handles are
+      // checked before hit-testing, so wall stretching is unaffected.
       let bestOpening = null;
       let bestOpeningD = tolIn + 6;
       for (const opening of design.openings) {
@@ -314,6 +340,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         if (d < bestOpeningD) { bestOpeningD = d; bestOpening = opening; }
       }
       if (bestOpening) return { kind: "opening", id: bestOpening.id };
+      let best = null;
+      let bestD = tolIn;
+      for (const wall of design.walls) {
+        const d = distancePointToSegment(plan, wall.a, wall.b);
+        if (d < bestD) { bestD = d; best = wall; }
+      }
+      if (best) return { kind: "wall", id: best.id };
       // rooms — the interior selects the room; walls still win on the
       // shared edges above, so wall editing is unaffected.
       for (let i = design.rooms.length - 1; i >= 0; i -= 1) {
@@ -641,7 +674,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         }
       }
     }
-    const hit = hitTest(plan);
+    const hit = cycleStackedHit(plan, hitTest(plan));
     if (hit?.kind === "furniture") {
       dispatch({ type: "SELECT", selection: hit });
       setDrag({ kind: "move-furniture", id: hit.id, moved: false });

@@ -169,8 +169,8 @@ export const TOOL_DEFS = [
   { id: "select", label: "Select", icon: MousePointer2, hint: "Click to select · drag endpoints & furniture · double-click furniture to rotate" },
   { id: "wall", label: "Wall", icon: Square, hint: "Drag on the plan to draw a wall (snaps to the grid)" },
   { id: "wallrect", label: "Wall rect", icon: SquareDashed, hint: "Drag on the plan to draw a rectangular wall outline (snaps to the grid)" },
-  { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening" },
-  { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening" },
+  { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening. Select it afterward to set its width." },
+  { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening. Select it afterward to set its width." },
   // Pre-shaped rooms: one palette entry per template. Selecting one arms
   // the room tool with that template pending (see onSelect below); the
   // right panel still shows the full "Room shapes" picker.
@@ -2975,7 +2975,8 @@ const STANDARD_OPENING_WIDTHS = {
   window: [24, 36, 48, 60, 72],
 };
 
-export function OpeningWidthFields({ opening, dispatch }) {  const presets = STANDARD_OPENING_WIDTHS[opening.type] || STANDARD_OPENING_WIDTHS.door;
+export function OpeningWidthFields({ opening, dispatch }) {
+  const presets = STANDARD_OPENING_WIDTHS[opening.type] || STANDARD_OPENING_WIDTHS.door;
   const commitTypedWidth = (raw) => {
     const value = Number(raw);
     if (!Number.isFinite(value) || value <= 0) return;
@@ -3147,6 +3148,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
     return (
       <PanelShell title={opening.type === "door" ? "Door" : "Window"} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
         <OpeningWidthFields opening={opening} dispatch={dispatch} />
+        <p className="mb-2 text-[11px] text-gray-500">Pick a width above, type one, or drag the orange endpoints on the plan.</p>
         <label className="block text-xs text-gray-400">
           Position along wall ({Math.round(opening.offsetIn)}″)
           <input

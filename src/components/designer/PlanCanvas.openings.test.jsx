@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-// Placed openings (doors/windows) on the canvas: wall hits take priority
-// over opening hits on the shared wall line (CAD-style); an opening hit
-// beats room interiors. Clicking an opening selects it and drags it along
+// Placed openings (doors/windows) on the canvas: an opening hit beats the
+// wall line it sits on and room interiors; repeated clicks at the same
+// spot cycle between the opening and its wall. Clicking an opening selects it and drags it along
 // its wall with the pointer grab offset preserved (no jump); a selected
 // opening shows end handles that resize it with the far edge anchored.
 
@@ -71,16 +71,49 @@ describe("PlanCanvas placed openings", () => {
     container.remove();
   });
 
-  it("a wall hit beats an opening hit on the shared wall line", () => {
+  it("clicking the wall over a placed opening selects the opening first", () => {
     const design = designWithDoor();
-    const wallId = design.walls[0].id;
+    const openingId = design.openings[0].id;
     renderCanvas(design);
-    // Directly on the wall over the door gap — the wall must win.
     pointer(svg, "pointerdown", { x: 54, y: 0 });
     pointer(svg, "pointerup", { x: 54, y: 0 });
     const selects = dispatch.mock.calls.filter((c) => c[0].type === "SELECT");
     expect(selects.length).toBeGreaterThan(0);
-    expect(selects[0][0].selection).toEqual({ kind: "wall", id: wallId });
+    expect(selects[0][0].selection).toEqual({ kind: "opening", id: openingId });
+  });
+
+  it("repeated clicks at the same spot cycle from the opening to the wall and back", () => {
+    const design = designWithDoor();
+    const openingId = design.openings[0].id;
+    const wallId = design.walls[0].id;
+    renderCanvas(design);
+    const clickAt = (plan) => {
+      pointer(svg, "pointerdown", plan);
+      pointer(svg, "pointerup", plan);
+    };
+    clickAt({ x: 54, y: 0 });
+    clickAt({ x: 54, y: 0 });
+    clickAt({ x: 54, y: 0 });
+    const selections = dispatch.mock.calls
+      .filter((c) => c[0].type === "SELECT")
+      .map((c) => c[0].selection);
+    expect(selections).toEqual([
+      { kind: "opening", id: openingId },
+      { kind: "wall", id: wallId },
+      { kind: "opening", id: openingId },
+    ]);
+  });
+
+  it("a click at a different spot restarts the cycle at the opening", () => {
+    const design = designWithDoor();
+    const openingId = design.openings[0].id;
+    renderCanvas(design);
+    pointer(svg, "pointerdown", { x: 54, y: 0 });
+    pointer(svg, "pointerup", { x: 54, y: 0 });
+    pointer(svg, "pointerdown", { x: 40, y: 0 });
+    pointer(svg, "pointerup", { x: 40, y: 0 });
+    const selects = dispatch.mock.calls.filter((c) => c[0].type === "SELECT");
+    expect(selects[1][0].selection).toEqual({ kind: "opening", id: openingId });
   });
 
   it("clicking just off the wall over the opening selects the opening", () => {
