@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  HOUSE_FIXTURE_CATEGORIES,
   PINNED_TOOL_IDS,
   groupToolsByCategory,
   orderToolbarTools,
@@ -195,9 +196,10 @@ describe("extensible tool categories", () => {
     resetToolCategories();
   });
 
-  it("returns the built-in House, Rooms, Structures, Mechanical, Process, Plan categories by default", () => {
+  it("returns the built-in House, House furniture subgroups, Rooms, Structures, Mechanical, Process, Plan categories by default", () => {
     expect(getToolCategories().map((c) => c.id)).toEqual([
       "house",
+      ...HOUSE_FIXTURE_CATEGORIES.map((c) => c.id),
       "rooms",
       "structures",
       "mechanical",

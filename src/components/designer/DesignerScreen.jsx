@@ -102,7 +102,7 @@ import {
   switchLevel,
   updateLevelDesign,
 } from "@/domains/roomDesigner/homeProject";
-import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
+import { FURNITURE_CATALOG, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
 import { ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign, zoomExtentsRect } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
@@ -150,11 +150,21 @@ import ElevationPrintOverlay from "./ElevationPrintOverlay";
 import DxfExportDialog from "./DxfExportDialog";
 import GlbExportDialog from "./GlbExportDialog";
 import DesignerHelpModal from "./DesignerHelpModal";
-import { groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
+import { FIXTURE_TOOL_PREFIX, HOUSE_FIXTURE_CATEGORIES, groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
 import ToolPalette from "./ToolPalette";
 
 // Exported for catalog-integrity tests: every roomTemplate referenced by a
 // palette entry must resolve via getRoomTemplate().
+const FIXTURE_TOOL_DEFS = FURNITURE_CATALOG
+  .filter((item) => HOUSE_FIXTURE_CATEGORIES.some((c) => c.category === item.category))
+  .map((item) => ({
+    id: `${FIXTURE_TOOL_PREFIX}${item.id}`,
+    label: item.label,
+    icon: Sofa,
+    hint: `Click the plan to place a ${item.label.toLowerCase()}`,
+    catalogId: item.id,
+  }));
+
 export const TOOL_DEFS = [
   { id: "select", label: "Select", icon: MousePointer2, hint: "Click to select · drag endpoints & furniture · double-click furniture to rotate" },
   { id: "wall", label: "Wall", icon: Square, hint: "Drag on the plan to draw a wall (snaps to the grid)" },
@@ -180,6 +190,7 @@ export const TOOL_DEFS = [
   // containers) placed through the room-drop pipeline.
   { id: "structure-container-20", label: "Container 20'", icon: Box, hint: "Drop a 20' × 8' shipping container", roomTemplate: "container-20" },
   { id: "structure-container-40", label: "Container 40'", icon: Box, hint: "Drop a 40' × 8' shipping container", roomTemplate: "container-40" },
+  ...FIXTURE_TOOL_DEFS,
   { id: "furniture", label: "Furniture", icon: Sofa, hint: "Pick a piece, then click the plan to place it", leftPalette: false },
   { id: "pipe", label: "Pipe", icon: Spline, hint: "Click to add pipe vertices · double-click or Enter to finish · Esc cancels" },
   { id: "piping", label: "Piping", icon: Shapes, hint: "Pick a valve, fitting, or equipment symbol, then click the plan to place it" },
@@ -966,6 +977,8 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             const shapeId = shapeIdFromToolId(toolId);
             if (def?.roomTemplate) {
               dispatch({ type: "SET_PENDING_ROOM", templateId: def.roomTemplate });
+            } else if (def?.catalogId) {
+              dispatch({ type: "SET_PENDING_CATALOG", catalogId: def.catalogId });
             } else if (def?.symbolDomain) {
               dispatch({ type: "OPEN_OBJECT_LIBRARY", domain: def.symbolDomain });
             } else if (shapeId) {
