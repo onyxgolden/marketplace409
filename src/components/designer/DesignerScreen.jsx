@@ -3197,7 +3197,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
             className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
           />
         </label>
-        <p className="mt-2 text-[11px] text-gray-500">The 3D view shows the deck top this far below the threshold. Change it to match your code or inspector&apos;s requirement.</p>
+        <p className="mt-2 text-[11px] text-gray-500">The 3D view shows the deck top this far below the threshold. Change it to match your code or inspector&apos;s requirement. A patio or driveway is usually set near 0 (at grade).</p>
       </PanelShell>
     );
   }

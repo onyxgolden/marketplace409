@@ -1534,7 +1534,7 @@ export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN, material 
 
 export const DECK_MATERIALS = Object.freeze({
   wood: { label: "Wood platform", thicknessIn: 5.5, color: "#a0744a" },
-  concrete: { label: "Concrete pad", thicknessIn: 4, color: "#b5b3ab" },
+  concrete: { label: "Concrete (patio / driveway)", thicknessIn: 4, color: "#b5b3ab" },
 });
 
 function cleanDeckMaterial(material) {
