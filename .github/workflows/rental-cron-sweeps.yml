@@ -17,8 +17,12 @@
 #
 # What this never does: never merges, never deploys, never writes data
 # except through the endpoints themselves (which is their job).
-
 name: Rental Cron Sweeps
+
+# Identify each run in the Actions list: the fired cron expression for
+# schedules (1:1 with the endpoint via SCHEDULE_MAP below), or the
+# endpoint path for manual dispatches.
+run-name: ${{ github.event_name == 'schedule' && format('sweep [{0}]', github.event.schedule) || format('manual [{0}]', inputs.endpoint) }}
 
 on:
   schedule:
