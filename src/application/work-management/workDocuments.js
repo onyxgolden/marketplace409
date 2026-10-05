@@ -91,8 +91,13 @@ export async function uploadDocument(db, ownerId, actor, file, fields = {}) {
     });
   if (rpcError) {
     await db.storage.from(BUCKET).remove([objectPath]);
-    // Backstop: the unique (owner, family, version) index firing means two
-    // writers raced past the advisory lock somehow — retryable, not fatal.
+    // Backstop: a uniqueness conflict means two writers raced on this
+    // version family — either past the advisory lock (version-number index)
+    // or via a direct write outside the RPC (one-current-version index).
+    // Either way the retry re-runs the atomic RPC, which supersedes cleanly.
+    // The storage cleanup above is now permitted by the orphan-cleanup
+    // policy (objects no document row references); referenced files stay
+    // protected.
     if (rpcError.code === "23505") {
       return {
         ok: false, retryable: true,

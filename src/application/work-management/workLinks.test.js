@@ -318,3 +318,66 @@ describe("unlinkWorkLink", () => {
     expect(result.httpStatus).toBe(404);
   });
 });
+
+describe("resolveEndpoint column selection", () => {
+  // Capturing mock: records every (table, select-columns) pair so tests can
+  // prove the resolver never asks a table for columns it does not have.
+  function captureDb(rowsByTable) {
+    const seen = [];
+    const node = (table) => {
+      const n = {
+        select: (cols) => { seen.push({ table, cols }); return n; },
+        eq: () => n, order: () => n, insert: () => n, update: () => n,
+        single: async () => ({ data: { ...LINK, status: "active" }, error: null }),
+        maybeSingle: async () => ({ data: rowsByTable[table] ?? null, error: null }),
+      };
+      return n;
+    };
+    return { seen, from: (table) => node(table) };
+  }
+  const colsFor = (seen, table) => seen.filter((s) => s.table === table).map((s) => s.cols);
+
+  it("requests only id from tables without currency columns", async () => {
+    const db = captureDb({ forge_work_packages: { id: "forge_wp_1" }, forge_work_assets: { id: "forge_wasset_1" } });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: INPUT });
+    expect(result.ok).toBe(true);
+    expect(colsFor(db.seen, "forge_work_packages")).toEqual(["id"]);
+    expect(colsFor(db.seen, "forge_work_assets")).toEqual(["id"]);
+  });
+
+  it("requests the full currency columns for the document library", async () => {
+    const input = { ...INPUT, relationship_type: "library_supporting_document",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_doc_1" };
+    const db = captureDb({
+      forge_work_packages: { id: "forge_wp_1" },
+      forge_work_document_library: { id: "work_doc_1", deleted_at: null, is_current_version: true },
+    });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input });
+    expect(result.ok).toBe(true);
+    expect(colsFor(db.seen, "forge_work_document_library")).toEqual(["id, deleted_at, is_current_version"]);
+  });
+
+  it("requests deleted_at but not is_current_version for rental documents", async () => {
+    const input = { ...INPUT, relationship_type: "supporting_document",
+      target_domain: "documents", target_type: "rental_document", target_id: "rdoc_1" };
+    const db = captureDb({
+      forge_work_packages: { id: "forge_wp_1" },
+      rental_documents: { id: "rdoc_1", deleted_at: null },
+    });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input });
+    expect(result.ok).toBe(true);
+    expect(colsFor(db.seen, "rental_documents")).toEqual(["id, deleted_at"]);
+  });
+
+  it("treats a soft-deleted rental document as missing", async () => {
+    const input = { ...INPUT, relationship_type: "supporting_document",
+      target_domain: "documents", target_type: "rental_document", target_id: "rdoc_1" };
+    const db = captureDb({
+      forge_work_packages: { id: "forge_wp_1" },
+      rental_documents: { id: "rdoc_1", deleted_at: "2026-10-05T00:00:00Z" },
+    });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/not found in this workspace/);
+  });
+});

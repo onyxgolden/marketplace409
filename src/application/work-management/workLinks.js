@@ -31,19 +31,27 @@ const TABLES = Object.freeze({
 // whose domains have no authoritative table yet (workmgmt.project,
 // property.investor_property, people.*) are vocabulary-valid but rejected at
 // write time with an explicit "not yet supported" — never silently.
+//
+// Currency columns are declared per endpoint, not assumed: only the
+// document library has is_current_version, and only some tables carry
+// deleted_at. Requesting a column a table does not have makes the
+// resolution query fail and the link wrongly reads as broken — so the
+// resolver selects exactly the columns each table actually has.
 const ENDPOINT_TABLES = Object.freeze({
-  "workmgmt:work_package": "forge_work_packages",
-  "workmgmt:forge_work_asset": "forge_work_assets",
-  "workmgmt:forge_work_location": "forge_work_locations",
-  "workmgmt:forge_work_document": "forge_work_document_library",
-  "scheduling:schedule_block": "schedule_blocks",
-  "designer:designer_project": "designer_projects",
-  "documents:rental_document": "rental_documents",
-  "financial:financial_event": "financial_events",
-  "capture:capture_artifact": "capture_library",
-  "rental:rental_maintenance_work_order": "rental_maintenance_work_orders",
-  "rental:rental_contractor": "rental_contractors",
-  "rental:rental_vendor": "rental_vendors",
+  "workmgmt:work_package": { table: "forge_work_packages" },
+  "workmgmt:forge_work_asset": { table: "forge_work_assets" },
+  "workmgmt:forge_work_location": { table: "forge_work_locations" },
+  "workmgmt:forge_work_document": {
+    table: "forge_work_document_library", softDelete: true, versioned: true,
+  },
+  "scheduling:schedule_block": { table: "schedule_blocks" },
+  "designer:designer_project": { table: "designer_projects" },
+  "documents:rental_document": { table: "rental_documents", softDelete: true },
+  "financial:financial_event": { table: "financial_events", softDelete: true },
+  "capture:capture_artifact": { table: "capture_library" },
+  "rental:rental_maintenance_work_order": { table: "rental_maintenance_work_orders" },
+  "rental:rental_contractor": { table: "rental_contractors" },
+  "rental:rental_vendor": { table: "rental_vendors" },
 });
 
 function newId(prefix) {
@@ -60,13 +68,23 @@ function endpointKey(domain, type) {
 // reason 'superseded': the record exists but is a superseded document version —
 //   the other end changed, so an existing link goes stale (never silently ok).
 async function resolveEndpoint(db, ownerId, domain, type, id) {
-  const table = ENDPOINT_TABLES[endpointKey(domain, type)];
-  if (!table) return { ok: false, reason: "unsupported" };
-  const { data, error } = await db.from(table).select("id, is_current_version, deleted_at")
+  const endpoint = ENDPOINT_TABLES[endpointKey(domain, type)];
+  if (!endpoint) return { ok: false, reason: "unsupported" };
+  // Select only the currency columns this table actually has. A missing
+  // column makes the whole query error, which would wrongly mark the link
+  // broken — so document-only columns are never requested from
+  // package/Designer/scheduling/asset/location tables.
+  const columns = ["id"];
+  if (endpoint.softDelete) columns.push("deleted_at");
+  if (endpoint.versioned) columns.push("is_current_version");
+  const { data, error } = await db.from(endpoint.table).select(columns.join(", "))
     .eq("owner_id", ownerId).eq("id", id).maybeSingle();
   if (error) throw error;
-  if (!data || data.deleted_at) return { ok: false, reason: "missing" };
-  if (data.is_current_version === false) return { ok: false, reason: "superseded" };
+  if (!data) return { ok: false, reason: "missing" };
+  if (endpoint.softDelete && data.deleted_at) return { ok: false, reason: "missing" };
+  if (endpoint.versioned && data.is_current_version === false) {
+    return { ok: false, reason: "superseded" };
+  }
   return { ok: true };
 }
 
