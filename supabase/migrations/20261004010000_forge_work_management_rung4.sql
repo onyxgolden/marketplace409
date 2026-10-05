@@ -219,6 +219,10 @@ declare
   v_baseline_finish date;
   v_planned_pct numeric(7,4);
   v_tolerance constant numeric := 0.05;
+  v_remaining_cost numeric;
+  v_remaining_hours numeric;
+  v_etc_cost numeric;
+  v_etc_hours numeric;
 begin
   select baseline_hours, baseline_cost, baseline_start, baseline_finish
     into v_baseline_hours, v_baseline_cost, v_baseline_start, v_baseline_finish
@@ -232,6 +236,9 @@ begin
   end if;
 
   -- Earned value must be consistent with the named baseline budget.
+  -- The application derives earned values from the CANONICAL earned_pct
+  -- (rounded to 4dp, the column precision) so this recomputation matches
+  -- to within 2dp column rounding — valid fractional progress is accepted.
   if abs(NEW.earned_hours - (NEW.earned_pct / 100) * v_baseline_hours) > v_tolerance then
     raise exception 'forge_work: snapshot earned_hours % inconsistent with earned_pct % and baseline hours %',
       NEW.earned_hours, NEW.earned_pct, v_baseline_hours;
@@ -257,14 +264,45 @@ begin
       NEW.planned_pct, v_planned_pct, NEW.status_date;
   end if;
 
-  -- EAC must equal actuals + ETC (the engine's only forecast identity).
-  if NEW.etc_hours is not null and NEW.eac_hours is not null
-     and abs(NEW.eac_hours - (NEW.actual_hours + NEW.etc_hours)) > v_tolerance then
-    raise exception 'forge_work: snapshot eac_hours inconsistent with actual_hours + etc_hours';
+  -- Forecasts are DERIVED fields, not human measurements: the trigger
+  -- recomputes ETC/EAC with the same semantics as the domain engine
+  -- (zero actuals forecast remaining work at plan; completed work needs
+  -- no forecast) and rejects nulls and mismatches.
+  if NEW.etc_hours is null or NEW.etc_cost is null
+     or NEW.eac_hours is null or NEW.eac_cost is null then
+    raise exception 'forge_work: snapshot forecast fields (etc/eac hours/cost) are required';
   end if;
-  if NEW.etc_cost is not null and NEW.eac_cost is not null
-     and abs(NEW.eac_cost - (NEW.actual_cost + NEW.etc_cost)) > v_tolerance then
-    raise exception 'forge_work: snapshot eac_cost inconsistent with actual_cost + etc_cost';
+
+  v_remaining_hours := v_baseline_hours - NEW.earned_hours;
+  v_remaining_cost := v_baseline_cost - NEW.earned_cost;
+  if v_remaining_hours <= 0 then
+    v_etc_hours := 0;
+  elsif NEW.actual_hours > 0 and NEW.earned_hours > 0 then
+    v_etc_hours := v_remaining_hours / (NEW.earned_hours / NEW.actual_hours);
+  else
+    v_etc_hours := v_remaining_hours;
+  end if;
+  if v_remaining_cost <= 0 then
+    v_etc_cost := 0;
+  elsif NEW.actual_cost > 0 and NEW.earned_cost > 0 then
+    v_etc_cost := v_remaining_cost / (NEW.earned_cost / NEW.actual_cost);
+  else
+    v_etc_cost := v_remaining_cost;
+  end if;
+
+  if abs(NEW.etc_hours - v_etc_hours) > v_tolerance then
+    raise exception 'forge_work: snapshot etc_hours % inconsistent with engine forecast %',
+      NEW.etc_hours, v_etc_hours;
+  end if;
+  if abs(NEW.etc_cost - v_etc_cost) > v_tolerance then
+    raise exception 'forge_work: snapshot etc_cost % inconsistent with engine forecast %',
+      NEW.etc_cost, v_etc_cost;
+  end if;
+  if abs(NEW.eac_hours - (NEW.actual_hours + v_etc_hours)) > v_tolerance then
+    raise exception 'forge_work: snapshot eac_hours inconsistent with actual_hours + forecast etc_hours';
+  end if;
+  if abs(NEW.eac_cost - (NEW.actual_cost + v_etc_cost)) > v_tolerance then
+    raise exception 'forge_work: snapshot eac_cost inconsistent with actual_cost + forecast etc_cost';
   end if;
 
   return NEW;
@@ -273,6 +311,77 @@ drop trigger if exists forge_work_progress_snapshots_verify_trg on forge_work_pr
 create trigger forge_work_progress_snapshots_verify_trg
   before insert on forge_work_progress_snapshots
   for each row execute function forge_work_snapshots_verify();
+
+-- ---------------------------------------------------------------------------
+-- Authenticated attribution at the database boundary (reviewer finding,
+-- PR #549 re-review). NOT NULL alone cannot authenticate a supplied
+-- identity: a direct write can forge frozen_by/recorded_by.
+--
+-- The trigger stamps attribution from auth.uid() — the authenticated
+-- caller of the PostgREST request itself — and overwrites whatever the
+-- payload supplied. Writes with no authenticated identity fail closed.
+-- No payload value is ever trusted; no cross-request session state is
+-- needed (each PostgREST call is its own transaction).
+-- ---------------------------------------------------------------------------
+create or replace function forge_work_stamp_actor()
+returns trigger language plpgsql as $$
+declare
+  v_actor text;
+begin
+  begin
+    v_actor := auth.uid()::text;
+  exception when undefined_function then
+    v_actor := null;
+  end;
+  if v_actor is null or v_actor = '' then
+    raise exception 'forge_work: missing authenticated identity — scheduling writes require a signed-in user';
+  end if;
+  if TG_ARGV[0] = 'frozen_by' then
+    NEW.frozen_by := v_actor;
+  else
+    NEW.recorded_by := v_actor;
+  end if;
+  return NEW;
+end $$;
+
+drop trigger if exists forge_work_package_baselines_stamp_actor_trg on forge_work_package_baselines;
+create trigger forge_work_package_baselines_stamp_actor_trg
+  before insert on forge_work_package_baselines
+  for each row execute function forge_work_stamp_actor('frozen_by');
+
+drop trigger if exists forge_work_progress_snapshots_stamp_actor_trg on forge_work_progress_snapshots;
+create trigger forge_work_progress_snapshots_stamp_actor_trg
+  before insert on forge_work_progress_snapshots
+  for each row execute function forge_work_stamp_actor('recorded_by');
+
+drop trigger if exists forge_work_weekly_commitments_stamp_actor_trg on forge_work_weekly_commitments;
+create trigger forge_work_weekly_commitments_stamp_actor_trg
+  before insert on forge_work_weekly_commitments
+  for each row execute function forge_work_stamp_actor('recorded_by');
+
+drop trigger if exists forge_work_manpower_days_stamp_actor_trg on forge_work_manpower_days;
+create trigger forge_work_manpower_days_stamp_actor_trg
+  before insert on forge_work_manpower_days
+  for each row execute function forge_work_stamp_actor('recorded_by');
+
+-- Mutable tables (commitments, manpower_days): creation identity is
+-- preserved — an UPDATE can never rewrite who recorded the row.
+create or replace function forge_work_preserve_actor()
+returns trigger language plpgsql as $$
+begin
+  NEW.recorded_by := OLD.recorded_by;
+  return NEW;
+end $$;
+
+drop trigger if exists forge_work_weekly_commitments_preserve_actor_trg on forge_work_weekly_commitments;
+create trigger forge_work_weekly_commitments_preserve_actor_trg
+  before update on forge_work_weekly_commitments
+  for each row execute function forge_work_preserve_actor();
+
+drop trigger if exists forge_work_manpower_days_preserve_actor_trg on forge_work_manpower_days;
+create trigger forge_work_manpower_days_preserve_actor_trg
+  before update on forge_work_manpower_days
+  for each row execute function forge_work_preserve_actor();
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security

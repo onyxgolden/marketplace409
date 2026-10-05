@@ -21,8 +21,39 @@ describe("rung4 scheduling migration — reviewer findings (PR #549)", () => {
     // Planned % is derived from the frozen schedule (reviewer finding 4).
     expect(sql).toMatch(/status_date <= v_baseline_start/);
     expect(sql).toMatch(/planned_pct[\s\S]*?does not match frozen schedule/i);
-    // EAC identity: actuals + ETC.
-    expect(sql).toMatch(/eac_cost[\s\S]*?actual_cost \+ NEW\.etc_cost/i);
+  });
+
+  it("stamps the authenticated caller at the database boundary", () => {
+    // Reviewer finding 1 (re-review): NOT NULL cannot authenticate an
+    // identity — the trigger overwrites attribution from auth.uid() (the
+    // authenticated PostgREST caller) and fails closed without one. No
+    // payload value is trusted; no cross-request session state is used.
+    expect(sql).toMatch(/create or replace function forge_work_stamp_actor\(\)/i);
+    expect(sql).toMatch(/auth\.uid\(\)::text/);
+    expect(sql).toMatch(/missing authenticated identity/);
+    expect(sql).toMatch(/NEW\.frozen_by := v_actor/);
+    expect(sql).toMatch(/NEW\.recorded_by := v_actor/);
+    expect(sql).toMatch(/forge_work_package_baselines_stamp_actor_trg/);
+    expect(sql).toMatch(/forge_work_progress_snapshots_stamp_actor_trg/);
+    expect(sql).toMatch(/forge_work_weekly_commitments_stamp_actor_trg/);
+    expect(sql).toMatch(/forge_work_manpower_days_stamp_actor_trg/);
+    expect(sql).not.toMatch(/forge_work_set_actor/);
+  });
+
+  it("preserves creation identity on mutable tables", () => {
+    expect(sql).toMatch(/create or replace function forge_work_preserve_actor\(\)/i);
+    expect(sql).toMatch(/NEW\.recorded_by := OLD\.recorded_by/);
+    expect(sql).toMatch(/forge_work_weekly_commitments_preserve_actor_trg/);
+    expect(sql).toMatch(/forge_work_manpower_days_preserve_actor_trg/);
+  });
+
+  it("recomputes forecasts with engine semantics and rejects nulls", () => {
+    // Reviewer finding 2 (re-review): ETC/EAC are derived, never supplied.
+    expect(sql).toMatch(/forecast fields \(etc\/eac hours\/cost\) are required/);
+    expect(sql).toMatch(/v_remaining_cost := v_baseline_cost - NEW\.earned_cost/);
+    expect(sql).toMatch(/v_etc_cost := v_remaining_cost \/ \(NEW\.earned_cost \/ NEW\.actual_cost\)/);
+    expect(sql).toMatch(/snapshot etc_cost % inconsistent with engine forecast/);
+    expect(sql).toMatch(/snapshot eac_cost inconsistent with actual_cost \+ forecast etc_cost/);
   });
 
   it("has no silent 'system' attribution default", () => {

@@ -131,17 +131,28 @@ export async function recordProgressSnapshot(db, {
 
   const plannedPct = plannedPercentComplete(
     baseline.baseline_start, baseline.baseline_finish, statusDate);
-  const earnedPct = percentComplete(progressMethod, measurements);
-  const earnedHours = earnedValue(earnedPct, Number(baseline.baseline_hours));
-  const earnedCost = earnedValue(earnedPct, Number(baseline.baseline_cost));
+  // Canonical precision (reviewer findings, PR #549 re-reviews): every
+  // value that reaches the database is rounded to its column precision
+  // BEFORE any derived calculation — earned % to 4dp (numeric 7,4),
+  // hours/money to 2dp (numeric 14,2) — so the write-boundary trigger
+  // recomputes from the identical representation. CPI amplifies any
+  // float-vs-stored gap far beyond tolerance at low progress, so the
+  // rounding must happen before CPI/ETC/EAC, not just before insert.
+  const round4 = (n) => Math.round(n * 10000) / 10000;
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const earnedPct = round4(percentComplete(progressMethod, measurements));
+  const earnedHours = round2(earnedValue(earnedPct, Number(baseline.baseline_hours)));
+  const earnedCost = round2(earnedValue(earnedPct, Number(baseline.baseline_cost)));
+  const actualHrs = round2(actualHours);
+  const actualCst = round2(actualCost);
   const plannedHrs = plannedValue(plannedPct, Number(baseline.baseline_hours));
   const plannedCst = plannedValue(plannedPct, Number(baseline.baseline_cost));
-  const cpi = costPerformanceIndex(earnedCost, actualCost);
-  const etcCost = estimateToComplete(Number(baseline.baseline_cost), earnedCost, cpi);
-  const eacCost = estimateAtCompletion(actualCost, etcCost);
-  const cpiHrs = costPerformanceIndex(earnedHours, actualHours);
-  const etcHours = estimateToComplete(Number(baseline.baseline_hours), earnedHours, cpiHrs);
-  const eacHours = estimateAtCompletion(actualHours, etcHours);
+  const cpi = costPerformanceIndex(earnedCost, actualCst);
+  const etcCost = round2(estimateToComplete(Number(baseline.baseline_cost), earnedCost, cpi));
+  const eacCost = round2(estimateAtCompletion(actualCst, etcCost));
+  const cpiHrs = costPerformanceIndex(earnedHours, actualHrs);
+  const etcHours = round2(estimateToComplete(Number(baseline.baseline_hours), earnedHours, cpiHrs));
+  const eacHours = round2(estimateAtCompletion(actualHrs, etcHours));
 
   const row = {
     id: newId("forge_wps"),
@@ -153,8 +164,8 @@ export async function recordProgressSnapshot(db, {
     earned_pct: earnedPct,
     earned_hours: earnedHours,
     earned_cost: earnedCost,
-    actual_hours: actualHours,
-    actual_cost: actualCost,
+    actual_hours: actualHrs,
+    actual_cost: actualCst,
     etc_hours: etcHours,
     etc_cost: etcCost,
     eac_hours: eacHours,
@@ -167,7 +178,7 @@ export async function recordProgressSnapshot(db, {
   return {
     ...data,
     variances: {
-      costVariance: costVariance(earnedCost, actualCost),
+      costVariance: costVariance(earnedCost, actualCst),
       scheduleVariance: scheduleVariance(earnedCost, plannedCst),
       cpi,
       spi: schedulePerformanceIndex(earnedCost, plannedCst),

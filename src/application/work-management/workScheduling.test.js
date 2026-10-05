@@ -160,6 +160,60 @@ describe("recordProgressSnapshot", () => {
     expect(result.variances.cpi).toBe(Infinity);
   });
 
+  it("derives earned values from the canonical 4dp earned_pct (fractional progress, large budget)", async () => {
+    // Reviewer finding, PR #549 re-review: the DB trigger recomputes from
+    // the STORED earned_pct, so the engine must derive from the same
+    // rounded representation — 1/3 of a 1M budget must not be rejected.
+    const insertChain = chain({ data: { id: "s1" }, error: null });
+    const bigBaseline = { ...BASELINE, baseline_hours: "1000", baseline_cost: "1000000" };
+    const db = mockDb([
+      chain({ data: { id: "forge_wp_1", progress_method: "physical_quantity", weight_method: "hours" }, error: null }),
+      chain({ data: bigBaseline, error: null }),
+      insertChain,
+    ]);
+    await recordProgressSnapshot(db, {
+      ...CTX,
+      statusDate: "2026-10-04",
+      measurements: { installedQty: 1, plannedQty: 3 },
+      actualHours: 300, actualCost: 300000,
+      recordedBy: "user_1",
+    });
+    const inserted = insertChain.insert.mock.calls[0][0];
+    expect(inserted.earned_pct).toBe(33.3333);
+    expect(inserted.earned_cost).toBe(333333);
+    // Trigger recomputation: (33.3333/100)*1000000 = 333333.00 — matches.
+    expect(Math.abs(inserted.earned_cost - (inserted.earned_pct / 100) * 1000000)).toBeLessThan(0.05);
+  });
+
+  it("uses canonical 2dp inputs for forecasts so the DB trigger recomputes identically (low-progress repro)", async () => {
+    // Reviewer finding, PR #549 re-review 2: baseline hours=100/cost=1000,
+    // earned 0.1234%, actuals 10h/$100. CPI amplifies any float-vs-stored
+    // gap, so earned AND actuals are rounded to 2dp BEFORE CPI/ETC/EAC.
+    const insertChain = chain({ data: { id: "s1" }, error: null });
+    const smallBaseline = { ...BASELINE, baseline_hours: "100", baseline_cost: "1000" };
+    const db = mockDb([
+      chain({ data: { id: "forge_wp_1", progress_method: "physical_quantity", weight_method: "hours" }, error: null }),
+      chain({ data: smallBaseline, error: null }),
+      insertChain,
+    ]);
+    await recordProgressSnapshot(db, {
+      ...CTX,
+      statusDate: "2026-10-04",
+      measurements: { installedQty: 0.1234, plannedQty: 100 },
+      actualHours: 10, actualCost: 100,
+      recordedBy: "user_1",
+    });
+    const inserted = insertChain.insert.mock.calls[0][0];
+    expect(inserted.earned_pct).toBe(0.1234);
+    expect(inserted.earned_hours).toBe(0.12);
+    expect(inserted.earned_cost).toBe(1.23);
+    // Trigger recomputation from stored values: CPI=0.12/10=0.012,
+    // ETC=(100-0.12)/0.012=8323.333... — must match within tolerance.
+    const triggerEtcHours = (100 - 0.12) / (0.12 / 10);
+    expect(Math.abs(inserted.etc_hours - triggerEtcHours)).toBeLessThan(0.05);
+    expect(inserted.etc_hours).toBe(8323.33);
+  });
+
   it("requires an authenticated actor", async () => {
     const db = mockDb([
       chain({ data: { id: "forge_wp_1", progress_method: "physical_quantity" }, error: null }),
