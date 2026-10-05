@@ -3,6 +3,7 @@ import {
   DECK_DEFAULT_DROP_IN,
   DECK_MATERIALS,
   addDeck,
+  addWall,
   createEmptyDesign,
   deleteDeck,
   setDeckDrop,
@@ -59,5 +60,46 @@ describe("decks", () => {
     expect(design.decks[0].material).toBe("wood");
     design = setDeckMaterial(design, design.decks[0].id, "tile");
     expect(design.decks[0].material).toBe("wood");
+  });
+});
+
+describe("deck holes in the floor plane", () => {
+  it("cuts an attached exterior deck out of the floor so it shows at its elevation", () => {
+    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
+    design = addDeck(design, { x: 48, y: -24 }, { x: 144, y: -12 });
+    const scene = buildThreeScene(design);
+    expect(scene.floor.deckHoles).toEqual([{ minX: 48, maxX: 144, minZ: -24, maxZ: -12 }]);
+  });
+
+  it("clips a deck that runs past the floor edge to the floor rectangle", () => {
+    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
+    design = addDeck(design, { x: 200, y: -24 }, { x: 300, y: -12 });
+    const scene = buildThreeScene(design);
+    expect(scene.floor.deckHoles).toEqual([{ minX: 200, maxX: scene.floor.maxX, minZ: -24, maxZ: -12 }]);
+  });
+
+  it("cuts nothing for a deck entirely outside the floor", () => {
+    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
+    design = addDeck(design, { x: 400, y: 400 }, { x: 500, y: 500 });
+    expect(buildThreeScene(design).floor.deckHoles).toEqual([]);
+  });
+
+  it("cuts a deck sitting in the notch of an L-shaped plan", () => {
+    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
+    design = addWall(design, { x: 240, y: 0 }, { x: 240, y: 120 });
+    design = addWall(design, { x: 240, y: 120 }, { x: 120, y: 120 });
+    design = addWall(design, { x: 120, y: 120 }, { x: 120, y: 240 });
+    design = addWall(design, { x: 120, y: 240 }, { x: 0, y: 240 });
+    design = addWall(design, { x: 0, y: 240 }, { x: 0, y: 0 });
+    design = addDeck(design, { x: 150, y: 150 }, { x: 230, y: 230 });
+    const scene = buildThreeScene(design);
+    expect(scene.floor.deckHoles).toEqual([{ minX: 150, maxX: 230, minZ: 150, maxZ: 230 }]);
+  });
+
+  it("does not cut a second deck that overlaps the first hole", () => {
+    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
+    design = addDeck(design, { x: 48, y: -24 }, { x: 144, y: -12 });
+    design = addDeck(design, { x: 96, y: -24 }, { x: 192, y: -12 });
+    expect(buildThreeScene(design).floor.deckHoles).toHaveLength(1);
   });
 });
