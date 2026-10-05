@@ -34,12 +34,20 @@ export default async function WorkPackagesPage() {
             dashboards arrive in later rungs.
           </p>
         </div>
-        <Link
-          href="/forge/work/new"
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-        >
-          New package
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/forge/work/documents"
+            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Document library
+          </Link>
+          <Link
+            href="/forge/work/new"
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          >
+            New package
+          </Link>
+        </div>
       </div>
 
       {!ok ? (

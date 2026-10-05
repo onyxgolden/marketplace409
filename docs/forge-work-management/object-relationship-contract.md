@@ -92,9 +92,12 @@ reverse duplicate facts.
 | `evidence_before` / `evidence_during` / `evidence_after` | capture.capture_artifact | workmgmt.work_package | artifact as phase evidence (meaning assigned by the attaching user/workflow, never inferred) |
 | `evidence_completion` | capture.capture_artifact | workmgmt.work_package | claimed completion evidence |
 | `evidence_inspection` | capture.capture_artifact | workmgmt.work_package | inspection evidence |
-| `supporting_document` | workmgmt.work_package | documents.rental_document | supporting material |
-| `closeout_document` | workmgmt.work_package | documents.rental_document | closeout material |
-| `permit_document` | workmgmt.work_package | documents.rental_document | permit record |
+| `supporting_document` | workmgmt.work_package | documents.rental_document | supporting material (rental library; kept for existing links) |
+| `closeout_document` | workmgmt.work_package | documents.rental_document | closeout material (rental library; kept for existing links) |
+| `permit_document` | workmgmt.work_package | documents.rental_document | permit record (rental library; kept for existing links) |
+| `library_supporting_document` | workmgmt.work_package | workmgmt.forge_work_document | supporting material (planner's own library, Rung 5) |
+| `library_closeout_document` | workmgmt.work_package | workmgmt.forge_work_document | closeout material (planner's own library, Rung 5) |
+| `library_permit_document` | workmgmt.work_package | workmgmt.forge_work_document | permit record (planner's own library, Rung 5) |
 | `realized_as` | workmgmt.work_package | rental.rental_maintenance_work_order | package work realized as a rental work order |
 | `contractor_via` | workmgmt.work_package | rental.rental_contractor | contractor/vendor reference |
 | `responsible_party` | workmgmt.work_package | people.* / rental.rental_vendor | responsibility reference |

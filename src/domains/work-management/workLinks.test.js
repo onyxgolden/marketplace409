@@ -159,4 +159,13 @@ describe("vocabulary metadata", () => {
     expect(isResolvableRelationshipType("on_asset")).toBe(true);
     expect(isResolvableRelationshipType("executes")).toBe(true);
   });
+  it("the Rung 5 library types target the planner's own document library", () => {
+    for (const key of ["library_supporting_document", "library_closeout_document", "library_permit_document"]) {
+      const rel = LINK_RELATIONSHIPS[key];
+      expect(rel, key).toBeTruthy();
+      expect(rel.source).toEqual({ domain: "workmgmt", type: "work_package" });
+      expect(rel.target).toEqual({ domain: "workmgmt", type: "forge_work_document" });
+      expect(isResolvableRelationshipType(key)).toBe(true);
+    }
+  });
 });

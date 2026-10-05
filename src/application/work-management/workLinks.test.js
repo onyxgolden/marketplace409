@@ -67,6 +67,18 @@ describe("createLink", () => {
     expect(result.httpStatus).toBe(400);
     expect(result.error).toMatch(/workmgmt\.work_package 'forge_wp_1' not found in this workspace/);
   });
+  it("rejects linking a superseded document version", async () => {
+    const supersededDoc = chain({ data: { id: "work_document_1", is_current_version: false, deleted_at: null }, error: null });
+    const db = mockDb([exists("forge_wp_1"), supersededDoc]);
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
+      relationship_type: "library_supporting_document",
+      source_domain: "workmgmt", source_type: "work_package", source_id: "forge_wp_1",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_document_1",
+    }});
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/superseded version/);
+  });
   it("rejects a reverse-orientation link before touching the DB", async () => {
     const db = mockDb([]);
     const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
@@ -224,6 +236,31 @@ describe("recheckLink", () => {
     expect(result.ok).toBe(true);
     expect(result.link.status).toBe("active");
   });
+  it("marks a link stale when its document endpoint is superseded", async () => {
+    const docLink = { ...LINK, relationship_type: "library_supporting_document",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_document_1" };
+    const loadChain = chain({ data: docLink, error: null });
+    const updateChain = chain({ data: { ...docLink, status: "stale" }, error: null });
+    const supersededDoc = chain({ data: { id: "work_document_1", is_current_version: false, deleted_at: null }, error: null });
+    const db = mockDb([loadChain, exists("forge_wp_1"), supersededDoc, updateChain]);
+    const result = await recheckLink(db, { ownerId: "owner_1", linkId: "forge_wlink_1" });
+    expect(result.ok).toBe(true);
+    expect(result.link.status).toBe("stale");
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "stale", resolved_state: "moved",
+    }));
+  });
+  it("marks a link broken when its document endpoint is soft-deleted", async () => {
+    const docLink = { ...LINK, relationship_type: "library_supporting_document",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_document_1" };
+    const loadChain = chain({ data: docLink, error: null });
+    const updateChain = chain({ data: { ...docLink, status: "broken" }, error: null });
+    const deletedDoc = chain({ data: { id: "work_document_1", is_current_version: true, deleted_at: "2026-10-05T00:00:00Z" }, error: null });
+    const db = mockDb([loadChain, exists("forge_wp_1"), deletedDoc, updateChain]);
+    const result = await recheckLink(db, { ownerId: "owner_1", linkId: "forge_wlink_1" });
+    expect(result.ok).toBe(true);
+    expect(result.link.status).toBe("broken");
+  });
 });
 
 describe("flagLinkStale", () => {
@@ -279,5 +316,68 @@ describe("unlinkWorkLink", () => {
     const result = await unlinkWorkLink(db, { ownerId: "owner_1", linkId: "nope" });
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(404);
+  });
+});
+
+describe("resolveEndpoint column selection", () => {
+  // Capturing mock: records every (table, select-columns) pair so tests can
+  // prove the resolver never asks a table for columns it does not have.
+  function captureDb(rowsByTable) {
+    const seen = [];
+    const node = (table) => {
+      const n = {
+        select: (cols) => { seen.push({ table, cols }); return n; },
+        eq: () => n, order: () => n, insert: () => n, update: () => n,
+        single: async () => ({ data: { ...LINK, status: "active" }, error: null }),
+        maybeSingle: async () => ({ data: rowsByTable[table] ?? null, error: null }),
+      };
+      return n;
+    };
+    return { seen, from: (table) => node(table) };
+  }
+  const colsFor = (seen, table) => seen.filter((s) => s.table === table).map((s) => s.cols);
+
+  it("requests only id from tables without currency columns", async () => {
+    const db = captureDb({ forge_work_packages: { id: "forge_wp_1" }, forge_work_assets: { id: "forge_wasset_1" } });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: INPUT });
+    expect(result.ok).toBe(true);
+    expect(colsFor(db.seen, "forge_work_packages")).toEqual(["id"]);
+    expect(colsFor(db.seen, "forge_work_assets")).toEqual(["id"]);
+  });
+
+  it("requests the full currency columns for the document library", async () => {
+    const input = { ...INPUT, relationship_type: "library_supporting_document",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_doc_1" };
+    const db = captureDb({
+      forge_work_packages: { id: "forge_wp_1" },
+      forge_work_document_library: { id: "work_doc_1", deleted_at: null, is_current_version: true },
+    });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input });
+    expect(result.ok).toBe(true);
+    expect(colsFor(db.seen, "forge_work_document_library")).toEqual(["id, deleted_at, is_current_version"]);
+  });
+
+  it("requests deleted_at but not is_current_version for rental documents", async () => {
+    const input = { ...INPUT, relationship_type: "supporting_document",
+      target_domain: "documents", target_type: "rental_document", target_id: "rdoc_1" };
+    const db = captureDb({
+      forge_work_packages: { id: "forge_wp_1" },
+      rental_documents: { id: "rdoc_1", deleted_at: null },
+    });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input });
+    expect(result.ok).toBe(true);
+    expect(colsFor(db.seen, "rental_documents")).toEqual(["id, deleted_at"]);
+  });
+
+  it("treats a soft-deleted rental document as missing", async () => {
+    const input = { ...INPUT, relationship_type: "supporting_document",
+      target_domain: "documents", target_type: "rental_document", target_id: "rdoc_1" };
+    const db = captureDb({
+      forge_work_packages: { id: "forge_wp_1" },
+      rental_documents: { id: "rdoc_1", deleted_at: "2026-10-05T00:00:00Z" },
+    });
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/not found in this workspace/);
   });
 });

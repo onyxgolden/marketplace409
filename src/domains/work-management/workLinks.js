@@ -94,6 +94,27 @@ export const LINK_RELATIONSHIPS = Object.freeze({
     label: "Permit document",
     formal: "permit_document",
   },
+  // Rung 5: the planner's own per-client document library
+  // (forge_work_document_library). Parallel to the rental-document types
+  // above, which stay valid for existing links.
+  library_supporting_document: {
+    source: { domain: "workmgmt", type: "work_package" },
+    target: { domain: "workmgmt", type: "forge_work_document" },
+    label: "Library document supports this work",
+    formal: "library_supporting_document",
+  },
+  library_closeout_document: {
+    source: { domain: "workmgmt", type: "work_package" },
+    target: { domain: "workmgmt", type: "forge_work_document" },
+    label: "Library closeout document",
+    formal: "library_closeout_document",
+  },
+  library_permit_document: {
+    source: { domain: "workmgmt", type: "work_package" },
+    target: { domain: "workmgmt", type: "forge_work_document" },
+    label: "Library permit document",
+    formal: "library_permit_document",
+  },
   realized_as: {
     source: { domain: "workmgmt", type: "work_package" },
     target: { domain: "rental", type: "rental_maintenance_work_order" },
@@ -300,7 +321,9 @@ export const RESOLVABLE_LINK_TYPES = Object.freeze([
   "executes", "constrains", "milestone_for", "supported_by_drawing",
   "cost_attributed", "evidence_before", "evidence_during", "evidence_after",
   "evidence_completion", "evidence_inspection", "supporting_document",
-  "closeout_document", "permit_document", "realized_as", "contractor_via",
+  "closeout_document", "permit_document", "library_supporting_document",
+  "library_closeout_document", "library_permit_document",
+  "realized_as", "contractor_via",
   "responsible_party", "supplies_material", "on_asset", "in_location",
 ]);
 
