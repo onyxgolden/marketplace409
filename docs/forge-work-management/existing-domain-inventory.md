@@ -144,6 +144,19 @@ Conventions observed across domains:
 - **Authority:** the document library owns files and visibility. Work
   Management links documents as supporting or closeout material.
 
+### Work Management's own document library (Rung 5)
+
+- **Table:** `forge_work_document_library` (`owner_id`, `id`, `name`,
+  `kind` free text — base kinds `template | filled_form | reference`, each
+  client defines their own — `mime_type`, `byte_size`, `bucket`/`object_path`,
+  `version_of_document_id`/`version_number`/`is_current_version`,
+  `template_source_id` for filled copies made from a template).
+- **Authority:** the planner's own per-client file repository. Drawings stay
+  in the Designer domain and are only linked (`supported_by_drawing`); the
+  library holds the planner's templates, forms, and reference documents.
+  Links use the `library_*` relationship types targeting
+  `workmgmt.forge_work_document`.
+
 ## People / vendors
 
 - **Owner identity:** the authenticated user (`auth.uid()::text`) is the

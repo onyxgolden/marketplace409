@@ -67,6 +67,18 @@ describe("createLink", () => {
     expect(result.httpStatus).toBe(400);
     expect(result.error).toMatch(/workmgmt\.work_package 'forge_wp_1' not found in this workspace/);
   });
+  it("rejects linking a superseded document version", async () => {
+    const supersededDoc = chain({ data: { id: "work_document_1", is_current_version: false, deleted_at: null }, error: null });
+    const db = mockDb([exists("forge_wp_1"), supersededDoc]);
+    const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
+      relationship_type: "library_supporting_document",
+      source_domain: "workmgmt", source_type: "work_package", source_id: "forge_wp_1",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_document_1",
+    }});
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/superseded version/);
+  });
   it("rejects a reverse-orientation link before touching the DB", async () => {
     const db = mockDb([]);
     const result = await createLink(db, { ownerId: "owner_1", actor: "user_1", input: {
@@ -223,6 +235,31 @@ describe("recheckLink", () => {
     const result = await recheckLink(db, { ownerId: "owner_1", linkId: "forge_wlink_1" });
     expect(result.ok).toBe(true);
     expect(result.link.status).toBe("active");
+  });
+  it("marks a link stale when its document endpoint is superseded", async () => {
+    const docLink = { ...LINK, relationship_type: "library_supporting_document",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_document_1" };
+    const loadChain = chain({ data: docLink, error: null });
+    const updateChain = chain({ data: { ...docLink, status: "stale" }, error: null });
+    const supersededDoc = chain({ data: { id: "work_document_1", is_current_version: false, deleted_at: null }, error: null });
+    const db = mockDb([loadChain, exists("forge_wp_1"), supersededDoc, updateChain]);
+    const result = await recheckLink(db, { ownerId: "owner_1", linkId: "forge_wlink_1" });
+    expect(result.ok).toBe(true);
+    expect(result.link.status).toBe("stale");
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "stale", resolved_state: "moved",
+    }));
+  });
+  it("marks a link broken when its document endpoint is soft-deleted", async () => {
+    const docLink = { ...LINK, relationship_type: "library_supporting_document",
+      target_domain: "workmgmt", target_type: "forge_work_document", target_id: "work_document_1" };
+    const loadChain = chain({ data: docLink, error: null });
+    const updateChain = chain({ data: { ...docLink, status: "broken" }, error: null });
+    const deletedDoc = chain({ data: { id: "work_document_1", is_current_version: true, deleted_at: "2026-10-05T00:00:00Z" }, error: null });
+    const db = mockDb([loadChain, exists("forge_wp_1"), deletedDoc, updateChain]);
+    const result = await recheckLink(db, { ownerId: "owner_1", linkId: "forge_wlink_1" });
+    expect(result.ok).toBe(true);
+    expect(result.link.status).toBe("broken");
   });
 });
 

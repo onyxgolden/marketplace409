@@ -35,6 +35,7 @@ const ENDPOINT_TABLES = Object.freeze({
   "workmgmt:work_package": "forge_work_packages",
   "workmgmt:forge_work_asset": "forge_work_assets",
   "workmgmt:forge_work_location": "forge_work_locations",
+  "workmgmt:forge_work_document": "forge_work_document_library",
   "scheduling:schedule_block": "schedule_blocks",
   "designer:designer_project": "designer_projects",
   "documents:rental_document": "rental_documents",
@@ -54,14 +55,18 @@ function endpointKey(domain, type) {
 }
 
 // Resolve one endpoint to a real record inside the link's workspace.
-// Returns { ok: true } or { ok: false, reason: 'unsupported' | 'missing' }.
+// Returns { ok: true } or { ok: false, reason }.
+// reason 'missing': no such record (or it is soft-deleted) — the link is broken.
+// reason 'superseded': the record exists but is a superseded document version —
+//   the other end changed, so an existing link goes stale (never silently ok).
 async function resolveEndpoint(db, ownerId, domain, type, id) {
   const table = ENDPOINT_TABLES[endpointKey(domain, type)];
   if (!table) return { ok: false, reason: "unsupported" };
-  const { data, error } = await db.from(table).select("id")
+  const { data, error } = await db.from(table).select("id, is_current_version, deleted_at")
     .eq("owner_id", ownerId).eq("id", id).maybeSingle();
   if (error) throw error;
-  if (!data) return { ok: false, reason: "missing" };
+  if (!data || data.deleted_at) return { ok: false, reason: "missing" };
+  if (data.is_current_version === false) return { ok: false, reason: "superseded" };
   return { ok: true };
 }
 
@@ -111,9 +116,11 @@ export async function createLink(db, { ownerId, actor, input }) {
       return { ok: false, httpStatus: 400, error: unsupportedMessage(domain, type) };
     }
     if (!resolved.ok) {
+      const why = resolved.reason === "superseded"
+        ? `is a superseded version — link the current version instead.`
+        : `not found in this workspace. Cross-workspace links are rejected.`;
       return { ok: false, httpStatus: 400,
-        error: `Link ${end} does not resolve: ${domain}.${type} '${id}' ` +
-          `not found in this workspace. Cross-workspace links are rejected.` };
+        error: `Link ${end} does not resolve: ${domain}.${type} '${id}' ${why}` };
     }
   }
   const now = new Date().toISOString();
@@ -218,7 +225,9 @@ export async function confirmLink(db, { ownerId, actor, linkId, note }) {
 }
 
 // Re-resolve a link's endpoints. Success returns it to active; a missing
-// endpoint marks it broken — surfaced, never silently dropped.
+// endpoint marks it broken — surfaced, never silently dropped. An endpoint
+// that resolves to a superseded document version marks the link stale:
+// the other end changed, and a person should re-point it.
 export async function recheckLink(db, { ownerId, linkId }) {
   const link = await getLink(db, ownerId, linkId);
   if (!link) return { ok: false, httpStatus: 404, error: "Link not found." };
@@ -227,7 +236,9 @@ export async function recheckLink(db, { ownerId, linkId }) {
     resolveEndpoint(db, ownerId, link.target_domain, link.target_type, link.target_id),
   ]);
   const now = new Date().toISOString();
-  const nextStatus = source.ok && target.ok ? LINK_STATUS.ACTIVE : LINK_STATUS.BROKEN;
+  const superseded = [source, target].some((r) => !r.ok && r.reason === "superseded");
+  const nextStatus = superseded ? LINK_STATUS.STALE
+    : (source.ok && target.ok ? LINK_STATUS.ACTIVE : LINK_STATUS.BROKEN);
   const transition = validateStatusTransition(link.status, nextStatus);
   if (!transition.ok) {
     return { ok: false, httpStatus: 409, error: transition.error };
@@ -235,7 +246,8 @@ export async function recheckLink(db, { ownerId, linkId }) {
   const { data: updated, error } = await db.from(TABLES.links).update({
     status: nextStatus,
     resolved_at: now,
-    resolved_state: source.ok && target.ok ? "ok" : "unavailable",
+    resolved_state: nextStatus === LINK_STATUS.STALE ? "moved"
+      : (source.ok && target.ok ? "ok" : "unavailable"),
   }).eq("owner_id", ownerId).eq("id", linkId).select("*").single();
   if (error) throw error;
   return { ok: true, link: updated };
