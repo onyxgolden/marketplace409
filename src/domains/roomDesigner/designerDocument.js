@@ -71,6 +71,10 @@ export const DESIGN_VERSION = 1;
 export const OPENING_DEFAULTS = Object.freeze({
   door: Object.freeze({ widthIn: 36 }),
   window: Object.freeze({ widthIn: 48 }),
+  // Closet: a bifold/sliding closet door. Cuts the wall like a door, no swing.
+  closet: Object.freeze({ widthIn: 48 }),
+  // Passage: an open cased gap (kitchen to living room), no door leaf.
+  passage: Object.freeze({ widthIn: 60 }),
 });
 
 let idSequence = 0;
@@ -400,8 +404,8 @@ export function moveRoom(design, roomId, dx, dy) {
 /** Cut a door/window opening into a wall at an offset from wall.a. */
 export function addOpening(design, wallId, { type, offsetIn = 0, widthIn } = {}) {
   assertDesign(design);
-  if (type !== "door" && type !== "window") {
-    throw new Error("Opening type must be \"door\" or \"window\".");
+  if (!Object.prototype.hasOwnProperty.call(OPENING_DEFAULTS, type)) {
+    throw new Error(`Opening type must be one of: ${Object.keys(OPENING_DEFAULTS).join(", ")}.`);
   }
   const wall = findWall(design, wallId);
   if (!wall) throw new Error(`Unknown wall: ${wallId}`);

@@ -182,7 +182,7 @@ export function measureLevelDesign(design) {
     let h = Number(o.heightIn);
     if (!(h > 0)) {
       // Geometry does not store opening heights — documented default.
-      h = o.type === "door" ? OPENING_HEIGHT_DEFAULT_IN.door : OPENING_HEIGHT_DEFAULT_IN.window;
+      h = o.type === "window" ? OPENING_HEIGHT_DEFAULT_IN.window : OPENING_HEIGHT_DEFAULT_IN.door;
       if (w > 0) openingHeightsDefaulted = true;
     }
     return acc + (w * h) / 144;

@@ -70,6 +70,8 @@ const OPENING_MIN_WIDTH_IN = 12;
  */
 // Screen-pixel radius within which the pipe tool snaps to a nozzle anchor.
 const ANCHOR_SNAP_PX = 12;
+// Tools that cut an opening into a wall. Every key of OPENING_DEFAULTS is an opening kind.
+const OPENING_TOOL_IDS = Object.keys(OPENING_DEFAULTS);
 
 export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, onViewCenterChange = null }) {
   const svgRef = useRef(null);
@@ -351,7 +353,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         polygon: ghostRoomPolygon(template, point),
       };
     }
-    if (tool === "door" || tool === "window") {
+    if (OPENING_TOOL_IDS.includes(tool)) {
       const span = ghostOpeningSpan(design.walls, plan, {
         widthIn: OPENING_DEFAULTS[tool].widthIn,
         gridIn,
@@ -481,7 +483,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       dispatch({ type: "ADD_ROOM", templateId: pendingRoomTemplate, at: point });
       return;
     }
-    if (tool === "door" || tool === "window") {
+    if (OPENING_TOOL_IDS.includes(tool)) {
       const tolIn = HIT_TOLERANCE_PX / view.scale + 6;
       let best = null;
       let bestD = tolIn;
@@ -1178,6 +1180,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         const s1 = toScreen(g1);
         const s2 = toScreen(g2);
         const color = isSelected ? "#f59e0b" : o.type === "door" ? "#34d399" : "#60a5fa";
+        if (o.type === "passage" || o.type === "closet") {
+          // Passage: open gap, end caps only. Closet: end caps plus a dashed
+          // centerline across the gap (a bifold/sliding panel, no swing).
+          return (
+            <g key={o.id}>
+              <line x1={s1.x} y1={s1.y} x2={s2.x} y2={s2.y} stroke="#111827" strokeWidth={thicknessPx + 2} />
+              {o.type === "closet" && (
+                <line x1={s1.x} y1={s1.y} x2={s2.x} y2={s2.y} stroke={color} strokeWidth={1.5} strokeDasharray="6 4" />
+              )}
+              <line x1={s1.x - 4} y1={s1.y - 4} x2={s1.x + 4} y2={s1.y + 4} stroke={color} strokeWidth={2} />
+              <line x1={s2.x - 4} y1={s2.y - 4} x2={s2.x + 4} y2={s2.y + 4} stroke={color} strokeWidth={2} />
+            </g>
+          );
+        }
         if (o.type === "door") {
           // swing arc: quarter circle of radius = gap width around the
           // stored hinge, from the open leaf to the closed position.

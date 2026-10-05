@@ -5,6 +5,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   BookOpen,
   Box,
+  DoorClosed,
   DoorOpen,
   Download,
   Eraser,
@@ -12,6 +13,7 @@ import {
   HelpCircle,
   Home,
   Lock,
+  Minus,
   LockOpen,
   Maximize,
   MousePointer2,
@@ -161,6 +163,8 @@ export const TOOL_DEFS = [
   { id: "wallrect", label: "Wall rect", icon: SquareDashed, hint: "Drag on the plan to draw a rectangular wall outline (snaps to the grid)" },
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening" },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening" },
+  { id: "closet", label: "Closet", icon: DoorClosed, hint: "Click a wall to cut a closet door opening (bifold, no swing)" },
+  { id: "passage", label: "Passage", icon: Minus, hint: "Click a wall to cut an open passage (e.g. kitchen to living room), no door" },
   // Pre-shaped rooms: one palette entry per template. Selecting one arms
   // the room tool with that template pending (see onSelect below); the
   // right panel still shows the full "Room shapes" picker.
@@ -3132,7 +3136,7 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
     const opening = design.openings.find((o) => o.id === selection.id);
     if (!opening) return null;
     return (
-      <PanelShell title={opening.type === "door" ? "Door" : "Window"} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+      <PanelShell title={{ door: "Door", window: "Window", closet: "Closet", passage: "Passage" }[opening.type] || "Opening"} onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
         <OpeningWidthFields opening={opening} dispatch={dispatch} />
         <label className="block text-xs text-gray-400">
           Position along wall ({Math.round(opening.offsetIn)}″)

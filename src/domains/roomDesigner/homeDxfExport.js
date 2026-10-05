@@ -408,12 +408,12 @@ function exportLevelPlan(design, layers, ctx) {
           // Same clamp the editor applies, so the DXF gap matches the canvas.
           const clamped = clampOpening(
             wall,
-            o.type === "door" ? "door" : "window",
+            o.type === "window" ? "window" : "door",
             Number(o.offsetIn) || 0,
             Number(o.widthIn) || 0,
           );
           return {
-            type: o.type === "door" ? "door" : "window",
+            type: o.type === "window" ? "window" : "door",
             offsetIn: clamped.offsetIn,
             widthIn: clamped.widthIn,
             ...doorSwingOf(o),
@@ -451,7 +451,7 @@ function exportLevelPlan(design, layers, ctx) {
     for (const opening of wallOpenings) {
       const off = opening.offsetIn;
       const w = opening.widthIn;
-      const layer = opening.type === "door" ? layers.door : layers.window;
+      const layer = opening.type === "window" ? layers.window : layers.door;
       ctx.use(layer);
       for (const edge of [off, off + w]) {
         const [c1x, c1y] = dxfPt(at(span, edge, half));

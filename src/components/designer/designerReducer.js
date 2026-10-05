@@ -97,6 +97,8 @@ export const TOOLS = Object.freeze([
   "room",
   "door",
   "window",
+  "closet",
+  "passage",
   "furniture",
   "pipe",
   "piping",
