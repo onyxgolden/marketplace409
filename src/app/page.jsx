@@ -2,27 +2,12 @@ import { redirect } from "next/navigation";
 
 import { supabase } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
-import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
 import { loadProgrammerAuthorization } from "@/lib/supabase/loadProgrammerAuthorization";
 import WorkspaceHubGrid from "@/components/WorkspaceHubGrid";
 import WorkspaceAccountPanel from "@/components/WorkspaceAccountPanel";
 import { WORKSPACES } from "@/lib/workspaces";
 
 export const dynamic = "force-dynamic";
-
-// Deliberately not a WORKSPACES entry: that array also drives WorkspaceLinks, the cross-app
-// sidebar shown everywhere (including inside Forge) with no auth context of its own. Keeping this
-// tile local to this one server-rendered page is what lets it carry a real visibility check
-// (isOwnerOrCoOwner) without threading owner/co-owner state through every place WORKSPACES is
-// read. Health itself still lives inside Forge (/forge/health) -- this is a private shortcut to
-// it, not a promotion to a sibling top-level workspace.
-const HEALTH_SHORTCUT = Object.freeze({
-  id: "health",
-  name: "Health",
-  href: "/forge/health",
-  iconName: "HeartPulse",
-  description: "Shared household health records. Visible only to you and your co-owner.",
-});
 
 async function loadWorkspaceHub() {
   const supabaseServer = await createClient();
@@ -45,9 +30,9 @@ async function loadWorkspaceHub() {
     dev: "Programmer tools",
   };
 
-  if (!user) return { user: null, stats, isOwnerOrCoOwner: false, isDeveloperAuthorized: false, favoriteWorkspaceId: null };
+  if (!user) return { user: null, stats, isDeveloperAuthorized: false, favoriteWorkspaceId: null };
 
-  const [{ count: leaseCount }, { count: accountCount }, isOwnerOrCoOwner, preference, programmerAuthorization] = await Promise.all([
+  const [{ count: leaseCount }, { count: accountCount }, preference, programmerAuthorization] = await Promise.all([
     supabaseServer
       .from("rental_leases")
       .select("*", { count: "exact", head: true })
@@ -56,7 +41,6 @@ async function loadWorkspaceHub() {
       .from("financial_accounts")
       .select("*", { count: "exact", head: true })
       .eq("owner_id", user.id),
-    isOwnerOrActiveCoOwner({ supabaseClient: supabaseServer, actorUserId: user.id }),
     supabaseServer
       .from("user_workspace_preferences")
       .select("favorite_workspace_id")
@@ -76,20 +60,19 @@ async function loadWorkspaceHub() {
   return {
     user,
     stats,
-    isOwnerOrCoOwner,
     isDeveloperAuthorized: Boolean(programmerAuthorization.ok && programmerAuthorization.authorized),
     favoriteWorkspaceId: preference.data?.favorite_workspace_id ?? null,
   };
 }
 
 export default async function HubPage({ searchParams } = {}) {
-  const { user, stats, isOwnerOrCoOwner, isDeveloperAuthorized, favoriteWorkspaceId } = await loadWorkspaceHub();
+  const { user, stats, isDeveloperAuthorized, favoriteWorkspaceId } = await loadWorkspaceHub();
 
   // Dev is filtered out of the array itself (not just skipped when rendering) so both the tile grid
   // AND the favorite-redirect lookup below see the same, authorization-correct set -- a stale
   // favorite of "dev" saved while someone was authorized must not blindly redirect them (or, worse,
   // someone else signed into the same saved preference) straight into /forge/developer once they no
-  // longer are. Mirrors how the Health shortcut already guards its own redirect below.
+  // longer are.
   const visibleWorkspaces = isDeveloperAuthorized
     ? WORKSPACES
     : WORKSPACES.filter((workspace) => workspace.id !== "dev");
@@ -102,9 +85,7 @@ export default async function HubPage({ searchParams } = {}) {
   const params = await searchParams;
   const wantsPicker = params?.chooseWorkspace === "1";
   if (favoriteWorkspaceId && !wantsPicker) {
-    const favorite = favoriteWorkspaceId === HEALTH_SHORTCUT.id
-      ? (isOwnerOrCoOwner ? HEALTH_SHORTCUT : null)
-      : visibleWorkspaces.find((workspace) => workspace.id === favoriteWorkspaceId);
+    const favorite = visibleWorkspaces.find((workspace) => workspace.id === favoriteWorkspaceId);
     if (favorite) redirect(favorite.href);
   }
 
@@ -127,7 +108,6 @@ export default async function HubPage({ searchParams } = {}) {
       <WorkspaceHubGrid
         workspaces={visibleWorkspaces}
         stats={stats}
-        healthShortcut={isOwnerOrCoOwner ? HEALTH_SHORTCUT : null}
         initialFavoriteWorkspaceId={favoriteWorkspaceId}
       />
     </main>
