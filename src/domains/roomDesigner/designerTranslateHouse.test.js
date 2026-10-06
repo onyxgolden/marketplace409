@@ -36,6 +36,12 @@ describe("translateHouse", () => {
     expect(after.decks[0].b).toEqual({ x: 346, y: 116 });
   });
 
+  it("moves annotation points, which carry legacy stair geometry", () => {
+    const before = { ...sampleHouse(), annotations: [{ id: "ann_1", kind: "path", closed: true, points: [{ x: 10, y: 10 }, { x: 40, y: 10 }] }] };
+    const after = translateHouse(before, 5, 7);
+    expect(after.annotations[0].points).toEqual([{ x: 15, y: 17 }, { x: 45, y: 17 }]);
+  });
+
   it("leaves openings untouched because they ride their walls", () => {
     const before = sampleHouse();
     const after = translateHouse(before, 50, 50);

@@ -1584,7 +1584,8 @@ export function deleteDeck(design, deckId) {
 /**
  * Shift every house element by (dx, dy) inches, keeping its shape. Openings
  * ride with their walls, so they are not listed. Sheets (print frames) and
- * the underlay stay where they are.
+ * the underlay stay where they are. Annotations move too: legacy stair
+ * geometry is stored there and is rendered in 3D.
  */
 export function translateHouse(design, dx, dy) {
   assertDesign(design);
@@ -1598,6 +1599,7 @@ export function translateHouse(design, dx, dy) {
     pipes: (design.pipes || []).map((p) => ({ ...p, points: p.points.map(move) })),
     orgCharts: (design.orgCharts || []).map((c) => ({ ...c, x: c.x + dx, y: c.y + dy })),
     decks: decksOf(design).map((d) => ({ ...d, a: move(d.a), b: move(d.b) })),
+    annotations: (design.annotations || []).map((a) => ({ ...a, points: (a.points || []).map(move) })),
   };
 }
 

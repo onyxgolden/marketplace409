@@ -236,6 +236,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // wall it sits in, so either one can be picked without moving the cursor.
   const stackCycleRef = useRef(null);
   const houseMoveRef = useRef(null);
+  const houseMoveSeqRef = useRef(0);
   const cycleStackedHit = useCallback(
     (plan, hit) => {
       const stack = [];
@@ -705,7 +706,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     }
     const hit = cycleStackedHit(plan, hitTest(plan));
     if (selection?.kind === "house" && hit && HOUSE_HIT_KINDS.has(hit.kind)) {
-      houseMoveRef.current = { origin: plan, applied: { x: 0, y: 0 } };
+      houseMoveSeqRef.current += 1;
+      houseMoveRef.current = { origin: plan, applied: { x: 0, y: 0 }, key: `move-house:${houseMoveSeqRef.current}` };
       setDrag({ kind: "move-house" });
       return;
     }
@@ -883,7 +885,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const dy = target.y - ref.applied.y;
       if (dx || dy) {
         ref.applied = target;
-        dispatch({ type: "TRANSLATE_HOUSE", dx, dy, coalesce: "move-house" });
+        dispatch({ type: "TRANSLATE_HOUSE", dx, dy, coalesce: ref.key });
       }
       return;
     }
