@@ -41,11 +41,11 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         disabled={disabled}
         aria-pressed={active}
         aria-describedby={disabled ? `${tool.id}-disabled-reason` : undefined}
-        className={`flex w-full flex-col items-center gap-1 rounded px-1 py-2 text-xs ${
+        className={`flex w-full flex-col items-center gap-1 rounded px-1 py-1.5 text-[8px] ${
           active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
         } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
       >
-        <Icon size={20} aria-hidden="true" />
+        <Icon size={13} aria-hidden="true" />
         {/* Phone layout: the icon rail hides labels below md, but the All
             tools drawer (always below md) must show them — it is the only
             surface where a phone user can identify a tool. */}
@@ -262,9 +262,9 @@ export default function ToolPalette({
               aria-expanded={!collapsed}
               aria-label={`${collapsed ? "Expand" : "Collapse"} ${category.label} tools`}
               onClick={() => toggleCategory(category.id)}
-              className="mb-1 flex w-full items-center gap-1 rounded px-1 py-1 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 hover:bg-gray-800 hover:text-gray-300"
+              className="mb-1 flex w-full items-center gap-1 rounded px-1 py-1 text-left text-[8px] font-semibold uppercase tracking-wide text-gray-500 hover:bg-gray-800 hover:text-gray-300"
             >
-              <Chevron className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <Chevron className="h-2 w-2 shrink-0" aria-hidden="true" />
               <span className="truncate">
                 {category.label} ({category.tools.length})
               </span>
