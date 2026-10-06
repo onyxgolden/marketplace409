@@ -1,0 +1,150 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/application/rental/executeAutopayAttempt", () => ({ executeAutopayAttempt: vi.fn() }));
+vi.mock("../settlement-reconciliation/route.js", () => ({
+  reconcileMissingStripeSettlements: vi.fn(),
+}));
+
+import {
+  acquireSweepClaim,
+  releaseSweepClaim,
+  RENTAL_AUTOPAY_SWEEP_NAME,
+} from "./sweepRunner.js";
+
+// In-memory fake of the supabase query-builder subset used by the claim
+// functions. JavaScript is single-threaded, so each method body runs
+// atomically -- exactly what we need to prove the claim logic admits only
+// one owner even when two callers race.
+function fakeClaimsDb(seedRows = []) {
+  const rows = new Map();
+  const key = (name, date) => `${name}|${date}`;
+  for (const r of seedRows) rows.set(key(r.sweep_name, r.sweep_date), { ...r });
+
+  const matches = (row, filters) => filters.every(([c, v]) => row[c] === v);
+
+  return {
+    from() {
+      const filters = [];
+      const self = {
+        _mode: null,
+        _patch: null,
+        insert: async (row) => {
+          const kk = key(row.sweep_name, row.sweep_date);
+          if (rows.has(kk)) {
+            const err = new Error('duplicate key value violates unique constraint "rental_sweep_claims_pkey"');
+            err.code = "23505";
+            return { data: null, error: err };
+          }
+          rows.set(kk, { ...row });
+          return { data: [row], error: null };
+        },
+        select: () => {
+          if (self._mode !== "update") self._mode = "select";
+          return self;
+        },
+        update: (patch) => { self._mode = "update"; self._patch = patch; return self; },
+        eq: (col, val) => { filters.push([col, val]); return self; },
+        single: async () => {
+          const found = [...rows.values()].find((r) => matches(r, filters));
+          return found ? { data: { ...found }, error: null } : { data: null, error: new Error("no rows") };
+        },
+        then: (resolve) => {
+          if (self._mode === "update") {
+            const out = [];
+            for (const [kk, r] of rows) {
+              if (matches(r, filters)) {
+                const next = { ...r, ...self._patch };
+                rows.set(kk, next);
+                out.push(next);
+              }
+            }
+            resolve({ data: out, error: null });
+          } else {
+            resolve({ data: [], error: null });
+          }
+        },
+      };
+      return self;
+    },
+  };
+}
+
+const TODAY = "2026-10-06";
+const NAME = RENTAL_AUTOPAY_SWEEP_NAME;
+
+describe("acquireSweepClaim", () => {
+  it("grants the claim to the first caller", async () => {
+    const db = fakeClaimsDb();
+    const r = await acquireSweepClaim(db, NAME, TODAY, "schedule");
+    expect(r.acquired).toBe(true);
+    expect(r.reclaimed).toBe(false);
+  });
+
+  it("two simultaneous callers cannot both own the sweep", async () => {
+    const db = fakeClaimsDb();
+    const [a, b] = await Promise.all([
+      acquireSweepClaim(db, NAME, TODAY, "schedule"),
+      acquireSweepClaim(db, NAME, TODAY, "watchdog"),
+    ]);
+    expect([a.acquired, b.acquired].filter(Boolean)).toHaveLength(1);
+    const loser = a.acquired ? b : a;
+    expect(loser.acquired).toBe(false);
+    expect(loser.reason).toBe("in-progress");
+  });
+
+  it("does not grant a second claim after the sweep completed", async () => {
+    const db = fakeClaimsDb();
+    await acquireSweepClaim(db, NAME, TODAY, "schedule");
+    await releaseSweepClaim(db, NAME, TODAY, "completed");
+    const r = await acquireSweepClaim(db, NAME, TODAY, "watchdog");
+    expect(r.acquired).toBe(false);
+    expect(r.reason).toBe("already-completed");
+  });
+
+  it("a failed run is explicitly retryable via atomic reclaim", async () => {
+    const db = fakeClaimsDb();
+    await acquireSweepClaim(db, NAME, TODAY, "schedule");
+    await releaseSweepClaim(db, NAME, TODAY, "failed");
+    const r = await acquireSweepClaim(db, NAME, TODAY, "watchdog");
+    expect(r.acquired).toBe(true);
+    expect(r.reclaimed).toBe(true);
+    expect(r.previousStatus).toBe("failed");
+  });
+
+  it("reclaims a stale claim left by a dead runner", async () => {
+    const staleAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const db = fakeClaimsDb([{
+      sweep_name: NAME, sweep_date: TODAY, status: "claimed",
+      claimed_by: "schedule", claimed_at: staleAt, attempts: 1,
+    }]);
+    const r = await acquireSweepClaim(db, NAME, TODAY, "watchdog", 30);
+    expect(r.acquired).toBe(true);
+    expect(r.reclaimed).toBe(true);
+    expect(r.previousStatus).toBe("claimed");
+  });
+
+  it("does not reclaim a fresh in-progress claim", async () => {
+    const db = fakeClaimsDb();
+    await acquireSweepClaim(db, NAME, TODAY, "schedule");
+    const r = await acquireSweepClaim(db, NAME, TODAY, "watchdog", 30);
+    expect(r.acquired).toBe(false);
+    expect(r.reason).toBe("in-progress");
+    expect(r.owner).toBe("schedule");
+  });
+
+  it("only one simultaneous reclaimer wins when a failed claim is raced", async () => {
+    const db = fakeClaimsDb();
+    await acquireSweepClaim(db, NAME, TODAY, "schedule");
+    await releaseSweepClaim(db, NAME, TODAY, "failed");
+    const [a, b] = await Promise.all([
+      acquireSweepClaim(db, NAME, TODAY, "watchdog"),
+      acquireSweepClaim(db, NAME, TODAY, "manual"),
+    ]);
+    expect([a.acquired, b.acquired].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("propagates non-unique-violation database errors instead of silently continuing", async () => {
+    const db = { from: () => ({ insert: async () => ({ error: new Error("connection reset") }) }) };
+    await expect(acquireSweepClaim(db, NAME, TODAY, "schedule")).rejects.toThrow("connection reset");
+  });
+});

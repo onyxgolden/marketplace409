@@ -32,11 +32,24 @@ function markerChain() {
   return { insert, update, select, eq, single };
 }
 
+// rental_sweep_claims mock: insert() wins the claim on the happy path;
+// update().eq().eq() releases it.
+function claimChain() {
+  const insert = vi.fn(async () => ({ error: null }));
+  const eqInner = vi.fn(async () => ({ error: null }));
+  const eq = vi.fn(() => ({ eq: eqInner }));
+  const update = vi.fn(() => ({ eq }));
+  return { insert, update };
+}
+
 let marker;
+let claim;
 function mockDb(enrollments, charges) {
   marker = markerChain();
+  claim = claimChain();
   createRentalWebhookClient.mockReturnValue({
     from: vi.fn((table) => (table === "rental_sweep_runs" ? marker
+      : table === "rental_sweep_claims" ? claim
       : table === "rental_autopay_enrollments" ? enrollments : charges)),
   });
   return marker;
@@ -168,5 +181,50 @@ describe("autopay sweep cron", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.success).toBe(true);
+  });
+
+  it("acquires the atomic daily claim before running", async () => {
+    const enrollments = chain({ data: [], error: null });
+    const charges = chain({ data: [], error: null });
+    mockDb(enrollments, charges);
+
+    await GET(request("https://test/api", { authorization: "Bearer cron-secret" }));
+    expect(claim.insert).toHaveBeenCalledWith(expect.objectContaining({
+      sweep_name: "rental-autopay",
+      status: "claimed",
+      claimed_by: "schedule",
+    }));
+    expect(claim.update).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }));
+  });
+
+  it("does not run the sweep when the claim is already completed today", async () => {
+    const enrollments = chain({ data: [], error: null });
+    const charges = chain({ data: [], error: null });
+    mockDb(enrollments, charges);
+    const dupError = new Error("duplicate key");
+    dupError.code = "23505";
+    claim.insert.mockResolvedValueOnce({ error: dupError });
+    const single = vi.fn(async () => ({
+      data: { status: "completed", claimed_by: "schedule", claimed_at: new Date().toISOString(), attempts: 1 },
+      error: null,
+    }));
+    const node = { single };
+    node.eq = vi.fn(() => node);
+    // replace the from mock's claim branch for this test
+    createRentalWebhookClient.mockReturnValue({
+      from: vi.fn((table) => {
+        if (table === "rental_sweep_claims") return { insert: claim.insert, select: vi.fn(() => node), update: claim.update };
+        if (table === "rental_sweep_runs") return marker;
+        return table === "rental_autopay_enrollments" ? enrollments : charges;
+      }),
+    });
+
+    const response = await GET(request("https://test/api", { authorization: "Bearer cron-secret" }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.skipped).toBe(true);
+    expect(body.claimReason).toBe("already-completed");
+    expect(executeAutopayAttempt).not.toHaveBeenCalled();
   });
 });
