@@ -106,4 +106,15 @@ describe("deck holes in the floor plane", () => {
     design = addDeck(design, { x: 96, y: 0 }, { x: 192, y: 96 });
     expect(design.decks).toHaveLength(2);
   });
+
+  it("cuts a hole for each of two decks that touch along an edge", () => {
+    let design = addWall(createEmptyDesign("Test"), { x: 0, y: 0 }, { x: 240, y: 0 });
+    design = addDeck(design, { x: 48, y: -24 }, { x: 144, y: -12 });
+    design = addDeck(design, { x: 144, y: -24 }, { x: 200, y: -12 });
+    const scene = buildThreeScene(design);
+    expect(scene.floor.deckHoles).toEqual([
+      { minX: 48, maxX: 144, minZ: -24, maxZ: -12 },
+      { minX: 144, maxX: 200, minZ: -24, maxZ: -12 },
+    ]);
+  });
 });
