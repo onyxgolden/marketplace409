@@ -1,0 +1,7 @@
+# Some tests compare these files byte for byte (sha256 manifests, vendored
+# pdf.js copies, and SQL that is matched on "\n" line endings). Keep them
+# exactly as committed, even on a machine with core.autocrlf=true, where git
+# would otherwise write CRLF into the working copy.
+test-fixtures/** -text
+public/pdfjs/wasm/** -text
+supabase/migrations/*.sql text eol=lf
