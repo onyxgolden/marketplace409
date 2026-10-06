@@ -60,7 +60,7 @@ const fixtureToolIds = (category) =>
   FURNITURE_CATALOG.filter((item) => item.category === category).map((item) => `${FIXTURE_TOOL_PREFIX}${item.id}`);
 
 export const TOOL_CATEGORIES = [
-  { id: "house", label: "House", toolIds: ["wall", "wallrect", "door", "window", "closet", "passage"] },
+  { id: "house", label: "House", toolIds: ["wall", "wallrect", "deck", "door", "window", "closet", "passage"] },
   ...HOUSE_FIXTURE_CATEGORIES.map(({ id, label, category }) => ({ id, label, toolIds: fixtureToolIds(category) })),
   {
     id: "rooms",

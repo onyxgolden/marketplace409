@@ -13,7 +13,7 @@ import {
   wallDirection,
   wallLength,
 } from "./designerGeometry";
-import { findWall, pieceSize } from "./designerDocument";
+import { DECK_MATERIALS, decksOf, findWall, pieceSize } from "./designerDocument";
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
@@ -386,6 +386,18 @@ export function buildThreeScene(design) {
     .filter(Boolean);
   const stairs = stairsDescriptors(design);
   const equipment = equipmentDescriptors(design);
+  const decks = decksOf(design).map((d) => {
+    const spec = DECK_MATERIALS[d.material] || DECK_MATERIALS.wood;
+    return {
+      minX: Math.min(d.a.x, d.b.x),
+      maxX: Math.max(d.a.x, d.b.x),
+      minZ: Math.min(d.a.y, d.b.y),
+      maxZ: Math.max(d.a.y, d.b.y),
+      topYIn: -d.dropIn,
+      thicknessIn: spec.thicknessIn,
+      color: spec.color,
+    };
+  });
 
   let floor = null;
   const xs = [];
@@ -406,8 +418,27 @@ export function buildThreeScene(design) {
       minZ: Math.min(...zs) - pad,
       maxZ: Math.max(...zs) + pad,
     };
+    floor.deckHoles = deckHolesInFloor(floor, decks);
   }
-  return { walls, glass, furniture, stairs, equipment, floor };
+  return { walls, glass, furniture, stairs, equipment, decks, floor };
+}
+
+/**
+ * Decks sit below the floor plane, so each deck's footprint inside the floor
+ * rectangle is cut out of the floor, letting the deck show at its elevation.
+ * Decks never overlap (addDeck rejects that), so the holes never overlap.
+ */
+export function deckHolesInFloor(floor, decks) {
+  const holes = [];
+  for (const d of decks) {
+    const minX = Math.max(d.minX, floor.minX);
+    const maxX = Math.min(d.maxX, floor.maxX);
+    const minZ = Math.max(d.minZ, floor.minZ);
+    const maxZ = Math.min(d.maxZ, floor.maxZ);
+    if (maxX <= minX || maxZ <= minZ) continue;
+    holes.push({ minX, maxX, minZ, maxZ });
+  }
+  return holes;
 }
 
 /** Find the wall whose centerline is nearest to a plan point (for picking). */
