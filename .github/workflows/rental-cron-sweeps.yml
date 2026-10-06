@@ -35,7 +35,7 @@ run-name: ${{ github.event_name == 'schedule' && format('sweep [{0}]', github.ev
 on:
   schedule:
     - cron: '0 6 * * *'
-        - cron: '23 8 * * *'
+    - cron: '23 8 * * *'
     - cron: '30 7 * * *'
     - cron: '0 8 * * *'
     - cron: '0 9 * * *'
@@ -66,11 +66,11 @@ jobs:
           MANUAL_ENDPOINT: ${{ inputs.endpoint }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-                        ENDPOINT="$MANUAL_ENDPOINT?trigger=manual"
+            ENDPOINT="$MANUAL_ENDPOINT?trigger=manual"
           else
             case "$TRIGGER_SCHEDULE" in
               "0 6 * * *")  ENDPOINT="/api/rental/cron/generate-charges" ;;
-                            "23 8 * * *") ENDPOINT="/api/rental/cron/autopay-sweep" ;;
+              "23 8 * * *") ENDPOINT="/api/rental/cron/autopay-sweep" ;;
               "30 7 * * *") ENDPOINT="/api/private-financing/cron/autopay-sweep" ;;
               "0 8 * * *")  ENDPOINT="/api/rental/cron/settlement-reconciliation" ;;
               "0 9 * * *")  ENDPOINT="/api/private-financing/cron/payment-due-reminders" ;;
