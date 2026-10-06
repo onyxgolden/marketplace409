@@ -213,8 +213,17 @@ export function flipScope(design, scope, axis) {
   const mirror = axis === "horizontal"
     ? (p) => ({ x: 2 * cx - p.x, y: p.y })
     : (p) => ({ x: p.x, y: 2 * cy - p.y });
-  const negate = (deg) => (360 - (((deg % 360) + 360) % 360)) % 360;
-  return mapScope(design, scope, mirror, negate);
+  // A direction at angle θ mirrored across the vertical axis lies at 180° − θ;
+  // mirrored across the horizontal axis it lies at −θ.
+  const mirrorAngle = axis === "horizontal"
+    ? (deg) => turnDeg(180 - turnDeg(deg))
+    : (deg) => turnDeg(-deg);
+  return mapScope(design, scope, mirror, mirrorAngle);
+}
+
+/** An angle in degrees, normalized into [0, 360). */
+function turnDeg(deg) {
+  return ((deg % 360) + 360) % 360;
 }
 
 /** A deep copy of the scoped elements, to paste later. Plain data, no ids reused. */

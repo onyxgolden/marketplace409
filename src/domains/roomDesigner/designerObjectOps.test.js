@@ -132,7 +132,7 @@ describe("flip", () => {
     expect(next.walls[0].a).toEqual({ x: 100, y: 0 });
     expect(next.walls[0].b).toEqual({ x: 0, y: 0 });
     // Piece sits on the axis, so only its angle changes (mirror reverses rotation).
-    expect(next.furniture[0]).toMatchObject({ x: 50, y: 20, rotationDeg: 330 });
+    expect(next.furniture[0]).toMatchObject({ x: 50, y: 20, rotationDeg: 150 });
   });
 
   it("mirrors points across the selection's center for a vertical flip", () => {
@@ -144,6 +144,9 @@ describe("flip", () => {
     expect(next.walls[0].a).toEqual({ x: 0, y: 20 });
     expect(next.walls[0].b).toEqual({ x: 100, y: 20 });
     expect(next.furniture[0]).toMatchObject({ x: 50, y: 0 });
+    const rotated = placeFurniture(createEmptyDesign(), "bed-queen", 50, 20, 30);
+    const flippedUpDown = flipScope(rotated, scopeWith({ furniture: [rotated.furniture[0].id] }), "vertical");
+    expect(flippedUpDown.furniture[0].rotationDeg).toBe(330);
   });
 
   it("flipping twice restores the original geometry", () => {
