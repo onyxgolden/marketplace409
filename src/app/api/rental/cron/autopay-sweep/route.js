@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
-import { executeAutopayAttempt } from "@/application/rental/executeAutopayAttempt";
-import { AUTOPAY_COLLECTIBLE_CHARGE_TYPES } from "@/application/rental/tenantCharges";
 import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBillingProvider";
-import { reconcileMissingStripeSettlements } from "../settlement-reconciliation/route.js";
+import { runRentalAutopaySweep } from "./sweepRunner.js";
 
 export const runtime = "nodejs";
 
-// Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically when
-// CRON_SECRET is set in the project env — see vercel.json for the schedule.
+// Primary trigger: GitHub Actions schedule (moved to 23 8 * * * UTC /
+// 3:23 AM CDT on 2026-10-06 after the 0 7 * * * slot silently missed
+// 2026-10-05 and 2026-10-06 -- GitHub documents that scheduled runs can be
+// dropped under load, minute 00 named explicitly as a high-load point).
 // Safe to run more than once a day: executeAutopayAttempt no-ops on an
 // (enrollment, charge) pair that already has an attempt recorded.
 export async function GET(request) {
@@ -18,47 +18,12 @@ export async function GET(request) {
     const db = createRentalWebhookClient();
     const provider = createStripeBillingProvider();
     const today = new Date().toISOString().slice(0, 10);
-    // Scoped by provider_mode: a preserved sandbox enrollment (even one still marked 'active'
-    // from test-key usage) must never be picked up by a live-mode sweep, and vice versa — a
-    // landlord/tenant must set up autopay again for live payments rather than it silently
-    // carrying over.
-    const [{ data: enrollments, error: enrollmentError }, { data: charges, error: chargeError }] = await Promise.all([
-      db.from("rental_autopay_enrollments").select("id, owner_id, lease_id").eq("status", "active").eq("provider_mode", provider.mode),
-      // Automatic collection is fenced to rent/proration/late_fee: ad-hoc charge
-      // types (damage, fee, utility, other) are payable voluntarily through
-      // the tenant portal but never swept by autopay.
-      db.from("rent_charges").select("id, owner_id, lease_id, charge_type")
-        .in("status", ["due", "partially_paid", "overdue"]).in("charge_type", AUTOPAY_COLLECTIBLE_CHARGE_TYPES)
-        .lte("due_date", today),
-    ]);
-    if (enrollmentError) throw enrollmentError;
-    if (chargeError) throw chargeError;
-
-    const chargesByOwnerLease = new Map();
-    for (const charge of charges || []) {
-      const key = `${charge.owner_id}:${charge.lease_id}`;
-      if (!chargesByOwnerLease.has(key)) chargesByOwnerLease.set(key, []);
-      chargesByOwnerLease.get(key).push(charge);
-    }
-    const pairs = [];
-    for (const enrollment of enrollments || []) {
-      for (const charge of chargesByOwnerLease.get(`${enrollment.owner_id}:${enrollment.lease_id}`) || [])
-        pairs.push({ enrollmentId: enrollment.id, chargeId: charge.id });
-    }
-
-    let succeeded = 0, failed = 0, skipped = 0;
-    for (const pair of pairs) {
-      try {
-        const result = await executeAutopayAttempt(db, pair.enrollmentId, pair.chargeId);
-        if (result.body?.skipped) skipped += 1;
-        else if (result.httpStatus === 200) succeeded += 1; else failed += 1;
-      } catch (attemptError) {
-        failed += 1;
-        console.error("Autopay sweep attempt failed", pair, attemptError);
-      }
-    }
-    const settlements = await reconcileMissingStripeSettlements(db, provider);
-    return NextResponse.json({ success: true, candidates: pairs.length, succeeded, failed, skipped, settlements });
+    // Recovery provenance: the GitHub workflow appends ?trigger=manual for
+    // workflow_dispatch runs; the watchdog passes 'watchdog' itself.
+    const triggerParam = new URL(request.url).searchParams.get("trigger");
+    const triggeredBy = triggerParam === "manual" ? "manual" : "schedule";
+    const result = await runRentalAutopaySweep({ db, provider, today, triggeredBy });
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Autopay sweep cron error", error);
     return NextResponse.json({ error: "Unable to run autopay sweep." }, { status: 500 });
