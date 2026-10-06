@@ -1339,15 +1339,47 @@ export default function DesignerViewport3D({
         const floorMat = tier.textured
           ? stdMaterial({ color: "#ffffff", map: woodFloorTexture(fw / 96, fd / 96), roughness: 0.7 })
           : stdMaterial({ color: "#a98f66", roughness: 0.9 });
-        const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(fw, fd), floorMat);
+        // Shape in (x, -z) so the -90 degree turn lands it on the XZ plane;
+        // deck footprints are holes so decks below the floor stay visible.
+        const toShapePath = (r) => {
+          const path = new THREE.Path();
+          path.moveTo(r.minX, -r.minZ);
+          path.lineTo(r.maxX, -r.minZ);
+          path.lineTo(r.maxX, -r.maxZ);
+          path.lineTo(r.minX, -r.maxZ);
+          path.closePath();
+          return path;
+        };
+        const floorShape = new THREE.Shape(toShapePath(built.floor).getPoints());
+        for (const hole of built.floor.deckHoles || []) floorShape.holes.push(toShapePath(hole));
+        const floorGeometry = new THREE.ShapeGeometry(floorShape);
+        const uv = floorGeometry.attributes.uv;
+        const pos = floorGeometry.attributes.position;
+        for (let i = 0; i < pos.count; i += 1) {
+          uv.setXY(i, (pos.getX(i) - built.floor.minX) / fw, (-pos.getY(i) - built.floor.minZ) / fd);
+        }
+        uv.needsUpdate = true;
+        const floorMesh = new THREE.Mesh(floorGeometry, floorMat);
         floorMesh.rotation.x = -Math.PI / 2;
-        floorMesh.position.set(
-          (built.floor.minX + built.floor.maxX) / 2,
-          -0.5,
-          (built.floor.minZ + built.floor.maxZ) / 2,
-        );
+        floorMesh.position.set(0, -0.5, 0);
         floorMesh.receiveShadow = true;
         group.add(floorMesh);
+      }
+
+      // decks: wood boards over joists or a concrete pad, top at the drop below the threshold
+      for (const deck of built.decks || []) {
+        const mesh = shadowed(
+          new THREE.Mesh(
+            new THREE.BoxGeometry(deck.maxX - deck.minX, deck.thicknessIn, deck.maxZ - deck.minZ),
+            stdMaterial({ color: deck.color, roughness: 0.8 }),
+          ),
+        );
+        mesh.position.set(
+          (deck.minX + deck.maxX) / 2,
+          deck.topYIn - deck.thicknessIn / 2,
+          (deck.minZ + deck.maxZ) / 2,
+        );
+        group.add(mesh);
       }
 
       // walls (+ window sills/headers)

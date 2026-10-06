@@ -101,6 +101,7 @@ export function createEmptyDesign(name = "Untitled design") {
     orgCharts: [], // Phase 3: people org charts { id, name, x, y, nodes }
     underlay: null, // background trace-over image; see setUnderlay
     sheets: [], // printable paper frames; see addSheet
+    decks: [], // plan rectangles, top dropIn below the threshold; see addDeck
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
   };
 }
@@ -1494,6 +1495,90 @@ export function moveSheet(design, sheetId, x, y) {
 export function deleteSheet(design, sheetId) {
   assertDesign(design);
   return { ...design, sheets: sheetsOf(design).filter((s) => s.id !== sheetId) };
+}
+
+// ---- Decks ----
+// A deck is a rectangle drawn on the plan. Its top sits dropIn inches below
+// the finished floor (the door threshold, y = 0 in 3D).
+export const DECK_DEFAULT_DROP_IN = 4;
+export const DECK_MAX_DROP_IN = 24;
+export const DECK_MIN_SIDE_IN = 12;
+
+export function decksOf(design) {
+  return design?.decks || [];
+}
+
+function clampDeckDrop(dropIn) {
+  const value = Number(dropIn);
+  if (!Number.isFinite(value)) return DECK_DEFAULT_DROP_IN;
+  return Math.min(DECK_MAX_DROP_IN, Math.max(0, value));
+}
+
+/** True when two rectangles share interior area (touching edges do not count). */
+export function rectsOverlap(p, q) {
+  const [px0, px1] = [Math.min(p.a.x, p.b.x), Math.max(p.a.x, p.b.x)];
+  const [py0, py1] = [Math.min(p.a.y, p.b.y), Math.max(p.a.y, p.b.y)];
+  const [qx0, qx1] = [Math.min(q.a.x, q.b.x), Math.max(q.a.x, q.b.x)];
+  const [qy0, qy1] = [Math.min(q.a.y, q.b.y), Math.max(q.a.y, q.b.y)];
+  return px0 < qx1 && qx0 < px1 && py0 < qy1 && qy0 < py1;
+}
+
+/** Whether a new deck rectangle would overlap any deck already in the design. */
+export function deckOverlapsExisting(design, a, b) {
+  const candidate = { a, b };
+  return decksOf(design).some((d) => rectsOverlap(d, candidate));
+}
+
+export function addDeck(design, a, b, { dropIn = DECK_DEFAULT_DROP_IN, material = "wood" } = {}) {
+  assertDesign(design);
+  if (!isValidPoint(a) || !isValidPoint(b)) {
+    throw new Error("Deck corners must be valid points.");
+  }
+  if (Math.abs(b.x - a.x) < DECK_MIN_SIDE_IN || Math.abs(b.y - a.y) < DECK_MIN_SIDE_IN) {
+    throw new Error(`Deck is too small (each side must be at least ${DECK_MIN_SIDE_IN} inches).`);
+  }
+  if (deckOverlapsExisting(design, a, b)) {
+    throw new Error("Deck overlaps another deck; place it beside it instead.");
+  }
+  const deck = {
+    id: nextId("deck"),
+    a: clonePoint(a),
+    b: clonePoint(b),
+    dropIn: clampDeckDrop(dropIn),
+    material: cleanDeckMaterial(material),
+  };
+  return { ...design, decks: [...decksOf(design), deck] };
+}
+
+export const DECK_MATERIALS = Object.freeze({
+  wood: { label: "Wood platform", thicknessIn: 5.5, color: "#a0744a" },
+  concrete: { label: "Concrete (patio / driveway)", thicknessIn: 4, color: "#b5b3ab" },
+});
+
+function cleanDeckMaterial(material) {
+  return Object.prototype.hasOwnProperty.call(DECK_MATERIALS, material) ? material : "wood";
+}
+
+export function setDeckMaterial(design, deckId, material) {
+  assertDesign(design);
+  const clean = cleanDeckMaterial(material);
+  return {
+    ...design,
+    decks: decksOf(design).map((d) => (d.id === deckId ? { ...d, material: clean } : d)),
+  };
+}
+
+export function setDeckDrop(design, deckId, dropIn) {
+  assertDesign(design);
+  return {
+    ...design,
+    decks: decksOf(design).map((d) => (d.id === deckId ? { ...d, dropIn: clampDeckDrop(dropIn) } : d)),
+  };
+}
+
+export function deleteDeck(design, deckId) {
+  assertDesign(design);
+  return { ...design, decks: decksOf(design).filter((d) => d.id !== deckId) };
 }
 
 /**

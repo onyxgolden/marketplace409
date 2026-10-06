@@ -26,6 +26,7 @@ import {
   Save,
   Shapes,
   Factory,
+  LayoutGrid,
   Sofa,
   Spline,
   Square,
@@ -104,7 +105,7 @@ import {
 } from "@/domains/roomDesigner/homeProject";
 import { FURNITURE_CATALOG, getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { getSymbolSet, findSymbol } from "@/domains/roomDesigner/symbolRegistry";
-import { ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign, zoomExtentsRect } from "@/domains/roomDesigner/designerDocument";
+import { DECK_MATERIALS, DECK_MAX_DROP_IN, ROOM_TEMPLATES, STRUCTURE_TEMPLATES, SHEET_LOGO_MAX_BYTES, SHEET_PNG_DATA_URL_PREFIX, decksOf, fitScaleLabel, patchSheet, pieceSize, sheetFooterOf, sheetHeaderOf, sheetPlanBounds, validateDesign, zoomExtentsRect } from "@/domains/roomDesigner/designerDocument";
 import { SHEET_CATALOG, SHEET_ORIENTATIONS, sheetSizeLabel } from "@/domains/roomDesigner/sheetCatalog";
 import {
   feetInchesLabel,
@@ -169,6 +170,7 @@ export const TOOL_DEFS = [
   { id: "select", label: "Select", icon: MousePointer2, hint: "Click to select · drag endpoints & furniture · double-click furniture to rotate" },
   { id: "wall", label: "Wall", icon: Square, hint: "Drag on the plan to draw a wall (snaps to the grid)" },
   { id: "wallrect", label: "Wall rect", icon: SquareDashed, hint: "Drag on the plan to draw a rectangular wall outline (snaps to the grid)" },
+  { id: "deck", label: "Deck", icon: LayoutGrid, hint: "Drag on the plan to draw a deck (wood platform or concrete pad, set in the panel). Its top sits 4″ below the door threshold." },
   { id: "door", label: "Door", icon: DoorOpen, hint: "Click a wall to cut a door opening. Select it afterward to set its width." },
   { id: "window", label: "Window", icon: Box, hint: "Click a wall to cut a window opening. Select it afterward to set its width." },
   // Pre-shaped rooms: one palette entry per template. Selecting one arms
@@ -3161,6 +3163,41 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
         {opening.type === "door" && (
           <p className="mt-2 text-[11px] text-gray-500">Tip: or click the ⇄ / ⇅ handles next to the door on the plan. A door follows its wall&apos;s angle — draw the wall at 45° to angle the door.</p>
         )}
+      </PanelShell>
+    );
+  }
+  if (selection.kind === "deck") {
+    const deck = decksOf(design).find((d) => d.id === selection.id);
+    if (!deck) return null;
+    return (
+      <PanelShell title="Deck" onDelete={() => dispatch({ type: "DELETE_SELECTION" })}>
+        <div className="mb-2" role="group" aria-label="Deck material">
+          <span className="block text-xs text-gray-400">Material</span>
+          <div className="mt-1 flex gap-1">
+            {Object.entries(DECK_MATERIALS).map(([key, spec]) => (
+              <button
+                key={key} type="button" aria-pressed={deck.material === key}
+                onClick={() => dispatch({ type: "SET_DECK_MATERIAL", deckId: deck.id, material: key })}
+                className={`flex-1 rounded border px-2 py-1 text-xs ${deck.material === key
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : "border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
+              >
+                {spec.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="block text-xs text-gray-400">
+          Top below door threshold (inches)
+          <input
+            type="number" min={0} max={DECK_MAX_DROP_IN} step={0.5} value={deck.dropIn}
+            onChange={(e) => {
+              if (e.target.value !== "") dispatch({ type: "SET_DECK_DROP", deckId: deck.id, dropIn: e.target.value });
+            }}
+            className="mt-1 block w-full rounded bg-gray-800 px-2 py-1 text-white"
+          />
+        </label>
+        <p className="mt-2 text-[11px] text-gray-500">The 3D view shows the deck top this far below the threshold. Change it to match your code or inspector&apos;s requirement. A patio or driveway is usually set near 0 (at grade).</p>
       </PanelShell>
     );
   }
