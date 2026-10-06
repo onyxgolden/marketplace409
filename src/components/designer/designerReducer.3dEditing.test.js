@@ -19,6 +19,22 @@ function wallState() {
   return createInitialState(design);
 }
 
+describe("house moves and redo", () => {
+  it("an edit after undo clears redo, even when it uses the same coalesce key", () => {
+    let state = wallState();
+    state = designerReducer(state, { type: "SELECT_HOUSE" });
+    state = designerReducer(state, { type: "NUDGE_SELECTION", dx: 1, dy: 0 });
+    state = designerReducer(state, { type: "ADD_WALL", a: { x: 0, y: 60 }, b: { x: 60, y: 60 } });
+    state = designerReducer(state, { type: "UNDO" });
+    state = designerReducer(state, { type: "SELECT_HOUSE" });
+    state = designerReducer(state, { type: "NUDGE_SELECTION", dx: 1, dy: 0 });
+    const moved = state.design.walls[0].a.x;
+    state = designerReducer(state, { type: "REDO" });
+    expect(state.future).toEqual([]);
+    expect(state.design.walls[0].a.x).toBe(moved);
+  });
+});
+
 describe("3D editing through the reducer", () => {
   it("folds a multi-step 3D wall drag into one undo", () => {
     let state = wallState();

@@ -160,9 +160,12 @@ function touch(state, nextDesign, coalesceKey) {
   // rotate, resize, reconfigure, delete); a no-op for unattached designs.
   const design = reconcilePipeAttachments(nextDesign);
   const past = state.past || [];
+  // Coalescing only folds into the latest entry while no redo is pending; an
+  // edit made after an undo starts its own undo record and clears redo.
   if (
     coalesceKey != null &&
     past.length > 0 &&
+    (state.future || []).length === 0 &&
     past[past.length - 1].coalesceKey === coalesceKey
   ) {
     return {
