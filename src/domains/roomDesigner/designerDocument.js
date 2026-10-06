@@ -78,6 +78,10 @@ function nextId(prefix) {
   idSequence += 1;
   return `${prefix}_${idSequence}`;
 }
+/** A fresh id for a copied or pasted element (same counter as new elements). */
+export function newElementId(prefix) {
+  return nextId(prefix);
+}
 /** Test hook: restart id generation so snapshots stay stable. */
 export function resetDesignerIds() {
   idSequence = 0;
