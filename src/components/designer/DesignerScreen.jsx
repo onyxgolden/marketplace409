@@ -58,7 +58,8 @@ import {
 import OrgChartPanel from "./OrgChartPanel";
 import ObjectLibraryPanel from "./ObjectLibraryPanel";
 import PhotoFinishField from "./PhotoFinishField";
-import RotateButtons from "./RotateButtons";
+import RotateButtons, { RotateToAngle } from "./RotateButtons";
+import SelectionActions from "./SelectionActions";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
@@ -729,6 +730,14 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
         } else if (key === "a") {
           e.preventDefault();
           dispatch({ type: "SELECT_HOUSE" });
+        } else if (key === "c") {
+          // Copy keeps the browser's own copy working when nothing is selected here.
+          dispatch({ type: "COPY_SELECTION" });
+        } else if (key === "v") {
+          dispatch({ type: "PASTE_CLIPBOARD" });
+        } else if (key === "d") {
+          e.preventDefault(); // Ctrl+D is the browser's bookmark shortcut
+          dispatch({ type: "DUPLICATE_SELECTION" });
         }
       }
     };
@@ -1280,6 +1289,25 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         <div className="grid grid-cols-1 gap-1">
           {STRUCTURE_TEMPLATES.map(templateButton)}
         </div>
+      </div>
+    );
+  }
+
+  if (!selection && state.multiSelection?.length > 0) {
+    return (
+      <div>
+        <h2 className="mb-2 text-sm font-semibold text-white">
+          {state.multiSelection.length} pieces selected
+        </h2>
+        <div className="mb-3">
+          <SelectionActions dispatch={dispatch} canPaste={Boolean(state.clipboard)} />
+        </div>
+        <button
+          onClick={() => dispatch({ type: "DELETE_SELECTION" })}
+          className="flex items-center gap-1 rounded bg-red-900/60 px-2 py-1 text-xs text-red-200 hover:bg-red-800"
+        >
+          <Trash2 size={13} /> Delete
+        </button>
       </div>
     );
   }
@@ -3085,8 +3113,37 @@ export function DoorHandednessFields({ opening, dispatch }) {
   );
 }
 
-function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
+// Selections the copy/paste/flip actions apply to. Sheets and openings have their own panels.
+const ACTIONABLE_SELECTION_KINDS = new Set(["wall", "room", "furniture", "symbol", "pipe", "orgchart", "deck", "house", "group"]);
+
+function SelectionPanel(props) {
+  const kind = props.state.selection?.kind;
+  return (
+    <div>
+      {ACTIONABLE_SELECTION_KINDS.has(kind) && (
+        <div className="mb-3 border-b border-gray-800 pb-3">
+          <SelectionActions dispatch={props.dispatch} canPaste={Boolean(props.state.clipboard)} />
+        </div>
+      )}
+      <SelectionPanelContent {...props} />
+    </div>
+  );
+}
+
+function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
   const { design, selection } = state;
+  if (selection.kind === "house" || selection.kind === "group") {
+    return (
+      <PanelShell
+        title={selection.kind === "house" ? "Whole house" : "Selected pieces"}
+        onDelete={() => dispatch({ type: "DELETE_SELECTION" })}
+      >
+        <p className="text-[11px] text-gray-500">
+          Drag any part of it on the plan, or press the arrow keys, to move it all together.
+        </p>
+      </PanelShell>
+    );
+  }
   if (selection.kind === "sheet") {
     const sheet = (design.sheets || []).find((s) => s.id === selection.id);
     if (!sheet) return null;
@@ -3240,6 +3297,10 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
           rotationDeg={piece.rotationDeg}
           onRotate={(rotationDeg) => dispatch({ type: "ROTATE_FURNITURE", furnitureId: piece.id, rotationDeg })}
         />
+        <RotateToAngle
+          rotationDeg={piece.rotationDeg}
+          onRotate={(rotationDeg) => dispatch({ type: "ROTATE_FURNITURE", furnitureId: piece.id, rotationDeg })}
+        />
         <p className="mt-2 text-[11px] text-gray-500">Tip: drag the round handle above the piece to rotate it (15° steps, hold Shift for 45°), double-click to turn it, or drag its corner handles to resize.</p>
       </PanelShell>
     );
@@ -3372,6 +3433,10 @@ function SelectionPanel({ state, dispatch, onPrint, priceBooks = [] }) {
         </label>
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RotateButtons
+          rotationDeg={inst.rotationDeg}
+          onRotate={(rotationDeg) => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg })}
+        />
+        <RotateToAngle
           rotationDeg={inst.rotationDeg}
           onRotate={(rotationDeg) => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg })}
         />

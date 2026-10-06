@@ -48,6 +48,7 @@ import {
   decksOf,
   deckOverlapsExisting,
 } from "@/domains/roomDesigner/designerDocument";
+import { scopeOfSelection } from "@/domains/roomDesigner/designerObjectOps";
 import { getSheetSize } from "@/domains/roomDesigner/sheetCatalog";
 import {
   ROTATION_SNAP_DEG,
@@ -69,6 +70,22 @@ const HIT_TOLERANCE_PX = 10;
 const OPENING_MIN_WIDTH_IN = 12;
 // Plan items that move with a selected house (openings ride their walls).
 const HOUSE_HIT_KINDS = new Set(["wall", "opening", "room", "furniture", "symbol", "pipe", "orgchart", "deck"]);
+// Which scope list a hit belongs to, for a group selection (openings are checked through their wall).
+const GROUP_SCOPE_KEY = { wall: "walls", room: "rooms", furniture: "furniture", symbol: "symbols", pipe: "pipes", orgchart: "orgCharts", deck: "decks", annotation: "annotations" };
+
+/** Whether a plan hit moves with the current house or group selection. */
+function hitMovesWithSelection(design, selection, hit) {
+  if (!hit || !HOUSE_HIT_KINDS.has(hit.kind)) return false;
+  if (selection?.kind === "house") return true;
+  if (selection?.kind !== "group") return false;
+  const scope = selection.scope || {};
+  if (hit.kind === "opening") {
+    const opening = (design.openings || []).find((o) => o.id === hit.id);
+    return Boolean(opening) && (scope.walls || []).includes(opening.wallId);
+  }
+  const key = GROUP_SCOPE_KEY[hit.kind];
+  return Boolean(key) && (scope[key] || []).includes(hit.id);
+}
 
 /**
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
@@ -705,7 +722,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
     }
     const hit = cycleStackedHit(plan, hitTest(plan));
-    if (selection?.kind === "house" && hit && HOUSE_HIT_KINDS.has(hit.kind)) {
+    if (hitMovesWithSelection(design, selection, hit)) {
       houseMoveSeqRef.current += 1;
       houseMoveRef.current = { origin: plan, applied: { x: 0, y: 0 }, key: `move-house:${houseMoveSeqRef.current}` };
       setDrag({ kind: "move-house" });
@@ -1195,23 +1212,36 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   }
 
   const renderHouseSelection = () => {
-    if (selection?.kind !== "house") return null;
+    if (selection?.kind !== "house" && selection?.kind !== "group") return null;
+    const scope = scopeOfSelection(design, selection, []);
+    if (!scope) return null;
+    const inScope = (list, key) => {
+      const ids = new Set(scope[key]);
+      return (list || []).filter((x) => ids.has(x.id));
+    };
     const points = [
-      ...design.walls.flatMap((w) => [w.a, w.b]),
-      ...design.rooms.flatMap((r) => r.polygon),
-      ...decksOf(design).flatMap((d) => [d.a, d.b]),
+      ...inScope(design.walls, "walls").flatMap((w) => [w.a, w.b]),
+      ...inScope(design.rooms, "rooms").flatMap((r) => r.polygon),
+      ...inScope(decksOf(design), "decks").flatMap((d) => [d.a, d.b]),
+      // A group can be furniture or symbols alone, so their positions count too.
+      ...(selection.kind === "group"
+        ? [...inScope(design.furniture, "furniture"), ...inScope(design.symbols, "symbols")].map((p) => ({ x: p.x, y: p.y }))
+        : []),
     ];
     if (points.length === 0) return null;
     const xs = points.map((p) => p.x);
     const ys = points.map((p) => p.y);
     const a = toScreen({ x: Math.min(...xs) - 12, y: Math.min(...ys) - 12 });
     const b = toScreen({ x: Math.max(...xs) + 12, y: Math.max(...ys) + 12 });
+    const label = selection.kind === "house"
+      ? "House selected: drag to move, arrow keys nudge"
+      : "Selected: drag to move, arrow keys nudge";
     return (
       <g pointerEvents="none" data-testid="house-selection">
         <rect x={a.x} y={a.y} width={b.x - a.x} height={b.y - a.y} fill="none"
           stroke="#f59e0b" strokeWidth={thicknessPx} strokeDasharray="12 6" />
         <text x={a.x} y={a.y - 8} fontSize={13} fontWeight={600} fill="#f59e0b">
-          House selected: drag to move, arrow keys nudge
+          {label}
         </text>
       </g>
     );

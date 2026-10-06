@@ -23,7 +23,6 @@ import {
   setDeckDrop,
   setDeckMaterial,
   deleteDeck,
-  translateHouse,
   deleteSymbol,
   deleteWall,
   findOrgChart,
@@ -94,6 +93,15 @@ import { alignFurniture, distributeFurniture } from "@/domains/roomDesigner/desi
 import { getCatalogEntry } from "@/domains/roomDesigner/furnitureCatalog";
 import { PIPE_DIAMETERS_IN, PIPE_LAYERS } from "@/domains/roomDesigner/pipingGeometry";
 import { findSymbol, getSymbolSet } from "@/domains/roomDesigner/symbolRegistry";
+import {
+  DUPLICATE_OFFSET_IN,
+  copyScope,
+  deleteScope,
+  flipScope,
+  pasteBundle,
+  scopeOfSelection,
+  translateScope,
+} from "@/domains/roomDesigner/designerObjectOps";
 
 export const TOOLS = Object.freeze([
   "select",
@@ -129,6 +137,9 @@ export function createInitialState(design) {
     layerVisibility: { piping: true, equipment: true, annotations: true },
     selection: null, // { kind: "wall"|"opening"|"furniture"|"room"|"pipe"|"symbol", id }
     multiSelection: [], // shift-clicked furniture: [{ kind: "furniture", id }]
+    // A group selection covers a set of elements left by a paste: { kind: "group", id: "group", scope }.
+    // Copy/paste keeps its own snapshot here (not in the design), so Ctrl+V works after deletes.
+    clipboard: null, // { bundle, sourceKind, pastes } from COPY_SELECTION
     calibration: null, // scale-calibration clicks: { a: point, b?: point }
     view: "2d",
     dirty: false,
@@ -191,6 +202,42 @@ function touch(state, nextDesign, coalesceKey) {
 function pruneMulti(design, multiSelection) {
   const ids = new Set((design.furniture || []).map((f) => f.id));
   return (multiSelection || []).filter((m) => ids.has(m.id));
+}
+
+/** The elements a house or group selection moves together. Null for any other selection. */
+function movableScope(state) {
+  const kind = state.selection?.kind;
+  if (kind !== "house" && kind !== "group") return null;
+  return scopeOfSelection(state.design, state.selection, []);
+}
+
+// For a paste from a single-object selection, the pasted object is selected
+// as that same kind. Anything else (house, multi-select, several kinds) is
+// selected as a group.
+const SINGLE_KIND_LISTS = {
+  wall: "walls",
+  room: "rooms",
+  furniture: "furniture",
+  symbol: "symbols",
+  pipe: "pipes",
+  orgchart: "orgCharts",
+  deck: "decks",
+};
+
+function selectionAfterPaste(sourceKind, scope) {
+  const list = SINGLE_KIND_LISTS[sourceKind];
+  if (list && scope[list].length === 1) return { kind: sourceKind, id: scope[list][0] };
+  return { kind: "group", id: "group", scope };
+}
+
+/** Paste a copied bundle shifted by `offset`, select what landed, and record one undo step. */
+function placeCopy(state, bundle, sourceKind, offset) {
+  const { design, scope } = pasteBundle(state.design, bundle, { dx: offset, dy: offset });
+  return {
+    ...touch(state, design),
+    selection: selectionAfterPaste(sourceKind, scope),
+    multiSelection: [],
+  };
 }
 
 /** Furniture pieces currently multi-selected, with their rotated footprint dims. */
@@ -261,9 +308,48 @@ export function designerReducer(state, action) {
     }
     case "SELECT_HOUSE":
       return { ...state, tool: "select", selection: { kind: "house", id: "house" }, multiSelection: [] };
-    case "TRANSLATE_HOUSE":
-      if (state.selection?.kind !== "house") return state;
-      return touch(state, translateHouse(state.design, action.dx, action.dy), action.coalesce);
+    case "TRANSLATE_HOUSE": {
+      const scope = movableScope(state);
+      if (!scope) return state;
+      return touch(state, translateScope(state.design, scope, action.dx, action.dy), action.coalesce);
+    }
+    // Ctrl+C: remember a snapshot of the selection. Nothing changes in the plan.
+    case "COPY_SELECTION": {
+      const scope = scopeOfSelection(state.design, state.selection, state.multiSelection);
+      if (!scope) return state;
+      return {
+        ...state,
+        clipboard: {
+          bundle: copyScope(state.design, scope),
+          sourceKind: state.selection?.kind ?? null,
+          pastes: 0,
+        },
+      };
+    }
+    // Ctrl+V: each paste lands one more foot out, so repeated pastes don't stack on one spot.
+    case "PASTE_CLIPBOARD": {
+      const clip = state.clipboard;
+      if (!clip) return state;
+      const pastes = clip.pastes + 1;
+      return placeCopy(
+        { ...state, clipboard: { ...clip, pastes } },
+        clip.bundle,
+        clip.sourceKind,
+        DUPLICATE_OFFSET_IN * pastes,
+      );
+    }
+    // Ctrl+D: copy and paste in one step, a foot out from the original.
+    case "DUPLICATE_SELECTION": {
+      const scope = scopeOfSelection(state.design, state.selection, state.multiSelection);
+      if (!scope) return state;
+      return placeCopy(state, copyScope(state.design, scope), state.selection?.kind ?? null, DUPLICATE_OFFSET_IN);
+    }
+    case "FLIP_SELECTION": {
+      if (action.axis !== "horizontal" && action.axis !== "vertical") return state;
+      const scope = scopeOfSelection(state.design, state.selection, state.multiSelection);
+      if (!scope) return state;
+      return touch(state, flipScope(state.design, scope, action.axis));
+    }
     case "SET_TOOL":
       if (!TOOLS.includes(action.tool)) return state;
       return {
@@ -461,23 +547,20 @@ export function designerReducer(state, action) {
       else if (target.kind === "deck") design = deleteDeck(design, target.id);
       return { ...touch(state, design), selection: null, multiSelection: pruneMulti(design, state.multiSelection) };
     }
+    // Delete / Backspace. Every selection is one undo step; a selection with
+    // nothing left to delete changes nothing (and records no undo step).
     case "DELETE_SELECTION": {
       const sel = state.selection;
       if (!sel && state.multiSelection.length === 0) return state;
-      let design = state.design;
-      if (sel) {
-        if (sel.kind === "wall") design = deleteWall(design, sel.id);
-        else if (sel.kind === "opening") design = deleteOpening(design, sel.id);
-        else if (sel.kind === "furniture") design = deleteFurniture(design, sel.id);
-        else if (sel.kind === "room") design = deleteRoom(design, sel.id);
-        else if (sel.kind === "pipe") design = deletePipeRun(design, sel.id);
-        else if (sel.kind === "symbol") design = deleteSymbol(design, sel.id);
-        else if (sel.kind === "orgchart") design = deleteOrgChart(design, sel.id);
-        else if (sel.kind === "sheet") design = deleteSheet(design, sel.id);
-        else if (sel.kind === "deck") design = deleteDeck(design, sel.id);
-      }
-      for (const m of state.multiSelection) {
-        if (design.furniture.some((f) => f.id === m.id)) design = deleteFurniture(design, m.id);
+      let design;
+      if (sel?.kind === "sheet") {
+        design = deleteSheet(state.design, sel.id);
+      } else if (sel?.kind === "opening") {
+        design = deleteOpening(state.design, sel.id);
+      } else {
+        const scope = scopeOfSelection(state.design, sel, state.multiSelection);
+        if (!scope) return state;
+        design = deleteScope(state.design, scope);
       }
       return { ...touch(state, design), selection: null, multiSelection: [] };
     }
@@ -496,8 +579,10 @@ export function designerReducer(state, action) {
       const mx = (action.dx || 0) * grid;
       const my = (action.dy || 0) * grid;
       if (!mx && !my) return state;
-      if (state.selection?.kind === "house") {
-        return touch(state, translateHouse(state.design, mx, my), "nudge:house");
+      const movable = movableScope(state);
+      if (movable) {
+        const key = state.selection.kind === "house" ? "nudge:house" : "nudge:group";
+        return touch(state, translateScope(state.design, movable, mx, my), key);
       }
       const multi = state.multiSelection || [];
       if (multi.length > 0) {

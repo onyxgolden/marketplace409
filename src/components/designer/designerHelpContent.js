@@ -7,6 +7,11 @@ export const HELP_SHORTCUTS = [
   { label: "Save", description: "Ctrl+S (Cmd+S on a Mac)." },
   { label: "Undo", description: "Ctrl+Z (Cmd+Z on a Mac)." },
   { label: "Redo", description: "Ctrl+Shift+Z, or Ctrl+Y (Cmd+Shift+Z on a Mac)." },
+  { label: "Copy and paste", description: "Ctrl+C copies what's selected. Ctrl+V pastes it a foot away; press it again to paste another, one foot further out." },
+  { label: "Duplicate", description: "Ctrl+D makes a copy a foot away in one step." },
+  { label: "Delete", description: "Delete or Backspace removes what's selected. Undo brings it back." },
+  { label: "Flip", description: "The panel's \"Flip left-right\" and \"Flip up-down\" buttons mirror what's selected in place." },
+  { label: "Exact angle", description: "Select a piece of furniture or a symbol, type an angle in degrees, and press Set angle." },
 ];
 
 export const HELP_SECTIONS = [
