@@ -27,6 +27,7 @@ import {
   Shapes,
   Factory,
   LayoutGrid,
+  Move,
   Sofa,
   Spline,
   Square,
@@ -725,6 +726,9 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
         } else if ((key === "z" && e.shiftKey) || key === "y") {
           e.preventDefault();
           dispatch({ type: "REDO" });
+        } else if (key === "a") {
+          e.preventDefault();
+          dispatch({ type: "SELECT_HOUSE" });
         }
       }
     };
@@ -861,6 +865,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             className="rounded border border-gray-700 bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
           >
             {displayUnits === "in" ? "in" : "ft-in"}
+          </button>
+          <button
+            onClick={() => dispatch({ type: "SELECT_HOUSE" })}
+            title="Select the whole house (Ctrl+A), then drag or use arrow keys to move it"
+            className="flex items-center gap-1 rounded bg-gray-800 px-2 py-1 text-sm text-gray-300 hover:bg-gray-700"
+          >
+            <Move size={15} />
           </button>
           <button
             onClick={onZoomExtents}

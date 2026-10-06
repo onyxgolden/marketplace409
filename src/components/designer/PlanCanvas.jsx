@@ -67,6 +67,8 @@ const HIT_TOLERANCE_PX = 10;
  * never be inverted or collapsed by a handle.
  */
 const OPENING_MIN_WIDTH_IN = 12;
+// Plan items that move with a selected house (openings ride their walls).
+const HOUSE_HIT_KINDS = new Set(["wall", "opening", "room", "furniture", "symbol", "pipe", "orgchart", "deck"]);
 
 /**
  * SVG 2D floor-plan editor. All plan math is inches; the component maps
@@ -233,6 +235,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // Repeated clicks at the same spot cycle through a placed opening and the
   // wall it sits in, so either one can be picked without moving the cursor.
   const stackCycleRef = useRef(null);
+  const houseMoveRef = useRef(null);
+  const houseMoveSeqRef = useRef(0);
   const cycleStackedHit = useCallback(
     (plan, hit) => {
       const stack = [];
@@ -701,6 +705,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       }
     }
     const hit = cycleStackedHit(plan, hitTest(plan));
+    if (selection?.kind === "house" && hit && HOUSE_HIT_KINDS.has(hit.kind)) {
+      houseMoveSeqRef.current += 1;
+      houseMoveRef.current = { origin: plan, applied: { x: 0, y: 0 }, key: `move-house:${houseMoveSeqRef.current}` };
+      setDrag({ kind: "move-house" });
+      return;
+    }
     if (hit?.kind === "furniture") {
       dispatch({ type: "SELECT", selection: hit });
       setDrag({ kind: "move-furniture", id: hit.id, moved: false });
@@ -863,6 +873,20 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         snapRadiusIn: 9,
       });
       setDrawPreview({ kind: "wall-rect", a: drag.a, b: point });
+      return;
+    }
+    if (drag.kind === "move-house") {
+      const ref = houseMoveRef.current;
+      const raw = { x: plan.x - ref.origin.x, y: plan.y - ref.origin.y };
+      const target = snapEnabled
+        ? { x: snapScalar(raw.x, gridIn), y: snapScalar(raw.y, gridIn) }
+        : raw;
+      const dx = target.x - ref.applied.x;
+      const dy = target.y - ref.applied.y;
+      if (dx || dy) {
+        ref.applied = target;
+        dispatch({ type: "TRANSLATE_HOUSE", dx, dy, coalesce: ref.key });
+      }
       return;
     }
     if (drag.kind === "draw-deck") {
@@ -1169,6 +1193,29 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const p = (i * minorPx).toFixed(2);
     minorGridPath += `M ${p} 0 L ${p} ${majorPx.toFixed(2)} M 0 ${p} L ${majorPx.toFixed(2)} ${p} `;
   }
+
+  const renderHouseSelection = () => {
+    if (selection?.kind !== "house") return null;
+    const points = [
+      ...design.walls.flatMap((w) => [w.a, w.b]),
+      ...design.rooms.flatMap((r) => r.polygon),
+      ...decksOf(design).flatMap((d) => [d.a, d.b]),
+    ];
+    if (points.length === 0) return null;
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const a = toScreen({ x: Math.min(...xs) - 12, y: Math.min(...ys) - 12 });
+    const b = toScreen({ x: Math.max(...xs) + 12, y: Math.max(...ys) + 12 });
+    return (
+      <g pointerEvents="none" data-testid="house-selection">
+        <rect x={a.x} y={a.y} width={b.x - a.x} height={b.y - a.y} fill="none"
+          stroke="#f59e0b" strokeWidth={thicknessPx} strokeDasharray="12 6" />
+        <text x={a.x} y={a.y - 8} fontSize={13} fontWeight={600} fill="#f59e0b">
+          House selected: drag to move, arrow keys nudge
+        </text>
+      </g>
+    );
+  };
 
   const renderDeck = (deck) => {
     const a = toScreen(deck.a);
@@ -1916,6 +1963,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {renderAnnotations()}
         {decksOf(design).map(renderDeck)}
         {design.walls.map(renderWall)}
+        {renderHouseSelection()}
         {(design.pipes || []).map(renderPipe)}
         {design.furniture.map(renderFurniture)}
         {(design.symbols || []).map(renderPipingSymbol)}
