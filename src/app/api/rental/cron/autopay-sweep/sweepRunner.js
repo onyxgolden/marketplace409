@@ -35,8 +35,16 @@ function isUniqueViolation(error) {
 }
 
 // Acquire today's exclusive right to run the sweep.
-// Returns { acquired: true, reclaimed } on success, or
+// Returns { acquired: true, reclaimed, claimToken } on success, or
 // { acquired: false, reason, owner } when someone else owns it.
+// claimToken is the claim generation (the attempts counter): every
+// successful acquisition/reclaim strictly increments it, so it uniquely
+// identifies THIS ownership of the claim. It must be carried through the
+// run and required on release -- fencing release on claimed_by alone is
+// not enough, because two successive watchdog invocations share
+// claimed_by='watchdog' and a stalled old runner could otherwise release
+// a newer runner's reclaimed claim. Wall-clock claimed_at is NOT the
+// token: two acquisitions in the same millisecond would share it.
 export async function acquireSweepClaim(db, sweepName, sweepDate, triggeredBy, staleMinutes = SWEEP_CLAIM_STALE_MINUTES) {
   const nowIso = new Date().toISOString();
   // Fast path: atomic insert. The PRIMARY KEY guarantees mutual exclusion.
@@ -48,7 +56,7 @@ export async function acquireSweepClaim(db, sweepName, sweepDate, triggeredBy, s
     claimed_at: nowIso,
     attempts: 1,
   });
-  if (!insertError) return { acquired: true, reclaimed: false };
+  if (!insertError) return { acquired: true, reclaimed: false, claimToken: 1 };
   if (!isUniqueViolation(insertError)) throw insertError;
 
   // A claim row already exists for today. Read it and decide.
@@ -69,41 +77,50 @@ export async function acquireSweepClaim(db, sweepName, sweepDate, triggeredBy, s
   const reclaimable = existing.status === "failed" || isStale;
   if (!reclaimable) return { acquired: false, reason: "in-progress", owner: existing.claimed_by };
 
-  // Atomic compare-and-swap: only win if the row is still exactly as we saw
-  // it. The predicate includes the observed claimed_at (the claim token):
-  // a winning reclaim always sets claimed_at=now(), so a simultaneous
-  // reclaimer's predicate on the OLD claimed_at no longer matches and it
-  // loses (0 rows updated) instead of both proceeding. Predicating on
-  // status alone is NOT sufficient -- reclaiming a stale 'claimed' row
-  // writes status='claimed' right back, so a second racer's status
-  // predicate would still match after the first racer won.
+  // Atomic compare-and-swap against the observed generation: only win if
+  // the row is still exactly as we saw it. The predicate includes the
+  // observed attempts (the claim generation): a winning reclaim always
+  // increments it, so a simultaneous reclaimer's predicate on the OLD
+  // generation no longer matches and it loses (0 rows updated) instead of
+  // both proceeding. Predicating on status alone is NOT sufficient --
+  // reclaiming a stale 'claimed' row writes status='claimed' right back,
+  // so a second racer's status predicate would still match after the
+  // first racer won. claimed_at is wall-clock and NOT the token (two
+  // acquisitions in the same millisecond would share it); the strictly
+  // increasing generation is.
+  const nextGeneration = (existing.attempts || 1) + 1;
   const { data: updated, error: reclaimError } = await db.from("rental_sweep_claims")
     .update({
       status: "claimed",
       claimed_by: triggeredBy,
       claimed_at: nowIso,
       updated_at: nowIso,
-      attempts: (existing.attempts || 1) + 1,
+      attempts: nextGeneration,
     })
     .eq("sweep_name", sweepName)
     .eq("sweep_date", sweepDate)
     .eq("status", existing.status)
-    .eq("claimed_at", existing.claimed_at)
+    .eq("attempts", existing.attempts)
     .select("sweep_name");
   if (reclaimError) throw reclaimError;
   if (!updated || updated.length === 0) return { acquired: false, reason: "lost-reclaim-race" };
-  return { acquired: true, reclaimed: true, previousStatus: existing.status };
+  return { acquired: true, reclaimed: true, previousStatus: existing.status, claimToken: nextGeneration };
 }
 
-// Only the current claim owner may release the claim. If our claim was
-// reclaimed out from under us mid-run (dead-runner timeout), our release
-// matches zero rows and we leave the new owner's claim alone.
-export async function releaseSweepClaim(db, sweepName, sweepDate, status, claimedBy) {
+// Only the exact acquisition that owns the claim may release it. The
+// release is fenced on BOTH claimed_by and the claimToken (generation)
+// from acquireSweepClaim: two successive watchdog invocations share
+// claimed_by='watchdog', so a stalled old runner resuming after a newer
+// runner reclaimed the claim must not be able to release it. If our
+// ownership was superseded mid-run, our release matches zero rows and we
+// leave the new owner's claim alone.
+export async function releaseSweepClaim(db, sweepName, sweepDate, status, claimedBy, claimToken) {
   const { data, error } = await db.from("rental_sweep_claims")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("sweep_name", sweepName)
     .eq("sweep_date", sweepDate)
     .eq("claimed_by", claimedBy)
+    .eq("attempts", claimToken)
     .select("sweep_name");
   if (error) throw error;
   return { released: (data || []).length > 0 };
@@ -193,7 +210,7 @@ export async function runRentalAutopaySweep({ db, provider, today, triggeredBy }
     }
     const settlements = await reconcileMissingStripeSettlements(db, provider);
     const result = { success: true, candidates: pairs.length, succeeded, failed, skipped, settlements };
-    const release = await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "completed", triggeredBy);
+    const release = await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "completed", triggeredBy, claim.claimToken);
     if (!release.released) {
       // Our claim was reclaimed mid-run (we ran long past the stale
       // threshold). The money work is done; leave the new owner's claim
@@ -207,7 +224,7 @@ export async function runRentalAutopaySweep({ db, provider, today, triggeredBy }
     // error still propagates so the caller (and the Actions workflow) sees
     // the failure instead of silently swallowing a money-moving error.
     try {
-      await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "failed", triggeredBy);
+      await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "failed", triggeredBy, claim.claimToken);
     } catch (claimError) {
       console.error("Sweep claim release (failed) errored", claimError);
     }

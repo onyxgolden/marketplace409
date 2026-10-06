@@ -35,7 +35,8 @@ function markerChain() {
 function claimInsertOk() {
   const insert = vi.fn(async () => ({ error: null }));
   const select = vi.fn(async () => ({ data: [{ sweep_name: "rental-autopay" }], error: null }));
-  const eq3 = vi.fn(() => ({ select }));
+  const eq4 = vi.fn(() => ({ select }));
+  const eq3 = vi.fn(() => ({ eq: eq4 }));
   const eq2 = vi.fn(() => ({ eq: eq3 }));
   const eq1 = vi.fn(() => ({ eq: eq2 }));
   const update = vi.fn(() => ({ eq: eq1 }));
