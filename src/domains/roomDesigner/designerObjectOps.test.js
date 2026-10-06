@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDeck,
   addOpening,
+  addPipeRun,
   addRoomFromTemplate,
   addWall,
   createEmptyDesign,
@@ -91,6 +92,33 @@ describe("duplicate (copy + paste)", () => {
     const overlaps = copy.a.x < deck.b.x && copy.b.x > deck.a.x && copy.a.y < deck.b.y && copy.b.y > deck.a.y;
     expect(overlaps).toBe(false);
     expect(Math.abs(copy.b.x - copy.a.x)).toBe(120);
+  });
+});
+
+describe("pipe attachments on copy", () => {
+  // A pipe end attached to a pump's nozzle must not snap back to the original
+  // pump after a copy: it follows the copied pump, or the link is dropped.
+  const attached = (symbolId) => ({ start: { symbolId, anchorId: "tube-in" } });
+
+  it("re-points a copied pipe at the copied equipment when both are copied together", () => {
+    let design = placeSymbol(createEmptyDesign(), "processEquipment", "centrifugal-pump", 0, 0, { id: "pump-1" });
+    design = addPipeRun(design, [{ x: 0, y: 40 }, { x: 60, y: 40 }], { id: "pipe-1" });
+    design = { ...design, pipes: design.pipes.map((p) => ({ ...p, attachments: attached("pump-1") })) };
+    const { design: next, scope } = duplicate(design, scopeWith({ symbols: ["pump-1"], pipes: ["pipe-1"] }));
+    const copyPump = next.symbols.find((s) => s.id !== "pump-1");
+    const copyPipe = next.pipes.find((p) => p.id !== "pipe-1");
+    expect(scope.pipes).toEqual([copyPipe.id]);
+    expect(copyPipe.attachments).toEqual({ start: { symbolId: copyPump.id, anchorId: "tube-in" } });
+  });
+
+  it("drops the link when the equipment it was attached to is not part of the copy", () => {
+    let design = placeSymbol(createEmptyDesign(), "processEquipment", "centrifugal-pump", 0, 0, { id: "pump-1" });
+    design = addPipeRun(design, [{ x: 0, y: 40 }, { x: 60, y: 40 }], { id: "pipe-1" });
+    design = { ...design, pipes: design.pipes.map((p) => ({ ...p, attachments: attached("pump-1") })) };
+    const { design: next } = duplicate(design, scopeWith({ pipes: ["pipe-1"] }));
+    const copyPipe = next.pipes.find((p) => p.id !== "pipe-1");
+    expect(copyPipe.attachments).toBeUndefined();
+    expect(next.pipes.find((p) => p.id === "pipe-1").attachments).toEqual(attached("pump-1"));
   });
 });
 

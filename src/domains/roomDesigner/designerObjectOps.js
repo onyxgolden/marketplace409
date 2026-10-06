@@ -223,6 +223,21 @@ export function copyScope(design, scope) {
 }
 
 /**
+ * A pipe's nozzle links, pointed at the copied equipment. A link to equipment
+ * that is not part of the copy is dropped, so the copied pipe end stays where
+ * it was pasted instead of snapping back to the original's nozzle.
+ */
+function remapAttachments(attachments, symbolIds) {
+  if (!attachments) return undefined;
+  const kept = {};
+  for (const end of ["start", "end"]) {
+    const ref = attachments[end];
+    if (ref && symbolIds.has(ref.symbolId)) kept[end] = { ...ref, symbolId: symbolIds.get(ref.symbolId) };
+  }
+  return kept.start || kept.end ? kept : undefined;
+}
+
+/**
  * Paste a copied bundle shifted by (dx, dy). Every element gets a fresh id;
  * copied rooms and openings point at the copied walls. A copied deck that
  * would overlap a deck already in the plan is moved sideways past it, since
@@ -246,8 +261,19 @@ export function pasteBundle(design, bundle, { dx, dy }) {
     .filter((o) => wallIds.has(o.wallId))
     .map((o) => ({ ...o, id: newElementId("opening"), wallId: wallIds.get(o.wallId) }));
   const furniture = bundle.furniture.map((f) => ({ ...f, id: newElementId("furniture"), ...move(f) }));
-  const symbols = bundle.symbols.map((s) => ({ ...s, id: newElementId("symbol"), ...move(s) }));
-  const pipes = bundle.pipes.map((p) => ({ ...p, id: newElementId("pipe"), points: (p.points || []).map(move) }));
+  const symbolIds = new Map();
+  const symbols = bundle.symbols.map((s) => {
+    const id = newElementId("symbol");
+    symbolIds.set(s.id, id);
+    return { ...s, id, ...move(s) };
+  });
+  const pipes = bundle.pipes.map((p) => {
+    const copy = { ...p, id: newElementId("pipe"), points: (p.points || []).map(move) };
+    const attachments = remapAttachments(p.attachments, symbolIds);
+    if (attachments) copy.attachments = attachments;
+    else delete copy.attachments;
+    return copy;
+  });
   const orgCharts = bundle.orgCharts.map((c) => ({ ...c, id: newElementId("orgchart"), ...move(c) }));
   const annotations = bundle.annotations.map((a) => ({
     ...a,
