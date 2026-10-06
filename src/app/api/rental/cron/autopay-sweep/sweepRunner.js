@@ -69,9 +69,14 @@ export async function acquireSweepClaim(db, sweepName, sweepDate, triggeredBy, s
   const reclaimable = existing.status === "failed" || isStale;
   if (!reclaimable) return { acquired: false, reason: "in-progress", owner: existing.claimed_by };
 
-  // Atomic compare-and-swap: only win if the row is still in the state we
-  // saw. A simultaneous reclaimer loses (0 rows updated) instead of both
-  // proceeding.
+  // Atomic compare-and-swap: only win if the row is still exactly as we saw
+  // it. The predicate includes the observed claimed_at (the claim token):
+  // a winning reclaim always sets claimed_at=now(), so a simultaneous
+  // reclaimer's predicate on the OLD claimed_at no longer matches and it
+  // loses (0 rows updated) instead of both proceeding. Predicating on
+  // status alone is NOT sufficient -- reclaiming a stale 'claimed' row
+  // writes status='claimed' right back, so a second racer's status
+  // predicate would still match after the first racer won.
   const { data: updated, error: reclaimError } = await db.from("rental_sweep_claims")
     .update({
       status: "claimed",
@@ -83,18 +88,25 @@ export async function acquireSweepClaim(db, sweepName, sweepDate, triggeredBy, s
     .eq("sweep_name", sweepName)
     .eq("sweep_date", sweepDate)
     .eq("status", existing.status)
+    .eq("claimed_at", existing.claimed_at)
     .select("sweep_name");
   if (reclaimError) throw reclaimError;
   if (!updated || updated.length === 0) return { acquired: false, reason: "lost-reclaim-race" };
   return { acquired: true, reclaimed: true, previousStatus: existing.status };
 }
 
-export async function releaseSweepClaim(db, sweepName, sweepDate, status) {
-  const { error } = await db.from("rental_sweep_claims")
+// Only the current claim owner may release the claim. If our claim was
+// reclaimed out from under us mid-run (dead-runner timeout), our release
+// matches zero rows and we leave the new owner's claim alone.
+export async function releaseSweepClaim(db, sweepName, sweepDate, status, claimedBy) {
+  const { data, error } = await db.from("rental_sweep_claims")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("sweep_name", sweepName)
-    .eq("sweep_date", sweepDate);
+    .eq("sweep_date", sweepDate)
+    .eq("claimed_by", claimedBy)
+    .select("sweep_name");
   if (error) throw error;
+  return { released: (data || []).length > 0 };
 }
 
 async function recordSweepStarted(db, sweepName, sweepDate, triggeredBy) {
@@ -181,7 +193,13 @@ export async function runRentalAutopaySweep({ db, provider, today, triggeredBy }
     }
     const settlements = await reconcileMissingStripeSettlements(db, provider);
     const result = { success: true, candidates: pairs.length, succeeded, failed, skipped, settlements };
-    await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "completed");
+    const release = await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "completed", triggeredBy);
+    if (!release.released) {
+      // Our claim was reclaimed mid-run (we ran long past the stale
+      // threshold). The money work is done; leave the new owner's claim
+      // alone and say so loudly.
+      console.error("Sweep claim was reclaimed mid-run; not overwriting the new owner's claim");
+    }
     await recordSweepFinished(db, runId, "completed", result);
     return result;
   } catch (error) {
@@ -189,7 +207,7 @@ export async function runRentalAutopaySweep({ db, provider, today, triggeredBy }
     // error still propagates so the caller (and the Actions workflow) sees
     // the failure instead of silently swallowing a money-moving error.
     try {
-      await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "failed");
+      await releaseSweepClaim(db, RENTAL_AUTOPAY_SWEEP_NAME, today, "failed", triggeredBy);
     } catch (claimError) {
       console.error("Sweep claim release (failed) errored", claimError);
     }

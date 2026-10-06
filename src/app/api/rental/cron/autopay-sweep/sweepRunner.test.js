@@ -95,7 +95,7 @@ describe("acquireSweepClaim", () => {
   it("does not grant a second claim after the sweep completed", async () => {
     const db = fakeClaimsDb();
     await acquireSweepClaim(db, NAME, TODAY, "schedule");
-    await releaseSweepClaim(db, NAME, TODAY, "completed");
+    await releaseSweepClaim(db, NAME, TODAY, "completed", "schedule");
     const r = await acquireSweepClaim(db, NAME, TODAY, "watchdog");
     expect(r.acquired).toBe(false);
     expect(r.reason).toBe("already-completed");
@@ -104,7 +104,7 @@ describe("acquireSweepClaim", () => {
   it("a failed run is explicitly retryable via atomic reclaim", async () => {
     const db = fakeClaimsDb();
     await acquireSweepClaim(db, NAME, TODAY, "schedule");
-    await releaseSweepClaim(db, NAME, TODAY, "failed");
+    await releaseSweepClaim(db, NAME, TODAY, "failed", "schedule");
     const r = await acquireSweepClaim(db, NAME, TODAY, "watchdog");
     expect(r.acquired).toBe(true);
     expect(r.reclaimed).toBe(true);
@@ -135,12 +135,44 @@ describe("acquireSweepClaim", () => {
   it("only one simultaneous reclaimer wins when a failed claim is raced", async () => {
     const db = fakeClaimsDb();
     await acquireSweepClaim(db, NAME, TODAY, "schedule");
-    await releaseSweepClaim(db, NAME, TODAY, "failed");
+    await releaseSweepClaim(db, NAME, TODAY, "failed", "schedule");
     const [a, b] = await Promise.all([
       acquireSweepClaim(db, NAME, TODAY, "watchdog"),
       acquireSweepClaim(db, NAME, TODAY, "manual"),
     ]);
     expect([a.acquired, b.acquired].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("two simultaneous reclaimers of a STALE claim cannot both win (claim-token CAS)", async () => {
+    // Regression test for the exact bug ChatGPT caught: predicating the
+    // reclaim UPDATE on status alone is not a safe CAS, because reclaiming
+    // a stale 'claimed' row writes status='claimed' right back -- a second
+    // racer's status predicate still matches after the first racer wins.
+    // The claimed_at token must change on a winning swap.
+    const staleAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const db = fakeClaimsDb([{
+      sweep_name: NAME, sweep_date: TODAY, status: "claimed",
+      claimed_by: "schedule", claimed_at: staleAt, attempts: 1,
+    }]);
+    const [a, b] = await Promise.all([
+      acquireSweepClaim(db, NAME, TODAY, "watchdog", 30),
+      acquireSweepClaim(db, NAME, TODAY, "manual", 30),
+    ]);
+    const winners = [a, b].filter((r) => r.acquired);
+    expect(winners).toHaveLength(1);
+    expect(winners[0].reclaimed).toBe(true);
+    expect(winners[0].previousStatus).toBe("claimed");
+  });
+
+  it("only the claim owner can release the claim", async () => {
+    const db = fakeClaimsDb();
+    await acquireSweepClaim(db, NAME, TODAY, "schedule");
+    const r = await releaseSweepClaim(db, NAME, TODAY, "completed", "watchdog");
+    expect(r.released).toBe(false);
+    // the owner's claim is untouched: a new acquire still sees in-progress
+    const retry = await acquireSweepClaim(db, NAME, TODAY, "watchdog", 30);
+    expect(retry.acquired).toBe(false);
+    expect(retry.reason).toBe("in-progress");
   });
 
   it("propagates non-unique-violation database errors instead of silently continuing", async () => {

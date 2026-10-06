@@ -31,12 +31,14 @@ function markerChain() {
   return { insert, update, select, eq, single };
 }
 
-// Claim acquired on first insert (fresh day)
+// Claim acquired on first insert (fresh day); release is fenced on claimed_by.
 function claimInsertOk() {
   const insert = vi.fn(async () => ({ error: null }));
-  const eqInner = vi.fn(async () => ({ error: null }));
-  const eq = vi.fn(() => ({ eq: eqInner }));
-  const update = vi.fn(() => ({ eq }));
+  const select = vi.fn(async () => ({ data: [{ sweep_name: "rental-autopay" }], error: null }));
+  const eq3 = vi.fn(() => ({ select }));
+  const eq2 = vi.fn(() => ({ eq: eq3 }));
+  const eq1 = vi.fn(() => ({ eq: eq2 }));
+  const update = vi.fn(() => ({ eq: eq1 }));
   return { insert, update };
 }
 
