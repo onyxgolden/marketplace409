@@ -1582,6 +1582,26 @@ export function deleteDeck(design, deckId) {
 }
 
 /**
+ * Shift every house element by (dx, dy) inches, keeping its shape. Openings
+ * ride with their walls, so they are not listed. Sheets (print frames) and
+ * the underlay stay where they are.
+ */
+export function translateHouse(design, dx, dy) {
+  assertDesign(design);
+  const move = (p) => ({ x: p.x + dx, y: p.y + dy });
+  return {
+    ...design,
+    walls: design.walls.map((w) => ({ ...w, a: move(w.a), b: move(w.b) })),
+    rooms: design.rooms.map((r) => ({ ...r, polygon: r.polygon.map(move) })),
+    furniture: design.furniture.map((f) => ({ ...f, x: f.x + dx, y: f.y + dy })),
+    symbols: (design.symbols || []).map((s) => ({ ...s, x: s.x + dx, y: s.y + dy })),
+    pipes: (design.pipes || []).map((p) => ({ ...p, points: p.points.map(move) })),
+    orgCharts: (design.orgCharts || []).map((c) => ({ ...c, x: c.x + dx, y: c.y + dy })),
+    decks: decksOf(design).map((d) => ({ ...d, a: move(d.a), b: move(d.b) })),
+  };
+}
+
+/**
  * Change a sheet's size and/or orientation. The fit scale and plan region
  * are re-fixed against the CURRENT content (same rule as placement) while
  * the frame CENTER stays put, so the sheet does not jump across the plan.

@@ -23,6 +23,7 @@ import {
   setDeckDrop,
   setDeckMaterial,
   deleteDeck,
+  translateHouse,
   deleteSymbol,
   deleteWall,
   findOrgChart,
@@ -255,6 +256,11 @@ export function designerReducer(state, action) {
         multiSelection: [],
       };
     }
+    case "SELECT_HOUSE":
+      return { ...state, tool: "select", selection: { kind: "house", id: "house" }, multiSelection: [] };
+    case "TRANSLATE_HOUSE":
+      if (state.selection?.kind !== "house") return state;
+      return touch(state, translateHouse(state.design, action.dx, action.dy), action.coalesce);
     case "SET_TOOL":
       if (!TOOLS.includes(action.tool)) return state;
       return {
@@ -487,6 +493,9 @@ export function designerReducer(state, action) {
       const mx = (action.dx || 0) * grid;
       const my = (action.dy || 0) * grid;
       if (!mx && !my) return state;
+      if (state.selection?.kind === "house") {
+        return touch(state, translateHouse(state.design, mx, my), "nudge:house");
+      }
       const multi = state.multiSelection || [];
       if (multi.length > 0) {
         const ids = new Set(multi.map((m) => m.id));
