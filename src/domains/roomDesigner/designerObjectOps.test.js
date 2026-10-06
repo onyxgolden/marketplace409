@@ -95,6 +95,25 @@ describe("duplicate (copy + paste)", () => {
   });
 });
 
+describe("deck paste never overlaps", () => {
+  it("places a copied deck past the last deck when every nearer spot is taken", () => {
+    // Deck A sits next to deck B. A copy of A cannot go at the offset (it overlaps A)
+    // or beside A (it would overlap B), so it must go beyond B.
+    let design = addDeck(createEmptyDesign(), { x: 0, y: 0 }, { x: 120, y: 96 });
+    design = addDeck(design, { x: 132, y: 0 }, { x: 252, y: 96 });
+    const first = design.decks[0];
+    const { design: next } = duplicate(design, scopeWith({ decks: [first.id] }));
+    const copy = next.decks.find((d) => d.id !== first.id && d.id !== design.decks[1].id);
+    for (const other of next.decks) {
+      if (other === copy) continue;
+      const overlaps = copy.a.x < Math.max(other.a.x, other.b.x) && copy.b.x > Math.min(other.a.x, other.b.x)
+        && copy.a.y < Math.max(other.a.y, other.b.y) && copy.b.y > Math.min(other.a.y, other.b.y);
+      expect(overlaps).toBe(false);
+    }
+    expect(Math.min(copy.a.x, copy.b.x)).toBe(264);
+  });
+});
+
 describe("pipe attachments on copy", () => {
   // A pipe end attached to a pump's nozzle must not snap back to the original
   // pump after a copy: it follows the copied pump, or the link is dropped.
@@ -131,7 +150,7 @@ describe("flip", () => {
     // Bounding box x: 0..100, center 50. Wall ends swap sides.
     expect(next.walls[0].a).toEqual({ x: 100, y: 0 });
     expect(next.walls[0].b).toEqual({ x: 0, y: 0 });
-    // Piece sits on the axis, so only its angle changes (mirror reverses rotation).
+    // Piece sits on the axis, so only its angle changes: a left-right mirror maps θ to 180° − θ.
     expect(next.furniture[0]).toMatchObject({ x: 50, y: 20, rotationDeg: 150 });
   });
 
@@ -140,7 +159,7 @@ describe("flip", () => {
     design = placeFurniture(design, "bed-queen", 50, 20, 0);
     const scope = scopeWith({ walls: [design.walls[0].id], furniture: [design.furniture[0].id] });
     const next = flipScope(design, scope, "vertical");
-    // Bounding box y: 0..20, center 10.
+    // Bounding box y: 0..20, center 10. A top-bottom mirror maps θ to −θ.
     expect(next.walls[0].a).toEqual({ x: 0, y: 20 });
     expect(next.walls[0].b).toEqual({ x: 100, y: 20 });
     expect(next.furniture[0]).toMatchObject({ x: 50, y: 0 });

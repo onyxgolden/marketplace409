@@ -226,6 +226,26 @@ function turnDeg(deg) {
   return ((deg % 360) + 360) % 360;
 }
 
+/**
+ * Where a copied deck can go without overlapping any deck in the plan. Tries
+ * the offset position first, then beside each existing deck, and finally just
+ * past the rightmost deck, which is always free. So a spot is always returned.
+ */
+function freeDeckSpot(decks, a0, b0) {
+  const copyLeft = Math.min(a0.x, b0.x);
+  const at = (left) => {
+    const dx = left - copyLeft;
+    return { a: { x: a0.x + dx, y: a0.y }, b: { x: b0.x + dx, y: b0.y } };
+  };
+  const rightEdge = (d) => Math.max(d.a.x, d.b.x);
+  const candidates = [{ a: a0, b: b0 }];
+  for (const d of decks) candidates.push(at(rightEdge(d) + DUPLICATE_OFFSET_IN));
+  if (decks.length > 0) {
+    candidates.push(at(Math.max(...decks.map(rightEdge)) + DUPLICATE_OFFSET_IN));
+  }
+  return candidates.find((c) => !deckOverlapsExisting({ decks }, c.a, c.b));
+}
+
 /** A deep copy of the scoped elements, to paste later. Plain data, no ids reused. */
 export function copyScope(design, scope) {
   return JSON.parse(JSON.stringify(entitiesOf(design, scope)));
@@ -303,16 +323,7 @@ export function pasteBundle(design, bundle, { dx, dy }) {
   };
   const newDeckIds = [];
   for (const d of bundle.decks) {
-    const width = Math.abs(d.b.x - d.a.x);
-    let a = move(d.a);
-    let b = move(d.b);
-    // Step sideways past any overlapping deck. The loop is bounded so a
-    // pathological plan cannot hang the reducer.
-    for (let step = 0; step < 50 && deckOverlapsExisting(working, a, b); step += 1) {
-      const shift = width + DUPLICATE_OFFSET_IN;
-      a = { x: a.x + shift, y: a.y };
-      b = { x: b.x + shift, y: b.y };
-    }
+    const { a, b } = freeDeckSpot(decksOf(working), move(d.a), move(d.b));
     const id = newElementId("deck");
     newDeckIds.push(id);
     working = { ...working, decks: [...decksOf(working), { ...d, id, a, b }] };
