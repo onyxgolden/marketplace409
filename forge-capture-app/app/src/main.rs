@@ -23,11 +23,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use forge_capture_core::ai_edit;
 use forge_capture_core::annotations::{self, AnnotationsSidecar, SourceBinding};
 use forge_capture_core::artifact::{CaptureArtifact, CaptureKind, CursorState, RasterMime};
+use forge_capture_core::capture_meta::{self, CaptureMeta};
 use forge_capture_core::coords::{Monitor, Rect};
 use forge_capture_core::engines::{
     AcquisitionEngine, CaptureMode, CaptureRequest, DomAwareScrollEngine, NativeRasterEngine,
     RasterObservationScrollEngine,
 };
+use forge_capture_core::library_index::{LibraryIndex, LibraryIndexEntry};
 use forge_capture_core::native;
 use forge_capture_core::png::{decode_own, encode_rgba, png_dimensions};
 use forge_capture_core::result::ScrollingResult;
@@ -1177,6 +1179,126 @@ fn export_redacted(
     let out_path = dir.join(format!("{stem}.png"));
     atomic_write(&out_path, &output_png_bytes)?;
     Ok(out_path.to_string_lossy().into_owned())
+}
+
+// ---------------------------------------------------------------------------
+// Durable tags and the rebuildable library index (Slice 4)
+// ---------------------------------------------------------------------------
+
+/// `<stem>.png` -> `<stem>.meta.json` -- a sidecar separate from both the capture's own
+/// `.forge.json` provenance sidecar and its `.annotations.json`, mirroring
+/// `annotations_sidecar_path`'s convention.
+fn capture_meta_path(png_path: &std::path::Path) -> std::path::PathBuf {
+    png_path.with_extension("meta.json")
+}
+
+/// The tags for the capture at `pngPath`. No meta file yet is not an error -- it means no tags
+/// have ever been set, so this returns an empty list rather than requiring a file to exist first.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn load_capture_tags(pngPath: String) -> Result<Vec<String>, String> {
+    let png_path = std::path::PathBuf::from(&pngPath);
+    match std::fs::read_to_string(capture_meta_path(&png_path)) {
+        Ok(text) => Ok(capture_meta::parse_meta(&text).map_err(err)?.tags),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("cannot read capture tags: {e}")),
+    }
+}
+
+/// Replaces the tag list for the capture at `pngPath`. Each incoming tag is trimmed
+/// (`capture_meta::normalize_tag`) before validation, so a caller cannot accidentally persist
+/// pure-whitespace differences as distinct tags; validation (non-empty, length cap, no
+/// duplicates, count cap) then runs the same way it would for any other capture-meta write.
+/// Written atomically, same as every other sidecar in this program.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn save_capture_tags(pngPath: String, tags: Vec<String>) -> Result<(), String> {
+    let png_path = std::path::PathBuf::from(&pngPath);
+    if !png_path.exists() {
+        return Err(format!("no capture at {}", png_path.display()));
+    }
+    let meta = CaptureMeta {
+        tags: tags
+            .iter()
+            .map(|t| capture_meta::normalize_tag(t))
+            .collect(),
+        ..CaptureMeta::new()
+    };
+    let json = meta.to_json().map_err(err)?;
+    atomic_write(&capture_meta_path(&png_path), json.as_bytes())
+}
+
+/// Best-effort: a capture's window title, if its `.forge.json` sidecar has one. Reads the raw
+/// JSON directly rather than requiring strict `artifact::parse_sidecar` success, since not every
+/// sidecar in the captures dir is a still-capture artifact (recordings use a simpler inline
+/// shape) -- this is opt-in, best-effort metadata for the library index, not a security boundary,
+/// so a missing/unexpected shape here means "no title", never a hard failure.
+fn read_window_title(forge_json_path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(forge_json_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value
+        .get("window")?
+        .get("title")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Rebuilds `library-index.json` from scratch by scanning the captures directory -- a derived
+/// cache, never a source of truth. Tags are projected from each capture's own durable
+/// `.meta.json` (never originated here); rebuilding can never lose a tag, only the index file
+/// itself. `titleIndexingEnabled` is opt-in and caller-supplied every call -- there is no stored
+/// "title indexing is on" setting this command reads on its own, so a caller that never asks for
+/// titles can never get them by accident.
+///
+/// Stems are enumerated from `.forge.json` files (every file this app writes gets one -- the
+/// existing invariant `unique_stem` already depends on). A corrupt or missing `.meta.json` for a
+/// given capture is treated as "no tags" rather than failing the whole rebuild: this is a search
+/// convenience index, not a security-sensitive path, and one bad sidecar should not make every
+/// other capture briefly unsearchable.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn rebuild_library_index(titleIndexingEnabled: bool) -> Result<String, String> {
+    rebuild_library_index_in(&captures_dir()?, titleIndexingEnabled)
+}
+
+/// The directory-parameterized rebuild logic, separated from the Tauri command so tests can
+/// point it at a temp directory instead of the real captures dir -- the same thin-wrapper split
+/// already used for every other filesystem-touching command in this file.
+fn rebuild_library_index_in(
+    dir: &std::path::Path,
+    title_indexing_enabled: bool,
+) -> Result<String, String> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| format!("cannot list captures dir: {e}"))? {
+        let entry = entry.map_err(|e| format!("cannot read captures dir entry: {e}"))?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(stem) = name.strip_suffix(".forge.json") else {
+            continue;
+        };
+        let stem = stem.to_string();
+
+        let tags = std::fs::read_to_string(dir.join(format!("{stem}.meta.json")))
+            .ok()
+            .and_then(|text| capture_meta::parse_meta(&text).ok())
+            .map(|meta| meta.tags)
+            .unwrap_or_default();
+        let title = if title_indexing_enabled {
+            read_window_title(&path)
+        } else {
+            None
+        };
+
+        entries.push(LibraryIndexEntry { stem, tags, title });
+    }
+
+    let index = LibraryIndex::build(entries, title_indexing_enabled);
+    let json = index.to_json().map_err(err)?;
+    let index_path = dir.join("library-index.json");
+    atomic_write(&index_path, json.as_bytes())?;
+    Ok(index_path.to_string_lossy().into_owned())
 }
 
 /// Rung 5 — payload for the "Save to FORGE" upload. Returns the stored
@@ -3211,6 +3333,9 @@ fn main() {
             load_annotations,
             save_annotations,
             export_redacted,
+            load_capture_tags,
+            save_capture_tags,
+            rebuild_library_index,
             export_capture,
             begin_region_pick,
             overlay_context,
@@ -4243,6 +4368,269 @@ mod annotations_commands_tests {
         assert_eq!(second, dir.join("a-redacted-2.png").to_string_lossy());
         assert!(std::path::Path::new(&first).exists());
         assert!(std::path::Path::new(&second).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -- Slice 4: load_capture_tags / save_capture_tags / rebuild_library_index --
+
+    #[test]
+    fn load_capture_tags_returns_empty_when_no_meta_file_exists() {
+        let dir = temp_test_dir("tags-missing");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        let tags = load_capture_tags(png_path.to_string_lossy().into_owned()).unwrap();
+        assert!(tags.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_then_load_capture_tags_round_trips() {
+        let dir = temp_test_dir("tags-round-trip");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        save_capture_tags(
+            png_path.to_string_lossy().into_owned(),
+            vec!["safety".to_string(), "pump".to_string()],
+        )
+        .unwrap();
+        let tags = load_capture_tags(png_path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(tags, vec!["safety".to_string(), "pump".to_string()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_capture_tags_trims_each_tag_before_storing() {
+        let dir = temp_test_dir("tags-trim");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        save_capture_tags(
+            png_path.to_string_lossy().into_owned(),
+            vec!["  safety  ".to_string()],
+        )
+        .unwrap();
+        let tags = load_capture_tags(png_path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(tags, vec!["safety".to_string()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_capture_tags_rejects_duplicate_tags_and_writes_nothing() {
+        let dir = temp_test_dir("tags-dup");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        let result = save_capture_tags(
+            png_path.to_string_lossy().into_owned(),
+            vec!["safety".to_string(), "safety".to_string()],
+        );
+        assert!(result.is_err());
+        assert!(!capture_meta_path(&png_path).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_capture_tags_rejects_an_empty_tag() {
+        let dir = temp_test_dir("tags-empty");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        let result =
+            save_capture_tags(png_path.to_string_lossy().into_owned(), vec![String::new()]);
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_capture_tags_rejects_an_overlong_tag() {
+        let dir = temp_test_dir("tags-overlong");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        let result = save_capture_tags(
+            png_path.to_string_lossy().into_owned(),
+            vec!["x".repeat(capture_meta::MAX_TAG_CHARS + 1)],
+        );
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_capture_tags_rejects_too_many_tags() {
+        let dir = temp_test_dir("tags-too-many");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+
+        let too_many: Vec<String> = (0..capture_meta::MAX_TAGS + 1)
+            .map(|i| format!("t{i}"))
+            .collect();
+        let result = save_capture_tags(png_path.to_string_lossy().into_owned(), too_many);
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_capture_tags_refuses_when_the_png_does_not_exist() {
+        let dir = temp_test_dir("tags-no-png");
+        let png_path = dir.join("missing.png");
+
+        let result = save_capture_tags(
+            png_path.to_string_lossy().into_owned(),
+            vec!["safety".to_string()],
+        );
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_capture_tags_surfaces_a_corrupt_meta_file_as_an_error_rather_than_silently_empty() {
+        let dir = temp_test_dir("tags-corrupt");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(4, 4)).unwrap();
+        std::fs::write(capture_meta_path(&png_path), b"not json").unwrap();
+
+        let result = load_capture_tags(png_path.to_string_lossy().into_owned());
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn write_forge_json(dir: &std::path::Path, stem: &str, title: Option<&str>) {
+        let body = match title {
+            Some(t) => format!(r#"{{"window":{{"title":{t:?}}}}}"#),
+            None => "{}".to_string(),
+        };
+        std::fs::write(dir.join(format!("{stem}.forge.json")), body).unwrap();
+    }
+
+    fn write_capture_meta(dir: &std::path::Path, stem: &str, tags: &[&str]) {
+        let mut meta = CaptureMeta::new();
+        meta.tags = tags.iter().map(|t| t.to_string()).collect();
+        std::fs::write(
+            dir.join(format!("{stem}.meta.json")),
+            meta.to_json().unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rebuild_library_index_projects_tags_from_each_captures_durable_meta_file() {
+        let dir = temp_test_dir("index-tags");
+        write_forge_json(&dir, "a", None);
+        write_capture_meta(&dir, "a", &["safety", "pump"]);
+
+        let index_path = rebuild_library_index_in(&dir, false).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        let index: forge_capture_core::library_index::LibraryIndex =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(index.entries.len(), 1);
+        assert_eq!(index.entries[0].stem, "a");
+        assert_eq!(
+            index.entries[0].tags,
+            vec!["safety".to_string(), "pump".to_string()]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rebuild_library_index_never_includes_titles_when_title_indexing_is_disabled() {
+        let dir = temp_test_dir("index-titles-off");
+        write_forge_json(&dir, "a", Some("Save dialog"));
+
+        let index_path = rebuild_library_index_in(&dir, false).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        assert!(!json.contains("Save dialog"));
+        assert!(!json.contains("\"title\""));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rebuild_library_index_includes_titles_when_present_and_enabled() {
+        let dir = temp_test_dir("index-titles-on");
+        write_forge_json(&dir, "a", Some("Save dialog"));
+
+        let index_path = rebuild_library_index_in(&dir, true).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        let index: forge_capture_core::library_index::LibraryIndex =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(index.entries[0].title, Some("Save dialog".to_string()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rebuild_library_index_omits_title_when_enabled_but_the_capture_has_none() {
+        let dir = temp_test_dir("index-titles-absent");
+        write_forge_json(&dir, "a", None);
+
+        let index_path = rebuild_library_index_in(&dir, true).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        let index: forge_capture_core::library_index::LibraryIndex =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(index.entries[0].title, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rebuild_library_index_treats_a_corrupt_meta_file_as_no_tags_without_failing_the_rebuild() {
+        let dir = temp_test_dir("index-corrupt-meta");
+        write_forge_json(&dir, "a", None);
+        std::fs::write(dir.join("a.meta.json"), b"not json").unwrap();
+        write_forge_json(&dir, "b", None);
+        write_capture_meta(&dir, "b", &["ok"]);
+
+        let index_path = rebuild_library_index_in(&dir, false).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        let index: forge_capture_core::library_index::LibraryIndex =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(index.entries.len(), 2);
+        let a = index.entries.iter().find(|e| e.stem == "a").unwrap();
+        assert!(a.tags.is_empty());
+        let b = index.entries.iter().find(|e| e.stem == "b").unwrap();
+        assert_eq!(b.tags, vec!["ok".to_string()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rebuild_library_index_is_deterministic_and_sorted_by_stem_regardless_of_scan_order() {
+        let dir = temp_test_dir("index-sorted");
+        write_forge_json(&dir, "zebra", None);
+        write_forge_json(&dir, "apple", None);
+        write_forge_json(&dir, "mango", None);
+
+        let index_path = rebuild_library_index_in(&dir, false).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        let index: forge_capture_core::library_index::LibraryIndex =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            index
+                .entries
+                .iter()
+                .map(|e| e.stem.as_str())
+                .collect::<Vec<_>>(),
+            vec!["apple", "mango", "zebra"]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rebuild_library_index_ignores_files_that_are_not_forge_json_sidecars() {
+        let dir = temp_test_dir("index-ignore-others");
+        write_forge_json(&dir, "a", None);
+        std::fs::write(dir.join("a.png"), tiny_png(2, 2)).unwrap();
+        std::fs::write(dir.join("a.annotations.json"), b"{}").unwrap();
+        std::fs::write(dir.join("stray.txt"), b"not a capture").unwrap();
+
+        let index_path = rebuild_library_index_in(&dir, false).unwrap();
+        let json = std::fs::read_to_string(&index_path).unwrap();
+        let index: forge_capture_core::library_index::LibraryIndex =
+            serde_json::from_str(&json).unwrap();
+
+        assert_eq!(index.entries.len(), 1);
+        assert_eq!(index.entries[0].stem, "a");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
