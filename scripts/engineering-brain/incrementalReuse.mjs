@@ -20,8 +20,11 @@
 // content is untouched -- otherwise the fix would silently never take effect. When the previous
 // manifest's extractor_version doesn't match, this treats the run as if there were no previous
 // manifest at all (full rebuild), exactly once, until the next run is incremental again.
-export function partitionFilesForIncrementalBuild(trackedFiles, previousManifest, currentExtractorVersion) {
-  if (!previousManifest || previousManifest.extractor_version !== currentExtractorVersion) {
+export function partitionFilesForIncrementalBuild(trackedFiles, previousManifest, currentExtractorVersion, currentRegistryHash = null) {
+  // A registry change (a document reclassified, added, or removed) changes what gets indexed, so
+  // records built under the old registry are never reused. A missing hash counts as null on both sides.
+  const registryChanged = (previousManifest?.registry_hash ?? null) !== (currentRegistryHash ?? null);
+  if (!previousManifest || previousManifest.extractor_version !== currentExtractorVersion || registryChanged) {
     return { toProcess: trackedFiles, reusableRecordsByPath: new Map() };
   }
 

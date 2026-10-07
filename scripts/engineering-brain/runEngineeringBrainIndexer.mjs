@@ -7,6 +7,8 @@ import { buildManifest } from "./buildManifest.mjs";
 import { renderIndexReport } from "./renderIndexReport.mjs";
 import { partitionFilesForIncrementalBuild, findDeletedPaths } from "./incrementalReuse.mjs";
 import { EXTRACTOR_VERSION } from "./extractorVersion.mjs";
+import { getRegistry, validateRegistry } from "./canonicalDocumentRegistry.mjs";
+import { registryCoverageIssues, registryFingerprint } from "./registryCoverage.mjs";
 
 const OUTPUT_DIR = "engineering-brain";
 const MANIFEST_FILENAME = "index-manifest.json";
@@ -32,8 +34,11 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
   const commitSha = resolveCommitSha(repositoryRoot);
   const trackedFiles = listTrackedFiles(commitSha, repositoryRoot);
 
+  // The registry is part of the index identity: a change to it forces a full rebuild (incrementalReuse.mjs).
+  const registry = getRegistry();
+  const registryHash = registryFingerprint(registry);
   const previousManifest = useIncrementalReuse ? loadPreviousManifest(repositoryRoot) : null;
-  const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(trackedFiles, previousManifest, EXTRACTOR_VERSION);
+  const { toProcess, reusableRecordsByPath } = partitionFilesForIncrementalBuild(trackedFiles, previousManifest, EXTRACTOR_VERSION, registryHash);
   const deletedPaths = findDeletedPaths(trackedFiles, previousManifest);
 
   const filesWithContent = toProcess.map((file) => ({
@@ -41,7 +46,7 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
     content: readFileAtCommit(commitSha, file.path, repositoryRoot),
   }));
 
-  const { records: freshRecords, excluded, outOfScope } = buildIndexRecords({ commitSha, files: filesWithContent });
+  const { records: freshRecords, excluded, outOfScope } = buildIndexRecords({ commitSha, files: filesWithContent, registry });
 
   const reusedRecords = [];
   for (const records of reusableRecordsByPath.values()) {
@@ -49,6 +54,26 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
       reusedRecords.push({ ...record, commit_sha: commitSha });
     }
   }
+
+  // Coverage is checked against the FULL tracked list, not just the files re-read this run, so a
+  // registered document reused from the previous index is still counted as indexed.
+  const indexedPaths = new Set([...freshRecords, ...reusedRecords].map((record) => record.source_path));
+  const excludedReasons = new Map(excluded.map((entry) => [entry.source_path, entry.reason]));
+  const emittedAuthorityByPath = new Map();
+  for (const record of [...freshRecords, ...reusedRecords]) {
+    if (!emittedAuthorityByPath.has(record.source_path)) emittedAuthorityByPath.set(record.source_path, new Set());
+    emittedAuthorityByPath.get(record.source_path).add(record.authority_level);
+  }
+  const coverageIssues = [
+    ...registryCoverageIssues({
+      registry,
+      trackedPaths: new Set(trackedFiles.map((file) => file.path)),
+      indexedPaths,
+      excludedReasons,
+      emittedAuthorityByPath,
+    }),
+    ...validateRegistry(registry).map((issue) => ({ path: "(registry)", classification: null, issue })),
+  ];
 
   const manifest = buildManifest({
     commitSha,
@@ -59,6 +84,8 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
     outOfScope,
     deletedPaths,
     extractorVersion: EXTRACTOR_VERSION,
+    registryHash,
+    coverageIssues,
   });
 
   const report = renderIndexReport(manifest);
@@ -80,4 +107,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`Out of scope: ${result.manifest.counts.out_of_scope_total}`);
   console.log(`Reused via incremental hash: ${result.reusedCount}; reprocessed: ${result.processedFileCount}`);
   console.log(`Index content hash: ${result.manifest.index_content_hash}`);
+  const issues = result.manifest.coverage_issues;
+  if (issues.length > 0) {
+    console.error(`Registry coverage: ${issues.length} issue(s) -- see engineering-brain/index-report.md`);
+    for (const issue of issues) console.error(`  ${issue.path}: ${issue.issue}`);
+    process.exitCode = 1;
+  }
 }

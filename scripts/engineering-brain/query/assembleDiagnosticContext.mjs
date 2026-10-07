@@ -20,7 +20,9 @@ const IMPLICATED_CODE_TYPES = new Set([
 
 // Everything matched but not otherwise faceted still shows up -- nothing matched is silently
 // dropped, it just lands in other_evidence rather than a role-labeled facet.
-const INTENDED_BEHAVIOR_TYPES = new Set(["synchronized_document_section"]);
+// Canonical product and architecture documents describe intent: what the feature should do, not
+// proof of what the code does. They join the intended-behavior facet and stay labeled by authority.
+const INTENDED_BEHAVIOR_TYPES = new Set(["synchronized_document_section", "canonical_document_file"]);
 const DECISION_TYPES = new Set(["reviewed_decision"]);
 const TEST_TYPES = new Set(["test_file"]);
 

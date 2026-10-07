@@ -5,4 +5,4 @@
 // bug would silently never take effect for any file whose blob SHA is unchanged, since the
 // (now-wrong) previous records would keep getting reused forever. Bumping this forces one full
 // rebuild after any extractor change; the next run after that is incremental again.
-export const EXTRACTOR_VERSION = 3;
+export const EXTRACTOR_VERSION = 4;
