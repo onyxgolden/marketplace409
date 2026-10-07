@@ -30,12 +30,18 @@ function table(headers, rows) {
  * nothing is read here.
  *   registry: the approved registry (canonicalDocumentRegistry.mjs).
  *   freshManifest: a full, non-incremental build at the commit under acceptance.
- *   manifestValidation: validateProductionManifest(...)'s result.
+ *   coverageIssueRows: buildCoverageModel(...).issueRows for freshManifest, with a REAL
+ *     missingReferenceStatus -- the authoritative coverage-issue count. Never derive the count from
+ *     freshManifest.coverage_issues alone: that field omits MISSING_REFERENCES issues entirely, and
+ *     doing so would silently reopen the exact Slice 3 fail-open bug at this integration boundary.
+ *   manifestValidation: validateProductionManifest(...)'s result (self-consistency at the committed
+ *     artifact's OWN recorded commit; see validateProductionManifest.mjs for why it is never
+ *     commit_sha === current HEAD).
  *   incrementalEquivalence: { equivalent, detail }.
  *   security: runSecuritySelfCheck()'s result.
  *   docDrift: { findingCount }.
  */
-export function buildAcceptanceModel({ registry, freshManifest, manifestValidation, incrementalEquivalence, security, docDrift }) {
+export function buildAcceptanceModel({ registry, freshManifest, coverageIssueRows, manifestValidation, incrementalEquivalence, security, docDrift }) {
   const registered = sortRegistry(registry);
   return {
     commitSha: freshManifest.commit_sha,
@@ -46,8 +52,11 @@ export function buildAcceptanceModel({ registry, freshManifest, manifestValidati
     },
     indexedTotal: freshManifest.counts?.indexed_total ?? null,
     excludedTotal: freshManifest.counts?.excluded_total ?? null,
-    coverageIssueCount: (freshManifest.coverage_issues || []).length,
-    manifestStatus: manifestValidation.ok ? "fresh (matches a build from this exact head)" : "STALE or mismatched",
+    coverageIssueCount: coverageIssueRows.length,
+    manifestOk: manifestValidation.ok,
+    manifestStatus: manifestValidation.ok
+      ? "self-consistent at its own recorded commit, an ancestor of HEAD"
+      : "NOT self-consistent, or not an ancestor of HEAD",
     manifestProblems: manifestValidation.problems,
     incrementalEquivalence,
     security,
@@ -65,7 +74,7 @@ export function renderAcceptanceReport(model) {
   lines.push(`**Commit:** \`${model.commitSha}\``);
   lines.push("");
 
-  const clean = model.coverageIssueCount === 0 && model.manifestStatus.startsWith("fresh") && model.incrementalEquivalence.equivalent && model.security.pass;
+  const clean = model.coverageIssueCount === 0 && model.manifestOk && model.incrementalEquivalence.equivalent && model.security.pass;
   lines.push(clean
     ? "> Acceptance: CLEAN. Coverage, manifest freshness, incremental equivalence, and security all pass."
     : "> Acceptance: NOT CLEAN. See the sections below.");

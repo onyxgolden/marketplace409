@@ -23,6 +23,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectDocDrift,
   listDocFiles,
@@ -223,13 +224,18 @@ export async function main(argv) {
       // Dynamic import: only paid for when the flag is passed, so default doc-drift
       // behavior (and its cost) is unchanged -- requirement: preserve existing behavior
       // for non-canonical checks.
-      const [{ runEngineeringBrainIndexer }, { getRegistry }, { buildCoverageModel }] = await Promise.all([
+      const [{ runEngineeringBrainIndexer }, { getRegistry }, { buildCoverageModel }, { missingReferenceStatusAtCommit }] = await Promise.all([
         import("../runEngineeringBrainIndexer.mjs"),
         import("../canonicalDocumentRegistry.mjs"),
         import("../canonicalCoverageReport.mjs"),
+        import("../missingReferencePresence.mjs"),
       ]);
       const { manifest } = runEngineeringBrainIndexer({ repositoryRoot: repoRoot, write: false });
-      coverageModel = buildCoverageModel({ registry: getRegistry(), manifest, missingReferenceStatus: new Map() });
+      // Real presence at this exact commit, through git -- never an empty map. An empty map would make
+      // every declared-but-missing reference look absent regardless of the repository, silently
+      // reopening the Slice 3 fail-open bug this flag exists to surface (Slice 4 review finding).
+      const missingReferenceStatus = missingReferenceStatusAtCommit(manifest.commit_sha, repoRoot);
+      coverageModel = buildCoverageModel({ registry: getRegistry(), manifest, missingReferenceStatus });
     } catch (e) {
       console.error(`canonical coverage check failed: ${String((e && e.message) || e)}`);
       return 1;
@@ -292,6 +298,10 @@ export async function main(argv) {
   return failures > 0 ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// path.resolve + fileURLToPath, not a raw `file://${process.argv[1]}` string compare: the raw form
+// never matches on Windows (backslashes, and a missing third slash), so this CLI silently did nothing
+// when run as `node runDocDriftCli.mjs` there -- it happened to work in Linux CI only because a POSIX
+// path already starts with "/". Found while manually verifying the --canonical-coverage flag here.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).then((code) => process.exit(code));
 }

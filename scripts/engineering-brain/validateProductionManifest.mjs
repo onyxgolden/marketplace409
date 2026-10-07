@@ -1,61 +1,63 @@
 #!/usr/bin/env node
-// Canonical Knowledge Slice 4 — production manifest validation.
+// Canonical Knowledge Slice 4 — production manifest validation. Read-only: never writes, never
+// regenerates. See scripts/engineering-brain/runEngineeringBrainIndexer.mjs for regeneration.
 //
 //   node scripts/engineering-brain/validateProductionManifest.mjs
 //
-// Fails non-zero when the committed engineering-brain/index-manifest.json does not match what a
-// fresh, non-incremental build from the same repository head would produce. The one field this
-// deliberately excludes is `generated_at` -- the indexer's own documented non-reproducible field
-// (runEngineeringBrainIndexer.mjs: "The one non-deterministic input in this whole pipeline, by
-// design"). Every other field must be byte-identical.
-//
-// Also fails non-zero when the fresh build itself has coverage issues, so a stale OR an unclean
-// artifact both block acceptance -- a passing run is the only way this script says the production
-// artifact is trustworthy.
+// The freshness contract: a committed snapshot file can never contain the SHA of the commit that
+// contains it (that commit does not exist yet when the file is written), so "freshness" cannot mean
+// committedManifest.commit_sha === current HEAD. Instead this validates the committed artifact
+// against a FRESH build of the exact commit it already claims (committedManifest.commit_sha, an
+// ancestor commit) -- a self-consistency check that is always checkable, through git, regardless of
+// what is currently on disk or checked out. Two things can fail:
+//   1. the committed artifact does not accurately reproduce a fresh build of its own recorded
+//      commit (stale, hand-edited, or corrupted), or that commit is not an ancestor of current HEAD
+//      (wrong branch, or history was rewritten);
+//   2. that fresh build has coverage issues at its own commit, including a declared-but-missing
+//      reference (MISSING_REFERENCES) that is present there but still unregistered.
+// Being an ancestor of HEAD is a sanity check, not a demand that the artifact be caught up to HEAD --
+// closing that gap is a separate, explicit regeneration (see renderAcceptanceReport.mjs --regenerate).
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isAncestorCommit, resolveCommitSha } from "./gitRepository.mjs";
 import { runEngineeringBrainIndexer } from "./runEngineeringBrainIndexer.mjs";
+import { getRegistry } from "./canonicalDocumentRegistry.mjs";
+import { buildCoverageModel } from "./canonicalCoverageReport.mjs";
+import { missingReferenceStatusAtCommit } from "./missingReferencePresence.mjs";
 
 const OUTPUT_DIR = "engineering-brain";
 const MANIFEST_FILENAME = "index-manifest.json";
 
-// Fields allowed to differ between the committed artifact and a fresh build of the same commit.
-const NON_REPRODUCIBLE_FIELDS = ["generated_at"];
-
-function withoutNonReproducibleFields(manifest) {
-  const copy = { ...manifest };
-  for (const field of NON_REPRODUCIBLE_FIELDS) delete copy[field];
-  return copy;
-}
-
-/** Pure: no filesystem access, no process exit. The CLI below does both. */
-export function validateProductionManifest({ committedManifest, freshManifest }) {
-  const problems = [];
+/**
+ * Pure comparison. No filesystem or git access -- the caller (runValidation) does all I/O and hands
+ * in already-computed pieces, so this is unit-testable without a real repository.
+ *   committedManifest: parsed from disk, or null if missing/unparseable.
+ *   freshManifest: a fresh, non-incremental build AT committedManifest.commit_sha (not HEAD).
+ *   isAncestor: whether committedManifest.commit_sha is HEAD or a real ancestor of it.
+ *   coverageIssueRows: buildCoverageModel(...).issueRows for freshManifest, with a REAL
+ *     missingReferenceStatus (never an empty map -- that would silently reopen the Slice 3 bug).
+ */
+export function validateProductionManifest({ committedManifest, freshManifest, isAncestor, coverageIssueRows = [] }) {
   if (!committedManifest) {
-    problems.push(`${MANIFEST_FILENAME} is missing; nothing to validate against.`);
-    return { ok: false, problems };
+    return { ok: false, problems: [`${MANIFEST_FILENAME} is missing; nothing to validate against.`] };
   }
-  if (committedManifest.commit_sha !== freshManifest.commit_sha) {
-    problems.push(`Committed artifact is from commit ${committedManifest.commit_sha}, but the current head is ${freshManifest.commit_sha}. Regenerate it.`);
+  const problems = [];
+  if (isAncestor === false) {
+    problems.push(`Committed commit_sha ${committedManifest.commit_sha} is not an ancestor of the current HEAD. Wrong branch, or the artifact/history is corrupted.`);
   }
-  // coverage_issues is compared separately below, one message per issue, so it is excluded here --
-  // otherwise a coverage mismatch would be reported twice, once generically and once precisely.
-  const strip = (m) => { const c = withoutNonReproducibleFields(m); delete c.coverage_issues; return c; };
-  const committedComparable = JSON.stringify(strip(committedManifest));
-  const freshComparable = JSON.stringify(strip(freshManifest));
-  if (committedComparable !== freshComparable) {
-    problems.push("Committed artifact does not match a fresh build of the same head (ignoring generated_at). Regenerate it.");
+  const withoutGeneratedAt = (m) => { const c = { ...m }; delete c.generated_at; return c; };
+  if (JSON.stringify(withoutGeneratedAt(committedManifest)) !== JSON.stringify(withoutGeneratedAt(freshManifest))) {
+    problems.push(`Committed artifact does not accurately reproduce a fresh build of its own recorded commit ${committedManifest.commit_sha} (ignoring generated_at). It may be stale, hand-edited, or corrupted.`);
   }
-  if ((freshManifest.coverage_issues || []).length > 0) {
-    for (const issue of freshManifest.coverage_issues) {
-      problems.push(`Coverage issue: ${issue.path} -- ${issue.issue}`);
-    }
+  for (const issue of coverageIssueRows) {
+    problems.push(`Coverage issue at the committed artifact's own commit (${committedManifest.commit_sha}): ${issue.path} -- ${issue.issue}`);
   }
   return { ok: problems.length === 0, problems };
 }
 
+/** All I/O lives here: reads the committed manifest and git history. Writes nothing, ever. */
 export function runValidation(repositoryRoot) {
   const manifestPath = path.join(repositoryRoot, OUTPUT_DIR, MANIFEST_FILENAME);
   let committedManifest = null;
@@ -64,14 +66,23 @@ export function runValidation(repositoryRoot) {
   } catch {
     committedManifest = null;
   }
-  const { manifest: freshManifest } = runEngineeringBrainIndexer({ repositoryRoot, useIncrementalReuse: false, write: false });
-  return validateProductionManifest({ committedManifest, freshManifest });
+  if (!committedManifest?.commit_sha) {
+    return validateProductionManifest({ committedManifest: null, freshManifest: null, isAncestor: null, coverageIssueRows: [] });
+  }
+  const currentHead = resolveCommitSha(repositoryRoot);
+  const isAncestor = isAncestorCommit(committedManifest.commit_sha, currentHead, repositoryRoot);
+  const { manifest: freshManifest } = runEngineeringBrainIndexer({
+    repositoryRoot, useIncrementalReuse: false, write: false, targetCommitSha: committedManifest.commit_sha,
+  });
+  const missingReferenceStatus = missingReferenceStatusAtCommit(committedManifest.commit_sha, repositoryRoot);
+  const coverageModel = buildCoverageModel({ registry: getRegistry(), manifest: freshManifest, missingReferenceStatus });
+  return validateProductionManifest({ committedManifest, freshManifest, isAncestor, coverageIssueRows: coverageModel.issueRows });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result = runValidation(process.cwd());
   if (result.ok) {
-    console.log("Production manifest: matches a fresh build, and coverage is clean.");
+    console.log("Production manifest: self-consistent at its own recorded commit, an ancestor of HEAD, and coverage is clean there.");
   } else {
     console.error(`Production manifest validation failed (${result.problems.length} problem(s)):`);
     for (const problem of result.problems) console.error(`  - ${problem}`);

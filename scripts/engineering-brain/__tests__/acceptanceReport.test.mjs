@@ -14,6 +14,7 @@ const freshManifest = (overrides = {}) => ({
 const cleanInputs = () => ({
   registry,
   freshManifest: freshManifest(),
+  coverageIssueRows: [],
   manifestValidation: { ok: true, problems: [] },
   incrementalEquivalence: { equivalent: true, detail: "1234 records match." },
   security: { pass: true, checks: [{ name: "a", pass: true }, { name: "b", pass: true }] },
@@ -28,13 +29,38 @@ describe("buildAcceptanceModel / renderAcceptanceReport", () => {
     expect(report).toContain("Result: **pass** (2 checks)");
   });
 
-  it("reports NOT CLEAN when coverage has an issue, and lists the manifest problem", () => {
+  it("reports NOT CLEAN when a coverage issue row exists, and lists it", () => {
     const inputs = cleanInputs();
-    inputs.freshManifest = freshManifest({ coverage_issues: [{ path: "x.md", issue: "registered_path_missing" }] });
-    inputs.manifestValidation = { ok: false, problems: ["Coverage issue: x.md -- registered_path_missing"] };
+    inputs.coverageIssueRows = [{ path: "x.md", classification: "canonical", issue: "registered_path_missing" }];
     const report = renderAcceptanceReport(buildAcceptanceModel(inputs));
     expect(report).toContain("> Acceptance: NOT CLEAN.");
-    expect(report).toContain("Coverage issue: x.md -- registered_path_missing");
+    expect(report).toContain("Coverage issues: **1**");
+  });
+
+  it("reports NOT CLEAN when a declared-but-missing reference is present and unregistered (Slice 3 rule, carried through acceptance)", () => {
+    const inputs = cleanInputs();
+    inputs.coverageIssueRows = [{ path: "docs/governance/FORGE_IDEA_REGISTER.md", classification: null, issue: "declared_reference_present_but_unregistered" }];
+    const report = renderAcceptanceReport(buildAcceptanceModel(inputs));
+    expect(report).toContain("> Acceptance: NOT CLEAN.");
+    expect(report).toContain("Coverage issues: **1**");
+  });
+
+  it("the coverage count comes from coverageIssueRows, never from freshManifest.coverage_issues alone", () => {
+    const inputs = cleanInputs();
+    // freshManifest.coverage_issues has an entry, but coverageIssueRows (the authoritative,
+    // MISSING_REFERENCES-aware source) does not -- the model must follow coverageIssueRows.
+    inputs.freshManifest = freshManifest({ coverage_issues: [{ path: "z.md", issue: "something" }] });
+    inputs.coverageIssueRows = [];
+    const model = buildAcceptanceModel(inputs);
+    expect(model.coverageIssueCount).toBe(0);
+  });
+
+  it("reports NOT CLEAN and the manifest problems when manifest validation fails", () => {
+    const inputs = cleanInputs();
+    inputs.manifestValidation = { ok: false, problems: ["Committed commit_sha abc is not an ancestor of the current HEAD."] };
+    const report = renderAcceptanceReport(buildAcceptanceModel(inputs));
+    expect(report).toContain("> Acceptance: NOT CLEAN.");
+    expect(report).toContain("Committed commit_sha abc is not an ancestor of the current HEAD.");
   });
 
   it("reports NOT CLEAN when incremental reuse is not equivalent", () => {

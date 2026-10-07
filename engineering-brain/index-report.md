@@ -2,9 +2,9 @@
 
 > Sanitized: paths, counts, and content hashes only. No file contents or matched secret/PII values appear below.
 
-**Commit:** `1c95b258cf6281e209a29c60b630fe7b11fdf7b2`
-**Generated at:** 2026-10-07T06:13:01.076Z
-**Index content hash:** `f3abac93b30446864a7a1aaa8c2f874a455a37d4e69d4cf11ff5e7c37a639263` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
+**Commit:** `8625e4057c3682d2ef2f93156d24d6df305d6cf4`
+**Generated at:** 2026-10-07T06:41:37.223Z
+**Index content hash:** `4fb13314620c822e5b879b409e096294c80bcaba51093b9f1c010f6b58690af9` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
 
 ## Authority order
 
@@ -20,14 +20,14 @@
 
 ## Indexed records
 
-**Total:** 10498
+**Total:** 10504
 
 By source type:
 
 | Key | Count |
 | --- | ----- |
 | application_source_symbol | 4839 |
-| test_file | 1708 |
+| test_file | 1714 |
 | application_source_file | 1635 |
 | sql_rls_policy | 529 |
 | api_route_symbol | 528 |
@@ -49,7 +49,7 @@ By authority level:
 
 | Key | Count |
 | --- | ----- |
-| current | 10364 |
+| current | 10370 |
 | canonical_document | 50 |
 | synchronized_document | 50 |
 | historical_snapshot | 29 |
@@ -58,7 +58,7 @@ By authority level:
 
 ## Excluded records
 
-**Total:** 44
+**Total:** 45
 
 By reason:
 
@@ -67,9 +67,9 @@ By reason:
 | likely_secret:high_entropy_secret_assignment | 11 |
 | registry_excluded:module_plan_outside_scope | 7 |
 | likely_secret:supabase_service_role_jwt | 5 |
+| likely_pii:ssn_like_value | 4 |
 | registry_excluded:authority_unresolved_no_owner | 3 |
 | likely_pii:payment_card_like_value | 3 |
-| likely_pii:ssn_like_value | 3 |
 | likely_pii:ein_like_value | 3 |
 | lockfile | 2 |
 | likely_secret:stripe_live_secret_key | 2 |
@@ -81,7 +81,7 @@ By reason:
 
 ## Out of scope
 
-543 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
+548 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
 
 ## Deleted since previous index
 
