@@ -401,7 +401,7 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           : <span className="font-bold text-slate-500 dark:text-slate-400">Inactive</span>; } },
         { header: "Active balance", width: "130px", align: "right", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
           ? <span className="text-slate-500 dark:text-slate-400">—</span>
-          : <button type="button" onClick={() => openFullLedger(tenant)}
+          : <button type="button" onClick={(event) => { event.stopPropagation(); openFullLedger(tenant); }}
               title={`View the full ledger for ${tenant.display_name}`}
               aria-label={`View the full ledger for ${tenant.display_name} — balance ${money.format(balanceCents / 100)}`}
               className="underline decoration-dotted underline-offset-4 hover:opacity-80">
