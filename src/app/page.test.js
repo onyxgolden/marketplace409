@@ -4,7 +4,6 @@ import React from "react";
 
 const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
-  isOwnerOrActiveCoOwner: vi.fn(),
   loadProgrammerAuthorization: vi.fn(),
   redirect: vi.fn((href) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
   useRouter: vi.fn(() => ({ refresh: vi.fn() })),
@@ -21,7 +20,7 @@ vi.mock("@/lib/supabase", () => ({
   },
 }));
 
-// HubPage's own logic (stats, Health/Dev visibility, the favorite-redirect) is what this file
+// HubPage's own logic (stats, Dev visibility, the favorite-redirect) is what this file
 // tests -- WorkspaceAccountPanel's own sign-in/sign-up/sign-out/loading behavior has its own
 // dedicated test file. Stubbing it here keeps this suite from needing a real Supabase browser
 // client or router just to render the page around it, and still proves HubPage passes it the
@@ -61,10 +60,6 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-vi.mock("@/lib/supabase/isOwnerOrActiveCoOwner", () => ({
-  isOwnerOrActiveCoOwner: mocks.isOwnerOrActiveCoOwner,
-}));
-
 vi.mock("@/lib/supabase/loadProgrammerAuthorization", () => ({
   loadProgrammerAuthorization: mocks.loadProgrammerAuthorization,
 }));
@@ -75,49 +70,22 @@ describe("HubPage (Choose a workspace)", () => {
   beforeEach(() => {
     mocks.favoriteWorkspaceId = null;
     mocks.redirect.mockClear();
-    mocks.isOwnerOrActiveCoOwner.mockReset();
     mocks.loadProgrammerAuthorization.mockReset();
-    // Default: not a developer, so existing Health-only tests don't need to know Dev exists.
+    // Default: not a developer.
     mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: false, user: null });
   });
 
-  it("shows no Health tile to an anonymous visitor", async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: null } });
+  it("shows no Health tile to anyone -- the health shortcut was removed from the hub", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
     const markup = renderToStaticMarkup(await HubPage());
 
     expect(markup).toContain("Marketplace");
     expect(markup).not.toContain("Health");
-    expect(mocks.isOwnerOrActiveCoOwner).not.toHaveBeenCalled();
-  });
-
-  it("shows no Health tile to a signed-in staff member (manager, bookkeeper, read_only)", async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: { id: "staff-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-    const markup = renderToStaticMarkup(await HubPage());
-
-    expect(markup).not.toContain("Health");
-  });
-
-  it("shows the private Health shortcut, linking to /forge/health, to the primary owner", async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(true);
-    const markup = renderToStaticMarkup(await HubPage());
-
-    expect(markup).toContain("Health");
-    expect(markup).toContain('href="/forge/health"');
-  });
-
-  it("shows the private Health shortcut to an active co-owner too", async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: { id: "coowner-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(true);
-    const markup = renderToStaticMarkup(await HubPage());
-
-    expect(markup).toContain("Health");
+    expect(markup).not.toContain("/forge/health");
   });
 
   it("redirects a fresh visit straight to the saved favorite workspace", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
     mocks.favoriteWorkspaceId = "forge";
 
     await expect(HubPage()).rejects.toThrow("NEXT_REDIRECT:/forge");
@@ -126,7 +94,6 @@ describe("HubPage (Choose a workspace)", () => {
 
   it("shows the picker instead of redirecting when the All apps link's chooseWorkspace param is present, even with a saved favorite", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
     mocks.favoriteWorkspaceId = "forge";
 
     const markup = renderToStaticMarkup(
@@ -136,17 +103,8 @@ describe("HubPage (Choose a workspace)", () => {
     expect(markup).toContain("Choose a workspace");
   });
 
-  it("redirects to the health shortcut when it's the favorite and the actor is still owner/co-owner", async () => {
+  it("falls back to the picker when the saved favorite is a removed workspace id", async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: "owner-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(true);
-    mocks.favoriteWorkspaceId = "health";
-
-    await expect(HubPage()).rejects.toThrow("NEXT_REDIRECT:/forge/health");
-  });
-
-  it("falls back to the picker when the favorite is Health but the actor is no longer owner/co-owner", async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: { id: "staff-1" } } });
-    mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
     mocks.favoriteWorkspaceId = "health";
 
     const markup = renderToStaticMarkup(await HubPage());
@@ -174,8 +132,7 @@ describe("HubPage (Choose a workspace)", () => {
 
     it("does not show the Dev tile to an ordinary authenticated user", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "ordinary-1", email: "ordinary@example.com" } } });
-      mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-      mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: false, user: { id: "ordinary-1" } });
+        mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: false, user: { id: "ordinary-1" } });
 
       const markup = renderToStaticMarkup(await HubPage());
       expect(markup).not.toContain("Programmer tools");
@@ -183,8 +140,7 @@ describe("HubPage (Choose a workspace)", () => {
 
     it("shows the Dev tile, linking to /forge/developer, to an authorized developer", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "dev-1", email: "dev@example.com" } } });
-      mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-      mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: true, user: { id: "dev-1" } });
+        mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: true, user: { id: "dev-1" } });
 
       const markup = renderToStaticMarkup(await HubPage());
       expect(markup).toContain("Programmer tools");
@@ -193,8 +149,7 @@ describe("HubPage (Choose a workspace)", () => {
 
     it("treats a failed/unavailable authorization check the same as unauthorized -- fails closed, never open", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
-      mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-      mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: false, authorized: false, user: null, message: "unavailable" });
+        mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: false, authorized: false, user: null, message: "unavailable" });
 
       const markup = renderToStaticMarkup(await HubPage());
       expect(markup).not.toContain("Programmer tools");
@@ -202,8 +157,7 @@ describe("HubPage (Choose a workspace)", () => {
 
     it("does not blindly redirect to /forge/developer from a saved favorite if the actor is no longer an authorized developer", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "u1" } } });
-      mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-      mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: false, user: { id: "u1" } });
+        mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: false, user: { id: "u1" } });
       mocks.favoriteWorkspaceId = "dev";
 
       const markup = renderToStaticMarkup(await HubPage());
@@ -213,8 +167,7 @@ describe("HubPage (Choose a workspace)", () => {
 
     it("does redirect to /forge/developer from a saved favorite when the actor IS an authorized developer", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "dev-1" } } });
-      mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-      mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: true, user: { id: "dev-1" } });
+        mocks.loadProgrammerAuthorization.mockResolvedValue({ ok: true, authorized: true, user: { id: "dev-1" } });
       mocks.favoriteWorkspaceId = "dev";
 
       await expect(HubPage()).rejects.toThrow("NEXT_REDIRECT:/forge/developer");
@@ -230,8 +183,7 @@ describe("HubPage (Choose a workspace)", () => {
 
     it("passes the real, current user to the account panel when signed in", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: { id: "u1", email: "person@example.com" } } });
-      mocks.isOwnerOrActiveCoOwner.mockResolvedValue(false);
-      const markup = renderToStaticMarkup(await HubPage());
+        const markup = renderToStaticMarkup(await HubPage());
       expect(markup).toContain("signed-in:person@example.com");
     });
   });

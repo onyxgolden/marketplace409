@@ -40,7 +40,6 @@ describe(
           "Inbox",
           "Financial",
           "Budget",
-          "Health",
           "Property",
           "Connections",
           "Results",

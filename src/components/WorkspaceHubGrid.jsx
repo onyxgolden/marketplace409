@@ -50,7 +50,7 @@ function Tile({ workspace, stat, isFavorite, saving, onToggleFavorite }) {
   );
 }
 
-export default function WorkspaceHubGrid({ workspaces, stats, healthShortcut, initialFavoriteWorkspaceId }) {
+export default function WorkspaceHubGrid({ workspaces, stats, initialFavoriteWorkspaceId }) {
   const [favoriteWorkspaceId, setFavoriteWorkspaceId] = useState(initialFavoriteWorkspaceId);
   const [saving, setSaving] = useState(false);
 
@@ -73,15 +73,13 @@ export default function WorkspaceHubGrid({ workspaces, stats, healthShortcut, in
     }
   }
 
-  const allTiles = healthShortcut ? [...workspaces, healthShortcut] : workspaces;
-
   return (
     <div className="grid w-full max-w-4xl gap-5 sm:grid-cols-2">
-      {allTiles.map((workspace) => (
+      {workspaces.map((workspace) => (
         <Tile
           key={workspace.id}
           workspace={workspace}
-          stat={workspace.id === healthShortcut?.id ? "Private" : stats[workspace.id]}
+          stat={stats[workspace.id]}
           isFavorite={favoriteWorkspaceId === workspace.id}
           saving={saving}
           onToggleFavorite={toggleFavorite}
