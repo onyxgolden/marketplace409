@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use forge_capture_core::ai_edit;
+use forge_capture_core::annotations::{self, AnnotationsSidecar, SourceBinding};
 use forge_capture_core::artifact::{CaptureArtifact, CaptureKind, CursorState, RasterMime};
 use forge_capture_core::coords::{Monitor, Rect};
 use forge_capture_core::engines::{
@@ -954,6 +955,140 @@ fn get_sidecar(id: String, state: State<AppState>) -> Result<String, String> {
         .get(&id)
         .map(|s| s.sidecar_json.clone())
         .ok_or_else(|| format!("unknown capture id: {id}"))
+}
+
+// ---------------------------------------------------------------------------
+// Annotation layer (Slice 1 of the annotation/blur/callouts/library program)
+// ---------------------------------------------------------------------------
+//
+// The validated, versioned shape lives entirely in
+// `forge_capture_core::annotations` — the ONE authoritative contract. These
+// two commands are the sole boundary the JS/webview side goes through:
+// `load_annotations` always hands back an already-parsed-and-validated
+// `AnnotationsSidecar`, and `save_annotations` re-validates (`parse_sidecar`)
+// before anything touches disk, so an invalid shape can never be persisted
+// even if the JS side had a bug. The JS renderer consumes this validated
+// shape; it never independently parses or re-derives sidecar structure from
+// raw bytes.
+//
+// Commands take the PNG's own path rather than a capture `id` / session
+// lookup: the UI already has `pngPath` from `ArtifactRefDto`, and operating
+// directly on disk by path means these commands work for any capture the
+// app can see, not only one still held in this run's in-memory `captures`
+// map (e.g. after a restart, or for a file the user reopened).
+
+/// `<stem>.png` -> `<stem>.annotations.json`, next to the source, never
+/// inside it.
+fn annotations_sidecar_path(png_path: &std::path::Path) -> std::path::PathBuf {
+    png_path.with_extension("annotations.json")
+}
+
+/// Writes `bytes` to `path` atomically: a temp file in the same directory,
+/// flushed, then renamed over the target. A crash or a concurrent read
+/// mid-write can never observe a partial file at `path` — the rename is the
+/// only moment the new content becomes visible under the real name, and
+/// renames within one directory are atomic on both NTFS and POSIX
+/// filesystems. Mirrors the two-phase finalize pattern already used for
+/// capture uploads above (`finish_media_upload`), scoped down to one file
+/// since a sidecar has no paired media file that must land with it.
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| "sidecar path has no parent directory".to_string())?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "sidecar path has no file name".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    // Include the process id so two FORGE Capture instances writing the same
+    // sidecar at once (unlikely, but not impossible) never collide on the
+    // temp name itself; the final rename is still the only point of truth.
+    let tmp_path = dir.join(format!("{file_name}.tmp-{}", std::process::id()));
+    std::fs::write(&tmp_path, bytes).map_err(|e| format!("cannot write sidecar temp file: {e}"))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path); // best effort — no orphan temp file
+        format!("cannot finalize sidecar file: {e}")
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnnotationsLoadDto {
+    sidecar: AnnotationsSidecar,
+    /// "fresh" (hash matches these exact PNG bytes), "stale" (a sidecar
+    /// exists but was drawn against different bytes — the UI must refuse to
+    /// render/export it until the mismatch is explicitly accepted), or
+    /// "none" (no sidecar exists yet; `sidecar` is a fresh empty one,
+    /// already correctly bound to this PNG, ready to edit and save).
+    binding: String,
+}
+
+fn binding_str(b: SourceBinding) -> &'static str {
+    match b {
+        SourceBinding::Fresh => "fresh",
+        SourceBinding::Stale => "stale",
+    }
+}
+
+/// Loads (or, if none exists yet, creates in memory — not on disk) the
+/// annotation sidecar for the PNG at `pngPath`. Tauri matches invoke
+/// argument names exactly (see `begin_region_pick`'s doc comment above), so
+/// this stays camelCase to match the JS call.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn load_annotations(pngPath: String) -> Result<AnnotationsLoadDto, String> {
+    let png_path = std::path::PathBuf::from(&pngPath);
+    let png_bytes = std::fs::read(&png_path).map_err(|e| format!("cannot read source PNG: {e}"))?;
+    let (width, height) = png_dimensions(&png_bytes).map_err(err)?;
+    let sidecar_path = annotations_sidecar_path(&png_path);
+    match std::fs::read_to_string(&sidecar_path) {
+        Ok(text) => {
+            let sidecar = annotations::parse_sidecar(&text).map_err(err)?;
+            let binding = binding_str(annotations::check_source_binding(&sidecar, &png_bytes));
+            Ok(AnnotationsLoadDto {
+                sidecar,
+                binding: binding.to_string(),
+            })
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let hash = annotations::source_sha256_hex(&png_bytes);
+            let sidecar = AnnotationsSidecar::new(
+                hash,
+                annotations::Canvas {
+                    w: width,
+                    h: height,
+                },
+            );
+            Ok(AnnotationsLoadDto {
+                sidecar,
+                binding: "none".to_string(),
+            })
+        }
+        Err(e) => Err(format!("cannot read existing sidecar: {e}")),
+    }
+}
+
+/// Persists `sidecarJson` for the PNG at `pngPath`, atomically. Re-parses
+/// and re-validates through the one authoritative contract
+/// (`annotations::parse_sidecar`) and re-checks the source binding against
+/// the PNG's current bytes before writing anything — this is the
+/// enforcement point, not a formality: a stale or structurally invalid
+/// sidecar can never reach disk through this command, regardless of what
+/// the caller sent.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn save_annotations(pngPath: String, sidecarJson: String) -> Result<(), String> {
+    let png_path = std::path::PathBuf::from(&pngPath);
+    let png_bytes = std::fs::read(&png_path).map_err(|e| format!("cannot read source PNG: {e}"))?;
+    let sidecar = annotations::parse_sidecar(&sidecarJson).map_err(err)?;
+    if annotations::check_source_binding(&sidecar, &png_bytes) == SourceBinding::Stale {
+        return Err(
+            "sidecar's source hash does not match the current PNG bytes — refusing to save against pixels it was not drawn against"
+                .to_string(),
+        );
+    }
+    let sidecar_path = annotations_sidecar_path(&png_path);
+    atomic_write(&sidecar_path, sidecarJson.as_bytes())
 }
 
 /// Rung 5 — payload for the "Save to FORGE" upload. Returns the stored
@@ -2919,6 +3054,8 @@ fn main() {
             capture,
             copy_to_clipboard,
             get_sidecar,
+            load_annotations,
+            save_annotations,
             export_capture,
             begin_region_pick,
             overlay_context,
@@ -3520,5 +3657,77 @@ mod region_picker_tests {
         assert!(overlay_context_dto(&ctx).backdrop_blank);
         ctx.backdrop_blank = false;
         assert!(!overlay_context_dto(&ctx).backdrop_blank);
+    }
+}
+
+#[cfg(test)]
+mod annotations_commands_tests {
+    //! `atomic_write` and `annotations_sidecar_path` are plain path/fs
+    //! helpers, so they are tested directly here rather than only through
+    //! the Tauri commands that use them (which need a running app handle).
+    //! `load_annotations`/`save_annotations` themselves are exercised
+    //! end-to-end once the app is actually running; see docs/annotations.md.
+
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+    // Each test gets its own subdirectory under the OS temp dir, so
+    // concurrent `cargo test` runs (and repeated runs leaving stale
+    // directories) can never collide or interfere with each other.
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(1);
+    fn temp_test_dir(label: &str) -> std::path::PathBuf {
+        let n = NEXT_TEST_DIR.fetch_add(1, AtomicOrdering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "forge-capture-annotations-test-{label}-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sidecar_path_sits_next_to_the_png_with_the_annotations_extension() {
+        let png = std::path::PathBuf::from("/captures/cap-123.png");
+        assert_eq!(
+            annotations_sidecar_path(&png),
+            std::path::PathBuf::from("/captures/cap-123.annotations.json")
+        );
+    }
+
+    #[test]
+    fn atomic_write_round_trips_content_and_leaves_no_temp_file() {
+        let dir = temp_test_dir("round-trip");
+        let path = dir.join("x.annotations.json");
+        atomic_write(&path, b"hello").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "atomic_write left a temp file behind: {leftovers:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn atomic_write_overwrites_existing_content_cleanly() {
+        let dir = temp_test_dir("overwrite");
+        let path = dir.join("x.annotations.json");
+        atomic_write(&path, b"version one").unwrap();
+        atomic_write(&path, b"version two, longer than the first").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "version two, longer than the first"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn atomic_write_fails_clearly_when_the_directory_does_not_exist() {
+        let path = std::path::PathBuf::from("/this/does/not/exist/x.annotations.json");
+        assert!(atomic_write(&path, b"x").is_err());
     }
 }

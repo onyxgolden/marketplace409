@@ -38,11 +38,21 @@
 //!   validated parsing, language-hint validation, and transcript
 //!   text/search helpers. Pure logic; the shell owns the filesystem and
 //!   the runner contract lives in `docs/meeting-mode.md`.
+//! - [`annotations`] — Annotation sidecar contract (Slice 1 of the
+//!   annotation/blur/callouts/library program): schema/version, per-kind
+//!   geometry in source-image pixel coordinates, structural validation, and
+//!   SHA-256 source binding/staleness. The **one authoritative** definition
+//!   of what a valid annotation sidecar is — the JS/webview renderer
+//!   consumes an already-validated shape via the Tauri commands in
+//!   `app/src/main.rs`, never parsing or validating a sidecar on its own.
+//!   Pure logic; it draws no pixels (see its own doc comment for why) and
+//!   owns no filesystem, same division as [`ai_edit`] and [`meeting`].
 
 /// AI Edit job contract: the local spool layout, manifest schema, job-id
 /// validation, status resolution, and versioned result stems. Pure logic;
 /// the Tauri shell owns the filesystem, the runner contract lives in docs.
 pub mod ai_edit;
+pub mod annotations;
 pub mod artifact;
 pub mod coords;
 pub mod engines;
