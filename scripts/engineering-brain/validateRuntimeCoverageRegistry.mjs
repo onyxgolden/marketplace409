@@ -103,16 +103,62 @@ function validateTrigger(entry, errors) {
     } else if (t.dst === "dst-guarded") {
       if (hasCron || t.crons.length !== 2) {
         errors.push(`${label}: dst-guarded needs "crons" with exactly the two UTC slots`);
-      }
-      if (isNonEmptyString(t.chicago_label) && !t.chicago_label.includes("DST-guard")) {
-        errors.push(`${label}: dst-guarded label must name the DST-guard and the wall time it enforces`);
+      } else {
+        // A DST-guard pair exists because Chicago shifts one hour: the two
+        // UTC slots must be exactly one hour apart, same minute.
+        const [m0, h0] = t.crons[0].trim().split(/\s+/).slice(0, 2).map(Number);
+        const [m1, h1] = t.crons[1].trim().split(/\s+/).slice(0, 2).map(Number);
+        if (!(m0 === m1 && Math.abs(h0 - h1) === 1)) {
+          errors.push(`${label}: dst-guarded UTC slots must be one hour apart with the same minute`);
+        }
+        // The label's claimed wall time must be what the slots implement:
+        // one slot's CDT equivalent and the other's CST equivalent.
+        const wm = isNonEmptyString(t.chicago_label)
+          ? t.chicago_label.match(/(\d{1,2}:\d{2}\s*[AP]M)\s+America\/Chicago/)
+          : null;
+        if (!wm) {
+          errors.push(
+            `${label}: dst-guarded label must state the enforced wall time as "<H:MM AM/PM> America/Chicago" and name the DST-guard`
+          );
+        } else {
+          const wall = wm[1].replace(/\s+/g, " ");
+          const walls = t.crons.map((c) => chicagoWallTimes(c));
+          const wallMatches =
+            (walls[0].cdt === wall && walls[1].cst === wall) ||
+            (walls[0].cst === wall && walls[1].cdt === wall);
+          if (!wallMatches) {
+            errors.push(
+              `${label}: dst-guarded crons ${t.crons.join(" + ")} do not implement the claimed ${wall} America/Chicago wall time`
+            );
+          }
+          if (!t.chicago_label.includes("DST-guard")) {
+            errors.push(`${label}: dst-guarded label must name the DST-guard`);
+          }
+        }
       }
     } else if (t.dst === "dual-fire") {
       if (hasCron || t.crons.length < 2) {
         errors.push(`${label}: dual-fire needs "crons" with at least two UTC slots`);
-      }
-      if (isNonEmptyString(t.chicago_label) && !/both (slots )?fire/i.test(t.chicago_label)) {
-        errors.push(`${label}: dual-fire label must state that every UTC slot fires (no DST guard)`);
+      } else if (isNonEmptyString(t.chicago_label)) {
+        // Every slot's UTC time and both of its Chicago equivalents must
+        // appear: a false slot-time description must not pass.
+        for (const cron of t.crons) {
+          const [minute, hour] = cron.trim().split(/\s+/).slice(0, 2).map(Number);
+          const utc = `${hour}:${String(minute).padStart(2, "0")}`;
+          const { cdt, cst } = chicagoWallTimes(cron);
+          if (
+            !t.chicago_label.includes(utc) ||
+            !t.chicago_label.includes(cdt) ||
+            !t.chicago_label.includes(cst)
+          ) {
+            errors.push(
+              `${label}: dual-fire label must name UTC ${utc} and its Chicago equivalents (${cdt} CDT / ${cst} CST)`
+            );
+          }
+        }
+        if (!/both (slots )?fire/i.test(t.chicago_label)) {
+          errors.push(`${label}: dual-fire label must state that every UTC slot fires (no DST guard)`);
+        }
       }
     }
   } else if (t.kind === "event") {

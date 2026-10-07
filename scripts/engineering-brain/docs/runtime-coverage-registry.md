@@ -51,10 +51,16 @@ follows, and the validator enforces label honesty per pattern:
   this is the regression test for the review finding.
 - `"dst-guarded"` — a UTC cron pair with a workflow guard that admits
   exactly one Chicago wall time (e.g. the doc-drift and governance-refresh
-  workflows). The label names the enforced wall time and the guard.
+  workflows). The label names the enforced wall time and the guard. The
+  validator parses the claimed `"<H:MM AM/PM> America/Chicago"` wall time
+  from the label and proves the slots implement it (one slot's CDT
+  equivalent and the other's CST equivalent), and requires the two UTC
+  slots to be exactly one hour apart with the same minute — the DST-pair
+  structure. A false wall time cannot pass.
 - `"dual-fire"` — several UTC crons with no guard; every slot fires (e.g.
-  the Brain sync and undiscovered-errors workflows run twice daily). The
-  label must state that both slots fire.
+  the Brain sync and undiscovered-errors workflows run twice daily). For
+  each slot, the label must name its UTC time and both derived Chicago
+  equivalents; the validator checks all three against the cron.
 
 The UTC cron expression(s) are always the authority; the label is the
 human-readable consequence, checked, not trusted.

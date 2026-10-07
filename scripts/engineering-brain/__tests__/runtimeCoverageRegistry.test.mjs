@@ -211,4 +211,53 @@ describe("timezone-honest schedule representation (Slice 1 review finding)", () 
     const { ok } = validateRegistry([bad]);
     expect(ok).toBe(false);
   });
+
+  it("rejects a dst-guarded label claiming a wall time the slots do not implement", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "brain-doc-drift-nightly"));
+    bad.trigger = {
+      kind: "schedule",
+      crons: ["0 6 * * *", "0 7 * * *"],
+      chicago_label: "9:00 AM America/Chicago daily (DST-guard)",
+      dst: "dst-guarded",
+    };
+    const { ok, errors } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+    expect(errors.some((e) => e.includes("9:00 AM") && e.includes("do not implement"))).toBe(true);
+  });
+
+  it("rejects dst-guarded slots that are not one hour apart", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "brain-doc-drift-nightly"));
+    bad.trigger = {
+      kind: "schedule",
+      crons: ["0 6 * * *", "0 9 * * *"],
+      chicago_label: "1:00 AM America/Chicago daily (DST-guard)",
+      dst: "dst-guarded",
+    };
+    const { ok, errors } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+    expect(errors.some((e) => e.includes("one hour apart"))).toBe(true);
+  });
+
+  it("rejects a dual-fire label with a false local equivalent for a slot", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "brain-nightly-sync"));
+    bad.trigger = {
+      kind: "schedule",
+      crons: ["0 9 * * *", "0 10 * * *"],
+      chicago_label:
+        "9:00 UTC (9:00 AM CDT / 8:00 AM CST) and 10:00 UTC (5:00 AM CDT / 4:00 AM CST) daily — both slots fire, no DST guard",
+      dst: "dual-fire",
+    };
+    const { ok, errors } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+    expect(errors.some((e) => e.includes("9:00") && e.includes("Chicago equivalents"))).toBe(true);
+  });
+
+  it("accepts the shipped dst-guarded and dual-fire entries with verified times", () => {
+    for (const id of ["brain-doc-drift-nightly", "forge-governance-refresh", "brain-nightly-sync", "brain-undiscovered-errors"]) {
+      const entry = clone(CAPABILITIES.find((c) => c.id === id));
+      const { ok, errors } = validateRegistry([entry]);
+      expect(errors).toEqual([]);
+      expect(ok).toBe(true);
+    }
+  });
 });
