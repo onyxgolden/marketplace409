@@ -2,9 +2,9 @@
 
 > Sanitized: paths, counts, and content hashes only. No file contents or matched secret/PII values appear below.
 
-**Commit:** `8625e4057c3682d2ef2f93156d24d6df305d6cf4`
-**Generated at:** 2026-10-07T06:41:37.223Z
-**Index content hash:** `4fb13314620c822e5b879b409e096294c80bcaba51093b9f1c010f6b58690af9` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
+**Commit:** `9aff70dd30c50711c1472b358c761c5a97fb1863`
+**Generated at:** 2026-10-07T17:39:33.194Z
+**Index content hash:** `8256ab9fe513da3088a0da9a626e8aa94081d45aa35cde4504a46de615429b6c` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
 
 ## Authority order
 
@@ -20,14 +20,14 @@
 
 ## Indexed records
 
-**Total:** 10504
+**Total:** 10507
 
 By source type:
 
 | Key | Count |
 | --- | ----- |
 | application_source_symbol | 4839 |
-| test_file | 1714 |
+| test_file | 1717 |
 | application_source_file | 1635 |
 | sql_rls_policy | 529 |
 | api_route_symbol | 528 |
@@ -49,7 +49,7 @@ By authority level:
 
 | Key | Count |
 | --- | ----- |
-| current | 10370 |
+| current | 10373 |
 | canonical_document | 50 |
 | synchronized_document | 50 |
 | historical_snapshot | 29 |
@@ -81,7 +81,7 @@ By reason:
 
 ## Out of scope
 
-548 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
+549 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
 
 ## Deleted since previous index
 
