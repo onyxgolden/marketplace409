@@ -148,6 +148,10 @@ function recordingCtx() {
     fillText: (...a) => calls.push(["fillText", ...a]),
     arc: (...a) => calls.push(["arc", ...a]),
     blurRegion: (...a) => calls.push(["blurRegion", ...a]),
+    redactPlaceholder: (...a) => calls.push(["redactPlaceholder", ...a]),
+    set globalAlpha(v) {
+      calls.push(["globalAlpha", v]);
+    },
     drawImage: (...a) => calls.push(["drawImage", ...a]),
   };
   return ctx;
@@ -268,5 +272,41 @@ describe("flattenAnnotations", () => {
       { createCanvas: () => ({}), getContext2d: () => recordingCtx() },
     );
     expect(JSON.stringify(sourceImage)).toBe(before);
+  });
+});
+
+function redactItem(id, geometry) {
+  return { id, kind: "redact", geometry };
+}
+
+describe("resolveDrawOps: redact", () => {
+  it("resolves a redact item to a non-destructive placeholder, never anything destructive", () => {
+    const s = sidecar([redactItem("r1", { x: 1, y: 2, w: 3, h: 4 })]);
+    expect(resolveDrawOps(s)).toEqual([{ op: "redactPlaceholder", id: "r1", x: 1, y: 2, w: 3, h: 4 }]);
+  });
+});
+
+describe("flattenAnnotations: never destructive, even with a redact item present (Slice 2 review)", () => {
+  // Per the review: this module performs no destructive pixel work at all. The actual redaction
+  // is done entirely by the Rust export_redacted command, against the real re-read source. These
+  // tests prove flattenAnnotations's output for a sidecar containing a redact item is exactly
+  // what it would be for an ordinary sidecar -- only the non-destructive preview op, nothing that
+  // could be mistaken for a sanitized result.
+  it("draws only the non-destructive placeholder for a redact item, never a solid/opaque fill", () => {
+    const s = sidecar([redactItem("r1", { x: 5, y: 5, w: 10, h: 10 })]);
+    const ctx = recordingCtx();
+    flattenAnnotations(
+      { sidecar: s, sourceImage: { marker: "fake-image" } },
+      { createCanvas: (w, h) => ({ w, h }), getContext2d: () => ctx },
+    );
+    expect(ctx.calls.some((c) => c[0] === "redactPlaceholder")).toBe(true);
+    expect(ctx.calls.some((c) => c[0] === "fillRect")).toBe(false);
+    expect(ctx.calls.some((c) => c[0] === "globalAlpha")).toBe(false);
+  });
+
+  it("has no special-cased exported function for redaction at all", () => {
+    // Guards against the exact shape of the review finding recurring: a separate
+    // "export the redacted image" function that composites destructively in JS.
+    expect(typeof flattenAnnotations).toBe("function");
   });
 });

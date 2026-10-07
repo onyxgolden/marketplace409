@@ -127,9 +127,74 @@ draw pixels for this feature.
 
 Blur is drawn as a declared region (`blurRect`) only; the actual pixel blur
 is applied by the caller's own compositing pass (e.g. `ctx.filter`), since a
-mock `ctx` cannot meaningfully verify a real blur result. Slice 2 is where
-blur becomes interactive and redaction (an irreversible sanitized
-derivative) is added.
+mock `ctx` cannot meaningfully verify a real blur result.
+
+## Redact: irreversible, not the same thing as blur (Slice 2)
+
+`redact` is its own annotation kind (`AnnotationBody::Redact`, geometry only
+— no color: a fixed, non-caller-chosen sanitizing color is what makes "no
+recoverable pixels" tractable to reason about). Positioning a redact region
+is as reversible as any other sidecar item — move it, delete it, undo — but
+nothing is actually destroyed by saving the sidecar. The sidecar's redact
+items are a **draft**.
+
+**The destructive overwrite happens entirely in Rust, at the trusted export
+boundary — never in JS.** An earlier version of this slice had the webview
+composite an already-redacted buffer and had `export_redacted` trust that
+claim; review correctly rejected that (a caller could send any
+correctly-sized buffer, including one containing the untouched original
+pixels, and it would still be written out as `-redacted.png`). The
+corrected design:
+
+- `ui/annotations-render.js` performs **no destructive pixel work at all**.
+  `resolveDrawOps`'s `"redact"` case only ever produces the non-destructive
+  `redactPlaceholder` op, for live-editing preview. A caller preparing a
+  redaction export calls the same `flattenAnnotations` used for an ordinary
+  export (source image plus ordinary annotations; any `redact` items render
+  only as the preview placeholder) and sends its pixel data to Rust. There
+  is no separate "export a redacted image" function in this module.
+- The Tauri command `export_redacted` is the entire trust boundary. In
+  order: it **re-reads `pngPath` from disk itself** (never a caller's
+  claim); decodes its **actual** dimensions (`png_dimensions`) and checks
+  the sidecar's `canvas` against them (there is no width/height parameter a
+  caller could use to override this); checks the sidecar's source SHA
+  against those same real bytes and refuses a stale sidecar, the same as
+  `load_annotations`/`save_annotations`; confirms the sidecar actually
+  declares at least one `Redact` item (`annotations::has_redaction`);
+  decodes and length-checks the incoming buffer against the real
+  dimensions; then **overwrites every validated `Redact` rectangle in that
+  buffer itself**, with the fixed sanitizing pixel
+  (`annotations::apply_redactions` / `paint_redaction_rect`) —
+  unconditionally, regardless of what the incoming buffer already
+  contained there. Only then does it encode (`encode_rgba`, which never
+  writes metadata chunks at all — only signature/IHDR/IDAT/IEND, so "does
+  not copy source metadata by default" is satisfied by construction) and
+  write to a brand-new, versioned `<stem>-redacted.png`
+  (`annotations::versioned_redacted_stem`, mirroring
+  `ai_edit::versioned_stem`'s convention) via the same `atomic_write` as
+  every other write in this program. The source PNG and its editable
+  sidecar are never opened for writing.
+
+**"No recoverable pixels" is proven, not just argued**, because the
+destructive step is now plain Rust pixel arithmetic on an in-memory buffer:
+`core/src/annotations.rs`'s tests feed `paint_redaction_rect`/
+`apply_redactions` a buffer filled with a hostile, non-black value
+everywhere and assert the declared region becomes exactly the fixed
+sanitizing pixel while everything outside it is untouched.
+`app/src/main.rs`'s `export_redacted` tests go further: they send an
+**unredacted** buffer (every pixel a hostile, non-black value) through the
+real command, then **decode the file the command actually wrote**
+(`decode_own`, since it was produced by this crate's own encoder) and
+assert the redact region's pixels in that output file are the fixed
+sanitizing value — proving the guarantee for what lands on disk, not for an
+in-memory buffer this module happens to construct. Also covered: a stale
+sidecar/source is rejected, and a false `canvas` is rejected even with a
+correct source hash.
+
+Upload semantics (never send the editable sidecar or an unredacted buffer
+once a redact region exists) remain a constraint on *future* upload
+integration, not something this slice wires up — no upload path for
+annotated/redacted captures exists yet.
 
 ## What is not yet wired
 

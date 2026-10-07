@@ -147,10 +147,21 @@ pub enum AnnotationBody {
         text: String,
     },
     /// A region to blur. Reversible while editing (it is just another
-    /// sidecar item); see `docs/annotations.md` for how Slice 2's
-    /// irreversible redaction differs from this.
+    /// sidecar item): a soft visual effect, not a security guarantee. See
+    /// `Redact` and `docs/annotations.md` for the irreversible alternative.
     #[serde(rename_all = "camelCase")]
     Blur { geometry: RectI },
+    /// A region to permanently destroy, not merely cover. Positioning one is
+    /// reversible the same way any sidecar item is (move it, delete it,
+    /// undo), but the sidecar's `redact` items are only a *draft* — nothing
+    /// is actually destroyed by saving the sidecar. Destruction happens
+    /// exactly once, at export: `ui/annotations-render.js`'s
+    /// `exportRedacted` overwrites the region's pixels with an opaque fill
+    /// (not a translucent layer something could see through) in a brand
+    /// new file, `<stem>-redacted.png`, and the source PNG and its
+    /// annotation sidecar are never touched. See `docs/annotations.md`.
+    #[serde(rename_all = "camelCase")]
+    Redact { geometry: RectI },
     #[serde(rename_all = "camelCase")]
     Callout { anchor: PointI, color: Rgba },
 }
@@ -393,7 +404,7 @@ fn validate_body(body: &AnnotationBody, canvas: Canvas) -> Result<(), Annotation
             }
             check_text(text)?;
         }
-        AnnotationBody::Blur { geometry } => {
+        AnnotationBody::Blur { geometry } | AnnotationBody::Redact { geometry } => {
             check_rect_in_canvas(*geometry, canvas)?;
         }
         AnnotationBody::Callout { anchor, .. } => {
@@ -521,6 +532,83 @@ pub fn check_canvas_matches_source(
     }
 }
 
+/// An annotation error enum variant kept here would overstate what this check reports: this is
+/// not validation, just a useful read. Whether a sidecar has anything to redact at all --
+/// `export_redacted` refuses to run with none, so a caller cannot produce a `-redacted.png` that
+/// redacts nothing and mistake that for a real sanitized derivative.
+pub fn has_redaction(sidecar: &AnnotationsSidecar) -> bool {
+    sidecar
+        .items
+        .iter()
+        .any(|item| matches!(item.body, AnnotationBody::Redact { .. }))
+}
+
+/// The fixed sanitizing pixel value every redacted region becomes: opaque black, no transparency.
+/// Not caller-chosen, for the same reason `Redact` carries no color field -- a value something
+/// else gets to pick would widen what has to be trusted. `(r, g, b, a)`.
+pub const REDACTION_PIXEL: (u8, u8, u8, u8) = (0, 0, 0, 255);
+
+/// Overwrites `geometry` with [`REDACTION_PIXEL`] directly in an RGBA buffer, in place. This is
+/// the actual destructive operation for one `Redact` item: a literal overwrite of pixel bytes, not
+/// a drawing instruction a renderer could skip or get wrong -- so the "no recoverable pixels"
+/// guarantee holds regardless of what the buffer contained in that region beforehand (a hostile or
+/// simply unredacted incoming buffer, an incomplete client-side pass, anything). Review finding
+/// (Slice 2): the export boundary must perform this itself rather than trust a caller's claim that
+/// a buffer is already sanitized.
+///
+/// `width`/`height` describe `rgba`'s own layout (`width * height * 4` bytes); `geometry` is
+/// clamped to them as defense in depth, since the caller is expected to have already validated it
+/// against this exact canvas (`validate_sidecar`).
+pub fn paint_redaction_rect(rgba: &mut [u8], width: u32, height: u32, geometry: RectI) {
+    let (r, g, b, a) = REDACTION_PIXEL;
+    let x0 = geometry.x.clamp(0, width as i64) as u32;
+    let y0 = geometry.y.clamp(0, height as i64) as u32;
+    let x1 = geometry.right().clamp(0, width as i64) as u32;
+    let y1 = geometry.bottom().clamp(0, height as i64) as u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let idx = (y as u64 * width as u64 + x as u64) as usize * 4;
+            if idx + 3 < rgba.len() {
+                rgba[idx] = r;
+                rgba[idx + 1] = g;
+                rgba[idx + 2] = b;
+                rgba[idx + 3] = a;
+            }
+        }
+    }
+}
+
+/// Applies [`paint_redaction_rect`] for every `Redact` item in `sidecar`, in place. The one
+/// function that actually performs Slice 2's irreversible destruction; the sidecar contract,
+/// source-binding checks, and the Tauri command around it exist to make sure this runs on the
+/// right pixels, for the right regions, exactly once, at the trusted export boundary -- never on
+/// an unauthenticated claim from the caller that redaction already happened.
+pub fn apply_redactions(rgba: &mut [u8], width: u32, height: u32, sidecar: &AnnotationsSidecar) {
+    for item in &sidecar.items {
+        if let AnnotationBody::Redact { geometry } = &item.body {
+            paint_redaction_rect(rgba, width, height, *geometry);
+        }
+    }
+}
+
+/// Versioned result stem for an exported redaction: the source capture's stem plus `-redacted`,
+/// with a numeric suffix when that stem is taken. Mirrors `ai_edit::versioned_stem` -- each job
+/// kind owns its own naming convention rather than sharing one generic helper.
+pub fn versioned_redacted_stem(source_stem: &str, taken: &dyn Fn(&str) -> bool) -> String {
+    let base = format!("{source_stem}-redacted");
+    if !taken(&base) {
+        return base;
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !taken(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,6 +707,17 @@ mod tests {
                     geometry: RectI {
                         x: 0,
                         y: 0,
+                        w: 30,
+                        h: 30,
+                    },
+                },
+            },
+            Annotation {
+                id: "a6b".to_string(),
+                body: AnnotationBody::Redact {
+                    geometry: RectI {
+                        x: 40,
+                        y: 40,
                         w: 30,
                         h: 30,
                     },
@@ -997,5 +1096,170 @@ mod tests {
         let sidecar = AnnotationsSidecar::new("a".repeat(64), Canvas { w: 800, h: 600 });
         assert!(check_canvas_matches_source(&sidecar, 801, 600).is_err());
         assert!(check_canvas_matches_source(&sidecar, 800, 601).is_err());
+    }
+
+    // ---- Slice 2: redact ----
+
+    fn redact_item(id: &str, geometry: RectI) -> Annotation {
+        Annotation {
+            id: id.to_string(),
+            body: AnnotationBody::Redact { geometry },
+        }
+    }
+
+    #[test]
+    fn a_redact_region_validates_the_same_as_blur() {
+        let s = sidecar_with(vec![redact_item(
+            "r1",
+            RectI {
+                x: 10,
+                y: 10,
+                w: 30,
+                h: 30,
+            },
+        )]);
+        assert!(s.to_json().is_ok());
+    }
+
+    #[test]
+    fn a_zero_area_redact_region_is_rejected() {
+        let s = sidecar_with(vec![redact_item(
+            "r1",
+            RectI {
+                x: 10,
+                y: 10,
+                w: 0,
+                h: 30,
+            },
+        )]);
+        assert!(matches!(
+            s.to_json().unwrap_err(),
+            AnnotationsError::DegenerateGeometry(_)
+        ));
+    }
+
+    #[test]
+    fn a_redact_region_outside_the_canvas_is_rejected() {
+        let s = sidecar_with(vec![redact_item(
+            "r1",
+            RectI {
+                x: 750,
+                y: 10,
+                w: 100,
+                h: 30,
+            },
+        )]);
+        assert!(matches!(
+            s.to_json().unwrap_err(),
+            AnnotationsError::GeometryOutOfBounds(_)
+        ));
+    }
+
+    #[test]
+    fn has_redaction_is_false_with_no_redact_items_and_true_with_one() {
+        let geometry = RectI {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        assert!(!has_redaction(&sidecar_with(vec![])));
+        assert!(!has_redaction(&sidecar_with(vec![Annotation {
+            id: "b1".to_string(),
+            body: AnnotationBody::Blur { geometry },
+        }])));
+        assert!(has_redaction(&sidecar_with(vec![redact_item(
+            "r1", geometry
+        )])));
+    }
+
+    #[test]
+    fn versioned_redacted_stem_appends_a_suffix_only_when_taken() {
+        let never_taken = |_: &str| false;
+        assert_eq!(versioned_redacted_stem("cap-1", &never_taken), "cap-1-redacted");
+        let taken_first = |s: &str| s == "cap-1-redacted";
+        assert_eq!(
+            versioned_redacted_stem("cap-1", &taken_first),
+            "cap-1-redacted-2"
+        );
+        let taken_two = |s: &str| s == "cap-1-redacted" || s == "cap-1-redacted-2";
+        assert_eq!(
+            versioned_redacted_stem("cap-1", &taken_two),
+            "cap-1-redacted-3"
+        );
+    }
+
+    // ---- paint_redaction_rect / apply_redactions: the actual destructive overwrite ----
+
+    fn white_rgba(width: u32, height: u32) -> Vec<u8> {
+        vec![255u8; (width * height * 4) as usize]
+    }
+
+    fn pixel_at(rgba: &[u8], width: u32, x: u32, y: u32) -> (u8, u8, u8, u8) {
+        let i = ((y * width + x) * 4) as usize;
+        (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+    }
+
+    #[test]
+    fn paint_redaction_rect_overwrites_hostile_non_black_pixels_with_the_fixed_sanitizing_value() {
+        // The incoming buffer is "hostile": every pixel is white (255,255,255,255), standing in
+        // for a caller-supplied buffer that never actually redacted anything (an attacker's claim,
+        // or simply a client bug). The guarantee must hold regardless of what was there before.
+        let (w, h) = (10, 10);
+        let mut rgba = white_rgba(w, h);
+        paint_redaction_rect(&mut rgba, w, h, RectI { x: 2, y: 2, w: 3, h: 3 });
+        for y in 2..5 {
+            for x in 2..5 {
+                assert_eq!(pixel_at(&rgba, w, x, y), REDACTION_PIXEL);
+            }
+        }
+    }
+
+    #[test]
+    fn paint_redaction_rect_touches_nothing_outside_its_own_region() {
+        let (w, h) = (10, 10);
+        let mut rgba = white_rgba(w, h);
+        paint_redaction_rect(&mut rgba, w, h, RectI { x: 2, y: 2, w: 3, h: 3 });
+        // Just outside every edge of the rect: still untouched.
+        for (x, y) in [(1, 2), (5, 2), (2, 1), (2, 5), (0, 0), (9, 9)] {
+            assert_eq!(pixel_at(&rgba, w, x, y), (255, 255, 255, 255));
+        }
+    }
+
+    #[test]
+    fn paint_redaction_rect_clamps_to_the_buffer_bounds() {
+        // Defense in depth: geometry extending past the buffer must not panic or write
+        // out of bounds, even though a validated sidecar should never produce this.
+        let (w, h) = (4, 4);
+        let mut rgba = white_rgba(w, h);
+        paint_redaction_rect(&mut rgba, w, h, RectI { x: 2, y: 2, w: 100, h: 100 });
+        assert_eq!(pixel_at(&rgba, w, 3, 3), REDACTION_PIXEL);
+        assert_eq!(pixel_at(&rgba, w, 0, 0), (255, 255, 255, 255));
+    }
+
+    #[test]
+    fn apply_redactions_paints_every_redact_item_and_ignores_every_other_kind() {
+        let (w, h) = (20, 20);
+        let mut rgba = white_rgba(w, h);
+        let sidecar = sidecar_with(vec![
+            redact_item("r1", RectI { x: 0, y: 0, w: 5, h: 5 }),
+            redact_item("r2", RectI { x: 10, y: 10, w: 5, h: 5 }),
+            sample_rect(), // an ordinary annotation; must not be treated as a redaction
+        ]);
+        apply_redactions(&mut rgba, w, h, &sidecar);
+        assert_eq!(pixel_at(&rgba, w, 2, 2), REDACTION_PIXEL);
+        assert_eq!(pixel_at(&rgba, w, 12, 12), REDACTION_PIXEL);
+        // sample_rect()'s region (10,10,w:100,h:50 at the real canvas size in sidecar_with's
+        // default 800x600 canvas) is out of THIS 20x20 buffer's bounds and clamps to nothing; the
+        // real point of this assertion is simpler -- an ordinary rect must never paint black.
+        assert_eq!(pixel_at(&rgba, w, 15, 2), (255, 255, 255, 255));
+    }
+
+    #[test]
+    fn apply_redactions_is_a_no_op_with_no_redact_items() {
+        let (w, h) = (4, 4);
+        let mut rgba = white_rgba(w, h);
+        apply_redactions(&mut rgba, w, h, &sidecar_with(vec![sample_rect()]));
+        assert_eq!(rgba, white_rgba(w, h));
     }
 }
