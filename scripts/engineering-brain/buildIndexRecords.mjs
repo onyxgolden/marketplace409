@@ -15,6 +15,9 @@ import { CLASSIFICATIONS } from "./canonicalDocumentRegistry.mjs";
 
 const HTTP_HANDLER_NAMES = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
+// Tier lookup by id. A registry entry names its tier by id, and that id is the emitted authority.
+const AUTHORITY_BY_ID = new Map(Object.values(AUTHORITY_LEVELS).map((level) => [level.id, level]));
+
 function makeRecord({ sourcePath, sourceType, symbolOrSection, commitSha, content, authorityLevel, version = null, details = null }) {
   return {
     source_path: sourcePath,
@@ -82,6 +85,11 @@ export function buildIndexRecords({ commitSha, files, registry = [] }) {
 
     let sourceType = classifySourceFile(file.path);
     if (!sourceType && registryEntry) {
+      // Fail closed: an authority the indexer does not know is never emitted as a guess.
+      if (!AUTHORITY_BY_ID.has(registryEntry.brain_authority)) {
+        excluded.push({ source_path: file.path, reason: `registry_invalid_authority:${registryEntry.brain_authority}` });
+        continue;
+      }
       sourceType = registryEntry.classification === CLASSIFICATIONS.HISTORICAL ? "historical_document" : "canonical_document";
     }
     if (!sourceType) {
@@ -159,13 +167,13 @@ export function buildIndexRecords({ commitSha, files, registry = [] }) {
     } else if (sourceType === "canonical_document") {
       records.push(makeRecord({
         sourcePath: file.path, sourceType: "canonical_document_file", symbolOrSection: null,
-        commitSha, content: file.content, authorityLevel: AUTHORITY_LEVELS.CANONICAL_DOCUMENT,
+        commitSha, content: file.content, authorityLevel: AUTHORITY_BY_ID.get(registryEntry.brain_authority),
         details: { families: [...registryEntry.families], registry_status: registryEntry.status },
       }));
     } else if (sourceType === "historical_document") {
       records.push(makeRecord({
         sourcePath: file.path, sourceType: "historical_document_file", symbolOrSection: null,
-        commitSha, content: file.content, authorityLevel: AUTHORITY_LEVELS.HISTORICAL_SNAPSHOT,
+        commitSha, content: file.content, authorityLevel: AUTHORITY_BY_ID.get(registryEntry.brain_authority),
         details: { families: [...registryEntry.families], registry_status: registryEntry.status },
       }));
     } else if (sourceType === "package_manifest") {

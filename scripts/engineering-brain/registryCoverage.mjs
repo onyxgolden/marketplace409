@@ -17,8 +17,11 @@ export function registryFingerprint(entries) {
  *   trackedPaths:   every repository path at the commit (the full list, not just files re-read).
  *   indexedPaths:   paths that produced at least one record (fresh or reused).
  *   excludedReasons: Map of path -> reason, for paths excluded during this build.
+ *   emittedAuthorityByPath: Map of path -> Set of authority ids actually emitted for it.
+ *     A registered document whose emitted tier differs from its registry tier is reported:
+ *     the registry and the index must never hold two authority definitions for one document.
  */
-export function registryCoverageIssues({ registry, trackedPaths, indexedPaths, excludedReasons }) {
+export function registryCoverageIssues({ registry, trackedPaths, indexedPaths, excludedReasons, emittedAuthorityByPath = new Map() }) {
   const issues = [];
   for (const entry of registry) {
     if (entry.classification === CLASSIFICATIONS.EXCLUDED) continue;
@@ -26,7 +29,17 @@ export function registryCoverageIssues({ registry, trackedPaths, indexedPaths, e
       issues.push({ path: entry.path, classification: entry.classification, issue: "registered_path_missing" });
       continue;
     }
-    if (indexedPaths.has(entry.path)) continue;
+    if (indexedPaths.has(entry.path)) {
+      const emitted = [...(emittedAuthorityByPath.get(entry.path) ?? [])].sort();
+      if (emitted.some((id) => id !== entry.brain_authority)) {
+        issues.push({
+          path: entry.path,
+          classification: entry.classification,
+          issue: `authority_mismatch:registry=${entry.brain_authority},emitted=${emitted.join("+")}`,
+        });
+      }
+      continue;
+    }
     const reason = excludedReasons.get(entry.path);
     issues.push({
       path: entry.path,

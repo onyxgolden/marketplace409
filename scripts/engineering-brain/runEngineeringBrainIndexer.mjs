@@ -59,12 +59,18 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
   // registered document reused from the previous index is still counted as indexed.
   const indexedPaths = new Set([...freshRecords, ...reusedRecords].map((record) => record.source_path));
   const excludedReasons = new Map(excluded.map((entry) => [entry.source_path, entry.reason]));
+  const emittedAuthorityByPath = new Map();
+  for (const record of [...freshRecords, ...reusedRecords]) {
+    if (!emittedAuthorityByPath.has(record.source_path)) emittedAuthorityByPath.set(record.source_path, new Set());
+    emittedAuthorityByPath.get(record.source_path).add(record.authority_level);
+  }
   const coverageIssues = [
     ...registryCoverageIssues({
       registry,
       trackedPaths: new Set(trackedFiles.map((file) => file.path)),
       indexedPaths,
       excludedReasons,
+      emittedAuthorityByPath,
     }),
     ...validateRegistry(registry).map((issue) => ({ path: "(registry)", classification: null, issue })),
   ];
