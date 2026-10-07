@@ -1,12 +1,20 @@
-# Annotations — sidecar contract, Slice 1 of 4
+# Annotations — sidecar contract, Slices 1–4
 
 FORGE Capture's annotation layer lets a captured image be marked up —
 arrows, boxes, highlights, text, blur regions, and numbered callouts —
-without ever touching the original PNG. This is Slice 1 of a four-slice
-program (annotations → blur/redaction → numbered callouts → durable tags and
-a local library search). Plan and review trail: forge-ai-drop's
+without ever touching the original PNG. This covers the four-slice program
+(annotations → blur/redaction → numbered callouts → durable tags and a local
+library search). Plan and review trail: forge-ai-drop's
 `commands/chatgpt/forge-capture-annotation-plan-rereview.md` and
 `results/chatgpt/forge-capture-annotation-plan-rereview.md` (GO).
+
+Slice 1 built callout numbering as *derived from array order*
+(`AnnotationsSidecar::callout_numbers`), with no stored step/number field.
+Slice 3 added the one remaining piece — a validated reorder
+(`AnnotationsSidecar::move_item`) — fail-closed on an unknown id or an
+out-of-range target index; see its own doc comments in `annotations.rs`.
+Slice 4 (durable tags and the rebuildable library index) is covered in its
+own section below.
 
 ## One authoritative contract
 
@@ -197,6 +205,64 @@ once a redact region exists) remain a constraint on *future* upload
 integration, not something this slice wires up — no upload path for
 annotated/redacted captures exists yet.
 
+## Tags and the library index (Slice 4)
+
+Two more sidecars, each with its own module and lifetime — never conflated
+with each other or with the annotation sidecar above:
+
+- **`core/src/capture_meta.rs`** — durable, user-authored tags. Lives at
+  `<stem>.meta.json`, next to the PNG. Same discipline as `annotations.rs`:
+  a fixed `kind` (`"capture-meta"`), a schema version `parse_meta` rejects
+  if it is anything other than exactly 1, and bounds (`MAX_TAGS = 50`,
+  `MAX_TAG_CHARS = 64`) with validation rejecting empty, overlong, and
+  duplicate tags. This is the one and only place a tag is **originated**.
+  `capture_meta::normalize_tag` trims whitespace; it is *not* applied
+  automatically by `validate_meta`, so a caller cannot be surprised by
+  silent rewriting of what it asked to validate.
+- **`core/src/library_index.rs`** — `library-index.json`, a **derived
+  cache only**. It is never the source of truth for a tag: losing or
+  deleting it never loses a tag, because rebuilding re-reads every
+  capture's own `.meta.json`. `LibraryIndex::build` sorts entries by `stem`
+  before serializing, so the same captures always produce the same bytes
+  regardless of directory-scan order — a prerequisite for the index being
+  diffable/cacheable at all. `search` is a pure, case-insensitive substring
+  match over tags and title.
+
+**Window-title indexing is opt-in, off by default, and caller-supplied per
+call** — `titleIndexingEnabled: bool` is a parameter of
+`rebuild_library_index`, not a stored setting this command reads on its
+own. A caller that never asks for titles can never get them by accident,
+and the index is fully searchable with titles entirely absent (tags alone
+are enough). When titles are off, `LibraryIndexEntry.title` is always
+`None`, indistinguishable from "this capture never had a title" by design
+— a caller with titles off must never be able to infer whether a title
+would have existed.
+
+The Tauri commands:
+
+- `load_capture_tags(pngPath)` reads `<stem>.meta.json` and returns its
+  tags, or `[]` if the file does not exist. A file that exists but fails to
+  parse is a real error, surfaced rather than silently treated as "no
+  tags" — the difference between "never tagged" and "tagged, but the
+  sidecar is now unreadable" matters to a user who thinks they tagged it.
+- `save_capture_tags(pngPath, tags)` normalizes each tag
+  (`capture_meta::normalize_tag`), builds a `CaptureMeta`, and validates it
+  (via `to_json`) before writing anything — a rejected write
+  (duplicate/empty/overlong/too many tags) touches no file. It also refuses
+  outright if the PNG itself does not exist, so a tag sidecar can never be
+  created for a capture that was never actually made.
+- `rebuild_library_index(titleIndexingEnabled)` is a thin wrapper over
+  `rebuild_library_index_in(dir, titleIndexingEnabled)`, split out so tests
+  exercise the real scanning/aggregation logic against a temp directory
+  rather than the live captures directory. It enumerates `.forge.json`
+  stems (the sidecar every capture this app writes already gets), projects
+  each one's tags from its `.meta.json` (a missing or corrupt one is
+  treated as "no tags" for that one capture, not a failed rebuild — a
+  search-convenience index should not go dark because of one bad sidecar),
+  and optionally reads a window title out of the raw `.forge.json` value
+  (`read_window_title`, best-effort — it is not a security boundary, so an
+  unexpected shape there means "no title", never a hard failure either).
+
 ## What is not yet wired
 
 - The interactive drawing UI (mouse-driven creation/editing of annotations)
@@ -210,6 +276,13 @@ annotated/redacted captures exists yet.
   below) and schema-version rejection. What is still untested is the actual
   IPC round trip from JS through Tauri's `invoke` — that needs the real
   webview. Smoke-test that path before relying on it end to end.
+- Same gap for Slice 4: `load_capture_tags`/`save_capture_tags`/
+  `rebuild_library_index` are tested directly as plain functions (the last
+  via `rebuild_library_index_in` against a temp directory, never the real
+  captures directory) against real files on disk, not through a live
+  webview's `invoke`. No tagging UI or library/search UI exists yet either
+  — this slice is the contract and the three commands, not the panel that
+  would call them.
 
 ## Review findings fixed after the first Slice 1 pass
 

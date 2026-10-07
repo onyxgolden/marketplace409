@@ -47,6 +47,13 @@
 //!   `app/src/main.rs`, never parsing or validating a sidecar on its own.
 //!   Pure logic; it draws no pixels (see its own doc comment for why) and
 //!   owns no filesystem, same division as [`ai_edit`] and [`meeting`].
+//! - [`capture_meta`] — durable per-capture tags (Slice 4): a sidecar
+//!   separate from both [`artifact`]'s provenance sidecar and
+//!   [`annotations`]'s annotation sidecar. The source of truth
+//!   [`library_index`] projects from; never the other way round.
+//! - [`library_index`] — the rebuildable local library index (Slice 4): a
+//!   derived cache only, never a source of truth. Window-title indexing is
+//!   opt-in and off by default; search works fully without it.
 
 /// AI Edit job contract: the local spool layout, manifest schema, job-id
 /// validation, status resolution, and versioned result stems. Pure logic;
@@ -54,9 +61,11 @@
 pub mod ai_edit;
 pub mod annotations;
 pub mod artifact;
+pub mod capture_meta;
 pub mod coords;
 pub mod engines;
 pub mod hotkey;
+pub mod library_index;
 pub mod meeting;
 pub mod native;
 pub mod png;
