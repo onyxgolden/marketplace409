@@ -1044,6 +1044,12 @@ fn load_annotations(pngPath: String) -> Result<AnnotationsLoadDto, String> {
     match std::fs::read_to_string(&sidecar_path) {
         Ok(text) => {
             let sidecar = annotations::parse_sidecar(&text).map_err(err)?;
+            // The SHA binding alone only proves these are the bytes the sidecar was drawn
+            // against; it says nothing about whether `canvas` honestly describes their decoded
+            // dimensions. Checked unconditionally, before reporting any binding status, so a
+            // false canvas with a correct hash can never be reported "fresh" and rendered into
+            // the wrong coordinate space (Slice 1 review finding).
+            annotations::check_canvas_matches_source(&sidecar, width, height).map_err(err)?;
             let binding = binding_str(annotations::check_source_binding(&sidecar, &png_bytes));
             Ok(AnnotationsLoadDto {
                 sidecar,
@@ -1080,7 +1086,12 @@ fn load_annotations(pngPath: String) -> Result<AnnotationsLoadDto, String> {
 fn save_annotations(pngPath: String, sidecarJson: String) -> Result<(), String> {
     let png_path = std::path::PathBuf::from(&pngPath);
     let png_bytes = std::fs::read(&png_path).map_err(|e| format!("cannot read source PNG: {e}"))?;
+    let (width, height) = png_dimensions(&png_bytes).map_err(err)?;
     let sidecar = annotations::parse_sidecar(&sidecarJson).map_err(err)?;
+    // Same canvas/dimension check as load_annotations, and for the same reason: a correct source
+    // hash does not prove `canvas` is honest, so a false canvas must be rejected here too, not
+    // just on read.
+    annotations::check_canvas_matches_source(&sidecar, width, height).map_err(err)?;
     if annotations::check_source_binding(&sidecar, &png_bytes) == SourceBinding::Stale {
         return Err(
             "sidecar's source hash does not match the current PNG bytes — refusing to save against pixels it was not drawn against"
@@ -3663,13 +3674,21 @@ mod region_picker_tests {
 #[cfg(test)]
 mod annotations_commands_tests {
     //! `atomic_write` and `annotations_sidecar_path` are plain path/fs
-    //! helpers, so they are tested directly here rather than only through
-    //! the Tauri commands that use them (which need a running app handle).
-    //! `load_annotations`/`save_annotations` themselves are exercised
-    //! end-to-end once the app is actually running; see docs/annotations.md.
+    //! helpers, tested directly. `load_annotations`/`save_annotations` are
+    //! `#[tauri::command]` functions, but neither takes `State`/`AppHandle`,
+    //! so they are ALSO plain functions callable directly in a test, against
+    //! real files on disk and a real encoded PNG (`forge_capture_core::png`)
+    //! -- no running app or webview needed for this much. What genuinely
+    //! does need the live app is the actual IPC round trip from JS; see
+    //! docs/annotations.md for that gap.
 
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+    fn tiny_png(width: u32, height: u32) -> Vec<u8> {
+        let rgba = vec![0u8; (width * height * 4) as usize];
+        forge_capture_core::png::encode_rgba(width, height, &rgba).unwrap()
+    }
 
     // Each test gets its own subdirectory under the OS temp dir, so
     // concurrent `cargo test` runs (and repeated runs leaving stale
@@ -3729,5 +3748,99 @@ mod annotations_commands_tests {
     fn atomic_write_fails_clearly_when_the_directory_does_not_exist() {
         let path = std::path::PathBuf::from("/this/does/not/exist/x.annotations.json");
         assert!(atomic_write(&path, b"x").is_err());
+    }
+
+    #[test]
+    fn load_annotations_accepts_a_sidecar_whose_canvas_matches_the_real_png() {
+        let dir = temp_test_dir("load-canvas-ok");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let sidecar = AnnotationsSidecar::new(hash, annotations::Canvas { w: 10, h: 10 });
+        let json = sidecar.to_json().unwrap();
+        atomic_write(&annotations_sidecar_path(&png_path), json.as_bytes()).unwrap();
+
+        let dto = load_annotations(png_path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(dto.binding, "fresh");
+        assert_eq!((dto.sidecar.canvas.w, dto.sidecar.canvas.h), (10, 10));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_annotations_rejects_a_sidecar_whose_canvas_does_not_match_the_real_png_even_with_a_correct_hash(
+    ) {
+        // Slice 1 review finding: a correct source hash does not prove `canvas` is honest.
+        let dir = temp_test_dir("load-canvas-mismatch");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes); // correct hash for the real 10x10 PNG
+        let sidecar = AnnotationsSidecar::new(hash, annotations::Canvas { w: 9999, h: 9999 }); // false canvas
+        let json = sidecar.to_json().unwrap();
+        atomic_write(&annotations_sidecar_path(&png_path), json.as_bytes()).unwrap();
+
+        let result = load_annotations(png_path.to_string_lossy().into_owned());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("does not match"),
+            "expected a canvas-mismatch error, got: {msg}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_annotations_rejects_a_sidecar_whose_canvas_does_not_match_the_real_png_and_writes_nothing(
+    ) {
+        let dir = temp_test_dir("save-canvas-mismatch");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let sidecar_json = AnnotationsSidecar::new(hash, annotations::Canvas { w: 9999, h: 9999 })
+            .to_json()
+            .unwrap();
+
+        let result = save_annotations(png_path.to_string_lossy().into_owned(), sidecar_json);
+        assert!(result.unwrap_err().contains("does not match"));
+        assert!(
+            !annotations_sidecar_path(&png_path).exists(),
+            "a rejected sidecar must never be written to disk"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_annotations_accepts_and_persists_a_sidecar_whose_canvas_matches() {
+        let dir = temp_test_dir("save-canvas-ok");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let sidecar_json = AnnotationsSidecar::new(hash, annotations::Canvas { w: 10, h: 10 })
+            .to_json()
+            .unwrap();
+
+        save_annotations(png_path.to_string_lossy().into_owned(), sidecar_json.clone()).unwrap();
+        let on_disk = std::fs::read_to_string(annotations_sidecar_path(&png_path)).unwrap();
+        assert_eq!(on_disk, sidecar_json);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_annotations_rejects_schema_version_zero_at_the_command_boundary_too() {
+        let dir = temp_test_dir("save-schema-zero");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let bad_json = format!(
+            r#"{{"schemaVersion":0,"kind":"annotations","sourceSha256":"{hash}","canvas":{{"w":10,"h":10}},"items":[]}}"#
+        );
+
+        let result = save_annotations(png_path.to_string_lossy().into_owned(), bad_json);
+        assert!(result.is_err());
+        assert!(!annotations_sidecar_path(&png_path).exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

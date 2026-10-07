@@ -137,7 +137,25 @@ derivative) is added.
   is not part of Slice 1. This slice is the contract — schema, validation,
   persistence, and the renderer's draw-op resolution/application — not the
   toolbar and pointer-event handling that would call into it.
-- `load_annotations`/`save_annotations` are written and unit-tested
-  (`atomic_write`, path derivation) but not yet exercised against a running
-  app instance — that needs the real webview. Smoke-test before relying on
-  them end to end.
+- `load_annotations`/`save_annotations` are called directly in tests
+  (neither takes `State`/`AppHandle`, so they're plain functions) against
+  real files and real encoded PNGs — including the canvas-mismatch rejection
+  (a sidecar with a correct source hash but a false `canvas`, review finding
+  below) and schema-version rejection. What is still untested is the actual
+  IPC round trip from JS through Tauri's `invoke` — that needs the real
+  webview. Smoke-test that path before relying on it end to end.
+
+## Review findings fixed after the first Slice 1 pass
+
+- **Canvas not bound to the actual source.** The SHA binding alone proves a
+  sidecar was drawn against these exact bytes; it says nothing about whether
+  `canvas` honestly describes their decoded dimensions. A sidecar with a
+  correct hash but a false `canvas` was accepted as "fresh", and the
+  renderer then stretched the real image into the wrong coordinate space.
+  Fixed with `annotations::check_canvas_matches_source`, called by both
+  `load_annotations` and `save_annotations` using the dimensions they decode
+  from the PNG itself — never the sidecar's own claim.
+- **`schemaVersion: 0` was accepted.** The version check only rejected
+  versions *greater than* `ANNOTATIONS_SCHEMA_VERSION`, not versions below
+  it. Since 1 is the only schema that has ever existed, `parse_sidecar` now
+  rejects anything other than exactly 1.

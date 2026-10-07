@@ -216,6 +216,15 @@ pub enum AnnotationsError {
     UnsupportedSchemaVersion { found: u32 },
     MissingSchemaVersion,
     BadCanvas { w: u32, h: u32 },
+    /// A sidecar's `canvas` does not equal the actual source PNG's decoded dimensions. The SHA
+    /// binding alone does not catch this: a matching hash only proves the content bytes are the
+    /// ones the sidecar was drawn against, not that `canvas` honestly describes them. Review
+    /// finding (Slice 1): a sidecar with a correct hash but a false `canvas` was accepted as
+    /// fresh, and the renderer then stretched the real image into the wrong coordinate space.
+    CanvasDoesNotMatchSource {
+        declared: (u32, u32),
+        actual: (u32, u32),
+    },
     EmptyId,
     DuplicateId(String),
     TooManyItems { count: usize },
@@ -244,6 +253,13 @@ impl std::fmt::Display for AnnotationsError {
             }
             AnnotationsError::BadCanvas { w, h } => {
                 write!(f, "canvas dimensions {w}x{h} must be positive")
+            }
+            AnnotationsError::CanvasDoesNotMatchSource { declared, actual } => {
+                write!(
+                    f,
+                    "sidecar canvas {}x{} does not match the source PNG's actual dimensions {}x{}",
+                    declared.0, declared.1, actual.0, actual.1
+                )
             }
             AnnotationsError::EmptyId => write!(f, "annotation id must not be empty"),
             AnnotationsError::DuplicateId(id) => write!(f, "duplicate annotation id: {id}"),
@@ -425,7 +441,12 @@ pub fn parse_sidecar(input: &str) -> Result<AnnotationsSidecar, AnnotationsError
         .get("schemaVersion")
         .and_then(|v| v.as_u64())
         .ok_or(AnnotationsError::MissingSchemaVersion)?;
-    if version > ANNOTATIONS_SCHEMA_VERSION as u64 {
+    // Not `>`: version 1 is the only schema that has ever existed, so anything other than
+    // exactly 1 -- including 0 -- is unsupported. `>` alone let schemaVersion: 0 through.
+    // When a real v2 ships, this becomes a range/migration check; today there is nothing to
+    // migrate from, so accepting anything but the current version would be accepting a schema
+    // this build has never defined.
+    if version != ANNOTATIONS_SCHEMA_VERSION as u64 {
         return Err(AnnotationsError::UnsupportedSchemaVersion {
             found: version as u32,
         });
@@ -475,6 +496,28 @@ pub fn check_source_binding(sidecar: &AnnotationsSidecar, source_bytes: &[u8]) -
         SourceBinding::Fresh
     } else {
         SourceBinding::Stale
+    }
+}
+
+/// A sidecar binds to a source by content hash ([`check_source_binding`]), but the hash alone
+/// says nothing about `canvas`: a correct hash only proves the bytes are the ones the sidecar was
+/// drawn against, not that `canvas` honestly describes their decoded dimensions. A sidecar with a
+/// correct hash and a false `canvas` previously passed as "fresh" and was rendered into the wrong
+/// coordinate space — this is the second, independent check a caller must run (both `load` and
+/// `save` call it; see `app/src/main.rs`), using the dimensions it decodes from the PNG itself,
+/// never the sidecar's own claim.
+pub fn check_canvas_matches_source(
+    sidecar: &AnnotationsSidecar,
+    actual_width: u32,
+    actual_height: u32,
+) -> Result<(), AnnotationsError> {
+    if sidecar.canvas.w == actual_width && sidecar.canvas.h == actual_height {
+        Ok(())
+    } else {
+        Err(AnnotationsError::CanvasDoesNotMatchSource {
+            declared: (sidecar.canvas.w, sidecar.canvas.h),
+            actual: (actual_width, actual_height),
+        })
     }
 }
 
@@ -606,6 +649,17 @@ mod tests {
         let future = r#"{"schemaVersion":2,"kind":"annotations","sourceSha256":"x","canvas":{"w":1,"h":1},"items":[]}"#;
         let err = parse_sidecar(future).unwrap_err();
         assert_eq!(err, AnnotationsError::UnsupportedSchemaVersion { found: 2 });
+    }
+
+    #[test]
+    fn schema_version_zero_fails_closed() {
+        // Slice 1 review finding: `version > ANNOTATIONS_SCHEMA_VERSION` alone let 0 through.
+        // 1 is the only schema that has ever existed, so 0 is exactly as unsupported as 2.
+        let bad = r#"{"schemaVersion":0,"kind":"annotations","sourceSha256":"x","canvas":{"w":1,"h":1},"items":[]}"#;
+        assert_eq!(
+            parse_sidecar(bad).unwrap_err(),
+            AnnotationsError::UnsupportedSchemaVersion { found: 0 }
+        );
     }
 
     #[test]
@@ -905,5 +959,43 @@ mod tests {
         let sidecar = AnnotationsSidecar::new(source_sha256_hex(&bytes), canvas());
         bytes[0] ^= 0x01;
         assert_eq!(check_source_binding(&sidecar, &bytes), SourceBinding::Stale);
+    }
+
+    #[test]
+    fn canvas_matching_the_actual_source_dimensions_is_accepted() {
+        let sidecar = AnnotationsSidecar::new("a".repeat(64), canvas()); // canvas() is 800x600
+        assert_eq!(check_canvas_matches_source(&sidecar, 800, 600), Ok(()));
+    }
+
+    #[test]
+    fn a_sidecar_whose_canvas_does_not_match_the_actual_source_is_rejected_even_with_a_correct_hash(
+    ) {
+        // Slice 1 review finding: the source SHA matching only proves the sidecar was drawn
+        // against these exact bytes, not that `canvas` honestly describes their dimensions. A
+        // sidecar claiming a false canvas, with a correct hash for the real (differently-sized)
+        // source, must still be rejected.
+        let real_bytes = b"pretend png bytes, 10x10 say";
+        let sidecar = AnnotationsSidecar::new(
+            source_sha256_hex(real_bytes),
+            Canvas { w: 9999, h: 9999 }, // false: the real source is NOT 9999x9999
+        );
+        assert_eq!(
+            check_source_binding(&sidecar, real_bytes),
+            SourceBinding::Fresh
+        );
+        assert_eq!(
+            check_canvas_matches_source(&sidecar, 10, 10),
+            Err(AnnotationsError::CanvasDoesNotMatchSource {
+                declared: (9999, 9999),
+                actual: (10, 10),
+            })
+        );
+    }
+
+    #[test]
+    fn a_canvas_mismatch_in_either_dimension_alone_is_rejected() {
+        let sidecar = AnnotationsSidecar::new("a".repeat(64), Canvas { w: 800, h: 600 });
+        assert!(check_canvas_matches_source(&sidecar, 801, 600).is_err());
+        assert!(check_canvas_matches_source(&sidecar, 800, 601).is_err());
     }
 }
