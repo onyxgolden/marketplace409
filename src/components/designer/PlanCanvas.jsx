@@ -35,7 +35,7 @@ import { measureAreaSummary } from "@/domains/roomDesigner/measureArea";
 import { formatArea } from "@/domains/roomDesigner/homeQuantities";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
-import { nearestConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
+import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
   FURNITURE_MAX_SIZE_IN,
@@ -629,7 +629,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
       // A nearby equipment nozzle wins over grid/ortho snapping so the run
       // ends exactly on the connection anchor.
-      const nozzle = nearestConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale);
+      const nozzle = nearestVisibleConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale, layerVisible);
       setPipePreview((prev) => {
         const next = prev ? [...prev] : [];
         const last = next[next.length - 1];
@@ -882,7 +882,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (tool === "pipe" && !drag) {
       const plan = toPlan(screen);
       const { point } = snapPoint(plan, { ...snapOptions, snapRadiusIn: 9 });
-      const nozzle = nearestConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale);
+      const nozzle = nearestVisibleConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale, layerVisible);
       const last = pipePreview?.[pipePreview.length - 1];
       setHoverPoint(nozzle ? { x: nozzle.x, y: nozzle.y } : last && orthoSnap ? applyOrthoSnap(last, point) : point);
       return;
@@ -1023,7 +1023,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       // An END vertex dropped near a nozzle lands exactly on it (and attaches).
       const run = (design.pipes || []).find((p) => p.id === drag.pipeId);
       const isEnd = run && (drag.index === 0 || drag.index === run.points.length - 1);
-      const nozzle = isEnd ? nearestConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale) : null;
+      const nozzle = isEnd ? nearestVisibleConnectionAnchor(design, plan, ANCHOR_SNAP_PX / view.scale, layerVisible) : null;
       const point = nozzle ? { x: nozzle.x, y: nozzle.y } : gridPoint;
       dispatch({ type: "MOVE_PIPE_VERTEX", pipeId: drag.pipeId, index: drag.index, point, coalesce: `move-pipe-vertex:${drag.pipeId}:${drag.index}` });
     }
