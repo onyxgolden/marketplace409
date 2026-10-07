@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import {
+  MAX_NAMED_VIEWS,
+  addNamedView,
+  nextViewName,
+  poseFromCamera,
+  removeNamedView,
+} from "@/domains/roomDesigner/namedCameraViews";
 import {
   buildThreeScene,
   highlightKeysForSelection,
@@ -624,6 +631,27 @@ export default function DesignerViewport3D({
   // first-person). Only one controls object is ever active; see the setup
   // effect and setCameraModeAndSync below.
   const [cameraMode, setCameraModeState] = useState("orbit");
+  // Named camera views (session only; see namedCameraViews.js). Saving and
+  // recalling need an orbit target, so they are offered in Orbit and Dollhouse,
+  // never Walk or Fly (PointerLockControls has no target to return to).
+  const [namedViews, setNamedViews] = useState([]);
+  const canUseNamedViews = cameraMode === "orbit" || cameraMode === "dollhouse";
+  const saveNamedView = useCallback(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls?.target) return;
+    setNamedViews((views) => addNamedView(views, nextViewName(views), poseFromCamera(camera, controls.target)));
+  }, []);
+  const recallNamedView = useCallback((view) => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls?.target) return;
+    const { position, target } = view.pose;
+    camera.position.set(position.x, position.y, position.z);
+    controls.target.set(target.x, target.y, target.z);
+    controls.update();
+  }, []);
+  const deleteNamedView = useCallback((id) => setNamedViews((views) => removeNamedView(views, id)), []);
   const cameraModeRef = useRef("orbit");
   const pointerLockControlsRef = useRef(null);
   const [pointerLocked, setPointerLocked] = useState(false);
@@ -1900,6 +1928,45 @@ export default function DesignerViewport3D({
           ))}
         </div>
       </div>
+      {/* Named camera views: save the current angle, return to it later.
+          Bottom-left, away from the mode switcher and the navigation cluster.
+          Hidden in Walk and Fly, where there is no orbit target to return to. */}
+      {canUseNamedViews && (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[60%] flex-col gap-1">
+          <div className="pointer-events-auto flex flex-wrap items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/80 p-1.5 shadow-lg">
+            <button
+              type="button"
+              onClick={saveNamedView}
+              disabled={namedViews.length >= MAX_NAMED_VIEWS}
+              title={namedViews.length >= MAX_NAMED_VIEWS ? "Saved view limit reached" : "Save this camera angle"}
+              className="rounded px-2 py-1 text-xs font-medium text-slate-200 hover:bg-slate-800/90 disabled:opacity-40"
+            >
+              Save view
+            </button>
+            {namedViews.map((view) => (
+              <span key={view.id} className="flex items-center rounded bg-slate-800/90">
+                <button
+                  type="button"
+                  onClick={() => recallNamedView(view)}
+                  title={`Return to ${view.name}`}
+                  className="px-2 py-1 text-xs text-slate-100 hover:text-white"
+                >
+                  {view.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteNamedView(view.id)}
+                  aria-label={`Delete ${view.name}`}
+                  title={`Delete ${view.name}`}
+                  className="px-1.5 py-1 text-xs text-slate-400 hover:text-rose-300"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {/* On-screen navigation cluster: labels, record, reset view. Sits BELOW
           the ViewCube gizmo (rendered into the canvas itself, top-right
           corner) so the two never overlap. pointer-events-none on the
