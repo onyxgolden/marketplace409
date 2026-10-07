@@ -10,6 +10,8 @@
 //   docs/governance/FORGE_DOCUMENT_OWNERSHIP.md  (canonical owner per concept, §5–§13)
 //   docs/governance/FORGE_DOCUMENTATION_INDEX.md (authority classes §7, lifecycle statuses §6)
 
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { AUTHORITY_LEVELS } from "./authorityLevels.mjs";
 
 export const CLASSIFICATIONS = Object.freeze({
@@ -38,6 +40,7 @@ export const EXPECTED_FAMILIES = Object.freeze({
   product_roadmap: CLASSIFICATIONS.CANONICAL,
   vision_north_star: CLASSIFICATIONS.CANONICAL,
   existing_forge_sync: CLASSIFICATIONS.CANONICAL,
+  ai_engineering_organization: CLASSIFICATIONS.CANONICAL,
   executive_bootstrap: CLASSIFICATIONS.HISTORICAL,
   documentation_bootstrap: CLASSIFICATIONS.HISTORICAL,
 });
@@ -465,7 +468,204 @@ const ENTRIES = [
     rationale: "Not indexed today and outside this slice. Excluded, not dropped: decide whether it joins the synchronized set.",
     reason: "outside_current_sync_pattern",
   },
+  // ---- Canonical: AI Engineering Organization (ownership map §9 names it; index §3 lists each manual) ----
+  ...[
+    ["docs/ai-engineering-organization/README.md", "AI Engineering Organization index"],
+    ["docs/ai-engineering-organization/01-ai-organization-charter/AI_ORGANIZATION_CHARTER.md", "Roles and charter"],
+    ["docs/ai-engineering-organization/02-governance-authority-matrix/GOVERNANCE_AUTHORITY_MATRIX.md", "Authority delegation"],
+    ["docs/ai-engineering-organization/03-operations-control-center/OPERATIONS_CONTROL_CENTER.md", "Operational procedures"],
+    ["docs/ai-engineering-organization/04-engineering-standards/ENGINEERING_STANDARDS.md", "Engineering standards"],
+    ["docs/ai-engineering-organization/05-agent-framework/AGENT_FRAMEWORK.md", "Agent framework"],
+    ["docs/ai-engineering-organization/06-memory-knowledge-management/MEMORY_KNOWLEDGE_MANAGEMENT.md", "Organizational memory"],
+    ["docs/ai-engineering-organization/07-incident-response/INCIDENT_RESPONSE_MANUAL.md", "Incident management"],
+    ["docs/ai-engineering-organization/08-validation-quality/VALIDATION_QUALITY_MANUAL.md", "Validation"],
+    ["docs/ai-engineering-organization/09-project-management-standard/PROJECT_MANAGEMENT_STANDARD.md", "Project management"],
+    ["docs/ai-engineering-organization/10-knowledge-base-index/KNOWLEDGE_BASE_INDEX.md", "Knowledge base index"],
+  ].map(([path, topic]) => ({
+    path,
+    families: ["ai_engineering_organization"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "Draft",
+    evidence: `${OWNER_MAP} §9 (AI Engineering Organization owns ${topic.toLowerCase()}); docs/governance/FORGE_DOCUMENTATION_INDEX.md §3 lists it.`,
+    rationale: "Owned by the AI Engineering Organization. Draft status is a lifecycle state and does not remove ownership.",
+  })),
+
+  // ---- Canonical: architecture, engineering control, and product governance named by the index/owner map ----
+  {
+    path: "docs/architecture/FORGE_ENGINEERING_CONTROL_CENTER.md",
+    families: ["forge_os_architecture_governance"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "Active",
+    evidence: `${OWNER_MAP} §5 (supporting operational owner); docs/governance/FORGE_DOCUMENTATION_INDEX.md lists it as primary.`,
+    rationale: "Live engineering execution control. Operational authority, recorded at the synchronized tier.",
+  },
+  {
+    path: "docs/architecture/ARCHITECTURE_DECISIONS.md",
+    families: ["forge_os_architecture_governance"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "reviewed_decision",
+    status: "not stated in header",
+    evidence: "docs/governance/FORGE_DOCUMENTATION_INDEX.md lists it as an architecture decision record.",
+    rationale: "Architecture decision record. Reviewed decisions rank above synchronized summaries.",
+  },
+  {
+    path: "docs/architecture/FORGE_GUARD_SYSTEM.md",
+    families: ["forge_os_architecture_governance"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "Mandatory",
+    evidence: "Header: Status 'Mandatory'. docs/governance/FORGE_DOCUMENTATION_INDEX.md lists it as primary.",
+    rationale: "Mandatory guard rules.",
+  },
+  {
+    path: "docs/forge-os/architecture/FORGE_DOCUMENT_LIFECYCLE.md",
+    families: ["forge_os_architecture_governance"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "Draft",
+    evidence: "Header: 'Authority: Derived from FORGE OS Constitution'. Defines Draft, Reviewed, Approved, Superseded semantics.",
+    rationale: "Lifecycle semantics for every governed document. Derived from the FORGE OS Constitution, so it is canonical; Draft is its own lifecycle state.",
+  },
+  {
+    path: "docs/product/FORGE_PRODUCT_RESEARCH_STANDARD.md",
+    families: ["product_operating_system"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "not stated in header",
+    evidence: `${OWNER_MAP} §6 (Product Research Standard); index lists it as primary.`,
+    rationale: "Research standard named by the owner map.",
+  },
+  {
+    path: "docs/product/FORGE_PRODUCT_GLOSSARY.md",
+    families: ["product_operating_system"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "not stated in header",
+    evidence: `${OWNER_MAP} §6 (Product Glossary).`,
+    rationale: "Terminology owner, named by the owner map.",
+  },
+  {
+    path: "docs/product/FORGE_TIMELINE.md",
+    families: ["product_roadmap"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "Visionary",
+    evidence: `${OWNER_MAP} §6 (Product Timeline).`,
+    rationale: "Product timeline owner. Visionary lifecycle status does not remove ownership.",
+  },
+  {
+    path: "docs/product/FORGE_IDEA_INCUBATOR.md",
+    families: ["product_operating_system"],
+    classification: CLASSIFICATIONS.CANONICAL,
+    brain_authority: "synchronized_document",
+    status: "Active",
+    evidence: `${OWNER_MAP} §6 (Active Idea Development).`,
+    rationale: "Active idea development owner, named by the owner map.",
+  },
+
+  // ---- Historical: stale checkpoint superseded for current status by FORGE_STATUS.md ----
+  {
+    path: "docs/architecture/FORGE_FEATURE_MANIFEST.md",
+    families: ["forge_os_architecture_governance"],
+    classification: CLASSIFICATIONS.HISTORICAL,
+    brain_authority: "historical_snapshot",
+    status: "Checkpoint",
+    evidence: "Header: 'Status checkpoint after Step 15. Feature table below is unverified since Step 15 - see FORGE_STATUS.md for current capability status.'",
+    rationale: "Point-in-time checkpoint. Current capability status belongs to FORGE_STATUS.md.",
+  },
+
+  // ---- Excluded / unresolved: significant but no owner in the map or index (decision required) ----
+  {
+    path: "docs/forge-os/architecture/WORKSPACE_MODEL.md",
+    families: [],
+    classification: CLASSIFICATIONS.EXCLUDED,
+    brain_authority: null,
+    status: "Draft",
+    evidence: "Not named in FORGE_DOCUMENT_OWNERSHIP.md or FORGE_DOCUMENTATION_INDEX.md. Header status Draft only.",
+    rationale: "Authority unresolved. Not invisible: it is reported as excluded until someone assigns an owner.",
+    reason: "authority_unresolved_no_owner",
+  },
+  {
+    path: "docs/architecture/FORGE_STARTUP_CHECKLIST.md",
+    families: [],
+    classification: CLASSIFICATIONS.EXCLUDED,
+    brain_authority: null,
+    status: "Mandatory",
+    evidence: "Header: Status 'Mandatory'. Not named in FORGE_DOCUMENT_OWNERSHIP.md or the documentation index.",
+    rationale: "Mandatory checklist with no owner in the map. Excluded pending a decision whether it is canonical.",
+    reason: "authority_unresolved_no_owner",
+  },
+  {
+    path: "docs/product/FORGE_DESIGN_PRINCIPLES.md",
+    families: [],
+    classification: CLASSIFICATIONS.EXCLUDED,
+    brain_authority: null,
+    status: "not stated in header",
+    evidence: "Not named in FORGE_DOCUMENT_OWNERSHIP.md or FORGE_DOCUMENTATION_INDEX.md.",
+    rationale: "Product design principles with no owner in the map. Excluded pending a decision.",
+    reason: "authority_unresolved_no_owner",
+  },
+  ...[
+    "docs/product/FORGE_RENTAL_FIRST_TENANT_RUNBOOK.md",
+    "docs/product/FORGE_RENTAL_MANAGER_PARITY_PLAN.md",
+    "docs/product/FORGE_TRADING_ARCHITECTURE_AND_PHASED_PLAN.md",
+    "docs/product/FORGE_TRADING_IMPLEMENTATION_HANDOFF_PROMPTS.md",
+    "docs/product/FORGE_TRADING_TR05_LEDGER_AUTHORITY.md",
+    "docs/product/FORGE_TRADING_TR0_DISCOVERY_AND_CONTRACTS.md",
+    "docs/product/FORGE_TRADING_TR1A_VENDOR_DECISION_REVIEW.md",
+  ].map((path) => ({
+    path,
+    families: [],
+    classification: CLASSIFICATIONS.EXCLUDED,
+    brain_authority: null,
+    status: "module plan",
+    evidence: "Module-specific plan (rental or trading) named by filename; not referenced by the owner map or documentation index.",
+    rationale: "Module plan outside this program's governance and OS scope. Explicitly excluded, not dropped.",
+    reason: "module_plan_outside_scope",
+  })),
 ];
+
+// The declared discovery scope: every repository document that is governance, product, or
+// architecture material for this program. A document matching a pattern below MUST have a registry
+// entry (canonical, historical, or excluded). The regression test enumerates the scope from disk, so a
+// new sibling cannot fall outside the registry silently.
+export const GOVERNED_SCOPE_PATTERNS = Object.freeze([
+  /^docs\/product\/FORGE_[A-Z0-9_]+\.md$/,
+  /^docs\/architecture\/FORGE_[A-Z0-9_]+\.md$/,
+  /^docs\/architecture\/ARCHITECTURE_DECISIONS\.md$/,
+  /^docs\/architecture\/synchronized\/FORGE_[A-Z0-9_]+\.md$/,
+  /^docs\/forge-os\/architecture\/[A-Z0-9_]+\.md$/,
+  /^docs\/governance\/FORGE_[A-Z0-9_]+\.md$/,
+  /^docs\/theory\/FORGE_[A-Z0-9_]+\.md$/,
+  /^docs\/ai-engineering-organization\/.+\.md$/,
+  /^FORGE_CONSTITUTION\.md$/,
+  /^ROADMAP\.md$/,
+]);
+
+/** Repository-relative paths in the declared scope, found on disk under `repoRoot`. Sorted. */
+export function discoverGovernedDocuments(repoRoot) {
+  const found = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(join(repoRoot, dir))) {
+      const rel = dir ? `${dir}/${name}` : name;
+      if (statSync(join(repoRoot, rel)).isDirectory()) walk(rel);
+      else found.push(rel);
+    }
+  };
+  walk("docs");
+  for (const root of ["FORGE_CONSTITUTION.md", "ROADMAP.md"]) {
+    if (existsSync(join(repoRoot, root))) found.push(root);
+  }
+  return found.filter((p) => GOVERNED_SCOPE_PATTERNS.some((re) => re.test(p))).sort();
+}
+
+/** Governed documents in `discoveredPaths` that no registry entry covers. Sorted. */
+export function findUnregisteredGoverned(entries, discoveredPaths) {
+  const registered = new Set(entries.map((e) => e.path));
+  return [...discoveredPaths].filter((p) => !registered.has(p)).sort();
+}
 
 // Named in FORGE_DOCUMENT_OWNERSHIP.md but absent from the repository. They are NOT registered,
 // because a registry entry must point at a real file. The coverage report should show them.

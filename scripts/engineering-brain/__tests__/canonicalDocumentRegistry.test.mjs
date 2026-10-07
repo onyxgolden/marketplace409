@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import {
   CLASSIFICATIONS,
   EXPECTED_FAMILIES,
+  discoverGovernedDocuments,
   findMissingRegisteredPaths,
+  findUnregisteredGoverned,
   getRegistry,
   renderRegistry,
   sortRegistry,
@@ -156,15 +158,72 @@ describe("canonical document registry: real contents", () => {
     }
   });
 
-  it("keeps the Executive Bootstrap below every canonical document in authority", () => {
+  // Slice 1 checks the classification only. Ranking order is tested with the indexing slice.
+  it("classifies the Executive Bootstrap as historical (ranking is tested in the indexing slice)", () => {
     const executive = getRegistry().find((e) => e.path === "docs/architecture/FORGE_EXECUTIVE_BOOTSTRAP.md");
     expect(executive.classification).toBe(CLASSIFICATIONS.HISTORICAL);
+    expect(executive.brain_authority).toBe("historical_snapshot");
   });
 
   it("names the owner-map references that are missing, without registering them", () => {
     const registry = getRegistry();
     expect(registry.some((e) => e.path === "docs/governance/FORGE_IDEA_REGISTER.md")).toBe(false);
     expect(registry.some((e) => e.path === "docs/governance/FORGE_KNOWLEDGE_ARCHITECTURE.md")).toBe(false);
+  });
+});
+
+describe("canonical document registry: completeness of the governed scope", () => {
+  // The regression that stops a new governed document from silently falling outside the registry.
+  // The scope is enumerated from disk, so a new FORGE_*.md under a declared directory fails this test
+  // until it gets an explicit canonical, historical, or excluded entry.
+  it("every document in the declared governed scope has a registry entry", () => {
+    const discovered = discoverGovernedDocuments(REPO_ROOT);
+    expect(discovered.length).toBeGreaterThan(0);
+    expect(findUnregisteredGoverned(getRegistry(), discovered)).toEqual([]);
+  });
+
+  it("the detector catches a governed document that has no entry", () => {
+    const entries = getRegistry().filter((e) => e.path !== "docs/forge-os/architecture/WORKSPACE_MODEL.md");
+    const discovered = discoverGovernedDocuments(REPO_ROOT);
+    expect(findUnregisteredGoverned(entries, discovered)).toEqual(["docs/forge-os/architecture/WORKSPACE_MODEL.md"]);
+  });
+
+  it("the detector catches a brand-new governed document in a synthetic scope", () => {
+    expect(findUnregisteredGoverned(getRegistry(), ["docs/product/FORGE_NEW_SIBLING.md"]))
+      .toEqual(["docs/product/FORGE_NEW_SIBLING.md"]);
+  });
+
+  it("names the documents the review said were invisible, and they now have explicit entries", () => {
+    const registry = getRegistry();
+    const byPath = new Map(registry.map((e) => [e.path, e]));
+    const named = [
+      "docs/forge-os/architecture/WORKSPACE_MODEL.md",
+      "docs/forge-os/architecture/FORGE_DOCUMENT_LIFECYCLE.md",
+      "docs/architecture/FORGE_ENGINEERING_CONTROL_CENTER.md",
+      "docs/architecture/ARCHITECTURE_DECISIONS.md",
+      "docs/architecture/FORGE_GUARD_SYSTEM.md",
+      "docs/product/FORGE_PRODUCT_RESEARCH_STANDARD.md",
+    ];
+    for (const path of named) {
+      expect(byPath.has(path), path).toBe(true);
+    }
+    expect(byPath.get("docs/forge-os/architecture/FORGE_DOCUMENT_LIFECYCLE.md").classification)
+      .toBe(CLASSIFICATIONS.CANONICAL);
+    expect(byPath.get("docs/forge-os/architecture/WORKSPACE_MODEL.md").classification)
+      .toBe(CLASSIFICATIONS.EXCLUDED);
+  });
+
+  it("every excluded entry states why, so exclusions are reviewable", () => {
+    for (const e of getRegistry().filter((x) => x.classification === CLASSIFICATIONS.EXCLUDED)) {
+      expect(typeof e.reason, e.path).toBe("string");
+      expect(e.reason.length, e.path).toBeGreaterThan(0);
+    }
+  });
+
+  it("the declared scope patterns cover the directories the index names", () => {
+    expect(discoverGovernedDocuments(REPO_ROOT).some((p) => p.startsWith("docs/ai-engineering-organization/"))).toBe(true);
+    expect(discoverGovernedDocuments(REPO_ROOT).some((p) => p.startsWith("docs/forge-os/architecture/"))).toBe(true);
+    expect(discoverGovernedDocuments(REPO_ROOT).some((p) => p.startsWith("docs/product/"))).toBe(true);
   });
 });
 
