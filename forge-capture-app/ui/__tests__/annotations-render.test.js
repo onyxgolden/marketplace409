@@ -107,6 +107,23 @@ describe("resolveDrawOps", () => {
     expect(resolveDrawOps(after).map((o) => o.number)).toEqual([1, 2]);
   });
 
+  it("reordering the items array renumbers callouts at render with no stored number", () => {
+    // Mirrors the Rust move_item: the last callout moves to the front by
+    // array position; the renderer derives 1..N from the new order.
+    const items = [
+      { id: "c1", kind: "callout", anchor: { x: 1, y: 1 }, color: red },
+      { id: "c2", kind: "callout", anchor: { x: 2, y: 2 }, color: red },
+      { id: "c3", kind: "callout", anchor: { x: 3, y: 3 }, color: red },
+    ];
+    const moved = [items[2], items[0], items[1]];
+    const ops = resolveDrawOps(sidecar(moved)).filter((o) => o.op === "callout");
+    expect(ops.map((o) => [o.id, o.number])).toEqual([
+      ["c3", 1],
+      ["c1", 2],
+      ["c2", 3],
+    ]);
+  });
+
   it("skips an item of an unknown kind rather than guessing how to draw it", () => {
     const s = sidecar([{ id: "a1", kind: "future-kind-v2", color: red }]);
     expect(resolveDrawOps(s)).toEqual([]);

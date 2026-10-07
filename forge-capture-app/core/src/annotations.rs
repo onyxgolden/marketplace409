@@ -219,14 +219,51 @@ impl AnnotationsSidecar {
             .map(|(i, item)| (item.id.clone(), i as u32 + 1))
             .collect()
     }
+
+    /// Moves the annotation with `id` to `new_index` in the `items` array
+    /// (0-based; `items.len() - 1` at most). This is the reorder half of
+    /// Slice 3's "reorder/delete/insert" — delete and insert are plain
+    /// array operations by the caller, but moving an item by stable id is
+    /// where an off-by-one or a silent no-op would corrupt the callout
+    /// order, so it lives here, validated, next to the numbering it feeds.
+    /// Because displayed numbers are always derived by
+    /// [`callout_numbers`](Self::callout_numbers), a move automatically
+    /// renumbers every affected callout at the next render; no stored
+    /// number can go stale because none exists.
+    pub fn move_item(&mut self, id: &str, new_index: usize) -> Result<(), AnnotationsError> {
+        let len = self.items.len();
+        if new_index >= len {
+            return Err(AnnotationsError::IndexOutOfBounds {
+                index: new_index,
+                len,
+            });
+        }
+        let from = self
+            .items
+            .iter()
+            .position(|item| item.id == id)
+            .ok_or_else(|| AnnotationsError::UnknownId(id.to_string()))?;
+        if from != new_index {
+            let item = self.items.remove(from);
+            self.items.insert(new_index, item);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnotationsError {
-    KindMismatch { found: String },
-    UnsupportedSchemaVersion { found: u32 },
+    KindMismatch {
+        found: String,
+    },
+    UnsupportedSchemaVersion {
+        found: u32,
+    },
     MissingSchemaVersion,
-    BadCanvas { w: u32, h: u32 },
+    BadCanvas {
+        w: u32,
+        h: u32,
+    },
     /// A sidecar's `canvas` does not equal the actual source PNG's decoded dimensions. The SHA
     /// binding alone does not catch this: a matching hash only proves the content bytes are the
     /// ones the sidecar was drawn against, not that `canvas` honestly describes them. Review
@@ -238,12 +275,23 @@ pub enum AnnotationsError {
     },
     EmptyId,
     DuplicateId(String),
-    TooManyItems { count: usize },
+    TooManyItems {
+        count: usize,
+    },
+    /// `move_item` was asked to move an id the sidecar does not contain.
+    UnknownId(String),
+    /// `move_item` was asked to move to a position outside `0..items.len()`.
+    IndexOutOfBounds {
+        index: usize,
+        len: usize,
+    },
     GeometryOutOfBounds(String),
     DegenerateGeometry(String),
     ZeroStrokeWidth,
     EmptyText,
-    TextTooLong { chars: usize },
+    TextTooLong {
+        chars: usize,
+    },
     Json(String),
 }
 
@@ -274,6 +322,11 @@ impl std::fmt::Display for AnnotationsError {
             }
             AnnotationsError::EmptyId => write!(f, "annotation id must not be empty"),
             AnnotationsError::DuplicateId(id) => write!(f, "duplicate annotation id: {id}"),
+            AnnotationsError::UnknownId(id) => write!(f, "no annotation with id: {id}"),
+            AnnotationsError::IndexOutOfBounds { index, len } => write!(
+                f,
+                "move target index {index} is out of bounds for {len} items"
+            ),
             AnnotationsError::TooManyItems { count } => {
                 write!(f, "{count} annotations exceeds the {MAX_ITEMS} cap")
             }
@@ -1032,6 +1085,88 @@ mod tests {
         );
     }
 
+    fn callout(id: &str, x: i64) -> Annotation {
+        Annotation {
+            id: id.to_string(),
+            body: AnnotationBody::Callout {
+                anchor: PointI { x, y: 1 },
+                color: red(),
+            },
+        }
+    }
+
+    #[test]
+    fn move_item_reorders_callouts_and_renumbers_at_next_render() {
+        let mut s = sidecar_with(vec![callout("c1", 1), callout("c2", 2), callout("c3", 3)]);
+        s.move_item("c3", 0).unwrap(); // last callout to the front
+        assert_eq!(
+            s.items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["c3", "c1", "c2"]
+        );
+        assert_eq!(
+            s.callout_numbers(),
+            vec![
+                ("c3".to_string(), 1),
+                ("c1".to_string(), 2),
+                ("c2".to_string(), 3)
+            ]
+        );
+    }
+
+    #[test]
+    fn move_item_to_its_current_position_is_a_no_op() {
+        let mut s = sidecar_with(vec![callout("c1", 1), callout("c2", 2)]);
+        s.move_item("c1", 0).unwrap();
+        assert_eq!(
+            s.items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["c1", "c2"]
+        );
+        assert_eq!(
+            s.callout_numbers(),
+            vec![("c1".to_string(), 1), ("c2".to_string(), 2)]
+        );
+    }
+
+    #[test]
+    fn move_item_moves_non_callout_items_without_disturbing_numbers() {
+        // A rect between two callouts moves to the end; the callouts keep
+        // their relative order, so their derived numbers do not change.
+        let mut s = sidecar_with(vec![callout("c1", 1), sample_rect(), callout("c2", 2)]);
+        s.move_item("a1", 2).unwrap();
+        assert_eq!(
+            s.items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["c1", "c2", "a1"]
+        );
+        assert_eq!(
+            s.callout_numbers(),
+            vec![("c1".to_string(), 1), ("c2".to_string(), 2)]
+        );
+    }
+
+    #[test]
+    fn move_item_rejects_an_unknown_id() {
+        let mut s = sidecar_with(vec![callout("c1", 1)]);
+        assert_eq!(
+            s.move_item("nope", 0),
+            Err(AnnotationsError::UnknownId("nope".to_string()))
+        );
+        // The sidecar is untouched by the failed move.
+        assert_eq!(s.items.len(), 1);
+    }
+
+    #[test]
+    fn move_item_rejects_an_out_of_bounds_index() {
+        let mut s = sidecar_with(vec![callout("c1", 1), callout("c2", 2)]);
+        assert_eq!(
+            s.move_item("c1", 2),
+            Err(AnnotationsError::IndexOutOfBounds { index: 2, len: 2 })
+        );
+        assert_eq!(
+            s.items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["c1", "c2"]
+        );
+    }
+
     #[test]
     fn source_sha256_matches_a_known_vector() {
         // SHA-256("") — the standard empty-string test vector.
@@ -1176,7 +1311,10 @@ mod tests {
     #[test]
     fn versioned_redacted_stem_appends_a_suffix_only_when_taken() {
         let never_taken = |_: &str| false;
-        assert_eq!(versioned_redacted_stem("cap-1", &never_taken), "cap-1-redacted");
+        assert_eq!(
+            versioned_redacted_stem("cap-1", &never_taken),
+            "cap-1-redacted"
+        );
         let taken_first = |s: &str| s == "cap-1-redacted";
         assert_eq!(
             versioned_redacted_stem("cap-1", &taken_first),
@@ -1207,7 +1345,17 @@ mod tests {
         // or simply a client bug). The guarantee must hold regardless of what was there before.
         let (w, h) = (10, 10);
         let mut rgba = white_rgba(w, h);
-        paint_redaction_rect(&mut rgba, w, h, RectI { x: 2, y: 2, w: 3, h: 3 });
+        paint_redaction_rect(
+            &mut rgba,
+            w,
+            h,
+            RectI {
+                x: 2,
+                y: 2,
+                w: 3,
+                h: 3,
+            },
+        );
         for y in 2..5 {
             for x in 2..5 {
                 assert_eq!(pixel_at(&rgba, w, x, y), REDACTION_PIXEL);
@@ -1219,7 +1367,17 @@ mod tests {
     fn paint_redaction_rect_touches_nothing_outside_its_own_region() {
         let (w, h) = (10, 10);
         let mut rgba = white_rgba(w, h);
-        paint_redaction_rect(&mut rgba, w, h, RectI { x: 2, y: 2, w: 3, h: 3 });
+        paint_redaction_rect(
+            &mut rgba,
+            w,
+            h,
+            RectI {
+                x: 2,
+                y: 2,
+                w: 3,
+                h: 3,
+            },
+        );
         // Just outside every edge of the rect: still untouched.
         for (x, y) in [(1, 2), (5, 2), (2, 1), (2, 5), (0, 0), (9, 9)] {
             assert_eq!(pixel_at(&rgba, w, x, y), (255, 255, 255, 255));
@@ -1232,7 +1390,17 @@ mod tests {
         // out of bounds, even though a validated sidecar should never produce this.
         let (w, h) = (4, 4);
         let mut rgba = white_rgba(w, h);
-        paint_redaction_rect(&mut rgba, w, h, RectI { x: 2, y: 2, w: 100, h: 100 });
+        paint_redaction_rect(
+            &mut rgba,
+            w,
+            h,
+            RectI {
+                x: 2,
+                y: 2,
+                w: 100,
+                h: 100,
+            },
+        );
         assert_eq!(pixel_at(&rgba, w, 3, 3), REDACTION_PIXEL);
         assert_eq!(pixel_at(&rgba, w, 0, 0), (255, 255, 255, 255));
     }
@@ -1242,8 +1410,24 @@ mod tests {
         let (w, h) = (20, 20);
         let mut rgba = white_rgba(w, h);
         let sidecar = sidecar_with(vec![
-            redact_item("r1", RectI { x: 0, y: 0, w: 5, h: 5 }),
-            redact_item("r2", RectI { x: 10, y: 10, w: 5, h: 5 }),
+            redact_item(
+                "r1",
+                RectI {
+                    x: 0,
+                    y: 0,
+                    w: 5,
+                    h: 5,
+                },
+            ),
+            redact_item(
+                "r2",
+                RectI {
+                    x: 10,
+                    y: 10,
+                    w: 5,
+                    h: 5,
+                },
+            ),
             sample_rect(), // an ordinary annotation; must not be treated as a redaction
         ]);
         apply_redactions(&mut rgba, w, h, &sidecar);
