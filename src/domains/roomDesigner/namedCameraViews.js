@@ -22,7 +22,19 @@ export function isCameraPose(pose) {
   return Boolean(pose) && isFiniteVec(pose.position) && isFiniteVec(pose.target);
 }
 
-let nextId = 1;
+/**
+ * The next ID, one above the highest `view-N` already in the list. The list is
+ * the only record of IDs (a module counter would restart after a reload and
+ * collide with IDs saved in the design, so delete could remove two views).
+ */
+export function nextViewId(views) {
+  let highest = 0;
+  for (const v of views) {
+    const match = /^view-(\d+)$/.exec(String(v?.id ?? ""));
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return `view-${highest + 1}`;
+}
 
 /**
  * Add a view, or replace the one with the same name. Returns a new array. A blank
@@ -37,8 +49,7 @@ export function addNamedView(views, rawName, pose) {
     return views.map((v) => (v.id === existing.id ? { ...v, pose: copy } : v));
   }
   if (views.length >= MAX_NAMED_VIEWS) return views;
-  nextId += 1;
-  return [...views, { id: `view-${nextId}`, name, pose: copy }];
+  return [...views, { id: nextViewId(views), name, pose: copy }];
 }
 
 export function removeNamedView(views, id) {

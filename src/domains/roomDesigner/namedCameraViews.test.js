@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_NAMED_VIEWS,
   addNamedView,
@@ -66,6 +66,45 @@ describe("addNamedView", () => {
     expect(JSON.stringify(before)).toBe(snapshot);
   });
 });
+
+describe("view IDs stay unique across a reload", () => {
+  it("a view saved after a reload does not reuse an ID already stored in the design", async () => {
+    // Session 1 saved two views. The design was saved and reloaded, which
+    // gives a fresh module (a counter starting over) and the stored list.
+    const session1 = await loadFreshModule();
+    let views = session1.addNamedView([], "Entry", pose(1));
+    views = session1.addNamedView(views, "Kitchen", pose(2));
+    const stored = JSON.parse(JSON.stringify(views));
+
+    const fresh = await loadFreshModule();
+    const after = fresh.addNamedView(stored, "Garage", pose(3));
+    const ids = after.map((v) => v.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(after).toHaveLength(3);
+  });
+
+  it("deleting a view after a reload removes only that view, not its twin", async () => {
+    const session1 = await loadFreshModule();
+    let views = session1.addNamedView([], "Entry", pose(1));
+    views = session1.addNamedView(views, "Kitchen", pose(2));
+    const fresh = await loadFreshModule();
+    const withNew = fresh.addNamedView(JSON.parse(JSON.stringify(views)), "Garage", pose(3));
+    const garage = withNew.find((v) => v.name === "Garage");
+    const remaining = fresh.removeNamedView(withNew, garage.id);
+    expect(remaining.map((v) => v.name)).toEqual(["Entry", "Kitchen"]);
+  });
+
+  it("the next ID follows the highest stored one, whatever the gap", () => {
+    const stored = [{ id: "view-7", name: "A", pose: pose(1) }];
+    const after = addNamedView(stored, "B", pose(2));
+    expect(after[1].id).toBe("view-8");
+  });
+});
+
+async function loadFreshModule() {
+  vi.resetModules();
+  return import("./namedCameraViews");
+}
 
 describe("removeNamedView", () => {
   it("removes only the view with that id", () => {
