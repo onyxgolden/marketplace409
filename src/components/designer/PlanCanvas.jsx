@@ -31,6 +31,8 @@ import {
   longestPipeSegment,
   pipeRunLengthIn,
 } from "@/domains/roomDesigner/pipingGeometry";
+import { measureAreaSummary } from "@/domains/roomDesigner/measureArea";
+import { formatArea } from "@/domains/roomDesigner/homeQuantities";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
 import { nearestConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
@@ -102,6 +104,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [measureStart, setMeasureStart] = useState(null); // plan-inch point once the Measure tool's first click lands; null = waiting for it
   const [measureLivePoint, setMeasureLivePoint] = useState(null); // live second point while measureStart is set, follows the cursor
   const [measurement, setMeasurement] = useState(null); // {a, b} plan inches — the last COMPLETED measurement, stays visible until a new one starts or the tool changes
+  // Measure tool, Area mode: the corners traced so far (plan inches), the live
+  // corner following the cursor, and the last CLOSED polygon. Like distance,
+  // this is a pure read and never dispatches.
+  const [areaPoints, setAreaPoints] = useState([]);
+  const [areaLivePoint, setAreaLivePoint] = useState(null);
+  const [areaResult, setAreaResult] = useState(null);
   const [pipePreview, setPipePreview] = useState(null); // [points] plan inches while drawing a pipe run
   const [hoverPoint, setHoverPoint] = useState(null); // rubber-band cursor point for the pipe tool
   const [ghost, setGhost] = useState(null); // placement ghost preview (component-local only; never dispatched)
@@ -132,6 +140,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     (layer) => (layerVisibility || {})[layer] !== false,
     [layerVisibility],
   );
+
+  // Leaving the Area mode drops any half-traced polygon and the last closed one.
+  useEffect(() => {
+    if (tool !== "measure-area") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing component-local UI state (never design data) when the active tool changes away from Area, not syncing a derived value.
+      setAreaPoints([]);
+      setAreaLivePoint(null);
+      setAreaResult(null);
+    }
+  }, [tool]);
 
   // Leaving the Measure tool clears any in-progress first click and the
   // last completed result. Without this, switching away mid-measurement and
@@ -519,6 +537,22 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       if (design.underlay) dispatch({ type: "ADD_CALIBRATION_POINT", point: plan });
       return;
     }
+    // Measure, Area mode: each click adds a corner; a click on the first
+    // corner (once there are three) closes the shape. A click after a closed
+    // shape starts a new one. Never dispatched.
+    if (tool === "measure-area") {
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
+      if (areaPoints.length >= 3 && Math.hypot(point.x - areaPoints[0].x, point.y - areaPoints[0].y) <= 9) {
+        setAreaResult(areaPoints);
+        setAreaPoints([]);
+        setAreaLivePoint(null);
+      } else {
+        setAreaResult(null);
+        setAreaPoints([...areaPoints, point]);
+        setAreaLivePoint(point);
+      }
+      return;
+    }
     // Measure: click two points, see the distance. Never dispatched — a
     // pure read, nothing in the design document changes. A third click
     // starts a brand-new measurement rather than chaining off the last
@@ -853,6 +887,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       setHoverPoint(nozzle ? { x: nozzle.x, y: nozzle.y } : last && orthoSnap ? applyOrthoSnap(last, point) : point);
       return;
     }
+    // Measure, Area mode: the live corner follows the cursor while a shape is open.
+    if (tool === "measure-area" && areaPoints.length > 0 && !drag) {
+      const plan = toPlan(screen);
+      const { point } = snapPoint(plan, { ...snapOptions, snapTargets, snapMidpoints: midpointTargets, snapRadiusIn: 9 });
+      setAreaLivePoint(point);
+      return;
+    }
     // Measure tool: after the first click, the live second point follows
     // the cursor (snapped the same way the first click was) until the
     // second click commits it.
@@ -1185,6 +1226,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         setMeasureStart(null);
         setMeasureLivePoint(null);
         setMeasurement(null);
+        setAreaPoints([]);
+        setAreaLivePoint(null);
+        setAreaResult(null);
       }
     };
     const onKeyUp = (e) => {
@@ -2064,6 +2108,40 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
               <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 12} textAnchor="middle" fontSize={13} fontWeight={600} fill="#38bdf8">
                 {feetInchesLabel(distanceIn)}
               </text>
+            </g>
+          );
+        })()}
+        {(() => {
+          // Measure, Area mode. The traced corners and the live corner are a
+          // dashed outline; a closed shape is a filled polygon. Sky blue, like
+          // distance, and never written to the design.
+          if (tool !== "measure-area") return null;
+          const traced = areaPoints.length > 0 ? areaPoints : null;
+          const shape = areaResult;
+          if (!traced && !shape) return null;
+          const corners = shape ?? traced;
+          const outline = shape ? shape : [...traced, ...(areaLivePoint ? [areaLivePoint] : [])];
+          const pts = outline.map((p) => toScreen(p)).map((p) => `${p.x},${p.y}`).join(" ");
+          const summary = measureAreaSummary(corners);
+          const cx = corners.reduce((sum, p) => sum + p.x, 0) / corners.length;
+          const cy = corners.reduce((sum, p) => sum + p.y, 0) / corners.length;
+          const labelAt = toScreen({ x: cx, y: cy });
+          return (
+            <g>
+              {shape ? (
+                <polygon points={pts} fill="#38bdf8" fillOpacity={0.15} stroke="#38bdf8" strokeWidth={2} />
+              ) : (
+                <polyline points={pts} fill="none" stroke="#38bdf8" strokeWidth={2} strokeLinecap="round" strokeDasharray="8 5" />
+              )}
+              {outline.map((p, i) => {
+                const s = toScreen(p);
+                return <circle key={i} cx={s.x} cy={s.y} r={4} fill="#38bdf8" />;
+              })}
+              {summary && (
+                <text x={labelAt.x} y={labelAt.y} textAnchor="middle" fontSize={13} fontWeight={600} fill="#38bdf8">
+                  {`${formatArea(summary.areaSqFt)} · perimeter ${feetInchesLabel(summary.perimeterIn)}`}
+                </text>
+              )}
             </g>
           );
         })()}

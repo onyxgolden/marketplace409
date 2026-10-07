@@ -205,6 +205,7 @@ export const TOOL_DEFS = [
   { id: "orgchart", label: "Org chart", icon: Network, hint: "Click the plan to place an org chart, then add people and reporting lines" },
   { id: "erase", label: "Erase", icon: Eraser, hint: "Click anything to delete it" },
   { id: "measure", label: "Measure", icon: Ruler, hint: "Click two points to see the distance between them · Esc cancels" },
+  { id: "measure-area", label: "Area", icon: Ruler, hint: "Click the corners of a space, then click the first corner to close it and see its area and perimeter · Esc cancels" },
   { id: "pan", label: "Pan", icon: Hand, hint: "Drag to pan · scroll to zoom (or hold Space anytime)" },
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
