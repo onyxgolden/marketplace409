@@ -762,7 +762,6 @@ describe("executeAutopayAttempt", () => {
       }));
     });
   });
-});
 
   // Verify-before-fail (2026-10-06 double-debit incident): a Stripe error
   // does not prove the payment died. When the error carries a PaymentIntent
@@ -879,4 +878,20 @@ describe("executeAutopayAttempt", () => {
         status: "failed", provider_payment_id: null,
       }));
     });
+
+    it("fails closed on an unrecognized Stripe status instead of recording money in flight", async () => {
+      const { paymentUpdate, enrollmentUpdate, result } =
+        runFailingAttempt(stripeErrorWithIntent(), async () => ({ id: "pi_live_1", status: "some_future_status" }));
+      const out = await result;
+      expect(out.httpStatus).toBe(409);
+      expect(out.body).toEqual(expect.objectContaining({ error: "Autopay attempt failed." }));
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", provider_payment_id: "pi_live_1",
+      }));
+      const [paymentPayload] = paymentUpdate.update.mock.calls[0];
+      expect(paymentPayload.failure_message).toMatch(/Unrecognized Stripe status/);
+      const [enrollmentPayload] = enrollmentUpdate.update.mock.calls[0];
+      expect(enrollmentPayload).toEqual(expect.objectContaining({ consecutive_failures: 1 }));
+    });
   });
+});
