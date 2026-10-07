@@ -631,17 +631,22 @@ export default function DesignerViewport3D({
   // first-person). Only one controls object is ever active; see the setup
   // effect and setCameraModeAndSync below.
   const [cameraMode, setCameraModeState] = useState("orbit");
-  // Named camera views (session only; see namedCameraViews.js). Saving and
-  // recalling need an orbit target, so they are offered in Orbit and Dollhouse,
-  // never Walk or Fly (PointerLockControls has no target to return to).
-  const [namedViews, setNamedViews] = useState([]);
+  // Named camera views live in the design document (cameraViews), so they
+  // save with the design and undo like any edit. Saving and recalling need an
+  // orbit target, so they are offered in Orbit and Dollhouse, never Walk or
+  // Fly (PointerLockControls has no target to return to).
+  const namedViews = design.cameraViews || [];
   const canUseNamedViews = cameraMode === "orbit" || cameraMode === "dollhouse";
   const saveNamedView = useCallback(() => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
-    if (!camera || !controls?.target) return;
-    setNamedViews((views) => addNamedView(views, nextViewName(views), poseFromCamera(camera, controls.target)));
-  }, []);
+    if (!camera || !controls?.target || !dispatch) return;
+    const views = design.cameraViews || [];
+    dispatch({
+      type: "SET_CAMERA_VIEWS",
+      views: addNamedView(views, nextViewName(views), poseFromCamera(camera, controls.target)),
+    });
+  }, [design.cameraViews, dispatch]);
   const recallNamedView = useCallback((view) => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
@@ -651,7 +656,10 @@ export default function DesignerViewport3D({
     controls.target.set(target.x, target.y, target.z);
     controls.update();
   }, []);
-  const deleteNamedView = useCallback((id) => setNamedViews((views) => removeNamedView(views, id)), []);
+  const deleteNamedView = useCallback(
+    (id) => dispatch?.({ type: "SET_CAMERA_VIEWS", views: removeNamedView(design.cameraViews || [], id) }),
+    [design.cameraViews, dispatch],
+  );
   const cameraModeRef = useRef("orbit");
   const pointerLockControlsRef = useRef(null);
   const [pointerLocked, setPointerLocked] = useState(false);

@@ -28,6 +28,7 @@
 
 import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitureCatalog";
 import { findSymbol } from "./symbolRegistry";
+import { isCameraPose } from "./namedCameraViews";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
@@ -106,6 +107,7 @@ export function createEmptyDesign(name = "Untitled design") {
     underlay: null, // background trace-over image; see setUnderlay
     sheets: [], // printable paper frames; see addSheet
     decks: [], // plan rectangles, top dropIn below the threshold; see addDeck
+    cameraViews: [], // saved 3D camera angles { id, name, pose }; see namedCameraViews.js
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
   };
 }
@@ -1119,6 +1121,11 @@ export function validateDesign(design) {
       errors.push(`Sheet ${sheet.id} has bad geometry (bounds, fit scale, or anchor).`);
     }
   }
+  for (const view of design.cameraViews || []) {
+    if (!view?.id || !String(view.name ?? "").trim() || !isCameraPose(view.pose)) {
+      errors.push(`Saved camera view "${view?.name ?? view?.id ?? "?"}" is malformed (name or pose).`);
+    }
+  }
   return errors;
 }
 
@@ -1138,6 +1145,8 @@ export function parseDesign(json) {
   // Documents saved before the annotations array existed load safely:
   // normalize the missing array instead of bumping the version.
   if (!Array.isArray(parsed.annotations)) parsed.annotations = [];
+  // Same rule for saved camera views: a document saved before them loads with none.
+  if (!Array.isArray(parsed.cameraViews)) parsed.cameraViews = [];
   return parsed;
 }
 
