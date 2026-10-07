@@ -112,7 +112,8 @@ draw pixels for this feature.
   (see `AnnotationBody::Callout`'s doc comment in `annotations.rs`: the
   original plan stored a step number and separately claimed numbering was
   derived, a contradiction the approved revision fixed by not persisting a
-  number at all).
+  number at all). Reordering the `items` array (see `move_item` below)
+  renumbers every callout at the next render with no gaps.
 - `drawOpsToCanvas(ctx, ops)` — a thin adapter from draw ops to real
   `CanvasRenderingContext2D` calls. `ctx` only needs to implement the
   handful of methods used, so tests pass a recording mock instead of a real
