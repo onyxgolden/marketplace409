@@ -30,16 +30,21 @@ import {
 import { proposeDocFix, isDocRewriteTarget } from "./proposeDocFix.mjs";
 import { pathExistsInRepo } from "../patch/proposePatch.mjs";
 import { prepareFixPr } from "../patch/prepareFixPr.mjs";
+import { canonicalCoverageDriftFindings } from "./canonicalCoverageDriftFindings.mjs";
 
 function usage() {
   return [
     "usage: runDocDriftCli.mjs --repo <root> [--docs <dir> ...] [--apply]",
     "         [--max-fixes <n>] [--base <sha>] [--dry-run] [--json]",
+    "         [--canonical-coverage]",
+    "",
+    "  --canonical-coverage  also surface canonical-knowledge coverage issues",
+    "                        (Slice 4). Read-only, never auto-fixed.",
   ].join("\n");
 }
 
 export function parseArgs(argv) {
-  const out = { docs: ["docs"], apply: false, maxFixes: 1, dryRun: false, json: false };
+  const out = { docs: ["docs"], apply: false, maxFixes: 1, dryRun: false, json: false, canonicalCoverage: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--repo") out.repo = argv[++i];
@@ -49,6 +54,7 @@ export function parseArgs(argv) {
     else if (a === "--base") out.base = argv[++i];
     else if (a === "--dry-run") out.dryRun = true;
     else if (a === "--json") out.json = true;
+    else if (a === "--canonical-coverage") out.canonicalCoverage = true;
     else if (a === "--help" || a === "-h") out.help = true;
     else { out.bad = a; break; }
   }
@@ -134,7 +140,7 @@ export function applyDocPatch({ patch, repoRoot, baseCommit }) {
 }
 
 /** Scan + propose. Pure-ish: repo I/O isolated here so tests inject seams. */
-export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, scriptNames = null }) {
+export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, scriptNames = null, coverageModel = null }) {
   const docFiles = files || listDocFiles(repoRoot, docs);
   const scripts =
     scriptNames ||
@@ -177,6 +183,22 @@ export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, script
       report.push({ finding, proposable: !patch.noPatch, reason: patch.noPatch ? patch.reason : null, explanation, patch: patch.noPatch ? null : patch });
     }
   }
+  // Canonical-knowledge coverage issues (Slice 4), reshaped from the same registry+manifest
+  // evaluator the coverage report uses -- never recomputed here. Always non-proposable: a coverage
+  // failure is a registry decision (add/correct a registry entry), never a text patch this CLI may
+  // silently apply.
+  if (coverageModel) {
+    for (const finding of canonicalCoverageDriftFindings(coverageModel)) {
+      report.push({
+        finding,
+        proposable: false,
+        reason: "canonical-coverage-requires-a-registry-decision",
+        explanation: `Canonical knowledge coverage issue: ${finding.literal}`,
+        patch: null,
+      });
+    }
+  }
+
   // Deterministic order: doc path, then line.
   report.sort((a, b) =>
     a.finding.docPath < b.finding.docPath ? -1
@@ -186,7 +208,7 @@ export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, script
   return report;
 }
 
-export function main(argv) {
+export async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) { console.log(usage()); return 0; }
   if (args.bad || !args.repo) { console.error(usage()); return 2; }
@@ -195,9 +217,27 @@ export function main(argv) {
   if (!Number.isInteger(args.maxFixes) || args.maxFixes < 1) { console.error("--max-fixes must be a positive int"); return 2; }
 
   const repoRoot = path.resolve(args.repo);
+  let coverageModel = null;
+  if (args.canonicalCoverage) {
+    try {
+      // Dynamic import: only paid for when the flag is passed, so default doc-drift
+      // behavior (and its cost) is unchanged -- requirement: preserve existing behavior
+      // for non-canonical checks.
+      const [{ runEngineeringBrainIndexer }, { getRegistry }, { buildCoverageModel }] = await Promise.all([
+        import("../runEngineeringBrainIndexer.mjs"),
+        import("../canonicalDocumentRegistry.mjs"),
+        import("../canonicalCoverageReport.mjs"),
+      ]);
+      const { manifest } = runEngineeringBrainIndexer({ repositoryRoot: repoRoot, write: false });
+      coverageModel = buildCoverageModel({ registry: getRegistry(), manifest, missingReferenceStatus: new Map() });
+    } catch (e) {
+      console.error(`canonical coverage check failed: ${String((e && e.message) || e)}`);
+      return 1;
+    }
+  }
   let report;
   try {
-    report = scanAndPropose({ repoRoot, docs: args.docs });
+    report = scanAndPropose({ repoRoot, docs: args.docs, coverageModel });
   } catch (e) {
     console.error(`scan failed: ${String((e && e.message) || e)}`);
     return 1;
@@ -253,5 +293,5 @@ export function main(argv) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  process.exit(main(process.argv.slice(2)));
+  main(process.argv.slice(2)).then((code) => process.exit(code));
 }
