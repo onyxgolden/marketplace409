@@ -1102,41 +1102,67 @@ fn save_annotations(pngPath: String, sidecarJson: String) -> Result<(), String> 
     atomic_write(&sidecar_path, sidecarJson.as_bytes())
 }
 
-/// Exports a sanitized, irreversible redacted derivative (Slice 2). `rgbaBase64` is the
-/// already-flattened, already-redacted RGBA pixel buffer the webview composited
-/// (`ui/annotations-render.js`'s `exportRedacted`) -- this command's job is to confirm a real
-/// redaction actually happened rather than blindly trusting what JS sent, encode it, and write it
-/// to a brand-new file that never overwrites the source or the editable sidecar. Dimensions are
-/// re-validated against the sidecar's own canvas the same way `load`/`save` do, and the buffer
-/// length is checked against width*height*4 before it is ever handed to the encoder.
+/// Exports a sanitized, irreversible redacted derivative (Slice 2). `rgbaBase64` is an ORDINARY
+/// flattened RGBA buffer the webview composited (`ui/annotations-render.js`'s
+/// `flattenAnnotations`, its existing Slice 1 primitive -- source image plus ordinary
+/// annotations, nothing destructive). This command does not trust that buffer to already be
+/// sanitized in any way; it performs the actual destructive overwrite itself, which is the
+/// trusted export boundary's whole job (review finding, Slice 2: the earlier version trusted an
+/// opaque claim from the caller that a buffer was already redacted, which an arbitrary
+/// correctly-sized buffer -- including one containing the original, unredacted pixels -- could
+/// satisfy without ever being sanitized).
+///
+/// Concretely, in order:
+/// 1. Re-reads `pngPath` from disk -- the actual source, never a caller's claim about it.
+/// 2. Decodes its ACTUAL dimensions (`png_dimensions`) and checks the sidecar's `canvas` against
+///    them (`check_canvas_matches_source`) -- a caller cannot override the real dimensions by
+///    passing different ones; there is no width/height parameter here at all.
+/// 3. Checks the sidecar's source SHA against those same real bytes
+///    (`check_source_binding`) and refuses a stale sidecar, the same as `load`/`save`.
+/// 4. Confirms the sidecar actually declares at least one `Redact` item.
+/// 5. Decodes and length-checks the incoming buffer against the REAL dimensions.
+/// 6. Overwrites every validated `Redact` rectangle in that buffer with the fixed sanitizing
+///    pixel (`annotations::apply_redactions`) -- regardless of what was there before, so a
+///    hostile or simply unredacted incoming buffer still ends up sanitized in the output.
+/// 7. Encodes and writes only THAT overwritten buffer.
 #[tauri::command]
 #[allow(non_snake_case)]
 fn export_redacted(
     pngPath: String,
     sidecarJson: String,
     rgbaBase64: String,
-    width: u32,
-    height: u32,
 ) -> Result<String, String> {
+    let png_path = std::path::PathBuf::from(&pngPath);
+    let png_bytes = std::fs::read(&png_path).map_err(|e| format!("cannot read source PNG: {e}"))?;
+    let (width, height) = png_dimensions(&png_bytes).map_err(err)?;
     let sidecar = annotations::parse_sidecar(&sidecarJson).map_err(err)?;
+    annotations::check_canvas_matches_source(&sidecar, width, height).map_err(err)?;
+    if annotations::check_source_binding(&sidecar, &png_bytes) == SourceBinding::Stale {
+        return Err(
+            "sidecar's source hash does not match the current PNG bytes — refusing to export a redaction against pixels it was not drawn against"
+                .to_string(),
+        );
+    }
     if !annotations::has_redaction(&sidecar) {
         return Err("sidecar has no redact regions — nothing to export".to_string());
     }
-    annotations::check_canvas_matches_source(&sidecar, width, height).map_err(err)?;
-    let rgba = base64_decode(&rgbaBase64)?;
+    let mut rgba = base64_decode(&rgbaBase64)?;
     let expected_len = width as usize * height as usize * 4;
     if rgba.len() != expected_len {
         return Err(format!(
-            "redacted pixel buffer is {} bytes, expected {expected_len} for {width}x{height} RGBA",
+            "flattened pixel buffer is {} bytes, expected {expected_len} for {width}x{height} RGBA",
             rgba.len()
         ));
     }
+    // THE destructive step, performed here, not trusted from the caller: every validated Redact
+    // rectangle is overwritten with the fixed sanitizing pixel, regardless of what the incoming
+    // buffer contained there.
+    annotations::apply_redactions(&mut rgba, width, height, &sidecar);
     // encode_rgba never writes metadata chunks (it only ever emits signature/IHDR/IDAT/IEND --
     // see core/src/png.rs), so the "strip metadata by default" requirement is satisfied by
     // construction, not by anything this command does.
-    let png_bytes = encode_rgba(width, height, &rgba).map_err(err)?;
+    let output_png_bytes = encode_rgba(width, height, &rgba).map_err(err)?;
 
-    let png_path = std::path::PathBuf::from(&pngPath);
     let dir = png_path
         .parent()
         .ok_or_else(|| "pngPath has no parent directory".to_string())?
@@ -1149,7 +1175,7 @@ fn export_redacted(
     let taken = |s: &str| dir.join(format!("{s}.png")).exists();
     let stem = annotations::versioned_redacted_stem(&source_stem, &taken);
     let out_path = dir.join(format!("{stem}.png"));
-    atomic_write(&out_path, &png_bytes)?;
+    atomic_write(&out_path, &output_png_bytes)?;
     Ok(out_path.to_string_lossy().into_owned())
 }
 
@@ -1225,37 +1251,66 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-/// Dependency-free base64 decoder (standard alphabet, padded), the inverse of
-/// `base64_encode`. Used for `export_redacted`'s flattened RGBA payload from
-/// JS -- that direction has no existing decoder in this codebase (every
-/// prior use only ever encoded Rust bytes for JS to consume).
+/// Dependency-free, STRICT base64 decoder (standard alphabet, padded), the
+/// inverse of `base64_encode`. Used for `export_redacted`'s flattened RGBA
+/// payload from JS -- that direction has no existing decoder in this
+/// codebase (every prior use only ever encoded Rust bytes for JS to
+/// consume), and this is new code on an IPC boundary, so it rejects
+/// malformed length/padding rather than silently decoding it (review
+/// finding, Slice 2: the previous version stripped every trailing '=' first
+/// and then decoded whatever chunk length was left, including an invalid
+/// length-1 final chunk -- e.g. a single stray character would silently
+/// "decode" to a byte built from only 6 real bits instead of failing).
 fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    fn value(c: u8) -> Result<u8, String> {
+    fn value(c: u8) -> Result<u32, String> {
         match c {
-            b'A'..=b'Z' => Ok(c - b'A'),
-            b'a'..=b'z' => Ok(c - b'a' + 26),
-            b'0'..=b'9' => Ok(c - b'0' + 52),
+            b'A'..=b'Z' => Ok((c - b'A') as u32),
+            b'a'..=b'z' => Ok((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Ok((c - b'0' + 52) as u32),
             b'+' => Ok(62),
             b'/' => Ok(63),
             _ => Err(format!("invalid base64 character: {}", c as char)),
         }
     }
-    let input = input.trim_end_matches('=');
     let bytes = input.as_bytes();
-    if !bytes.iter().all(|b| b.is_ascii()) {
+    if !bytes.iter().all(u8::is_ascii) {
         return Err("base64 input must be ASCII".to_string());
     }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3 + 3);
-    for chunk in bytes.chunks(4) {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Valid padded base64's total length (including any '=' padding) is always a multiple of 4.
+    // The previous decoder stripped padding BEFORE checking this, which is exactly how a
+    // too-short, malformed input slipped through.
+    if !bytes.len().is_multiple_of(4) {
+        return Err(format!(
+            "invalid base64 length {} (must be a multiple of 4, including padding)",
+            bytes.len()
+        ));
+    }
+    let padding = bytes.iter().rev().take_while(|&&b| b == b'=').count();
+    if padding > 2 {
+        return Err("invalid base64 padding (more than 2 '=' characters)".to_string());
+    }
+    // '=' is only ever valid in that trailing run -- never anywhere else in the input.
+    if bytes[..bytes.len() - padding].contains(&b'=') {
+        return Err("invalid base64 padding ('=' may only appear at the very end)".to_string());
+    }
+    let num_chunks = bytes.len() / 4;
+    let mut out = Vec::with_capacity(num_chunks * 3);
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        let is_last = i == num_chunks - 1;
+        let chunk_padding = if is_last { padding } else { 0 };
         let mut n: u32 = 0;
-        for (i, &c) in chunk.iter().enumerate() {
-            n |= (value(c)? as u32) << (18 - 6 * i);
+        for (j, &c) in chunk.iter().enumerate() {
+            let v = if c == b'=' { 0 } else { value(c)? };
+            n |= v << (18 - 6 * j);
         }
         out.push((n >> 16) as u8);
-        if chunk.len() > 2 {
+        if chunk_padding < 2 {
             out.push((n >> 8) as u8);
         }
-        if chunk.len() > 3 {
+        if chunk_padding < 1 {
             out.push(n as u8);
         }
     }
@@ -3528,6 +3583,35 @@ mod dto_ipc_tests {
     }
 
     #[test]
+    fn base64_decode_rejects_a_length_that_is_not_a_multiple_of_four() {
+        // Review finding: the previous decoder stripped trailing '=' before checking length, so
+        // a too-short input silently decoded a partial, wrong byte instead of failing. "QQ" (2
+        // chars, no padding) is exactly that case: a real base64 encoder would never emit it.
+        for input in ["Q", "QQ", "QQQ", "QQQQQ"] {
+            assert!(
+                base64_decode(input).is_err(),
+                "expected {input:?} (length {}) to be rejected",
+                input.len()
+            );
+        }
+    }
+
+    #[test]
+    fn base64_decode_rejects_excessive_padding() {
+        // "====" alone has a valid length (4) but is not a valid encoding of anything -- the
+        // previous decoder stripped all four '=' and silently returned an empty Vec instead of
+        // rejecting it.
+        assert!(base64_decode("====").is_err());
+        assert!(base64_decode("A===").is_err());
+    }
+
+    #[test]
+    fn base64_decode_rejects_padding_before_the_end() {
+        assert!(base64_decode("Zg=A").is_err());
+        assert!(base64_decode("Z=g=").is_err());
+    }
+
+    #[test]
     fn sidecar_raster_mime_reads_the_envelope() {
         let sidecar = r#"{"kind":"forge-capture-artifact","raster":{"mime":"image/png"}}"#;
         assert_eq!(sidecar_raster_mime(sidecar).unwrap(), "image/png");
@@ -3956,6 +4040,11 @@ mod annotations_commands_tests {
     }
 
     // ---- export_redacted (Slice 2) ----
+    //
+    // Rewritten per the Slice 2 review: this command re-reads the source itself, validates the
+    // sidecar's canvas and source SHA against those real bytes (never a caller's claim), and
+    // performs the destructive overwrite itself -- so these tests exercise exactly that, not a
+    // trust relationship with whatever JS happened to send.
 
     fn redact_sidecar_json(hash: &str, w: u32, h: u32, geometry: (i64, i64, i64, i64)) -> String {
         let (x, y, gw, gh) = geometry;
@@ -3964,10 +4053,15 @@ mod annotations_commands_tests {
         )
     }
 
-    /// A trivially-valid flattened RGBA buffer for a `w`x`h` canvas, base64-encoded the same way
-    /// the real JS side would send one.
-    fn flattened_rgba_b64(w: u32, h: u32) -> String {
-        base64_encode(&vec![0u8; (w * h * 4) as usize])
+    /// An "ordinary flattened" RGBA buffer, filled with a non-black, non-zero value everywhere --
+    /// standing in for real captured content. Deliberately NOT pre-redacted: these tests exist to
+    /// prove Rust does that, not to assume JS already did.
+    fn unredacted_rgba(w: u32, h: u32) -> Vec<u8> {
+        (0..(w * h * 4) as usize).map(|i| if i % 4 == 3 { 255 } else { 200 }).collect()
+    }
+
+    fn unredacted_rgba_b64(w: u32, h: u32) -> String {
+        base64_encode(&unredacted_rgba(w, h))
     }
 
     #[test]
@@ -3984,32 +4078,51 @@ mod annotations_commands_tests {
         let result = export_redacted(
             png_path.to_string_lossy().into_owned(),
             no_redact,
-            flattened_rgba_b64(10, 10),
-            10,
-            10,
+            unredacted_rgba_b64(10, 10),
         );
         assert!(result.unwrap_err().contains("nothing to export"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn export_redacted_rejects_a_canvas_that_does_not_match_the_declared_dimensions() {
+    fn export_redacted_rejects_a_sidecar_canvas_that_does_not_match_the_real_png_even_with_a_correct_hash(
+    ) {
+        // The security property this slice exists for: a correct source hash does not prove
+        // `canvas` is honest, and there is no width/height parameter a caller could use to
+        // override the real, re-decoded dimensions either.
         let dir = temp_test_dir("export-canvas-mismatch");
         let png_bytes = tiny_png(10, 10);
         let png_path = dir.join("a.png");
         std::fs::write(&png_path, &png_bytes).unwrap();
-        let hash = annotations::source_sha256_hex(&png_bytes);
-        // sidecar canvas says 10x10, caller claims the flattened buffer is 20x20.
-        let json = redact_sidecar_json(&hash, 10, 10, (1, 1, 2, 2));
+        let hash = annotations::source_sha256_hex(&png_bytes); // correct hash for the real 10x10 PNG
+        let json = redact_sidecar_json(&hash, 99, 99, (1, 1, 2, 2)); // false canvas
+        // The canvas check runs (and fails) before the buffer is ever examined, so an arbitrary
+        // small buffer is enough here -- no need to build one matching the false 99x99 claim.
 
         let result = export_redacted(
             png_path.to_string_lossy().into_owned(),
             json,
-            flattened_rgba_b64(20, 20),
-            20,
-            20,
+            unredacted_rgba_b64(1, 1),
         );
         assert!(result.unwrap_err().contains("does not match"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_redacted_rejects_a_stale_sidecar_whose_hash_does_not_match_the_current_source() {
+        let dir = temp_test_dir("export-stale");
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, tiny_png(10, 10)).unwrap();
+        // The hash is for DIFFERENT bytes than what is actually on disk at png_path.
+        let stale_hash = annotations::source_sha256_hex(b"not the real source bytes");
+        let json = redact_sidecar_json(&stale_hash, 10, 10, (1, 1, 2, 2));
+
+        let result = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json,
+            unredacted_rgba_b64(10, 10),
+        );
+        assert!(result.unwrap_err().contains("does not match the current PNG bytes"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4026,10 +4139,49 @@ mod annotations_commands_tests {
             png_path.to_string_lossy().into_owned(),
             json,
             base64_encode(&[0u8; 10]), // nowhere near 10*10*4 bytes
-            10,
-            10,
         );
         assert!(result.unwrap_err().contains("bytes, expected"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_redacted_sanitizes_hostile_unredacted_pixels_regardless_of_what_the_caller_sent() {
+        // The core security regression: the incoming buffer is NOT pre-redacted (every pixel is
+        // 200,200,200,255 -- standing in for a hostile or simply buggy caller that never actually
+        // redacted anything). Rust must still produce a genuinely black, opaque redact region in
+        // the OUTPUT FILE -- inspected here by decoding the file this command just wrote, not by
+        // inspecting the in-memory buffer this test built, so the assertion is about what actually
+        // landed on disk.
+        let dir = temp_test_dir("export-hostile");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let json = redact_sidecar_json(&hash, 10, 10, (2, 3, 4, 4)); // redact rect: x2 y3 w4 h4
+
+        let out_path = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json,
+            unredacted_rgba_b64(10, 10),
+        )
+        .unwrap();
+
+        let (w, _h, rgba) = decode_own(&std::fs::read(&out_path).unwrap()).unwrap();
+        let pixel = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3])
+        };
+        // Every pixel inside the declared redact rectangle (x:2..6, y:3..7) is the fixed
+        // sanitizing value, not the hostile 200,200,200,255 the caller sent.
+        for y in 3..7 {
+            for x in 2..6 {
+                assert_eq!(pixel(x, y), annotations::REDACTION_PIXEL, "at ({x}, {y})");
+            }
+        }
+        // Just outside the rectangle, the caller's original (unredacted) content survives --
+        // proves this is a targeted overwrite of the declared region, not e.g. the whole image.
+        assert_eq!(pixel(0, 0), (200, 200, 200, 255));
+        assert_eq!(pixel(9, 9), (200, 200, 200, 255));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4049,9 +4201,7 @@ mod annotations_commands_tests {
         let out_path = export_redacted(
             png_path.to_string_lossy().into_owned(),
             json,
-            flattened_rgba_b64(10, 10),
-            10,
-            10,
+            unredacted_rgba_b64(10, 10),
         )
         .unwrap();
 
@@ -4079,17 +4229,13 @@ mod annotations_commands_tests {
         let first = export_redacted(
             png_path.to_string_lossy().into_owned(),
             json.clone(),
-            flattened_rgba_b64(10, 10),
-            10,
-            10,
+            unredacted_rgba_b64(10, 10),
         )
         .unwrap();
         let second = export_redacted(
             png_path.to_string_lossy().into_owned(),
             json,
-            flattened_rgba_b64(10, 10),
-            10,
-            10,
+            unredacted_rgba_b64(10, 10),
         )
         .unwrap();
 
