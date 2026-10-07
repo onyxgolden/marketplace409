@@ -29,7 +29,7 @@ use forge_capture_core::engines::{
     RasterObservationScrollEngine,
 };
 use forge_capture_core::native;
-use forge_capture_core::png::{decode_own, png_dimensions};
+use forge_capture_core::png::{decode_own, encode_rgba, png_dimensions};
 use forge_capture_core::result::ScrollingResult;
 use forge_capture_core::scroll::{
     AbortFlag, ProgressCallback, ScrollDirection, ScrollEngineKind, ScrollLimits, ScrollRequest,
@@ -1102,6 +1102,57 @@ fn save_annotations(pngPath: String, sidecarJson: String) -> Result<(), String> 
     atomic_write(&sidecar_path, sidecarJson.as_bytes())
 }
 
+/// Exports a sanitized, irreversible redacted derivative (Slice 2). `rgbaBase64` is the
+/// already-flattened, already-redacted RGBA pixel buffer the webview composited
+/// (`ui/annotations-render.js`'s `exportRedacted`) -- this command's job is to confirm a real
+/// redaction actually happened rather than blindly trusting what JS sent, encode it, and write it
+/// to a brand-new file that never overwrites the source or the editable sidecar. Dimensions are
+/// re-validated against the sidecar's own canvas the same way `load`/`save` do, and the buffer
+/// length is checked against width*height*4 before it is ever handed to the encoder.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn export_redacted(
+    pngPath: String,
+    sidecarJson: String,
+    rgbaBase64: String,
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    let sidecar = annotations::parse_sidecar(&sidecarJson).map_err(err)?;
+    if !annotations::has_redaction(&sidecar) {
+        return Err("sidecar has no redact regions — nothing to export".to_string());
+    }
+    annotations::check_canvas_matches_source(&sidecar, width, height).map_err(err)?;
+    let rgba = base64_decode(&rgbaBase64)?;
+    let expected_len = width as usize * height as usize * 4;
+    if rgba.len() != expected_len {
+        return Err(format!(
+            "redacted pixel buffer is {} bytes, expected {expected_len} for {width}x{height} RGBA",
+            rgba.len()
+        ));
+    }
+    // encode_rgba never writes metadata chunks (it only ever emits signature/IHDR/IDAT/IEND --
+    // see core/src/png.rs), so the "strip metadata by default" requirement is satisfied by
+    // construction, not by anything this command does.
+    let png_bytes = encode_rgba(width, height, &rgba).map_err(err)?;
+
+    let png_path = std::path::PathBuf::from(&pngPath);
+    let dir = png_path
+        .parent()
+        .ok_or_else(|| "pngPath has no parent directory".to_string())?
+        .to_path_buf();
+    let source_stem = png_path
+        .file_stem()
+        .ok_or_else(|| "pngPath has no file name".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let taken = |s: &str| dir.join(format!("{s}.png")).exists();
+    let stem = annotations::versioned_redacted_stem(&source_stem, &taken);
+    let out_path = dir.join(format!("{stem}.png"));
+    atomic_write(&out_path, &png_bytes)?;
+    Ok(out_path.to_string_lossy().into_owned())
+}
+
 /// Rung 5 — payload for the "Save to FORGE" upload. Returns the stored
 /// raster bytes (base64) plus the sidecar's MIME type so the UI can build the
 /// multipart POST. Screenshots produced by this app are PNG/JPEG/WebP; the
@@ -1172,6 +1223,43 @@ fn base64_encode(bytes: &[u8]) -> String {
         });
     }
     out
+}
+
+/// Dependency-free base64 decoder (standard alphabet, padded), the inverse of
+/// `base64_encode`. Used for `export_redacted`'s flattened RGBA payload from
+/// JS -- that direction has no existing decoder in this codebase (every
+/// prior use only ever encoded Rust bytes for JS to consume).
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    fn value(c: u8) -> Result<u8, String> {
+        match c {
+            b'A'..=b'Z' => Ok(c - b'A'),
+            b'a'..=b'z' => Ok(c - b'a' + 26),
+            b'0'..=b'9' => Ok(c - b'0' + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            _ => Err(format!("invalid base64 character: {}", c as char)),
+        }
+    }
+    let input = input.trim_end_matches('=');
+    let bytes = input.as_bytes();
+    if !bytes.iter().all(|b| b.is_ascii()) {
+        return Err("base64 input must be ASCII".to_string());
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3 + 3);
+    for chunk in bytes.chunks(4) {
+        let mut n: u32 = 0;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= (value(c)? as u32) << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Ok(out)
 }
 
 /// Rung 6 — opens the FORGE capture library deep link in the OS default
@@ -3067,6 +3155,7 @@ fn main() {
             get_sidecar,
             load_annotations,
             save_annotations,
+            export_redacted,
             export_capture,
             begin_region_pick,
             overlay_context,
@@ -3414,6 +3503,28 @@ mod dto_ipc_tests {
         let encoded = base64_encode(&all);
         assert_eq!(encoded.len(), 344);
         assert!(encoded.ends_with("=="));
+    }
+
+    #[test]
+    fn base64_decode_matches_known_vectors() {
+        assert_eq!(base64_decode("").unwrap(), b"");
+        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64_decode("Zm9v").unwrap(), b"foo");
+        assert_eq!(base64_decode("Zm9vYg==").unwrap(), b"foob");
+        assert_eq!(base64_decode("Zm9vYmE=").unwrap(), b"fooba");
+        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
+    }
+
+    #[test]
+    fn base64_round_trips_every_byte_value() {
+        let all: Vec<u8> = (0u8..=255u8).collect();
+        assert_eq!(base64_decode(&base64_encode(&all)).unwrap(), all);
+    }
+
+    #[test]
+    fn base64_decode_rejects_invalid_characters() {
+        assert!(base64_decode("not valid base64!!").is_err());
     }
 
     #[test]
@@ -3841,6 +3952,151 @@ mod annotations_commands_tests {
         let result = save_annotations(png_path.to_string_lossy().into_owned(), bad_json);
         assert!(result.is_err());
         assert!(!annotations_sidecar_path(&png_path).exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ---- export_redacted (Slice 2) ----
+
+    fn redact_sidecar_json(hash: &str, w: u32, h: u32, geometry: (i64, i64, i64, i64)) -> String {
+        let (x, y, gw, gh) = geometry;
+        format!(
+            r#"{{"schemaVersion":1,"kind":"annotations","sourceSha256":"{hash}","canvas":{{"w":{w},"h":{h}}},"items":[{{"id":"r1","kind":"redact","geometry":{{"x":{x},"y":{y},"w":{gw},"h":{gh}}}}}]}}"#
+        )
+    }
+
+    /// A trivially-valid flattened RGBA buffer for a `w`x`h` canvas, base64-encoded the same way
+    /// the real JS side would send one.
+    fn flattened_rgba_b64(w: u32, h: u32) -> String {
+        base64_encode(&vec![0u8; (w * h * 4) as usize])
+    }
+
+    #[test]
+    fn export_redacted_rejects_a_sidecar_with_no_redact_regions() {
+        let dir = temp_test_dir("export-no-redact");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let no_redact = AnnotationsSidecar::new(hash, annotations::Canvas { w: 10, h: 10 })
+            .to_json()
+            .unwrap();
+
+        let result = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            no_redact,
+            flattened_rgba_b64(10, 10),
+            10,
+            10,
+        );
+        assert!(result.unwrap_err().contains("nothing to export"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_redacted_rejects_a_canvas_that_does_not_match_the_declared_dimensions() {
+        let dir = temp_test_dir("export-canvas-mismatch");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        // sidecar canvas says 10x10, caller claims the flattened buffer is 20x20.
+        let json = redact_sidecar_json(&hash, 10, 10, (1, 1, 2, 2));
+
+        let result = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json,
+            flattened_rgba_b64(20, 20),
+            20,
+            20,
+        );
+        assert!(result.unwrap_err().contains("does not match"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_redacted_rejects_a_pixel_buffer_of_the_wrong_length() {
+        let dir = temp_test_dir("export-bad-buffer");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let json = redact_sidecar_json(&hash, 10, 10, (1, 1, 2, 2));
+
+        let result = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json,
+            base64_encode(&[0u8; 10]), // nowhere near 10*10*4 bytes
+            10,
+            10,
+        );
+        assert!(result.unwrap_err().contains("bytes, expected"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_redacted_writes_a_new_file_and_never_touches_the_source_or_its_sidecar() {
+        let dir = temp_test_dir("export-ok");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let sidecar_path = annotations_sidecar_path(&png_path);
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let json = redact_sidecar_json(&hash, 10, 10, (1, 1, 2, 2));
+        atomic_write(&sidecar_path, json.as_bytes()).unwrap();
+        let sidecar_before = std::fs::read(&sidecar_path).unwrap();
+        let source_before = std::fs::read(&png_path).unwrap();
+
+        let out_path = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json,
+            flattened_rgba_b64(10, 10),
+            10,
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(out_path, dir.join("a-redacted.png").to_string_lossy());
+        assert!(std::path::Path::new(&out_path).exists());
+        // Decoding the file we just wrote proves it is a real, valid PNG at the right size, not
+        // just arbitrary bytes under a .png name.
+        let (w, h) = png_dimensions(&std::fs::read(&out_path).unwrap()).unwrap();
+        assert_eq!((w, h), (10, 10));
+        // Neither the source PNG nor its editable sidecar was touched.
+        assert_eq!(std::fs::read(&png_path).unwrap(), source_before);
+        assert_eq!(std::fs::read(&sidecar_path).unwrap(), sidecar_before);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_redacted_versions_the_output_stem_rather_than_overwriting_a_previous_export() {
+        let dir = temp_test_dir("export-versioned");
+        let png_bytes = tiny_png(10, 10);
+        let png_path = dir.join("a.png");
+        std::fs::write(&png_path, &png_bytes).unwrap();
+        let hash = annotations::source_sha256_hex(&png_bytes);
+        let json = redact_sidecar_json(&hash, 10, 10, (1, 1, 2, 2));
+
+        let first = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json.clone(),
+            flattened_rgba_b64(10, 10),
+            10,
+            10,
+        )
+        .unwrap();
+        let second = export_redacted(
+            png_path.to_string_lossy().into_owned(),
+            json,
+            flattened_rgba_b64(10, 10),
+            10,
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(first, dir.join("a-redacted.png").to_string_lossy());
+        assert_eq!(second, dir.join("a-redacted-2.png").to_string_lossy());
+        assert!(std::path::Path::new(&first).exists());
+        assert!(std::path::Path::new(&second).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -4,7 +4,13 @@
 // module's own DI design (same spirit as ai-edit.js's injected `invoke`).
 
 import { describe, expect, it } from "vitest";
-import { resolveDrawOps, drawOpsToCanvas, flattenAnnotations } from "../annotations-render.js";
+import {
+  resolveDrawOps,
+  resolveRedactionFills,
+  drawOpsToCanvas,
+  flattenAnnotations,
+  exportRedacted,
+} from "../annotations-render.js";
 
 const red = { r: 255, g: 0, b: 0, a: 255 };
 
@@ -148,6 +154,10 @@ function recordingCtx() {
     fillText: (...a) => calls.push(["fillText", ...a]),
     arc: (...a) => calls.push(["arc", ...a]),
     blurRegion: (...a) => calls.push(["blurRegion", ...a]),
+    redactPlaceholder: (...a) => calls.push(["redactPlaceholder", ...a]),
+    set globalAlpha(v) {
+      calls.push(["globalAlpha", v]);
+    },
     drawImage: (...a) => calls.push(["drawImage", ...a]),
   };
   return ctx;
@@ -267,6 +277,100 @@ describe("flattenAnnotations", () => {
       { sidecar: s, sourceImage },
       { createCanvas: () => ({}), getContext2d: () => recordingCtx() },
     );
+    expect(JSON.stringify(sourceImage)).toBe(before);
+  });
+});
+
+function redactItem(id, geometry) {
+  return { id, kind: "redact", geometry };
+}
+
+describe("resolveDrawOps: redact", () => {
+  it("resolves a redact item to a non-destructive placeholder, never an opaque fill", () => {
+    const s = sidecar([redactItem("r1", { x: 1, y: 2, w: 3, h: 4 })]);
+    expect(resolveDrawOps(s)).toEqual([{ op: "redactPlaceholder", id: "r1", x: 1, y: 2, w: 3, h: 4 }]);
+  });
+});
+
+describe("resolveRedactionFills", () => {
+  it("resolves each redact item to an opaqueFill op, and ignores every other kind", () => {
+    const s = sidecar([
+      redactItem("r1", { x: 1, y: 2, w: 3, h: 4 }),
+      { id: "b1", kind: "blur", geometry: { x: 0, y: 0, w: 1, h: 1 } },
+      { id: "r2", kind: "rect", geometry: { x: 0, y: 0, w: 1, h: 1 }, color: red, strokeWidth: 1 },
+    ]);
+    expect(resolveRedactionFills(s)).toEqual([{ op: "opaqueFill", id: "r1", x: 1, y: 2, w: 3, h: 4 }]);
+  });
+
+  it("is empty for a sidecar with no redact items", () => {
+    expect(resolveRedactionFills(sidecar([]))).toEqual([]);
+  });
+});
+
+describe("drawOpsToCanvas: opaqueFill", () => {
+  it("resets globalAlpha to 1 and fills with the fixed sanitizing color, carrying no caller-chosen color", () => {
+    const ctx = recordingCtx();
+    drawOpsToCanvas(ctx, [{ op: "opaqueFill", x: 1, y: 2, w: 3, h: 4 }]);
+    expect(ctx.calls).toEqual([
+      ["globalAlpha", 1],
+      ["fillStyle", "#000000"],
+      ["fillRect", 1, 2, 3, 4],
+    ]);
+  });
+});
+
+describe("exportRedacted", () => {
+  const sourceImage = { marker: "fake-image" };
+  const deps = (ctx) => ({ createCanvas: (w, h) => ({ w, h }), getContext2d: () => ctx });
+
+  it("refuses to run when the sidecar has no redact regions", () => {
+    const s = sidecar([{ id: "b1", kind: "blur", geometry: { x: 0, y: 0, w: 1, h: 1 } }]);
+    expect(() => exportRedacted({ sidecar: s, sourceImage }, deps(recordingCtx()))).toThrow(
+      /nothing to redact/,
+    );
+  });
+
+  it("draws the source image, then ordinary annotations, then the redaction fill strictly last", () => {
+    const s = sidecar([
+      { id: "h1", kind: "highlight", geometry: { x: 0, y: 0, w: 1, h: 1 }, color: red },
+      redactItem("r1", { x: 5, y: 5, w: 10, h: 10 }),
+    ]);
+    const ctx = recordingCtx();
+    exportRedacted({ sidecar: s, sourceImage }, deps(ctx));
+    const drawImageIndex = ctx.calls.findIndex((c) => c[0] === "drawImage");
+    const highlightIndex = ctx.calls.findIndex((c) => c[0] === "fillRect" && c[3] === 1 && c[4] === 1);
+    const redactFillIndex = ctx.calls.findIndex((c) => c[0] === "fillRect" && c[3] === 10 && c[4] === 10);
+    expect(drawImageIndex).toBe(0);
+    expect(highlightIndex).toBeGreaterThan(drawImageIndex);
+    expect(redactFillIndex).toBeGreaterThan(highlightIndex);
+    // Nothing is drawn after the redaction fill: it is strictly the last drawing call.
+    const lastDrawCallIndex = ctx.calls.length - 1;
+    expect(redactFillIndex).toBe(lastDrawCallIndex);
+  });
+
+  it("a redact region that overlaps an earlier annotation still ends up fully opaque black there, by draw order", () => {
+    // Canvas 2D semantics: an opaque fillRect with globalAlpha=1 and the default 'source-over'
+    // composite operation completely replaces whatever was drawn before it in that region. This
+    // test proves the ORDER guarantee that makes that true (the fill is strictly last); it does
+    // not re-simulate canvas compositing itself (no real canvas/pixel buffer is available here).
+    const s = sidecar([
+      { id: "h1", kind: "highlight", geometry: { x: 5, y: 5, w: 10, h: 10 }, color: red }, // same region
+      redactItem("r1", { x: 5, y: 5, w: 10, h: 10 }),
+    ]);
+    const ctx = recordingCtx();
+    exportRedacted({ sidecar: s, sourceImage }, deps(ctx));
+    const opaqueFillCalls = ctx.calls.filter(
+      (c) => c[0] === "fillRect" && c[1] === 5 && c[2] === 5 && c[3] === 10 && c[4] === 10,
+    );
+    // Both the highlight and the redaction fill touch the same rect; the LAST one drawn (verified
+    // above to always be the redaction fill) is what canvas compositing actually leaves visible.
+    expect(opaqueFillCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not mutate sourceImage", () => {
+    const s = sidecar([redactItem("r1", { x: 0, y: 0, w: 1, h: 1 })]);
+    const before = JSON.stringify(sourceImage);
+    exportRedacted({ sidecar: s, sourceImage }, deps(recordingCtx()));
     expect(JSON.stringify(sourceImage)).toBe(before);
   });
 });

@@ -25,6 +25,14 @@
 const MIN_ARROWHEAD_LEN = 10;
 const ARROWHEAD_ANGLE_RAD = (25 * Math.PI) / 180;
 
+/**
+ * The one color a redacted region is ever filled with. Fixed, not user-chosen: a user-selectable
+ * color could end up carrying information (e.g. a color sampled from the very pixels being
+ * redacted), and letting it vary would widen what has to be reasoned about for "no recoverable
+ * pixels". Solid black, no alpha channel.
+ */
+const REDACTION_FILL_COLOR = "#000000";
+
 function arrowheadPoints(from, to, strokeWidth) {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -137,6 +145,20 @@ export function resolveDrawOps(sidecar) {
           h: body.geometry.h,
         });
         break;
+      case "redact":
+        // A DRAFT marker only -- live-editing preview, never destructive. The live source image
+        // is never touched by this op; real destruction happens exactly once, in
+        // `resolveRedactionFills` + `exportRedacted`, into a brand new file. A caller must not
+        // treat this op as having redacted anything.
+        ops.push({
+          op: "redactPlaceholder",
+          id: item.id,
+          x: body.geometry.x,
+          y: body.geometry.y,
+          w: body.geometry.w,
+          h: body.geometry.h,
+        });
+        break;
       case "callout":
         calloutNumber += 1;
         ops.push({
@@ -217,6 +239,23 @@ export function drawOpsToCanvas(ctx, ops) {
           ctx.blurRegion(op.x, op.y, op.w, op.h);
         }
         break;
+      case "redactPlaceholder":
+        // Draft-editing visual only (hatching), never the real redaction. See resolveDrawOps's
+        // "redact" case and exportRedacted below.
+        if (typeof ctx.redactPlaceholder === "function") {
+          ctx.redactPlaceholder(op.x, op.y, op.w, op.h);
+        }
+        break;
+      case "opaqueFill":
+        // The real redaction: total, opaque overwrite, no transparency, no color the caller
+        // chose -- a fixed sanitizing color (REDACTION_FILL_COLOR), so nothing about the
+        // covered pixels survives into this op's own parameters either. globalAlpha is reset
+        // explicitly in case an op drawn earlier in this same pass left it at something other
+        // than 1; this fill must be fully opaque regardless of prior canvas state.
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = REDACTION_FILL_COLOR;
+        ctx.fillRect(op.x, op.y, op.w, op.h);
+        break;
       case "callout":
         ctx.fillStyle = cssColor(op.color);
         ctx.beginPath();
@@ -253,5 +292,50 @@ export function flattenAnnotations({ sidecar, sourceImage }, { createCanvas, get
   const ctx = getContext2d(canvas);
   ctx.drawImage(sourceImage, 0, 0, sidecar.canvas.w, sidecar.canvas.h);
   drawOpsToCanvas(ctx, resolveDrawOps(sidecar));
+  return canvas;
+}
+
+/**
+ * The real, destructive redaction ops for a sidecar's `redact` items -- pure, like
+ * `resolveDrawOps`. Kept as a separate function (not folded into `resolveDrawOps`, which only
+ * ever emits the non-destructive `redactPlaceholder` for redact items) so an ordinary preview or
+ * export can never accidentally destroy a region just by calling the "normal" resolver.
+ */
+export function resolveRedactionFills(sidecar) {
+  return sidecar.items
+    .filter((item) => item.kind === "redact")
+    .map((item) => ({
+      op: "opaqueFill",
+      id: item.id,
+      x: item.geometry.x,
+      y: item.geometry.y,
+      w: item.geometry.w,
+      h: item.geometry.h,
+    }));
+}
+
+/**
+ * Exports a sanitized, irreversible derivative: the source image plus every ordinary annotation
+ * (drawn exactly as `flattenAnnotations` would), then every `redact` region overwritten with an
+ * opaque fill -- strictly last, after everything else, so nothing drawn earlier (including the
+ * live source image itself) can show through. This is the only place anything in this module is
+ * actually destroyed; `resolveDrawOps`'s "redact" case is a draft marker only.
+ *
+ * Refuses to run with no `redact` items: calling this on a sidecar with nothing to redact would
+ * produce a file indistinguishable from an ordinary flattened export, and a caller could mistake
+ * that for a real sanitized derivative when nothing was actually redacted.
+ *
+ * Same injected-canvas contract as `flattenAnnotations`.
+ */
+export function exportRedacted({ sidecar, sourceImage }, { createCanvas, getContext2d }) {
+  const redactions = resolveRedactionFills(sidecar);
+  if (redactions.length === 0) {
+    throw new Error("exportRedacted called with no redact regions — nothing to redact");
+  }
+  const canvas = createCanvas(sidecar.canvas.w, sidecar.canvas.h);
+  const ctx = getContext2d(canvas);
+  ctx.drawImage(sourceImage, 0, 0, sidecar.canvas.w, sidecar.canvas.h);
+  drawOpsToCanvas(ctx, resolveDrawOps(sidecar));
+  drawOpsToCanvas(ctx, redactions);
   return canvas;
 }

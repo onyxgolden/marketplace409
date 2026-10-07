@@ -147,10 +147,21 @@ pub enum AnnotationBody {
         text: String,
     },
     /// A region to blur. Reversible while editing (it is just another
-    /// sidecar item); see `docs/annotations.md` for how Slice 2's
-    /// irreversible redaction differs from this.
+    /// sidecar item): a soft visual effect, not a security guarantee. See
+    /// `Redact` and `docs/annotations.md` for the irreversible alternative.
     #[serde(rename_all = "camelCase")]
     Blur { geometry: RectI },
+    /// A region to permanently destroy, not merely cover. Positioning one is
+    /// reversible the same way any sidecar item is (move it, delete it,
+    /// undo), but the sidecar's `redact` items are only a *draft* — nothing
+    /// is actually destroyed by saving the sidecar. Destruction happens
+    /// exactly once, at export: `ui/annotations-render.js`'s
+    /// `exportRedacted` overwrites the region's pixels with an opaque fill
+    /// (not a translucent layer something could see through) in a brand
+    /// new file, `<stem>-redacted.png`, and the source PNG and its
+    /// annotation sidecar are never touched. See `docs/annotations.md`.
+    #[serde(rename_all = "camelCase")]
+    Redact { geometry: RectI },
     #[serde(rename_all = "camelCase")]
     Callout { anchor: PointI, color: Rgba },
 }
@@ -393,7 +404,7 @@ fn validate_body(body: &AnnotationBody, canvas: Canvas) -> Result<(), Annotation
             }
             check_text(text)?;
         }
-        AnnotationBody::Blur { geometry } => {
+        AnnotationBody::Blur { geometry } | AnnotationBody::Redact { geometry } => {
             check_rect_in_canvas(*geometry, canvas)?;
         }
         AnnotationBody::Callout { anchor, .. } => {
@@ -521,6 +532,35 @@ pub fn check_canvas_matches_source(
     }
 }
 
+/// An annotation error enum variant kept here would overstate what this check reports: this is
+/// not validation, just a useful read. Whether a sidecar has anything to redact at all --
+/// `export_redacted` refuses to run with none, so a caller cannot produce a `-redacted.png` that
+/// redacts nothing and mistake that for a real sanitized derivative.
+pub fn has_redaction(sidecar: &AnnotationsSidecar) -> bool {
+    sidecar
+        .items
+        .iter()
+        .any(|item| matches!(item.body, AnnotationBody::Redact { .. }))
+}
+
+/// Versioned result stem for an exported redaction: the source capture's stem plus `-redacted`,
+/// with a numeric suffix when that stem is taken. Mirrors `ai_edit::versioned_stem` -- each job
+/// kind owns its own naming convention rather than sharing one generic helper.
+pub fn versioned_redacted_stem(source_stem: &str, taken: &dyn Fn(&str) -> bool) -> String {
+    let base = format!("{source_stem}-redacted");
+    if !taken(&base) {
+        return base;
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !taken(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,6 +659,17 @@ mod tests {
                     geometry: RectI {
                         x: 0,
                         y: 0,
+                        w: 30,
+                        h: 30,
+                    },
+                },
+            },
+            Annotation {
+                id: "a6b".to_string(),
+                body: AnnotationBody::Redact {
+                    geometry: RectI {
+                        x: 40,
+                        y: 40,
                         w: 30,
                         h: 30,
                     },
@@ -997,5 +1048,96 @@ mod tests {
         let sidecar = AnnotationsSidecar::new("a".repeat(64), Canvas { w: 800, h: 600 });
         assert!(check_canvas_matches_source(&sidecar, 801, 600).is_err());
         assert!(check_canvas_matches_source(&sidecar, 800, 601).is_err());
+    }
+
+    // ---- Slice 2: redact ----
+
+    fn redact_item(id: &str, geometry: RectI) -> Annotation {
+        Annotation {
+            id: id.to_string(),
+            body: AnnotationBody::Redact { geometry },
+        }
+    }
+
+    #[test]
+    fn a_redact_region_validates_the_same_as_blur() {
+        let s = sidecar_with(vec![redact_item(
+            "r1",
+            RectI {
+                x: 10,
+                y: 10,
+                w: 30,
+                h: 30,
+            },
+        )]);
+        assert!(s.to_json().is_ok());
+    }
+
+    #[test]
+    fn a_zero_area_redact_region_is_rejected() {
+        let s = sidecar_with(vec![redact_item(
+            "r1",
+            RectI {
+                x: 10,
+                y: 10,
+                w: 0,
+                h: 30,
+            },
+        )]);
+        assert!(matches!(
+            s.to_json().unwrap_err(),
+            AnnotationsError::DegenerateGeometry(_)
+        ));
+    }
+
+    #[test]
+    fn a_redact_region_outside_the_canvas_is_rejected() {
+        let s = sidecar_with(vec![redact_item(
+            "r1",
+            RectI {
+                x: 750,
+                y: 10,
+                w: 100,
+                h: 30,
+            },
+        )]);
+        assert!(matches!(
+            s.to_json().unwrap_err(),
+            AnnotationsError::GeometryOutOfBounds(_)
+        ));
+    }
+
+    #[test]
+    fn has_redaction_is_false_with_no_redact_items_and_true_with_one() {
+        let geometry = RectI {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        assert!(!has_redaction(&sidecar_with(vec![])));
+        assert!(!has_redaction(&sidecar_with(vec![Annotation {
+            id: "b1".to_string(),
+            body: AnnotationBody::Blur { geometry },
+        }])));
+        assert!(has_redaction(&sidecar_with(vec![redact_item(
+            "r1", geometry
+        )])));
+    }
+
+    #[test]
+    fn versioned_redacted_stem_appends_a_suffix_only_when_taken() {
+        let never_taken = |_: &str| false;
+        assert_eq!(versioned_redacted_stem("cap-1", &never_taken), "cap-1-redacted");
+        let taken_first = |s: &str| s == "cap-1-redacted";
+        assert_eq!(
+            versioned_redacted_stem("cap-1", &taken_first),
+            "cap-1-redacted-2"
+        );
+        let taken_two = |s: &str| s == "cap-1-redacted" || s == "cap-1-redacted-2";
+        assert_eq!(
+            versioned_redacted_stem("cap-1", &taken_two),
+            "cap-1-redacted-3"
+        );
     }
 }
