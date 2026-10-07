@@ -13,7 +13,15 @@
 # one too (double-execution is a no-op by design).
 #
 # Schedules are UTC, copied verbatim from vercel.json (which is UTC-only).
-# CDT = UTC-5, so 0 7 * * * UTC = 2:00 AM CDT.
+# CDT = UTC-5, so 23 8 * * * UTC = 3:23 AM CDT.
+#
+# 2026-10-06: the rental autopay sweep moved from 0 7 * * * (2:00 AM CDT) to
+# 23 8 * * * (3:23 AM CDT). The 07:00 UTC slot silently missed 2026-10-05 and
+# 2026-10-06 with no run object created -- GitHub documents that scheduled
+# runs can be dropped under load and names minute 00 as a high-load point.
+# Recovery: /api/rental/cron/autopay-sweep-watchdog, triggered from an
+# INDEPENDENT scheduler (never this workflow -- correlated failure risk).
+# It checks the durable rental_sweep_runs evidence table, not the Actions API.
 #
 # What this never does: never merges, never deploys, never writes data
 # except through the endpoints themselves (which is their job).
@@ -27,7 +35,7 @@ run-name: ${{ github.event_name == 'schedule' && format('sweep [{0}]', github.ev
 on:
   schedule:
     - cron: '0 6 * * *'
-    - cron: '0 7 * * *'
+    - cron: '23 8 * * *'
     - cron: '30 7 * * *'
     - cron: '0 8 * * *'
     - cron: '0 9 * * *'
@@ -58,11 +66,11 @@ jobs:
           MANUAL_ENDPOINT: ${{ inputs.endpoint }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            ENDPOINT="$MANUAL_ENDPOINT"
+            ENDPOINT="$MANUAL_ENDPOINT?trigger=manual"
           else
             case "$TRIGGER_SCHEDULE" in
               "0 6 * * *")  ENDPOINT="/api/rental/cron/generate-charges" ;;
-              "0 7 * * *")  ENDPOINT="/api/rental/cron/autopay-sweep" ;;
+              "23 8 * * *") ENDPOINT="/api/rental/cron/autopay-sweep" ;;
               "30 7 * * *") ENDPOINT="/api/private-financing/cron/autopay-sweep" ;;
               "0 8 * * *")  ENDPOINT="/api/rental/cron/settlement-reconciliation" ;;
               "0 9 * * *")  ENDPOINT="/api/private-financing/cron/payment-due-reminders" ;;
