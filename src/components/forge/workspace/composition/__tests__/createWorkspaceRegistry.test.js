@@ -84,7 +84,6 @@ describe("createWorkspaceRegistry", () => {
       ),
     ).toEqual([
       "financial-position",
-      "health",
       "transaction-review",
       "property-portfolio",
       "forge-operating-system",
@@ -136,12 +135,10 @@ describe("createWorkspaceRegistry", () => {
     ).toBeNull();
   });
 
-  it("gates the Health module to the owner or an active co-owner only", () => {
+  it("does not list the Health module on the application chooser", () => {
     const registry = createWorkspaceRegistry();
-    const healthModule = registry.get("health");
 
-    expect(healthModule.isVisible({ isOwnerOrCoOwner: true })).toBe(true);
-    expect(healthModule.isVisible({ isOwnerOrCoOwner: false })).toBe(false);
-    expect(healthModule.isVisible({})).toBe(false);
+    expect(registry.has("health")).toBe(false);
+    expect(registry.get("health")).toBeNull();
   });
 });

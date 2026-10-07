@@ -50,11 +50,6 @@ export const FORGE_APPLICATIONS =
       shortLabel: "B",
     }),
     Object.freeze({
-      href: "/forge/health",
-      label: "Health",
-      shortLabel: "H",
-    }),
-    Object.freeze({
       href: "/forge/property",
       label: "Property",
       shortLabel: "P",

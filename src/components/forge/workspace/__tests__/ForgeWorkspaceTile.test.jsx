@@ -11,7 +11,30 @@ import {
 import ForgeWorkspaceTile from "../ForgeWorkspaceTile.jsx";
 
 describe("ForgeWorkspaceTile", () => {
-  it("preserves the compact tile when no expanded surface is supplied", () => {
+  it("renders a simple name card linking to the application", () => {
+    const markup = renderToStaticMarkup(
+      <ForgeWorkspaceTile
+        title="Financial Position"
+        href="/forge/financial"
+      />,
+    );
+
+    expect(markup).toContain("data-workspace-tile");
+    expect(markup).toContain("Financial Position");
+    expect(markup).toContain('href="/forge/financial"');
+  });
+
+  it("renders a static name card when there is no destination", () => {
+    const markup = renderToStaticMarkup(
+      <ForgeWorkspaceTile title="FORGE OS" />,
+    );
+
+    expect(markup).toContain("data-workspace-tile");
+    expect(markup).toContain("FORGE OS");
+    expect(markup).not.toContain("href=");
+  });
+
+  it("renders only the name -- no preview surface, detail, or expand affordance", () => {
     const markup = renderToStaticMarkup(
       <ForgeWorkspaceTile
         eyebrow="Financial Application"
@@ -19,83 +42,20 @@ describe("ForgeWorkspaceTile", () => {
         detail="Current financial condition."
         href="/forge/financial"
         status="Healthy"
-        span="wide"
+        actionLabel="Open workspace"
+        expandedChildren={<div>Expanded financial surface</div>}
+        initialExpanded
       >
         <div>Compact financial surface</div>
       </ForgeWorkspaceTile>,
     );
 
-    expect(markup).toContain("data-workspace-tile");
-    expect(markup).toContain(
-      'data-workspace-tile-expanded="false"',
-    );
-    expect(markup).toContain("xl:col-span-2");
-    expect(markup).toContain("Compact financial surface");
+    expect(markup).toContain("Financial Position");
+    expect(markup).not.toContain("Compact financial surface");
+    expect(markup).not.toContain("Expanded financial surface");
+    expect(markup).not.toContain("Current financial condition.");
     expect(markup).not.toContain("Expand");
-    expect(markup).toContain("Open workspace");
-  });
-
-  it("offers expansion when an expanded surface is supplied", () => {
-    const markup = renderToStaticMarkup(
-      <ForgeWorkspaceTile
-        title="Financial Position"
-        expandedChildren={
-          <div>Expanded financial surface</div>
-        }
-      >
-        <div>Compact financial surface</div>
-      </ForgeWorkspaceTile>,
-    );
-
-    expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("Expand");
-    expect(markup).toContain("Compact financial surface");
-    expect(markup).not.toContain(
-      "Expanded financial surface",
-    );
-  });
-
-  it("renders the expanded surface and full grid span when initially expanded", () => {
-    const markup = renderToStaticMarkup(
-      <ForgeWorkspaceTile
-        title="Financial Position"
-        expandedChildren={
-          <div>Expanded financial surface</div>
-        }
-        initialExpanded
-      >
-        <div>Compact financial surface</div>
-      </ForgeWorkspaceTile>,
-    );
-
-    expect(markup).toContain(
-      'data-workspace-tile-expanded="true"',
-    );
-    expect(markup).toContain('aria-expanded="true"');
-    expect(markup).toContain("md:col-span-2");
-    expect(markup).toContain("Collapse");
-    expect(markup).toContain(
-      "Expanded financial surface",
-    );
-    expect(markup).not.toContain(
-      "Compact financial surface",
-    );
-  });
-
-  it("ignores initial expansion when no expanded surface exists", () => {
-    const markup = renderToStaticMarkup(
-      <ForgeWorkspaceTile
-        title="Financial Position"
-        initialExpanded
-      >
-        <div>Compact financial surface</div>
-      </ForgeWorkspaceTile>,
-    );
-
-    expect(markup).toContain(
-      'data-workspace-tile-expanded="false"',
-    );
     expect(markup).not.toContain("Collapse");
-    expect(markup).toContain("Compact financial surface");
+    expect(markup).not.toContain("Open workspace");
   });
 });
