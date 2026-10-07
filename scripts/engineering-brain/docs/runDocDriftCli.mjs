@@ -23,6 +23,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   detectDocDrift,
   listDocFiles,
@@ -30,16 +31,21 @@ import {
 import { proposeDocFix, isDocRewriteTarget } from "./proposeDocFix.mjs";
 import { pathExistsInRepo } from "../patch/proposePatch.mjs";
 import { prepareFixPr } from "../patch/prepareFixPr.mjs";
+import { canonicalCoverageDriftFindings } from "./canonicalCoverageDriftFindings.mjs";
 
 function usage() {
   return [
     "usage: runDocDriftCli.mjs --repo <root> [--docs <dir> ...] [--apply]",
     "         [--max-fixes <n>] [--base <sha>] [--dry-run] [--json]",
+    "         [--canonical-coverage]",
+    "",
+    "  --canonical-coverage  also surface canonical-knowledge coverage issues",
+    "                        (Slice 4). Read-only, never auto-fixed.",
   ].join("\n");
 }
 
 export function parseArgs(argv) {
-  const out = { docs: ["docs"], apply: false, maxFixes: 1, dryRun: false, json: false };
+  const out = { docs: ["docs"], apply: false, maxFixes: 1, dryRun: false, json: false, canonicalCoverage: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--repo") out.repo = argv[++i];
@@ -49,6 +55,7 @@ export function parseArgs(argv) {
     else if (a === "--base") out.base = argv[++i];
     else if (a === "--dry-run") out.dryRun = true;
     else if (a === "--json") out.json = true;
+    else if (a === "--canonical-coverage") out.canonicalCoverage = true;
     else if (a === "--help" || a === "-h") out.help = true;
     else { out.bad = a; break; }
   }
@@ -134,7 +141,7 @@ export function applyDocPatch({ patch, repoRoot, baseCommit }) {
 }
 
 /** Scan + propose. Pure-ish: repo I/O isolated here so tests inject seams. */
-export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, scriptNames = null }) {
+export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, scriptNames = null, coverageModel = null }) {
   const docFiles = files || listDocFiles(repoRoot, docs);
   const scripts =
     scriptNames ||
@@ -177,6 +184,22 @@ export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, script
       report.push({ finding, proposable: !patch.noPatch, reason: patch.noPatch ? patch.reason : null, explanation, patch: patch.noPatch ? null : patch });
     }
   }
+  // Canonical-knowledge coverage issues (Slice 4), reshaped from the same registry+manifest
+  // evaluator the coverage report uses -- never recomputed here. Always non-proposable: a coverage
+  // failure is a registry decision (add/correct a registry entry), never a text patch this CLI may
+  // silently apply.
+  if (coverageModel) {
+    for (const finding of canonicalCoverageDriftFindings(coverageModel)) {
+      report.push({
+        finding,
+        proposable: false,
+        reason: "canonical-coverage-requires-a-registry-decision",
+        explanation: `Canonical knowledge coverage issue: ${finding.literal}`,
+        patch: null,
+      });
+    }
+  }
+
   // Deterministic order: doc path, then line.
   report.sort((a, b) =>
     a.finding.docPath < b.finding.docPath ? -1
@@ -186,7 +209,7 @@ export function scanAndPropose({ repoRoot, docs = ["docs"], files = null, script
   return report;
 }
 
-export function main(argv) {
+export async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) { console.log(usage()); return 0; }
   if (args.bad || !args.repo) { console.error(usage()); return 2; }
@@ -195,9 +218,32 @@ export function main(argv) {
   if (!Number.isInteger(args.maxFixes) || args.maxFixes < 1) { console.error("--max-fixes must be a positive int"); return 2; }
 
   const repoRoot = path.resolve(args.repo);
+  let coverageModel = null;
+  if (args.canonicalCoverage) {
+    try {
+      // Dynamic import: only paid for when the flag is passed, so default doc-drift
+      // behavior (and its cost) is unchanged -- requirement: preserve existing behavior
+      // for non-canonical checks.
+      const [{ runEngineeringBrainIndexer }, { getRegistry }, { buildCoverageModel }, { missingReferenceStatusAtCommit }] = await Promise.all([
+        import("../runEngineeringBrainIndexer.mjs"),
+        import("../canonicalDocumentRegistry.mjs"),
+        import("../canonicalCoverageReport.mjs"),
+        import("../missingReferencePresence.mjs"),
+      ]);
+      const { manifest } = runEngineeringBrainIndexer({ repositoryRoot: repoRoot, write: false });
+      // Real presence at this exact commit, through git -- never an empty map. An empty map would make
+      // every declared-but-missing reference look absent regardless of the repository, silently
+      // reopening the Slice 3 fail-open bug this flag exists to surface (Slice 4 review finding).
+      const missingReferenceStatus = missingReferenceStatusAtCommit(manifest.commit_sha, repoRoot);
+      coverageModel = buildCoverageModel({ registry: getRegistry(), manifest, missingReferenceStatus });
+    } catch (e) {
+      console.error(`canonical coverage check failed: ${String((e && e.message) || e)}`);
+      return 1;
+    }
+  }
   let report;
   try {
-    report = scanAndPropose({ repoRoot, docs: args.docs });
+    report = scanAndPropose({ repoRoot, docs: args.docs, coverageModel });
   } catch (e) {
     console.error(`scan failed: ${String((e && e.message) || e)}`);
     return 1;
@@ -252,6 +298,10 @@ export function main(argv) {
   return failures > 0 ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  process.exit(main(process.argv.slice(2)));
+// path.resolve + fileURLToPath, not a raw `file://${process.argv[1]}` string compare: the raw form
+// never matches on Windows (backslashes, and a missing third slash), so this CLI silently did nothing
+// when run as `node runDocDriftCli.mjs` there -- it happened to work in Linux CI only because a POSIX
+// path already starts with "/". Found while manually verifying the --canonical-coverage flag here.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2)).then((code) => process.exit(code));
 }

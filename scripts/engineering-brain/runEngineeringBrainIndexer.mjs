@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveCommitSha, listTrackedFiles, readFileAtCommit } from "./gitRepository.mjs";
 import { buildIndexRecords } from "./buildIndexRecords.mjs";
@@ -30,8 +31,15 @@ function currentTimestamp() {
   return new Date().toISOString();
 }
 
-export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), useIncrementalReuse = true, write = true } = {}) {
-  const commitSha = resolveCommitSha(repositoryRoot);
+// `targetCommitSha`: build the index AS OF that commit instead of the current HEAD. listTrackedFiles
+// and readFileAtCommit already read through git by explicit SHA, never the working tree (see
+// gitRepository.mjs), so this works correctly regardless of what is currently checked out --
+// including an ancestor of HEAD that is no longer the tip. This is what lets a committed artifact be
+// validated against a fresh build of the EXACT commit it claims to represent (Slice 4), rather than
+// the commit that currently contains it -- a file cannot contain the SHA of the commit that contains
+// it, so "freshness" can never mean commit_sha === current HEAD for a committed snapshot.
+export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), useIncrementalReuse = true, write = true, targetCommitSha = null } = {}) {
+  const commitSha = targetCommitSha || resolveCommitSha(repositoryRoot);
   const trackedFiles = listTrackedFiles(commitSha, repositoryRoot);
 
   // The registry is part of the index identity: a change to it forces a full rebuild (incrementalReuse.mjs).
@@ -100,7 +108,12 @@ export function runEngineeringBrainIndexer({ repositoryRoot = process.cwd(), use
   return { manifest, report, reusedCount: reusedRecords.length, processedFileCount: filesWithContent.length };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// path.resolve + fileURLToPath, not a raw `file://${process.argv[1]}` string compare: the raw form
+// never matches on Windows (backslashes, and a missing third slash), so this CLI entry point silently
+// did nothing when invoked as `node runEngineeringBrainIndexer.mjs` there -- it happened to work on
+// Linux CI only because a POSIX path already starts with "/". Discovered while building Slice 4's
+// --regenerate path, which calls this function directly rather than relying on any CLI guard.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result = runEngineeringBrainIndexer({});
   console.log(`Indexed ${result.manifest.counts.indexed_total} records at commit ${result.manifest.commit_sha}`);
   console.log(`Excluded ${result.manifest.counts.excluded_total} records (see engineering-brain/index-report.md for reasons)`);

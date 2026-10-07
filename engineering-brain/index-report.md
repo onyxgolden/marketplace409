@@ -2,9 +2,9 @@
 
 > Sanitized: paths, counts, and content hashes only. No file contents or matched secret/PII values appear below.
 
-**Commit:** `fe285b201d91f4f22d9c5424c119d51819e8df6e`
-**Generated at:** 2026-09-19T18:15:08.158Z
-**Index content hash:** `cb3f84257a148861ef9684b48393b1d334596ee35ab0056e70185330f73fe9b3` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
+**Commit:** `8625e4057c3682d2ef2f93156d24d6df305d6cf4`
+**Generated at:** 2026-10-07T06:41:37.223Z
+**Index content hash:** `4fb13314620c822e5b879b409e096294c80bcaba51093b9f1c010f6b58690af9` (excludes `generated_at` -- identical repo content at this commit always produces this same hash)
 
 ## Authority order
 
@@ -14,31 +14,34 @@
 | 1 | `validation_evidence` | Validation evidence |
 | 2 | `governance_state` | Current governance state |
 | 3 | `synchronized_document` | Synchronized documents |
-| 4 | `reviewed_decision` | Reviewed decisions and handoffs |
-| 5 | `historical_snapshot` | Historical snapshots |
+| 4 | `canonical_document` | Canonical product and architecture documents (intent) |
+| 5 | `reviewed_decision` | Reviewed decisions and handoffs |
+| 6 | `historical_snapshot` | Historical snapshots and bootstrap continuity |
 
 ## Indexed records
 
-**Total:** 6109
+**Total:** 10504
 
 By source type:
 
 | Key | Count |
 | --- | ----- |
-| application_source_symbol | 2581 |
-| application_source_file | 1213 |
-| test_file | 1094 |
-| sql_rls_policy | 259 |
-| api_route_symbol | 222 |
-| sql_migration_file | 169 |
-| sql_rpc_function | 165 |
-| api_route_file | 135 |
-| sql_table | 132 |
+| application_source_symbol | 4839 |
+| test_file | 1714 |
+| application_source_file | 1635 |
+| sql_rls_policy | 529 |
+| api_route_symbol | 528 |
+| api_route_file | 286 |
+| sql_migration_file | 259 |
+| sql_rpc_function | 245 |
+| sql_table | 228 |
+| sql_trigger | 71 |
+| canonical_document_file | 52 |
 | synchronized_document_section | 50 |
-| sql_trigger | 33 |
-| dependency_version | 28 |
+| dependency_version | 35 |
 | historical_snapshot | 23 |
-| reviewed_decision | 3 |
+| historical_document_file | 6 |
+| reviewed_decision | 2 |
 | governance_state | 1 |
 | package_manifest_file | 1 |
 
@@ -46,33 +49,46 @@ By authority level:
 
 | Key | Count |
 | --- | ----- |
-| current | 6032 |
+| current | 10370 |
+| canonical_document | 50 |
 | synchronized_document | 50 |
-| historical_snapshot | 23 |
-| reviewed_decision | 3 |
+| historical_snapshot | 29 |
+| reviewed_decision | 4 |
 | governance_state | 1 |
 
 ## Excluded records
 
-**Total:** 25
+**Total:** 45
 
 By reason:
 
 | Key | Count |
 | --- | ----- |
 | likely_secret:high_entropy_secret_assignment | 11 |
+| registry_excluded:module_plan_outside_scope | 7 |
 | likely_secret:supabase_service_role_jwt | 5 |
-| likely_pii:ssn_like_value | 2 |
+| likely_pii:ssn_like_value | 4 |
+| registry_excluded:authority_unresolved_no_owner | 3 |
+| likely_pii:payment_card_like_value | 3 |
+| likely_pii:ein_like_value | 3 |
+| lockfile | 2 |
 | likely_secret:stripe_live_secret_key | 2 |
-| likely_pii:payment_card_like_value | 2 |
-| lockfile | 1 |
-| likely_pii:ein_like_value | 1 |
+| registry_excluded:outside_current_sync_pattern | 1 |
+| registry_excluded:authority_undecided | 1 |
+| registry_excluded:conflicting_duplicate | 1 |
+| registry_excluded:module_roadmap_pending_decision | 1 |
 | likely_secret:generic_private_key_block | 1 |
 
 ## Out of scope
 
-345 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
+548 tracked files fell outside every category this Phase 1 indexer covers (not excluded -- simply not yet in scope; see requirement 3's category list).
 
 ## Deleted since previous index
 
-5 previously-indexed path(s) no longer exist at this commit and were dropped, not carried forward: src/app/auth/page.js, src/app/page.js, src/components/forge/ForgeDashboardCard.js, src/components/forge/ForgeNavigationBar.js, src/contexts/ThemeContext.jsx
+None.
+
+## Canonical document registry
+
+**Registry fingerprint:** `b25ed739bad6e86cc9164557971b0e861e3d4705adc8d3d605315b9f70a86518`
+
+Coverage: every registered canonical and historical document is indexed or explicitly excluded. No issues.

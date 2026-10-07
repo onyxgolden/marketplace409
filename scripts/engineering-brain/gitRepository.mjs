@@ -23,6 +23,18 @@ export function resolveCommitSha(cwd = process.cwd()) {
   return runGit(["rev-parse", "HEAD"], { cwd });
 }
 
+// True when `ancestorSha` is `descendantSha` itself or a real ancestor of it. Used to prove a
+// committed artifact's recorded commit_sha is a genuine prior point in THIS branch's history, not a
+// stale pointer into an unrelated or rewritten history.
+export function isAncestorCommit(ancestorSha, descendantSha, cwd = process.cwd()) {
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", ancestorSha, descendantSha], { cwd, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Lists every file tracked at `commitSha`, each with its git blob SHA -- git's own content address,
 // which the incremental-hash pass (see incrementalReuse.mjs) reuses as a free, already-deterministic
 // "did this file's bytes change" check with zero extra hashing.
