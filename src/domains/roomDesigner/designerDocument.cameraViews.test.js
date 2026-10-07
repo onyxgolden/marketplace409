@@ -33,6 +33,24 @@ describe("cameraViews in the design document", () => {
     expect(validateDesign(design).join(" ")).toMatch(/camera view "Bad"/);
   });
 
+  it("validation reports two saved views sharing an ID", () => {
+    const first = addNamedView([], "Entry", pose);
+    const second = addNamedView([], "Kitchen", pose);
+    const design = { ...createEmptyDesign(), cameraViews: [first[0], { ...second[0], id: first[0].id }] };
+    expect(validateDesign(design).join(" ")).toMatch(/duplicate camera view id/);
+  });
+
+  it("loading a design with duplicate view IDs gives every view its own ID and keeps the names and poses", () => {
+    const first = addNamedView([], "Entry", pose);
+    const second = addNamedView([], "Kitchen", pose);
+    const design = { ...createEmptyDesign(), cameraViews: [first[0], { ...second[0], id: first[0].id }] };
+    const loaded = parseDesign(JSON.stringify(design));
+    const ids = loaded.cameraViews.map((v) => v.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(loaded.cameraViews.map((v) => v.name)).toEqual(["Entry", "Kitchen"]);
+    expect(loaded.cameraViews[1].pose).toEqual(pose);
+  });
+
   it("validation accepts well-formed saved views", () => {
     const design = { ...createEmptyDesign(), cameraViews: addNamedView([], "Entry", pose) };
     expect(validateDesign(design)).toEqual([]);
