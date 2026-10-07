@@ -133,6 +133,19 @@ export function temaInstanceErrors(instance, symbol) {
  * same in both drawing modes, so a pipe snapped to one stays put when the
  * symbol switches between detailed and P&ID.
  */
+/**
+ * Nearest nozzle, skipping equipment on hidden layers. A hidden piece is not drawn,
+ * so its nozzles must not pull a pipe end onto nothing visible. `isLayerVisible` is
+ * the canvas's own layer predicate, so the rule matches what is drawn.
+ */
+export function nearestVisibleConnectionAnchor(design, point, radiusIn, isLayerVisible) {
+  const visible = {
+    ...design,
+    symbols: (design?.symbols || []).filter((inst) => isLayerVisible(inst.layer)),
+  };
+  return nearestConnectionAnchor(visible, point, radiusIn);
+}
+
 export function nearestConnectionAnchor(design, point, radiusIn) {
   let best = null;
   for (const inst of design?.symbols || []) {

@@ -19,6 +19,7 @@ import {
   initialTemaFields,
   instanceDrawingMode,
   nearestConnectionAnchor,
+  nearestVisibleConnectionAnchor,
   replaceWithDetailedVersion,
   setSymbolDrawingMode,
   setSymbolSize,
@@ -173,6 +174,30 @@ describe("validation of saved TEMA fields", () => {
     const json = serializeDesign(design);
     expect(serializeDesign(parseDesign(json))).toBe(json);
     expect(validateDesign(parseDesign(json))).toEqual([]);
+  });
+});
+
+describe("nearestVisibleConnectionAnchor", () => {
+  it("does not snap to a nozzle whose layer is hidden", () => {
+    let design = placeSymbol(createEmptyDesign(), D, "tema-exchanger", 100, 100, { id: "hx" });
+    design = setSymbolTemaConfig(design, "hx", TEMA_PRESETS.AES);
+    design = setSymbolLayer(design, "hx", "equipment");
+    const tube = temaAnchorsWorld(hxSymbol(), design.symbols[0]).find((a) => a.id === "tube-in");
+    const near = { x: tube.x + 3, y: tube.y - 2 };
+    const equipmentHidden = (layer) => layer !== "equipment";
+    expect(nearestVisibleConnectionAnchor(design, near, 6, equipmentHidden)).toBeNull();
+  });
+
+  it("still snaps to a nozzle on a visible layer", () => {
+    let design = placeSymbol(createEmptyDesign(), D, "tema-exchanger", 100, 100, { id: "hx" });
+    design = setSymbolTemaConfig(design, "hx", TEMA_PRESETS.AES);
+    design = setSymbolLayer(design, "hx", "equipment");
+    const tube = temaAnchorsWorld(hxSymbol(), design.symbols[0]).find((a) => a.id === "tube-in");
+    const near = { x: tube.x + 3, y: tube.y - 2 };
+    expect(nearestVisibleConnectionAnchor(design, near, 6, () => true)).toMatchObject({
+      symbolInstanceId: "hx",
+      anchorId: "tube-in",
+    });
   });
 });
 
