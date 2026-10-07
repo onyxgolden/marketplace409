@@ -4,6 +4,27 @@ import { detectConflicts } from "./detectConflicts.mjs";
 import { resolveExcerpt } from "./resolveExcerpt.mjs";
 import { computeConfidence } from "./computeFreshnessAndConfidence.mjs";
 import { hashContent } from "../hashContent.mjs";
+import { AUTHORITY_LEVELS } from "../authorityLevels.mjs";
+import { getRegistry } from "../canonicalDocumentRegistry.mjs";
+
+const AUTHORITY_RANK_BY_ID = new Map(Object.values(AUTHORITY_LEVELS).map((level) => [level.id, level.rank]));
+
+// Provenance from the approved registry, for documents it covers. This is a lookup for citations, not
+// a second authority source: the tier a result carries still comes from the index record.
+const REGISTRY_BY_PATH = new Map(getRegistry().map((entry) => [entry.path, entry]));
+
+function authorityBasisFor(sourcePath) {
+  const entry = REGISTRY_BY_PATH.get(sourcePath);
+  if (!entry) return null;
+  return {
+    classification: entry.classification,
+    configured_authority: entry.brain_authority,
+    families: [...entry.families],
+    status: entry.status,
+    rationale: entry.rationale,
+    evidence: entry.evidence,
+  };
+}
 
 const DEFAULT_MAX_RESULTS = 20;
 
@@ -59,6 +80,16 @@ export function runQuery({ manifest, queryText = "", filters = {}, excerptReader
       excerpt_truncated: excerptResolution.truncated || false,
       excerpt_unavailable_reason: excerptResolution.verified ? null : excerptResolution.reason,
       unresolved_conflict: conflict ? { subject: conflict.subject, outranked_by_or_outranks: conflict.winner.source_path === entry.record.source_path ? "wins" : "outranked" } : null,
+      // Additive provenance (Slice 3). Existing fields above are unchanged.
+      authority_rank: AUTHORITY_RANK_BY_ID.get(entry.record.authority_level) ?? null,
+      historical: entry.record.authority_level === "historical_snapshot",
+      citation: {
+        source_path: entry.record.source_path,
+        symbol_or_section: entry.record.symbol_or_section,
+        commit_sha: entry.record.commit_sha,
+        content_hash: entry.record.content_hash,
+      },
+      authority_basis: authorityBasisFor(entry.record.source_path),
     };
   });
 

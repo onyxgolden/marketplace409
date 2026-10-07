@@ -39,6 +39,13 @@ export function renderQueryOutputText(response) {
     lines.push(`   type=${result.source_type} authority=${result.authority_level} freshness=${result.freshness} confidence=${result.confidence}`);
     lines.push(`   commit=${result.commit_sha} content_hash=${result.content_hash}`);
     if (result.version) lines.push(`   version=${result.version}`);
+    if (result.historical) {
+      lines.push("   HISTORICAL: continuity or bootstrap material, not current authority. Do not treat it as current.");
+    }
+    if (result.authority_basis) {
+      const basis = result.authority_basis;
+      lines.push(`   basis: ${basis.classification}, configured ${basis.configured_authority} (${basis.status}) -- ${basis.rationale}`);
+    }
     if (result.unresolved_conflict) {
       lines.push(`   ⚠ unresolved conflict on subject "${result.unresolved_conflict.subject}" (this record ${result.unresolved_conflict.outranked_by_or_outranks})`);
     }
