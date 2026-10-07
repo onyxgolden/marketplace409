@@ -2,7 +2,7 @@
 
 > This report is evidence of acceptance, produced from the approved registry and a fresh index build. It is not an authority source and changes nothing about indexing, ranking, or coverage.
 
-**Commit:** `8625e4057c3682d2ef2f93156d24d6df305d6cf4`
+**Commit:** `9aff70dd30c50711c1472b358c761c5a97fb1863`
 
 > Acceptance: CLEAN. Coverage, manifest freshness, incremental equivalence, and security all pass.
 
@@ -29,7 +29,7 @@ By configured authority (non-excluded):
 
 ## Index
 
-Indexed records: **10504**. Excluded: **45**.
+Indexed records: **10507**. Excluded: **45**.
 Coverage issues: **0**.
 
 ## Production manifest
@@ -38,7 +38,7 @@ Status: **self-consistent at its own recorded commit, an ancestor of HEAD**.
 
 ## Incremental-reuse equivalence
 
-Result: **equivalent**. 10504 records and the coverage conclusion match between the full build and an incremental build against the currently committed manifest.
+Result: **equivalent**. 10507 records and the coverage conclusion match between the full build and an incremental build against the currently committed manifest.
 
 ## Security / fail-closed self-check
 
