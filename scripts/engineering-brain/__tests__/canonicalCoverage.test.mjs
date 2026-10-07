@@ -120,6 +120,33 @@ describe("coverage report: issues are conspicuous and never converted into succe
     expect(report).toContain("> Coverage issues: 0.");
     expect(report).not.toContain("COVERAGE ISSUES");
   });
+
+  it("a declared reference that is present but unregistered is an issue, not a clean run", () => {
+    const declared = "docs/governance/FORGE_IDEA_REGISTER.md";
+    const model = buildCoverageModel({
+      registry,
+      manifest: manifestFor([file(NORTH_STAR)]),
+      missingReferenceStatus: new Map([[declared, true]]),
+      missingReferences: [declared],
+    });
+    expect(model.issueRows).toEqual([{ path: declared, classification: null, issue: "declared_reference_present_but_unregistered" }]);
+    const report = renderCanonicalCoverageReport(model);
+    expect(report).toContain("> **COVERAGE ISSUES: 1.** Coverage is NOT clean.");
+    expect(report).toContain(`| \`${declared}\` | - | declared_reference_present_but_unregistered |`);
+    expect(report).not.toContain("> Coverage issues: 0.");
+  });
+
+  it("a declared reference that is still absent stays informational and is not an issue", () => {
+    const declared = "docs/governance/FORGE_IDEA_REGISTER.md";
+    const model = buildCoverageModel({
+      registry,
+      manifest: manifestFor([file(NORTH_STAR)]),
+      missingReferenceStatus: new Map([[declared, false]]),
+      missingReferences: [declared],
+    });
+    expect(model.issueRows).toEqual([]);
+    expect(renderCanonicalCoverageReport(model)).toContain("> Coverage issues: 0.");
+  });
 });
 
 describe("coverage report: determinism", () => {

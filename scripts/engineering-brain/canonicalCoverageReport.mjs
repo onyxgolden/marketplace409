@@ -81,9 +81,16 @@ export function buildCoverageModel({ registry, manifest, missingReferenceStatus 
     .sort()
     .map((path) => ({ path, presentInRepository: Boolean(missingReferenceStatus.get(path)) }));
 
-  const issueRows = [...coverageIssues]
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    .map((issue) => ({ path: issue.path, classification: issue.classification, issue: issue.issue }));
+  // A declared reference that now exists in the repository but has no registry entry is an uncovered
+  // governed authority reference. It must fail coverage, not sit beside a clean headline. A reference that
+  // is still absent stays informational and is not an issue.
+  const registeredPaths = new Set(registry.map((entry) => entry.path));
+  const unregisteredPresent = missing
+    .filter((m) => m.presentInRepository && !registeredPaths.has(m.path))
+    .map((m) => ({ path: m.path, classification: null, issue: "declared_reference_present_but_unregistered" }));
+
+  const issueRows = [...coverageIssues.map((issue) => ({ path: issue.path, classification: issue.classification, issue: issue.issue })), ...unregisteredPresent]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.issue < b.issue ? -1 : a.issue > b.issue ? 1 : 0));
 
   return { commitSha: manifest.commit_sha, registryHash: manifest.registry_hash, indexContentHash: manifest.index_content_hash, rows, missing, issueRows };
 }
