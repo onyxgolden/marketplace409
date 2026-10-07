@@ -29,12 +29,35 @@ evidence (Slice 3) build on this registry.
 |---|---|
 | `id` / `name` | non-empty strings, unique across the registry |
 | `execution_path` | non-empty string: where it runs |
-| `trigger` | `{ kind: "schedule", cron, chicago_label }` or `{ kind: "event", description }`; cron must be a strict 5-field UTC expression |
+| `trigger` | `{ kind: "schedule", cron\|crons, chicago_label, dst }` or `{ kind: "event", description }`; cron must be a strict 5-field UTC expression |
 | `moves_money` | boolean; `true` requires non-empty `durable_evidence` |
 | `durable_evidence` | non-empty array of non-empty strings (tables, logs); `"unverified"` markers where the survey could not trace a write |
 | `expected_cadence` | non-empty string |
 | `monitoring_status` | exactly one of `covered`, `partially-covered`, `uncovered`, `unable-to-verify` |
 | unknown fields | rejected — strict shape |
+
+## Timezone-honest schedules (Slice 1 review finding)
+
+A fixed UTC cron is **not** a fixed Chicago wall time: America/Chicago is
+UTC-5 in daylight time and UTC-6 in standard time. An earlier version of
+this registry labeled fixed-UTC crons as fixed CDT times, which is wrong
+half the year. The `trigger.dst` field declares which pattern a schedule
+follows, and the validator enforces label honesty per pattern:
+
+- `"fixed-utc"` — one UTC cron; the Chicago wall time shifts with DST.
+  The label must name **both** equivalents, e.g.
+  `"2:30 AM CDT / 1:30 AM CST daily"`. The validator derives both from the
+  cron (`chicagoWallTimes`) and rejects the label if either is missing —
+  this is the regression test for the review finding.
+- `"dst-guarded"` — a UTC cron pair with a workflow guard that admits
+  exactly one Chicago wall time (e.g. the doc-drift and governance-refresh
+  workflows). The label names the enforced wall time and the guard.
+- `"dual-fire"` — several UTC crons with no guard; every slot fires (e.g.
+  the Brain sync and undiscovered-errors workflows run twice daily). The
+  label must state that both slots fire.
+
+The UTC cron expression(s) are always the authority; the label is the
+human-readable consequence, checked, not trusted.
 
 ## What "unable-to-verify" means
 

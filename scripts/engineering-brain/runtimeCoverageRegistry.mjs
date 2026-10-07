@@ -60,8 +60,10 @@ export const CAPABILITIES = Object.freeze([
       "GitHub Actions .github/workflows/engineering-brain-doc-drift-nightly.yml (DST-aware guard picks one of the two slots)",
     trigger: {
       kind: "schedule",
-      cron: "0 6,7 * * *",
-      chicago_label: "1:00 AM America/Chicago daily (DST pair)",
+      crons: ["0 6 * * *", "0 7 * * *"],
+      chicago_label:
+        "1:00 AM America/Chicago daily (DST-guard admits the 01:00 Chicago slot: 06:00 UTC in CDT, 07:00 UTC in CST)",
+      dst: "dst-guarded",
     },
     moves_money: false,
     durable_evidence: ["GitHub Actions run log", "fix commits on main"],
@@ -90,12 +92,14 @@ export const CAPABILITIES = Object.freeze([
       "GitHub Actions .github/workflows/engineering-brain-sync.yml → node scripts/engineering-brain/runEngineeringBrainIndexer.mjs",
     trigger: {
       kind: "schedule",
-      cron: "0 9,10 * * *",
-      chicago_label: "3:00 AM America/Chicago daily (DST pair: 0 9 UTC in CDT, 0 10 UTC in CST)",
+      crons: ["0 9 * * *", "0 10 * * *"],
+      chicago_label:
+        "9:00 UTC (4:00 AM CDT / 3:00 AM CST) and 10:00 UTC (5:00 AM CDT / 4:00 AM CST) daily — both slots fire, no DST guard",
+      dst: "dual-fire",
     },
     moves_money: false,
     durable_evidence: ["GitHub Actions run log", "engineering-brain/ index files committed to repo"],
-    expected_cadence: "daily",
+    expected_cadence: "twice daily",
     monitoring_status: "partially-covered",
     monitoring_note: "Actions run logs exist; no independent execution check.",
   },
@@ -106,12 +110,14 @@ export const CAPABILITIES = Object.freeze([
       "GitHub Actions .github/workflows/engineering-brain-undiscovered-errors.yml → signals/fetchSupabaseSignals.mjs plus failed-CI collection",
     trigger: {
       kind: "schedule",
-      cron: "0 10,11 * * *",
-      chicago_label: "5:00 AM America/Chicago daily (DST pair)",
+      crons: ["0 10 * * *", "0 11 * * *"],
+      chicago_label:
+        "10:00 UTC (5:00 AM CDT / 4:00 AM CST) and 11:00 UTC (6:00 AM CDT / 5:00 AM CST) daily — both slots fire, no DST guard",
+      dst: "dual-fire",
     },
     moves_money: false,
     durable_evidence: ["GitHub Actions run log", "signals artifacts (signals-supabase.json)"],
-    expected_cadence: "daily",
+    expected_cadence: "twice daily",
     monitoring_status: "partially-covered",
     monitoring_note: "Read-only by design (workflow never commits); run logs exist, no independent check.",
   },
@@ -122,8 +128,10 @@ export const CAPABILITIES = Object.freeze([
       "GitHub Actions .github/workflows/forge-governance-refresh.yml → npm run forge:session, node scripts/governance/verifyShadowGovernance.mjs",
     trigger: {
       kind: "schedule",
-      cron: "0 7,8 * * *",
-      chicago_label: "2:00 AM America/Chicago daily (DST pair)",
+      crons: ["0 7 * * *", "0 8 * * *"],
+      chicago_label:
+        "2:00 AM America/Chicago daily (DST-guard admits the 02:00 Chicago slot: 07:00 UTC in CDT, 08:00 UTC in CST)",
+      dst: "dst-guarded",
     },
     moves_money: false,
     durable_evidence: ["GitHub Actions run log"],
@@ -136,7 +144,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Private-financing autopay sweep",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/private-financing/cron/autopay-sweep (src/app/api/private-financing/cron/autopay-sweep/route.js → src/application/private-financing/executePfAutopayAttempt.js)",
-    trigger: { kind: "schedule", cron: "30 7 * * *", chicago_label: "2:30 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "30 7 * * *", chicago_label: "2:30 AM CDT / 1:30 AM CST daily", dst: "fixed-utc" },
     moves_money: true,
     money_note: "Creates Stripe PaymentIntents (paymentIntentId recorded on the payment row).",
     durable_evidence: [
@@ -155,7 +163,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Private-financing payment-due reminders",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/private-financing/cron/payment-due-reminders",
-    trigger: { kind: "schedule", cron: "0 9 * * *", chicago_label: "4:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 9 * * *", chicago_label: "4:00 AM CDT / 3:00 AM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "private_financing_payment_reminder_deliveries (Supabase, verified)",
@@ -170,7 +178,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Private-financing payment-receipt notifications",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/private-financing/cron/payment-receipt-notifications",
-    trigger: { kind: "schedule", cron: "0 16 * * *", chicago_label: "11:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 16 * * *", chicago_label: "11:00 AM CDT / 10:00 AM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "private_financing_payment_receipt_deliveries (Supabase, verified)",
@@ -185,7 +193,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Rental autopay sweep",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/autopay-sweep (src/app/api/rental/cron/autopay-sweep/route.js → src/application/rental/executeAutopayAttempt.js)",
-    trigger: { kind: "schedule", cron: "23 8 * * *", chicago_label: "3:23 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "23 8 * * *", chicago_label: "3:23 AM CDT / 2:23 AM CST daily", dst: "fixed-utc" },
     moves_money: true,
     money_note: "Creates Stripe PaymentIntents (ACH debits) via the billing provider.",
     durable_evidence: [
@@ -228,7 +236,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Rental charge generation",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/generate-charges (src/app/api/rental/cron/generate-charges/route.js), bearer CRON_SECRET",
-    trigger: { kind: "schedule", cron: "0 6 * * *", chicago_label: "1:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 6 * * *", chicago_label: "1:00 AM CDT / 12:00 AM CST daily", dst: "fixed-utc" },
     moves_money: true,
     money_note: "Posts rent-charge debits to the tenant ledger (rent_charges); no Stripe call, but ledger debits count as money movement.",
     durable_evidence: [
@@ -248,7 +256,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Late-fee posting",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/late-fee-posting",
-    trigger: { kind: "schedule", cron: "0 11 * * *", chicago_label: "6:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 11 * * *", chicago_label: "6:00 AM CDT / 5:00 AM CST daily", dst: "fixed-utc" },
     moves_money: true,
     money_note: "Posts late-fee debits to the tenant ledger (rent_charges); no Stripe call, but ledger debits count as money movement.",
     durable_evidence: [
@@ -265,7 +273,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Owner payment notifications",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/owner-payment-notifications",
-    trigger: { kind: "schedule", cron: "0 14 * * *", chicago_label: "9:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 14 * * *", chicago_label: "9:00 AM CDT / 8:00 AM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "rental_owner_notifications (Supabase, verified)",
@@ -280,7 +288,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Rent-due reminders",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/rent-due-reminders",
-    trigger: { kind: "schedule", cron: "0 10 * * *", chicago_label: "5:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 10 * * *", chicago_label: "5:00 AM CDT / 4:00 AM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "rental_rent_reminder_deliveries (Supabase, verified)",
@@ -306,7 +314,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Settlement reconciliation",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/settlement-reconciliation",
-    trigger: { kind: "schedule", cron: "0 8 * * *", chicago_label: "3:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 8 * * *", chicago_label: "3:00 AM CDT / 2:00 AM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "rental_settlements (Supabase, verified)",
@@ -322,7 +330,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Tenant invite sweep",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/tenant-invite",
-    trigger: { kind: "schedule", cron: "0 15 * * *", chicago_label: "10:00 AM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 15 * * *", chicago_label: "10:00 AM CDT / 9:00 AM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "rental_tenants (Supabase, verified; invite state columns)",
@@ -338,7 +346,7 @@ export const CAPABILITIES = Object.freeze([
     name: "Tenant payment receipts",
     execution_path:
       "GitHub Actions .github/workflows/rental-cron-sweeps.yml → GET /api/rental/cron/tenant-payment-receipts",
-    trigger: { kind: "schedule", cron: "0 18 * * *", chicago_label: "1:00 PM CDT daily" },
+    trigger: { kind: "schedule", cron: "0 18 * * *", chicago_label: "1:00 PM CDT / 12:00 PM CST daily", dst: "fixed-utc" },
     moves_money: false,
     durable_evidence: [
       "rental_tenant_receipt_deliveries (Supabase, verified)",

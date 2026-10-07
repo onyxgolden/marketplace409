@@ -21,33 +21,110 @@ function isNonEmptyString(v) {
   return typeof v === "string" && v.trim().length > 0;
 }
 
+// America/Chicago is UTC-5 in daylight time, UTC-6 in standard time. A
+// fixed UTC cron therefore lands at two different local wall times across
+// the year. This helper derives both, so labels can be checked for honesty
+// instead of trusted. `cron` must be "M H * * *" with single numeric fields.
+export function chicagoWallTimes(cron) {
+  const [minute, hour] = cron.trim().split(/\s+/).slice(0, 2).map(Number);
+  const fmt = (h24raw) => {
+    const h24 = ((h24raw % 24) + 24) % 24;
+    const ampm = h24 < 12 ? "AM" : "PM";
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${h12}:${String(minute).padStart(2, "0")} ${ampm}`;
+  };
+  return { cdt: fmt(hour - 5), cst: fmt(hour - 6) };
+}
+
+function isSingleCron(cron) {
+  const [minute, hour] = cron.trim().split(/\s+/).slice(0, 2);
+  return /^[0-9]+$/.test(minute) && /^[0-9]+$/.test(hour);
+}
+
 function validateTrigger(entry, errors) {
   const t = entry.trigger;
+  const label = entry && typeof entry.id === "string" ? entry.id : "<missing id>";
   if (t === null || typeof t !== "object" || Array.isArray(t)) {
-    errors.push(`${entry.id}: trigger must be an object`);
+    errors.push(`${label}: trigger must be an object`);
     return;
   }
   if (t.kind === "schedule") {
-    const keys = Object.keys(t).sort().join(",");
-    if (keys !== "chicago_label,cron,kind") {
-      errors.push(`${entry.id}: schedule trigger must have exactly { kind, cron, chicago_label }`);
+    // Timezone-honest schedule representation (review finding, Slice 1):
+    // a fixed UTC cron is NOT a fixed Chicago wall time. `dst` declares
+    // which pattern the schedule follows, and the label must match it:
+    // - "fixed-utc": one UTC cron; Chicago wall time shifts with DST, so
+    //   the label must name BOTH the CDT and CST equivalents.
+    // - "dst-guarded": a UTC cron pair with a guard that admits exactly one
+    //   Chicago wall time; the label names that wall time and the guard.
+    // - "dual-fire": several UTC crons with no guard; every slot fires, so
+    //   the label must say so.
+    const hasCron = isNonEmptyString(t.cron);
+    const hasCrons = Array.isArray(t.crons);
+    if (hasCron === hasCrons) {
+      errors.push(`${label}: schedule trigger needs exactly one of "cron" or "crons"`);
+      return;
     }
-    if (!isNonEmptyString(t.cron) || !CRON_RE.test(t.cron.trim())) {
-      errors.push(`${entry.id}: schedule trigger has a malformed UTC cron expression`);
+    const crons = hasCron ? [t.cron] : t.crons;
+    for (const c of crons) {
+      if (!isNonEmptyString(c) || !CRON_RE.test(c.trim())) {
+        errors.push(`${label}: malformed UTC cron expression "${c}"`);
+      }
     }
     if (!isNonEmptyString(t.chicago_label)) {
-      errors.push(`${entry.id}: schedule trigger needs a non-empty chicago_label`);
+      errors.push(`${label}: schedule trigger needs a non-empty chicago_label`);
+    }
+    const allowedDst = ["fixed-utc", "dst-guarded", "dual-fire"];
+    if (!allowedDst.includes(t.dst)) {
+      errors.push(`${label}: schedule trigger dst must be one of ${allowedDst.join(", ")}`);
+      return;
+    }
+    const keys = Object.keys(t).sort().join(",");
+    const okKeys =
+      (hasCron && keys === "chicago_label,cron,dst,kind") ||
+      (!hasCron && keys === "chicago_label,crons,dst,kind");
+    if (!okKeys) {
+      errors.push(
+        `${label}: schedule trigger must have exactly { kind, cron|crons, chicago_label, dst }`
+      );
+    }
+    if (t.dst === "fixed-utc") {
+      if (!hasCron || !isSingleCron(t.cron)) {
+        errors.push(`${label}: fixed-utc needs a single "cron" with numeric minute and hour`);
+      } else if (isNonEmptyString(t.chicago_label)) {
+        // The regression: a fixed-UTC cron labeled as a fixed CDT wall
+        // time is wrong half the year. Both equivalents must appear.
+        const { cdt, cst } = chicagoWallTimes(t.cron);
+        if (!t.chicago_label.includes(cdt) || !t.chicago_label.includes(cst)) {
+          errors.push(
+            `${label}: fixed-utc label must name both Chicago equivalents (${cdt} CDT / ${cst} CST)`
+          );
+        }
+      }
+    } else if (t.dst === "dst-guarded") {
+      if (hasCron || t.crons.length !== 2) {
+        errors.push(`${label}: dst-guarded needs "crons" with exactly the two UTC slots`);
+      }
+      if (isNonEmptyString(t.chicago_label) && !t.chicago_label.includes("DST-guard")) {
+        errors.push(`${label}: dst-guarded label must name the DST-guard and the wall time it enforces`);
+      }
+    } else if (t.dst === "dual-fire") {
+      if (hasCron || t.crons.length < 2) {
+        errors.push(`${label}: dual-fire needs "crons" with at least two UTC slots`);
+      }
+      if (isNonEmptyString(t.chicago_label) && !/both (slots )?fire/i.test(t.chicago_label)) {
+        errors.push(`${label}: dual-fire label must state that every UTC slot fires (no DST guard)`);
+      }
     }
   } else if (t.kind === "event") {
     const keys = Object.keys(t).sort().join(",");
     if (keys !== "description,kind") {
-      errors.push(`${entry.id}: event trigger must have exactly { kind, description }`);
+      errors.push(`${label}: event trigger must have exactly { kind, description }`);
     }
     if (!isNonEmptyString(t.description)) {
-      errors.push(`${entry.id}: event trigger needs a non-empty description`);
+      errors.push(`${label}: event trigger needs a non-empty description`);
     }
   } else {
-    errors.push(`${entry.id}: trigger.kind must be "schedule" or "event"`);
+    errors.push(`${label}: trigger.kind must be "schedule" or "event"`);
   }
 }
 

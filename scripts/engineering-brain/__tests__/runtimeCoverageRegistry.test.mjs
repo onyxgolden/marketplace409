@@ -8,7 +8,11 @@ import {
   getCapability,
   getRegistry,
 } from "../runtimeCoverageRegistry.mjs";
-import { validateRegistry, validateShippedRegistry } from "../validateRuntimeCoverageRegistry.mjs";
+import {
+  chicagoWallTimes,
+  validateRegistry,
+  validateShippedRegistry,
+} from "../validateRuntimeCoverageRegistry.mjs";
 
 function clone(entry) {
   return JSON.parse(JSON.stringify(entry));
@@ -131,5 +135,80 @@ describe("validateRegistry fail-closed rules", () => {
     const a = validateRegistry([bad]);
     const b = validateRegistry([bad]);
     expect(a).toEqual(b);
+  });
+});
+
+describe("timezone-honest schedule representation (Slice 1 review finding)", () => {
+  it("derives both Chicago wall times from a fixed UTC cron", () => {
+    expect(chicagoWallTimes("30 7 * * *")).toEqual({ cdt: "2:30 AM", cst: "1:30 AM" });
+    expect(chicagoWallTimes("0 6 * * *")).toEqual({ cdt: "1:00 AM", cst: "12:00 AM" });
+    expect(chicagoWallTimes("0 18 * * *")).toEqual({ cdt: "1:00 PM", cst: "12:00 PM" });
+    expect(chicagoWallTimes("23 8 * * *")).toEqual({ cdt: "3:23 AM", cst: "2:23 AM" });
+  });
+
+  it("rejects the exact error class from the review: fixed-UTC cron labeled as fixed CDT", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "pf-autopay-sweep"));
+    bad.trigger = {
+      kind: "schedule",
+      cron: "30 7 * * *",
+      chicago_label: "2:30 AM CDT daily",
+      dst: "fixed-utc",
+    };
+    const { ok, errors } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+    expect(errors.some((e) => e.includes("2:30 AM") && e.includes("1:30 AM"))).toBe(true);
+  });
+
+  it("accepts the honest dual label for the same cron", () => {
+    const good = clone(CAPABILITIES.find((c) => c.id === "pf-autopay-sweep"));
+    const { ok, errors } = validateRegistry([good]);
+    expect(errors).toEqual([]);
+    expect(ok).toBe(true);
+  });
+
+  it("rejects a fixed-utc entry missing the dst marker", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "pf-autopay-sweep"));
+    delete bad.trigger.dst;
+    const { ok } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+  });
+
+  it("rejects a dst-guarded entry whose label does not name the guard", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "forge-governance-refresh"));
+    bad.trigger = {
+      kind: "schedule",
+      crons: ["0 7 * * *", "0 8 * * *"],
+      chicago_label: "2:00 AM America/Chicago daily",
+      dst: "dst-guarded",
+    };
+    const { ok, errors } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+    expect(errors.some((e) => e.includes("DST-guard"))).toBe(true);
+  });
+
+  it("rejects a dual-fire entry whose label hides that both slots fire", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "brain-nightly-sync"));
+    bad.trigger = {
+      kind: "schedule",
+      crons: ["0 9 * * *", "0 10 * * *"],
+      chicago_label: "3:00 AM America/Chicago daily",
+      dst: "dual-fire",
+    };
+    const { ok, errors } = validateRegistry([bad]);
+    expect(ok).toBe(false);
+    expect(errors.some((e) => e.includes("slot") && e.includes("fire"))).toBe(true);
+  });
+
+  it("rejects a schedule trigger with both cron and crons", () => {
+    const bad = clone(CAPABILITIES.find((c) => c.id === "pf-autopay-sweep"));
+    bad.trigger = {
+      kind: "schedule",
+      cron: "30 7 * * *",
+      crons: ["30 7 * * *"],
+      chicago_label: "2:30 AM CDT / 1:30 AM CST daily",
+      dst: "fixed-utc",
+    };
+    const { ok } = validateRegistry([bad]);
+    expect(ok).toBe(false);
   });
 });

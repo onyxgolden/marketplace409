@@ -31,7 +31,7 @@ function textReport(capabilities) {
   for (const c of capabilities.filter((c) => c.moves_money)) {
     const trig =
       c.trigger.kind === "schedule"
-        ? `schedule ${c.trigger.cron} (${c.trigger.chicago_label})`
+        ? `schedule ${c.trigger.cron || c.trigger.crons.join(" + ")} (${c.trigger.chicago_label})`
         : "event-triggered";
     lines.push(`  - ${c.id}: ${c.name} — ${trig}`);
   }
