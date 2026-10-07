@@ -762,4 +762,136 @@ describe("executeAutopayAttempt", () => {
       }));
     });
   });
+
+  // Verify-before-fail (2026-10-06 double-debit incident): a Stripe error
+  // does not prove the payment died. When the error carries a PaymentIntent
+  // ID, the intent's actual Stripe status decides the row's status.
+  describe("verify-before-fail", () => {
+    // db.from call order on the fresh-attempt failure path: enrollment,
+    // charge, existing attempt (null), in-flight payment (null), schedule,
+    // billing settings, landlord account, payment insert, attempt insert,
+    // then the failure-path writes (payment update, attempt update,
+    // enrollment update).
+    function runFailingAttempt(stripeError, retrieveImpl) {
+      const offSession = vi.fn(async () => { throw stripeError; });
+      const retrievePaymentIntent = vi.fn(retrieveImpl || (async () => { throw new Error("retrieve not stubbed"); }));
+      createStripeBillingProvider.mockReturnValue({ createOffSessionPayment: offSession, retrievePaymentIntent });
+      const db = { from: vi.fn() };
+      const paymentUpdate = chain({ error: null });
+      const attemptUpdate = chain({ error: null });
+      const enrollmentUpdate = chain({ error: null });
+      db.from
+        .mockReturnValueOnce(chain({ data: ENROLLMENT, error: null }))
+        .mockReturnValueOnce(chain({ data: CHARGE, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain({ data: null, error: null }))
+        .mockReturnValueOnce(chain(FORGE_SCHEDULE))
+        .mockReturnValueOnce(chain(BILLING_ENABLED))
+        .mockReturnValueOnce(chain({ data: { provider_account_id: "acct_1" }, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "rental_payment_1" }, error: null }))
+        .mockReturnValueOnce(chain({ data: { id: "attempt_1" }, error: null }))
+        .mockReturnValueOnce(paymentUpdate)
+        .mockReturnValueOnce(attemptUpdate)
+        .mockReturnValueOnce(enrollmentUpdate);
+      return { db, offSession, retrievePaymentIntent, paymentUpdate, attemptUpdate, enrollmentUpdate,
+        result: executeAutopayAttempt(db, "enrollment_1", "charge_1") };
+    }
+
+    function stripeErrorWithIntent() {
+      const err = new Error("ACH debit not enabled on the connected account.");
+      err.type = "StripeInvalidRequestError";
+      err.code = "ach_debit_not_enabled";
+      err.payment_intent = { id: "pi_live_1" };
+      return err;
+    }
+
+    it("records the intent's true status instead of failed when Stripe keeps it alive (Oct 3 regression)", async () => {
+      const { retrievePaymentIntent, paymentUpdate, attemptUpdate, enrollmentUpdate, result } =
+        runFailingAttempt(stripeErrorWithIntent(), async () => ({ id: "pi_live_1", status: "processing" }));
+      const out = await result;
+      expect(retrievePaymentIntent).toHaveBeenCalledWith({ connectedAccountId: "acct_1" }, "pi_live_1");
+      expect(out.httpStatus).toBe(200);
+      expect(out.body).toEqual(expect.objectContaining({
+        success: true, status: "processing", stripeStatus: "processing",
+      }));
+      expect(out.body.warning).toMatch(/not marked failed/);
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "processing", provider_payment_id: "pi_live_1", failure_code: null,
+      }));
+      expect(attemptUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "submitted", provider_payment_id: "pi_live_1", failure_code: null,
+      }));
+      // The money is in flight: the enrollment's failure count and pause
+      // state must not move.
+      const [enrollmentPayload] = enrollmentUpdate.update.mock.calls[0];
+      expect(enrollmentPayload).not.toHaveProperty("consecutive_failures");
+      expect(enrollmentPayload).not.toHaveProperty("status");
+      expect(enrollmentPayload).toEqual(expect.objectContaining({ last_attempt_at: expect.any(String) }));
+    });
+
+    it("marks succeeded when the verified intent already succeeded", async () => {
+      const { paymentUpdate, attemptUpdate, result } =
+        runFailingAttempt(stripeErrorWithIntent(), async () => ({ id: "pi_live_1", status: "succeeded" }));
+      const out = await result;
+      expect(out.httpStatus).toBe(200);
+      expect(out.body).toEqual(expect.objectContaining({ success: true, status: "succeeded" }));
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({ status: "succeeded" }));
+      expect(attemptUpdate.update).toHaveBeenCalledWith(expect.objectContaining({ status: "succeeded" }));
+    });
+
+    it("marks failed when Stripe confirms the intent is canceled", async () => {
+      const { retrievePaymentIntent, paymentUpdate, enrollmentUpdate, result } =
+        runFailingAttempt(stripeErrorWithIntent(), async () => ({ id: "pi_live_1", status: "canceled" }));
+      const out = await result;
+      expect(retrievePaymentIntent).toHaveBeenCalledTimes(1);
+      expect(out.httpStatus).toBe(409);
+      expect(out.body).toEqual(expect.objectContaining({ error: "Autopay attempt failed." }));
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", provider_payment_id: "pi_live_1", failure_code: "StripeInvalidRequestError",
+      }));
+      const [enrollmentPayload] = enrollmentUpdate.update.mock.calls[0];
+      expect(enrollmentPayload).toEqual(expect.objectContaining({ consecutive_failures: 1 }));
+    });
+
+    it("fails closed when the intent status cannot be verified", async () => {
+      const { paymentUpdate, enrollmentUpdate, result } =
+        runFailingAttempt(stripeErrorWithIntent(), async () => { throw new Error("network down"); });
+      const out = await result;
+      expect(out.httpStatus).toBe(409);
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", provider_payment_id: "pi_live_1",
+      }));
+      const [paymentPayload] = paymentUpdate.update.mock.calls[0];
+      expect(paymentPayload.failure_message).toMatch(/failing closed/);
+      const [enrollmentPayload] = enrollmentUpdate.update.mock.calls[0];
+      expect(enrollmentPayload).toEqual(expect.objectContaining({ consecutive_failures: 1 }));
+    });
+
+    it("never calls Stripe to verify when the error carries no PaymentIntent", async () => {
+      const err = new Error("Invalid request.");
+      err.type = "StripeInvalidRequestError";
+      const { retrievePaymentIntent, paymentUpdate, result } = runFailingAttempt(err);
+      const out = await result;
+      expect(retrievePaymentIntent).not.toHaveBeenCalled();
+      expect(out.httpStatus).toBe(409);
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", provider_payment_id: null,
+      }));
+    });
+
+    it("fails closed on an unrecognized Stripe status instead of recording money in flight", async () => {
+      const { paymentUpdate, enrollmentUpdate, result } =
+        runFailingAttempt(stripeErrorWithIntent(), async () => ({ id: "pi_live_1", status: "some_future_status" }));
+      const out = await result;
+      expect(out.httpStatus).toBe(409);
+      expect(out.body).toEqual(expect.objectContaining({ error: "Autopay attempt failed." }));
+      expect(paymentUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed", provider_payment_id: "pi_live_1",
+      }));
+      const [paymentPayload] = paymentUpdate.update.mock.calls[0];
+      expect(paymentPayload.failure_message).toMatch(/Unrecognized Stripe status/);
+      const [enrollmentPayload] = enrollmentUpdate.update.mock.calls[0];
+      expect(enrollmentPayload).toEqual(expect.objectContaining({ consecutive_failures: 1 }));
+    });
+  });
 });

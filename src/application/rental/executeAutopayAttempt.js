@@ -2,6 +2,23 @@ import { createStripeBillingProvider } from "@/infrastructure/billing/StripeBill
 import { isAutopayCollectibleChargeType } from "./tenantCharges.js";
 import { autopayFeeCents, resolveFeeBasisPoints } from "@/domains/rental-payment/convenienceFee";
 
+// Verify-before-fail status map (2026-10-06): the ONLY Stripe PaymentIntent
+// statuses that may take the verified-live path. "canceled" is absent by
+// design (terminal → failed path). Any status not listed here — including
+// future Stripe statuses — fails closed: recording an unrecognized status
+// as money in flight would repeat the exact lie this fix was built to
+// eliminate. Every mapped outcome is non-terminal and already covered by
+// the in-flight guard, so a verified-alive row blocks duplicates exactly
+// like a normally-processing one.
+const VERIFIED_INTENT_STATUS_MAP = {
+  succeeded: "succeeded",
+  processing: "processing",
+  requires_action: "requires_action",
+  requires_payment_method: "requires_payment_method",
+  requires_confirmation: "created",
+  requires_capture: "processing",
+};
+
 // Extracted so both the manual /api/rental/autopay/execute endpoint and the
 // autopay-sweep cron can attempt a single (enrollment, charge) pair identically.
 export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
@@ -194,8 +211,6 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     ]);
     return { httpStatus: 200, body: { success: true, duplicate: false, retried: retryable, paymentId, status: result.status } };
   } catch (error) {
-    const failures = Number(enrollment.consecutive_failures || 0) + 1;
-    const pause = failures > Number(enrollment.retry_limit || 0);
     // Record the real provider error instead of a generic message. The
     // failure CODE is the Stripe error TYPE (stable across calls and always
     // present on provider errors) because the retry gate classifies on it:
@@ -204,11 +219,72 @@ export async function executeAutopayAttempt(db, enrollmentId, chargeId) {
     // without a provider shape fails closed to "autopay_failed" and is never
     // auto-retried.
     const failureCode = error?.type || error?.code || "autopay_failed";
-    const failureMessage = String(error?.message || "Automatic payment requires attention.").slice(0, 500);
     // An error that carries a PaymentIntent (e.g. a decline on a confirmed
     // intent) DID reach Stripe — persist its ID so the row can never be
     // mistaken for a never-reached-Stripe failure by a future retry gate.
     const errorPaymentIntentId = error?.payment_intent?.id || error?.paymentIntentId || null;
+
+    // Verify-before-fail (2026-10-06 double-debit incident): a Stripe error
+    // does NOT prove the payment died. Stripe can throw (e.g.
+    // ach_debit_not_enabled on confirmation) while the PaymentIntent stays
+    // alive and processing — trusting the error alone wrote "failed" for a
+    // live debit. When the error carries a PaymentIntent ID, the intent's
+    // ACTUAL Stripe status decides the row's status, never the error.
+    let verifiedIntentStatus = null;
+    if (errorPaymentIntentId) {
+      try {
+        const intent = await createStripeBillingProvider().retrievePaymentIntent(
+          { connectedAccountId: account.data.provider_account_id },
+          errorPaymentIntentId,
+        );
+        verifiedIntentStatus = intent?.status || null;
+      } catch {
+        verifiedIntentStatus = null;
+      }
+    }
+    // Only statuses explicitly in VERIFIED_INTENT_STATUS_MAP may take the
+    // verified-live path. An unknown or future Stripe status falls through
+    // to fail closed below — it must never be recorded as money in flight.
+    const verifiedPaymentStatus = verifiedIntentStatus
+      ? (VERIFIED_INTENT_STATUS_MAP[verifiedIntentStatus] || null)
+      : null;
+    if (verifiedPaymentStatus) {
+      // The intent is alive in Stripe: record its truthful status, never
+      // "failed". The error stays as diagnostic context. The enrollment's
+      // failure count and pause state are untouched — the money is in
+      // flight, so counting this against the retry limit would be wrong.
+      // The in-flight guard treats every non-terminal status as blocking,
+      // so this row can never be auto-retried as a duplicate; webhooks
+      // reconcile the final outcome.
+      const attemptStatus = verifiedPaymentStatus === "succeeded" ? "succeeded" : "submitted";
+      const truthfulMessage = `Stripe threw ${failureCode} during confirmation, but PaymentIntent ${errorPaymentIntentId} is ${verifiedIntentStatus} in Stripe — recorded truthfully, not marked failed.`;
+      const verifiedAt = new Date().toISOString();
+      await Promise.all([
+        db.from("rental_payments").update({ provider_payment_id: errorPaymentIntentId,
+          status: verifiedPaymentStatus, failure_code: null, failure_message: truthfulMessage, updated_at: verifiedAt })
+          .eq("owner_id", enrollment.owner_id).eq("id", paymentId),
+        db.from("rental_autopay_attempts").update({ provider_payment_id: errorPaymentIntentId,
+          status: attemptStatus, failure_code: null, failure_message: truthfulMessage, updated_at: verifiedAt })
+          .eq("owner_id", enrollment.owner_id).eq("id", attemptId),
+        db.from("rental_autopay_enrollments").update({ last_attempt_at: verifiedAt, updated_at: verifiedAt })
+          .eq("owner_id", enrollment.owner_id).eq("id", enrollment.id),
+      ]);
+      return { httpStatus: 200, body: { success: true, duplicate: false, retried: retryable,
+        paymentId, status: verifiedPaymentStatus, stripeStatus: verifiedIntentStatus, warning: truthfulMessage } };
+    }
+
+    const failures = Number(enrollment.consecutive_failures || 0) + 1;
+    const pause = failures > Number(enrollment.retry_limit || 0);
+    // Fail closed: no PaymentIntent ID, a canceled intent, an unrecognized
+    // status, or a retrieve we could not complete. The ID is persisted when
+    // we have it so the retry gate (which requires a null
+    // provider_payment_id) still blocks any automatic retry of the
+    // ambiguous outcome.
+    const unverifiable = errorPaymentIntentId && !verifiedIntentStatus;
+    const unrecognized = !!verifiedIntentStatus && !verifiedPaymentStatus;
+    const failureMessage = (String(error?.message || "Automatic payment requires attention.")
+      + (unverifiable ? " Stripe status verification was attempted but failed; failing closed." : "")
+      + (unrecognized ? ` Unrecognized Stripe status '${verifiedIntentStatus}'; failing closed.` : "")).slice(0, 500);
     await Promise.all([
       db.from("rental_payments").update({ status: "failed", failure_code: failureCode,
         failure_message: failureMessage, provider_payment_id: errorPaymentIntentId,
