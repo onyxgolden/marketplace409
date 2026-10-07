@@ -28,6 +28,7 @@
 
 import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitureCatalog";
 import { findSymbol } from "./symbolRegistry";
+import { isCameraPose, nextViewId } from "./namedCameraViews";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
@@ -106,6 +107,7 @@ export function createEmptyDesign(name = "Untitled design") {
     underlay: null, // background trace-over image; see setUnderlay
     sheets: [], // printable paper frames; see addSheet
     decks: [], // plan rectangles, top dropIn below the threshold; see addDeck
+    cameraViews: [], // saved 3D camera angles { id, name, pose }; see namedCameraViews.js
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
   };
 }
@@ -1119,12 +1121,40 @@ export function validateDesign(design) {
       errors.push(`Sheet ${sheet.id} has bad geometry (bounds, fit scale, or anchor).`);
     }
   }
+  const viewIds = new Set();
+  for (const view of design.cameraViews || []) {
+    if (!view?.id || !String(view.name ?? "").trim() || !isCameraPose(view.pose)) {
+      errors.push(`Saved camera view "${view?.name ?? view?.id ?? "?"}" is malformed (name or pose).`);
+    }
+    if (view?.id && viewIds.has(view.id)) {
+      errors.push(`Saved camera view "${view.name}" has a duplicate camera view id (${view.id}).`);
+    }
+    if (view?.id) viewIds.add(view.id);
+  }
   return errors;
 }
 
 export function serializeDesign(design) {
   assertDesign(design);
   return JSON.stringify(design);
+}
+
+function uniqueCameraViews(views) {
+  const seen = new Set();
+  const out = [];
+  for (const view of views) {
+    if (!view || typeof view !== "object") continue;
+    if (view.id && !seen.has(view.id)) {
+      seen.add(view.id);
+      out.push(view);
+    } else {
+      // Fresh ID above every ID seen so far, including those still to come.
+      const id = nextViewId([...views, ...out]);
+      seen.add(id);
+      out.push({ ...view, id });
+    }
+  }
+  return out;
 }
 
 export function parseDesign(json) {
@@ -1138,6 +1168,10 @@ export function parseDesign(json) {
   // Documents saved before the annotations array existed load safely:
   // normalize the missing array instead of bumping the version.
   if (!Array.isArray(parsed.annotations)) parsed.annotations = [];
+  // Same rule for saved camera views: a document saved before them loads with none.
+  // A duplicate ID (from a damaged or hand-edited file) keeps its first view and
+  // gives the later ones fresh IDs, so a delete can only ever remove one view.
+  parsed.cameraViews = uniqueCameraViews(Array.isArray(parsed.cameraViews) ? parsed.cameraViews : []);
   return parsed;
 }
 

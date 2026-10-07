@@ -455,6 +455,9 @@ export function designerReducer(state, action) {
       return touch(state, addWall(state.design, action.a, action.b));
     case "ADD_WALL_RECT":
       return touch(state, addWallRect(state.design, action.a, action.b));
+    // Saved 3D camera views: the viewport computes the next list and hands it over.
+    case "SET_CAMERA_VIEWS":
+      return touch(state, { ...state.design, cameraViews: action.views });
     case "ADD_DECK": {
       const design = addDeck(state.design, action.a, action.b);
       const deck = design.decks[design.decks.length - 1];
