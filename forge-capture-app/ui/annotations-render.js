@@ -137,6 +137,22 @@ export function resolveDrawOps(sidecar) {
           h: body.geometry.h,
         });
         break;
+      case "redact":
+        // A DRAFT marker only -- live-editing preview, never destructive. The live source image
+        // is never touched by this op. The actual destructive redaction happens entirely in Rust
+        // (core::annotations::apply_redactions, called from the export_redacted Tauri command),
+        // against the real re-read source -- never here. This module must not, and does not,
+        // produce anything that could be mistaken for a real sanitized derivative; see
+        // docs/annotations.md's "Redact" section for why.
+        ops.push({
+          op: "redactPlaceholder",
+          id: item.id,
+          x: body.geometry.x,
+          y: body.geometry.y,
+          w: body.geometry.w,
+          h: body.geometry.h,
+        });
+        break;
       case "callout":
         calloutNumber += 1;
         ops.push({
@@ -217,6 +233,13 @@ export function drawOpsToCanvas(ctx, ops) {
           ctx.blurRegion(op.x, op.y, op.w, op.h);
         }
         break;
+      case "redactPlaceholder":
+        // Draft-editing visual only (hatching or similar), never the real redaction -- that
+        // happens entirely in Rust. See resolveDrawOps's "redact" case.
+        if (typeof ctx.redactPlaceholder === "function") {
+          ctx.redactPlaceholder(op.x, op.y, op.w, op.h);
+        }
+        break;
       case "callout":
         ctx.fillStyle = cssColor(op.color);
         ctx.beginPath();
@@ -247,6 +270,14 @@ export function drawOpsToCanvas(ctx, ops) {
  * @param {(w: number, h: number) => *} deps.createCanvas
  * @param {(canvas: *) => *} deps.getContext2d
  * @returns {*} the flattened canvas
+ *
+ * Also the input to a redaction export (Slice 2 review): this module performs no destructive
+ * pixel work at all -- the Rust `export_redacted` command re-reads the real source itself and
+ * does the actual, irreversible overwrite there, against the validated sidecar, never trusting a
+ * JS-composited buffer to already be sanitized. A caller preparing a redaction export calls this
+ * SAME function (ordinary annotations only; any `redact` items render only as the non-destructive
+ * `redactPlaceholder` preview, same as everywhere else) and sends its pixel data to that command.
+ * There is deliberately no separate "export a redacted image" function here to call instead.
  */
 export function flattenAnnotations({ sidecar, sourceImage }, { createCanvas, getContext2d }) {
   const canvas = createCanvas(sidecar.canvas.w, sidecar.canvas.h);
