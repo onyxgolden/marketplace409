@@ -3,12 +3,15 @@ import { AUTHORITY_LEVELS, AUTHORITY_LEVELS_BY_RANK } from "../authorityLevels.m
 import { buildIndexRecords } from "../buildIndexRecords.mjs";
 
 describe("authority ranking", () => {
-  it("encodes Jason's exact 6-tier order, current code first, historical snapshots last", () => {
+  // The canonical_document tier (Slice 2) sits between synchronized documents and reviewed decisions.
+  // Relative order of every pre-existing tier is unchanged; only ranks below it shift down by one.
+  it("encodes the 7-tier order: current code first, bootstrap and historical snapshots last", () => {
     expect(AUTHORITY_LEVELS_BY_RANK.map((l) => l.id)).toEqual([
       "current",
       "validation_evidence",
       "governance_state",
       "synchronized_document",
+      "canonical_document",
       "reviewed_decision",
       "historical_snapshot",
     ]);
@@ -16,7 +19,7 @@ describe("authority ranking", () => {
 
   it("ranks are strictly increasing with no gaps or duplicates", () => {
     const ranks = AUTHORITY_LEVELS_BY_RANK.map((l) => l.rank);
-    expect(ranks).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(ranks).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
   it("assigns authority_level per source type consistent with the defined order", () => {

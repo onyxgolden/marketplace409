@@ -13,11 +13,12 @@ const SOURCE_TYPES = [
   "test_file", "sql_table", "sql_rls_policy", "sql_trigger", "sql_rpc_function", "sql_migration_file",
   "synchronized_document_section", "governance_state", "validation_evidence", "historical_snapshot",
   "reviewed_decision", "package_manifest_file", "dependency_version",
+  "canonical_document_file", "historical_document_file",
 ];
 
 const AUTHORITY_LEVELS = [
   "current", "validation_evidence", "governance_state", "synchronized_document",
-  "reviewed_decision", "historical_snapshot",
+  "canonical_document", "reviewed_decision", "historical_snapshot",
 ];
 
 const CONFIDENCE_CLASS = {

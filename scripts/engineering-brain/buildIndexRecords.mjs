@@ -11,6 +11,7 @@ import { extractPackageVersions } from "./extractPackageVersions.mjs";
 import { extractContentTokens } from "./extractContentTokens.mjs";
 import { hashContent } from "./hashContent.mjs";
 import { AUTHORITY_LEVELS } from "./authorityLevels.mjs";
+import { CLASSIFICATIONS } from "./canonicalDocumentRegistry.mjs";
 
 const HTTP_HANDLER_NAMES = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
@@ -36,11 +37,16 @@ function makeRecord({ sourcePath, sourceType, symbolOrSection, commitSha, conten
 // the target commit). Returns { records, excluded, outOfScope } -- `excluded` covers denylist/secret/
 // PII hits (requirement 6/7, reported by reason), `outOfScope` covers tracked files that simply aren't
 // one of the categories requirement 3 asks this Phase 1 indexer to cover (most of the repo).
-export function buildIndexRecords({ commitSha, files }) {
+// `registry` (canonicalDocumentRegistry.mjs) decides documents the built-in classifier does not cover:
+// registered canonical documents become canonical_document_file records, registered historical
+// documents become historical_document_file records, and excluded entries are never indexed. Existing
+// classifications take precedence, so FORGE_SYNC and the other current categories are unchanged.
+export function buildIndexRecords({ commitSha, files, registry = [] }) {
   const records = [];
   const excluded = [];
   const outOfScope = [];
   const trackedPaths = new Set(files.map((file) => file.path));
+  const registryByPath = new Map(registry.map((entry) => [entry.path, entry]));
 
   const migrationFiles = [];
 
@@ -68,7 +74,16 @@ export function buildIndexRecords({ commitSha, files }) {
       continue;
     }
 
-    const sourceType = classifySourceFile(file.path);
+    const registryEntry = registryByPath.get(file.path);
+    if (registryEntry?.classification === CLASSIFICATIONS.EXCLUDED) {
+      excluded.push({ source_path: file.path, reason: `registry_excluded:${registryEntry.reason}` });
+      continue;
+    }
+
+    let sourceType = classifySourceFile(file.path);
+    if (!sourceType && registryEntry) {
+      sourceType = registryEntry.classification === CLASSIFICATIONS.HISTORICAL ? "historical_document" : "canonical_document";
+    }
     if (!sourceType) {
       outOfScope.push({ source_path: file.path });
       continue;
@@ -140,6 +155,18 @@ export function buildIndexRecords({ commitSha, files }) {
       records.push(makeRecord({
         sourcePath: file.path, sourceType: "reviewed_decision", symbolOrSection: null,
         commitSha, content: file.content, authorityLevel: AUTHORITY_LEVELS.REVIEWED_DECISION,
+      }));
+    } else if (sourceType === "canonical_document") {
+      records.push(makeRecord({
+        sourcePath: file.path, sourceType: "canonical_document_file", symbolOrSection: null,
+        commitSha, content: file.content, authorityLevel: AUTHORITY_LEVELS.CANONICAL_DOCUMENT,
+        details: { families: [...registryEntry.families], registry_status: registryEntry.status },
+      }));
+    } else if (sourceType === "historical_document") {
+      records.push(makeRecord({
+        sourcePath: file.path, sourceType: "historical_document_file", symbolOrSection: null,
+        commitSha, content: file.content, authorityLevel: AUTHORITY_LEVELS.HISTORICAL_SNAPSHOT,
+        details: { families: [...registryEntry.families], registry_status: registryEntry.status },
       }));
     } else if (sourceType === "package_manifest") {
       records.push(makeRecord({

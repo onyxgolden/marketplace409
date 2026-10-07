@@ -60,5 +60,23 @@ export function renderIndexReport(manifest) {
     : `${manifest.counts.deleted_total} previously-indexed path(s) no longer exist at this commit and were dropped, not carried forward: ${manifest.deleted_paths.join(", ")}`);
   lines.push("");
 
+  lines.push("## Canonical document registry");
+  lines.push("");
+  lines.push(`**Registry fingerprint:** \`${manifest.registry_hash ?? "none"}\``);
+  lines.push("");
+  const coverage = manifest.coverage_issues || [];
+  if (coverage.length === 0) {
+    lines.push("Coverage: every registered canonical and historical document is indexed or explicitly excluded. No issues.");
+  } else {
+    lines.push(`Coverage: ${coverage.length} issue(s). A registered document must be indexed, or it is reported here.`);
+    lines.push("");
+    lines.push("| Path | Classification | Issue |");
+    lines.push("| --- | --- | --- |");
+    for (const issue of coverage) {
+      lines.push(`| \`${issue.path}\` | ${issue.classification ?? "-"} | ${issue.issue} |`);
+    }
+  }
+  lines.push("");
+
   return lines.join("\n");
 }
