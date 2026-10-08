@@ -79,3 +79,20 @@ describe("PATCH /api/work-packages/[packageId]", () => {
     });
   });
 });
+
+describe("PATCH /api/work-packages/[packageId] budget revisions (Slice 3)", () => {
+  it("returns the atomic budget revision written by the service", async () => {
+    updateWorkPackage.mockResolvedValue({
+      ok: true,
+      package: { id: "forge_wp_1", planned_cost_cents: 125000 },
+      budgetRevision: { id: "rev_1", new_planned_cost_cents: 125000 },
+    });
+    const response = await PATCH(request({
+      planned_budget: "1250.00", budget_reason: "Initial budget", expected_version: 3,
+    }, "PATCH"), { params: params() });
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.package.planned_cost_cents).toBe(125000);
+    expect(body.budgetRevision.id).toBe("rev_1");
+  });
+});

@@ -29,9 +29,16 @@
 // and is never canonicalized. A null property_id never matches this ledger.
 
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
+import {
+  FINANCIAL_EVENT_SAFE_SOURCES,
+  FINANCIAL_EVENT_EXCLUDED_STATUSES,
+  contractorPaymentIdOf,
+} from "@/domains/rental/financialEventRules.js";
 
-const SAFE_SOURCES = new Set(["manual", "rentec", "rentec_api"]);
-const EXCLUDED_STATUSES = new Set(["inactive", "deleted"]);
+export { contractorPaymentIdOf };
+
+const SAFE_SOURCES = FINANCIAL_EVENT_SAFE_SOURCES;
+const EXCLUDED_STATUSES = FINANCIAL_EVENT_EXCLUDED_STATUSES;
 // Only payments that actually moved money affect the balance. Failed/cancelled/
 // processing payments stay visible with their status but contribute nothing.
 const BALANCE_EFFECT_STATUSES = new Set(["succeeded", "paid", "settled"]);
@@ -75,18 +82,6 @@ function unitIdMatches(id, unitIds) {
 function propertyMatches(slug, propertyId, unitIds) {
   if (!slug) return false;
   return propertySlugMatches(slug, propertyId) || unitIdMatches(slug, unitIds);
-}
-
-function contractorPaymentIdOf(event) {
-  if (!event) return null;
-  const PREFIX = "rental_contractor_payment_";
-  if (typeof event.source_record_id === "string" && event.source_record_id.startsWith(PREFIX)) {
-    return event.source_record_id.slice(PREFIX.length);
-  }
-  const viaMetadata = event.metadata && typeof event.metadata === "object"
-    ? event.metadata.contractor_payment_id
-    : null;
-  return typeof viaMetadata === "string" && viaMetadata ? viaMetadata : null;
 }
 
 export function buildPropertyLedger({
