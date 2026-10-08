@@ -33,10 +33,13 @@ const STALE_AFTER_MS = 36 * 60 * 60 * 1000; // 36h — generous for daily cadenc
  * @param {Array}  input.capabilities  — CAPABILITIES registry entries
  * @param {object|null} input.latestRun — {generated_at, commit_sha, extractor_version} or null
  * @param {number|null} input.bugFixCount — number of bug fixes in latest run, or null if unknown
+ * @param {boolean} [input.bugFixRowsOk=true] — false when the bug-fix count
+ *   succeeded but fetching the actual rows failed; the defect list is then
+ *   unknown, never "zero defects"
  * @param {number} [input.now] — epoch ms, defaults to Date.now()
  * @returns {object} health snapshot
  */
-export function aggregateHealth({ capabilities, latestRun, bugFixCount, now = Date.now() }) {
+export function aggregateHealth({ capabilities, latestRun, bugFixCount, bugFixRowsOk = true, now = Date.now() }) {
   const caps = Array.isArray(capabilities) ? capabilities : [];
 
   // --- runtime coverage section ---
@@ -59,35 +62,75 @@ export function aggregateHealth({ capabilities, latestRun, bugFixCount, now = Da
     };
   } else {
     const generatedMs = Date.parse(latestRun.generated_at);
-    const ageMs = Number.isFinite(generatedMs) ? now - generatedMs : NaN;
-    const stale = Number.isFinite(ageMs) && ageMs > STALE_AFTER_MS;
-    indexSection = {
-      state: stale ? "stale" : "confirmed",
-      provenance: "supabase:engineering_brain_runs (latest)",
-      detail: stale
-        ? `Latest index run is older than 36h (${latestRun.generated_at}).`
-        : "Index is fresh.",
-      generatedAt: latestRun.generated_at,
-      commitSha: latestRun.commit_sha || null,
-      extractorVersion: latestRun.extractor_version || null,
-    };
+    // Fail closed on untrustworthy timestamps: an unparseable or future-dated
+    // timestamp must never be reported as fresh/confirmed.
+    if (!Number.isFinite(generatedMs)) {
+      indexSection = {
+        state: "unavailable",
+        provenance: "supabase:engineering_brain_runs (latest)",
+        detail: `Latest index run has an invalid timestamp (${latestRun.generated_at}). Treated as unavailable, not fresh.`,
+        generatedAt: latestRun.generated_at,
+        commitSha: latestRun.commit_sha || null,
+        extractorVersion: latestRun.extractor_version || null,
+      };
+    } else if (generatedMs > now) {
+      indexSection = {
+        state: "stale",
+        provenance: "supabase:engineering_brain_runs (latest)",
+        detail: `Latest index run is future-dated (${latestRun.generated_at}). Its time claim is untrustworthy; treated as stale, not fresh.`,
+        generatedAt: latestRun.generated_at,
+        commitSha: latestRun.commit_sha || null,
+        extractorVersion: latestRun.extractor_version || null,
+      };
+    } else {
+      const ageMs = now - generatedMs;
+      const stale = ageMs > STALE_AFTER_MS;
+      indexSection = {
+        state: stale ? "stale" : "confirmed",
+        provenance: "supabase:engineering_brain_runs (latest)",
+        detail: stale
+          ? `Latest index run is older than 36h (${latestRun.generated_at}).`
+          : "Index is fresh.",
+        generatedAt: latestRun.generated_at,
+        commitSha: latestRun.commit_sha || null,
+        extractorVersion: latestRun.extractor_version || null,
+      };
+    }
   }
 
   // --- bug catalog section ---
-  const bugSection =
-    typeof bugFixCount === "number"
-      ? {
-          state: "confirmed",
-          provenance: "supabase:engineering_brain_bug_fixes (latest run)",
-          detail: `${bugFixCount} recorded fixes in the latest indexed run.`,
-          count: bugFixCount,
-        }
-      : {
-          state: "unavailable",
-          provenance: "supabase:engineering_brain_bug_fixes",
-          detail: "Bug catalog unreadable or not yet migrated.",
-          count: null,
-        };
+  // Distinguish "zero defects on record" (count=0, rows loaded OK) from
+  // "could not load defect rows" (count known or unknown, rows failed).
+  // The latter is UNAVAILABLE — never "no defects", which would imply
+  // healthy coverage from a failed read.
+  let bugSection;
+  if (typeof bugFixCount !== "number") {
+    bugSection = {
+      state: "unavailable",
+      provenance: "supabase:engineering_brain_bug_fixes",
+      detail: "Bug catalog unreadable or not yet migrated.",
+      count: null,
+      rowsOk: false,
+    };
+  } else if (!bugFixRowsOk) {
+    bugSection = {
+      state: "unavailable",
+      provenance: "supabase:engineering_brain_bug_fixes (latest run)",
+      detail:
+        `Count query reported ${bugFixCount} fixes, but row details could not be loaded. ` +
+        "The defect list is unknown — not confirmed empty.",
+      count: bugFixCount,
+      rowsOk: false,
+    };
+  } else {
+    bugSection = {
+      state: "confirmed",
+      provenance: "supabase:engineering_brain_bug_fixes (latest run)",
+      detail: `${bugFixCount} recorded fixes in the latest indexed run.`,
+      count: bugFixCount,
+      rowsOk: true,
+    };
+  }
 
   // --- watchdog section: DISABLED by operator decision. Never "confirmed". ---
   const watchdogSection = {

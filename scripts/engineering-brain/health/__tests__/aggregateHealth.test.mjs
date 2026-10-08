@@ -59,4 +59,63 @@ describe("aggregateHealth", () => {
       expect.arrayContaining(["confirmed", "suspected", "unavailable", "stale", "not-enabled"]),
     );
   });
+
+  it("marks index unavailable on invalid timestamp (never fresh/confirmed)", () => {
+    const badRun = { ...freshRun, generated_at: "not-a-timestamp" };
+    const h = aggregateHealth({ capabilities: caps, latestRun: badRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).toBe("unavailable");
+    expect(h.index.state).not.toBe("confirmed");
+    expect(h.index.detail).toMatch(/invalid/i);
+  });
+
+  it("marks index unavailable on empty timestamp string", () => {
+    const badRun = { ...freshRun, generated_at: "" };
+    // empty string is falsy -> hits the !latestRun.generated_at branch
+    const h = aggregateHealth({ capabilities: caps, latestRun: badRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).toBe("unavailable");
+    expect(h.index.state).not.toBe("confirmed");
+  });
+
+  it("marks index stale (never confirmed) on future-dated timestamp", () => {
+    const futureRun = { ...freshRun, generated_at: "2026-10-09T12:00:00.000Z" }; // 24h after NOW
+    const h = aggregateHealth({ capabilities: caps, latestRun: futureRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).not.toBe("confirmed");
+    expect(h.index.state).toBe("stale");
+    expect(h.index.detail).toMatch(/future/i);
+  });
+
+  it("marks bug catalog unavailable when count succeeds but rows fail (never 'no defects')", () => {
+    const h = aggregateHealth({
+      capabilities: caps, latestRun: freshRun, bugFixCount: 5, bugFixRowsOk: false, now: NOW,
+    });
+    expect(h.bugCatalog.state).toBe("unavailable");
+    expect(h.bugCatalog.state).not.toBe("confirmed");
+    expect(h.bugCatalog.count).toBe(5);
+    expect(h.bugCatalog.rowsOk).toBe(false);
+    expect(h.bugCatalog.detail).toMatch(/unknown/i);
+    expect(h.bugCatalog.detail).not.toMatch(/no .*defect/i);
+  });
+
+  it("marks bug catalog unavailable when count is unknown", () => {
+    const h = aggregateHealth({
+      capabilities: caps, latestRun: freshRun, bugFixCount: null, bugFixRowsOk: false, now: NOW,
+    });
+    expect(h.bugCatalog.state).toBe("unavailable");
+    expect(h.bugCatalog.count).toBeNull();
+  });
+
+  it("confirms bug catalog when count is zero and rows loaded OK (genuinely empty)", () => {
+    const h = aggregateHealth({
+      capabilities: caps, latestRun: freshRun, bugFixCount: 0, bugFixRowsOk: true, now: NOW,
+    });
+    expect(h.bugCatalog.state).toBe("confirmed");
+    expect(h.bugCatalog.count).toBe(0);
+    expect(h.bugCatalog.rowsOk).toBe(true);
+  });
+
+  it("defaults bugFixRowsOk to true for backward compatibility", () => {
+    const h = aggregateHealth({ capabilities: caps, latestRun: freshRun, bugFixCount: 3, now: NOW });
+    expect(h.bugCatalog.state).toBe("confirmed");
+    expect(h.bugCatalog.rowsOk).toBe(true);
+  });
 });

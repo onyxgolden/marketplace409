@@ -34,6 +34,7 @@ export async function GET() {
 
   let bugFixCount = null;
   let bugFixes = [];
+  let bugFixRowsOk = false;
   if (latestRun) {
     try {
       bugFixCount = await countBugFixesForRun(supabase, latestRun.id);
@@ -50,13 +51,18 @@ export async function GET() {
         class: row.class,
         files: row.files || [],
       }));
+      bugFixRowsOk = true;
     } catch {
+      // Row fetch failed: rows are unknown, never "zero defects".
+      // aggregateHealth marks the bug section unavailable; assembleFindings
+      // emits an evidence-unavailable finding.
       bugFixes = [];
+      bugFixRowsOk = false;
     }
   }
 
-  const health = aggregateHealth({ capabilities, latestRun, bugFixCount });
-  const findings = assembleFindings({ capabilities, bugFixes });
+  const health = aggregateHealth({ capabilities, latestRun, bugFixCount, bugFixRowsOk });
+  const findings = assembleFindings({ capabilities, bugFixes, bugFixesLoadFailed: !bugFixRowsOk && latestRun !== null });
 
   return NextResponse.json({ success: true, health, findings });
 }

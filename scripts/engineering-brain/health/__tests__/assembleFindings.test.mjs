@@ -61,4 +61,38 @@ describe("assembleFindings", () => {
       expect(text).not.toMatch(/definitively/);
     }
   });
+
+  it("emits evidence-unavailable finding when bug rows fail to load", () => {
+    const f = assembleFindings({ capabilities: [], bugFixes: [], bugFixesLoadFailed: true });
+    const ev = f.find((x) => x.id === "evidence:bug-catalog-rows-unavailable");
+    expect(ev).toBeDefined();
+    expect(ev.kind).toBe("evidence-unavailable");
+    expect(ev.what).toMatch(/could not be loaded/i);
+    expect(ev.whyItMatters).toMatch(/does not mean no defects/i);
+    expect(ev.nextStep).toMatch(/do not treat.*zero/i);
+  });
+
+  it("never reports zero findings as healthy when rows failed (synthetic finding present)", () => {
+    // Dashboard shows "no findings / healthy" only when findings.length === 0.
+    // With rows failed, the synthetic finding guarantees non-empty.
+    const f = assembleFindings({ capabilities: caps.slice(0, 1), bugFixes: [], bugFixesLoadFailed: true });
+    expect(f.length).toBeGreaterThan(0);
+  });
+
+  it("emits no synthetic finding when rows loaded OK (even if empty)", () => {
+    const f = assembleFindings({ capabilities: [], bugFixes: [], bugFixesLoadFailed: false });
+    expect(f.find((x) => x.id === "evidence:bug-catalog-rows-unavailable")).toBeUndefined();
+    expect(f.length).toBe(0);
+  });
+
+  it("defaults bugFixesLoadFailed to false for backward compatibility", () => {
+    const f = assembleFindings({ capabilities: [], bugFixes: [] });
+    expect(f.find((x) => x.id === "evidence:bug-catalog-rows-unavailable")).toBeUndefined();
+  });
+
+  it("synthetic finding has stable dedup id (no duplicates on repeat)", () => {
+    const f = assembleFindings({ capabilities: [], bugFixes: [], bugFixesLoadFailed: true });
+    const ids = f.map((x) => x.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });

@@ -71,9 +71,12 @@ function bugFinding(bug) {
  * @param {object} input
  * @param {Array} input.capabilities — registry entries
  * @param {Array} input.bugFixes — bug catalog records {sha, date, subject, pr, class, files}
+ * @param {boolean} [input.bugFixesLoadFailed=false] — true when the bug-fix
+ *   count succeeded but row fetch failed; emits an evidence-unavailable
+ *   finding so callers never conclude "zero defects" from a failed read
  * @returns {Array} deduplicated findings, deterministic order
  */
-export function assembleFindings({ capabilities = [], bugFixes = [] }) {
+export function assembleFindings({ capabilities = [], bugFixes = [], bugFixesLoadFailed = false }) {
   const byId = new Map();
 
   for (const cap of capabilities) {
@@ -88,6 +91,25 @@ export function assembleFindings({ capabilities = [], bugFixes = [] }) {
   for (const bug of sortedBugs) {
     const f = bugFinding(bug);
     if (f && !byId.has(f.id)) byId.set(f.id, f);
+  }
+
+  // Row fetch failed: the defect list is unknown. Emit an explicit
+  // evidence-unavailable finding so no consumer can mistake the absence
+  // of fix findings for "no repaired defects on record".
+  if (bugFixesLoadFailed) {
+    byId.set("evidence:bug-catalog-rows-unavailable", {
+      id: "evidence:bug-catalog-rows-unavailable",
+      kind: "evidence-unavailable",
+      what: "Bug catalog row details could not be loaded.",
+      subsystem: "supabase:engineering_brain_bug_fixes",
+      whyItMatters:
+        "The repaired-defect list is unknown. The absence of fix findings here does not mean no defects exist.",
+      confidence: "high",
+      lastSeen: null,
+      evidenceLinks: [],
+      nextStep:
+        "Retry the bug catalog read; do not treat this run as having zero known defects.",
+    });
   }
 
   return [...byId.values()];
