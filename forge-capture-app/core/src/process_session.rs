@@ -208,14 +208,17 @@ pub enum ClassifiedClick {
 #[derive(Debug, Clone)]
 pub struct ClickClassifier {
     config: ClickTimingConfig,
-    /// A down seen but not yet paired with its up.
-    pending_down: Option<RawButtonEvent>,
-    /// The down half of the most recently *resolved* pair (into a `Click`,
-    /// `Drag`, or `DoubleClick`) — the baseline the next down is compared
-    /// against for double-click timing/distance. Deliberately a separate
-    /// field from `pending_down`: that one is consumed (`take`n) the
-    /// moment its up resolves it, so without this second field there
-    /// would be nothing left to compare the *next* down against.
+    /// A down seen but not yet paired with its up, plus whether *this* down
+    /// is a double-click candidate (matched timing/distance against the
+    /// last genuine click). The decision is only made good once the
+    /// matching up arrives — see `feed`'s doc comment for why.
+    pending: Option<(RawButtonEvent, bool)>,
+    /// The down half of the most recently resolved **click** (single or
+    /// double) — the baseline the next down is compared against for
+    /// double-click timing/distance. A resolved **drag** never updates
+    /// this and explicitly clears it instead: a drag is not a click, so it
+    /// must not seed — or leave stale — double-click eligibility for
+    /// whatever comes next.
     last_resolved_down: Option<RawButtonEvent>,
 }
 
@@ -223,7 +226,7 @@ impl ClickClassifier {
     pub fn new(config: ClickTimingConfig) -> Self {
         ClickClassifier {
             config,
-            pending_down: None,
+            pending: None,
             last_resolved_down: None,
         }
     }
@@ -234,53 +237,62 @@ impl ClickClassifier {
     /// Pause, so a paused session never carries stale state into its next
     /// Resume.
     pub fn reset(&mut self) {
-        self.pending_down = None;
+        self.pending = None;
         self.last_resolved_down = None;
     }
 
-    /// Feed one raw button transition. Returns a classification once a
-    /// complete down→up pair resolves, or immediately on a down that
-    /// qualifies as the second half of a double-click (that down is then
-    /// considered fully resolved — its own matching up, if one arrives, is
-    /// swallowed rather than double-counted as a second event).
+    /// Feed one raw button transition. Returns a classification only once
+    /// a complete down→up pair resolves — **never on the down alone**,
+    /// even when that down's timing/distance against the last click
+    /// qualifies it as a double-click candidate. The actual gesture that
+    /// follows a down is not known until its up arrives: the same down
+    /// that looks like the second half of a double-click can still turn
+    /// into a drag if the pointer moves before release, and deciding
+    /// `DoubleClick` at down-time would silently discard that movement
+    /// (the up would then find no pending down to resolve against and be
+    /// swallowed). So every down is held as a *candidate* and classified
+    /// only on its matching up: movement beyond the drag threshold is
+    /// always a `Drag`, regardless of double-click timing; otherwise it is
+    /// `DoubleClick` when it was a candidate, `Click` when it was not.
     pub fn feed(&mut self, event: RawButtonEvent) -> Option<ClassifiedClick> {
         if event.is_down {
-            let is_double = self
+            let is_double_candidate = self
                 .last_resolved_down
                 .is_some_and(|prev| self.is_double_click(prev, event));
-            if is_double {
-                self.pending_down = None;
-                self.last_resolved_down = Some(event);
-                return Some(ClassifiedClick::DoubleClick {
-                    x: event.x,
-                    y: event.y,
-                });
-            }
-            self.pending_down = Some(event);
+            self.pending = Some((event, is_double_candidate));
             return None;
         }
         // Button up: resolve against the buffered down, if any and if it's
         // the same button (an up for a different button than the pending
-        // down means the down was orphaned by a dropped event, or this up
-        // belongs to a down already resolved as a double-click — discard
-        // rather than mis-pair or double-count).
-        let down = self.pending_down.take()?;
+        // down means the down was orphaned by a dropped event — discard
+        // rather than mis-pair).
+        let (down, is_double_candidate) = self.pending.take()?;
         if down.button != event.button {
             return None;
         }
-        self.last_resolved_down = Some(down);
         let dx = (event.x - down.x).abs();
         let dy = (event.y - down.y).abs();
         if dx > self.config.drag_threshold_w || dy > self.config.drag_threshold_h {
+            // A drag is never a click: it must not seed, or leave stale,
+            // double-click eligibility for whatever comes next.
+            self.last_resolved_down = None;
             Some(ClassifiedClick::Drag {
                 from: (down.x, down.y),
                 to: (event.x, event.y),
             })
         } else {
-            Some(ClassifiedClick::Click {
-                x: down.x,
-                y: down.y,
-            })
+            self.last_resolved_down = Some(down);
+            if is_double_candidate {
+                Some(ClassifiedClick::DoubleClick {
+                    x: down.x,
+                    y: down.y,
+                })
+            } else {
+                Some(ClassifiedClick::Click {
+                    x: down.x,
+                    y: down.y,
+                })
+            }
         }
     }
 
@@ -555,13 +567,75 @@ mod tests {
     }
 
     #[test]
-    fn two_downs_within_time_and_distance_classify_as_a_double_click() {
+    fn two_downs_within_time_and_distance_classify_as_a_double_click_on_the_up() {
         let mut c = ClickClassifier::new(config());
         c.feed(down(1, 0, 100, 100));
         c.feed(up(2, 10, 100, 100));
+        // The down alone is not enough to decide — see the next test for why.
+        assert_eq!(c.feed(down(3, 100, 101, 100)), None);
         assert_eq!(
-            c.feed(down(3, 100, 101, 100)),
+            c.feed(up(4, 110, 101, 100)),
             Some(ClassifiedClick::DoubleClick { x: 101, y: 100 })
+        );
+    }
+
+    #[test]
+    fn a_double_click_candidate_down_that_actually_drags_is_classified_as_a_drag_not_a_double_click(
+    ) {
+        // Regression: the down alone matches double-click timing/distance against
+        // the prior click, but the pointer then moves past the drag threshold
+        // before release — the gesture that actually happened is a drag, and
+        // deciding DoubleClick at down-time would have silently discarded that
+        // movement (the up would find no pending down and be swallowed).
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        c.feed(up(2, 10, 100, 100));
+        c.feed(down(3, 100, 101, 100)); // matches double-click timing/distance
+        assert_eq!(
+            c.feed(up(4, 150, 300, 100)), // but moves far before release
+            Some(ClassifiedClick::Drag {
+                from: (101, 100),
+                to: (300, 100)
+            })
+        );
+    }
+
+    #[test]
+    fn a_completed_drag_does_not_seed_double_click_eligibility_for_the_next_click() {
+        // Regression: a drag's down must never become the baseline a later
+        // click is compared against — a drag is not a click.
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        assert_eq!(
+            c.feed(up(2, 10, 300, 100)),
+            Some(ClassifiedClick::Drag {
+                from: (100, 100),
+                to: (300, 100)
+            })
+        );
+        // A click shortly after, near the drag's start point, must not be
+        // treated as the second half of a double-click.
+        c.feed(down(3, 50, 100, 100));
+        assert_eq!(
+            c.feed(up(4, 60, 100, 100)),
+            Some(ClassifiedClick::Click { x: 100, y: 100 })
+        );
+    }
+
+    #[test]
+    fn a_completed_drag_clears_a_stale_baseline_too() {
+        // A drag must reset last_resolved_down outright, not merely "not update"
+        // it — otherwise a click from before the drag could stay eligible and
+        // wrongly pair with a click after it.
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        c.feed(up(2, 10, 100, 100)); // an ordinary click, sets last_resolved_down
+        c.feed(down(3, 20, 500, 500));
+        c.feed(up(4, 30, 900, 500)); // a drag in between, must clear it
+        c.feed(down(5, 40, 101, 100)); // would match the first click's timing/distance
+        assert_eq!(
+            c.feed(up(6, 50, 101, 100)),
+            Some(ClassifiedClick::Click { x: 101, y: 100 })
         );
     }
 
@@ -570,7 +644,11 @@ mod tests {
         let mut c = ClickClassifier::new(config());
         c.feed(down(1, 0, 100, 100));
         c.feed(up(2, 10, 100, 100));
-        assert_eq!(c.feed(down(3, 600, 100, 100)), None);
+        c.feed(down(3, 600, 100, 100));
+        assert_eq!(
+            c.feed(up(4, 610, 100, 100)),
+            Some(ClassifiedClick::Click { x: 100, y: 100 })
+        );
     }
 
     #[test]
@@ -578,7 +656,11 @@ mod tests {
         let mut c = ClickClassifier::new(config());
         c.feed(down(1, 0, 100, 100));
         c.feed(up(2, 10, 100, 100));
-        assert_eq!(c.feed(down(3, 100, 200, 100)), None);
+        c.feed(down(3, 100, 200, 100));
+        assert_eq!(
+            c.feed(up(4, 110, 200, 100)),
+            Some(ClassifiedClick::Click { x: 200, y: 100 })
+        );
     }
 
     #[test]
