@@ -103,8 +103,12 @@ A separate slice (`ui/process-training.js` + `ui/process-training-core.js`,
 its own "Process Training" tab in `index.html`) builds the consent/session
 *shell* ahead of any real UI wiring to the pipeline above: a guarded state
 machine (`idle -> preflight -> consented_preview -> review -> discarded`),
-an explicit per-session trust-scope choice (never pre-checked, never
-granted by closing a dialog), and a review screen that maps the real
+an explicit per-session trust-scope choice (clarified after round-1
+review: the dialog preselects the safer `Default`/withhold option on
+every opening — `author_trusted` is never preselected or pre-checked,
+and neither option is itself a consent grant; consent only happens on
+the explicit "Start preview" click, never on opening or closing the
+dialog), and a review screen that maps the real
 `PipelineMessage` shape from `process_capture.rs` to a read-only view
 model — every variant (`Event`, `Gap`, `QueueOverflow` including
 `capture-capacity-exhausted`, `SessionReconciliationUncertain`) shown

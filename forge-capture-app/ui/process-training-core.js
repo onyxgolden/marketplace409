@@ -401,6 +401,17 @@ export function summarizeEvidence(viewModels) {
         break;
       case "loss":
         summary.lossByStage[vm.stage] = (summary.lossByStage[vm.stage] || 0) + (vm.droppedCount || 0);
+        // Review finding: a nonzero drop/overflow count at ANY real
+        // stage means something was lost -- marking the summary
+        // "complete" just because no separate Gap or
+        // SessionReconciliationUncertain happened to also be present
+        // would let a session with dropped/failed captures read as
+        // clean evidence. A zero-count loss entry (reported but nothing
+        // actually dropped yet) does not by itself make a session
+        // incomplete.
+        if ((vm.droppedCount || 0) > 0) {
+          summary.isComplete = false;
+        }
         break;
       case "uncertain":
         summary.reconciliationUncertain = true;

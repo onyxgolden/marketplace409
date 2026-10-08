@@ -286,6 +286,30 @@ describe("summarizeEvidence", () => {
     expect(summary.isComplete).toBe(true);
   });
 
+  // Regression (round 1 review): a nonzero loss/overflow entry with no
+  // separate Gap or SessionReconciliationUncertain was incorrectly
+  // leaving isComplete true — dropped/failed captures were reportable
+  // as "clean" evidence.
+  it("is NOT complete when a loss entry alone has a nonzero dropped count", () => {
+    const summary = summarizeEvidence([
+      { kind: "event", withheld: false, redacted: false },
+      { kind: "loss", stage: "capture-failure", droppedCount: 1 },
+    ]);
+    expect(summary.gapCount).toBe(0);
+    expect(summary.reconciliationUncertain).toBe(false);
+    expect(summary.lossByStage["capture-failure"]).toBe(1);
+    expect(summary.isComplete).toBe(false);
+  });
+
+  it("a zero-count loss entry alone does not, by itself, mark the summary incomplete", () => {
+    const summary = summarizeEvidence([
+      { kind: "event", withheld: false, redacted: false },
+      { kind: "loss", stage: "capture-failure", droppedCount: 0 },
+    ]);
+    expect(summary.lossByStage["capture-failure"]).toBe(0);
+    expect(summary.isComplete).toBe(true);
+  });
+
   it("throws on an unrecognized view-model kind", () => {
     expect(() => summarizeEvidence([{ kind: "mystery" }])).toThrow(ConsentError);
   });

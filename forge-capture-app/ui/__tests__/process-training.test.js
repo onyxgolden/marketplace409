@@ -23,11 +23,11 @@ beforeEach(() => {
   document.body.innerHTML = "";
 });
 
-function mountFresh() {
+function mountFresh(extraDeps = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const session = new ConsentSession();
-  const handle = renderProcessTrainingControls(container, { session });
+  const handle = renderProcessTrainingControls(container, { session, ...extraDeps });
   return { container, session, handle };
 }
 
@@ -155,6 +155,37 @@ describe("renderProcessTrainingControls — review", () => {
     expect(items.length).toBeGreaterThan(0);
     const text = items.map((li) => li.textContent).join(" ");
     expect(text).toMatch(/withheld|redacted|proceeded/);
+  });
+
+  // Regression (round 1 review): the banner must reflect a nonzero
+  // loss/overflow count even when there is no separate Gap or
+  // SessionReconciliationUncertain in the evidence.
+  it("shows the incomplete/warning banner for a loss-only session, with no gap or uncertainty present", () => {
+    const { container } = mountFresh({
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "X", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+        { type: "QueueOverflow", stage: "capture-failure", droppedCount: 3 },
+      ],
+    });
+    advanceToReview(container);
+
+    expect(container.querySelector("#pt-sum-gaps").textContent).toBe("0");
+    const lossItems = [...container.querySelectorAll("#pt-loss-list li")].map((li) => li.textContent);
+    expect(lossItems.some((t) => /reconciliation uncertain/i.test(t))).toBe(false);
+
+    const banner = container.querySelector("#pt-review-banner");
+    expect(banner.className).toContain("warning");
+    expect(banner.textContent.toLowerCase()).toContain("not verified");
   });
 });
 
