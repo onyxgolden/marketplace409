@@ -15,7 +15,7 @@
 //
 // Env (all optional for a dry evaluation; required for live evidence):
 //   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GITHUB_TOKEN
-// Exit code: 0 = no new alerts; 1 = new alerts need attention.
+// Exit code: 0 = no new alerts; 1 = new alerts need attention OR watchdog aborted.
 
 import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -88,6 +88,16 @@ function buildDeps() {
 
 const args = parseArgs(process.argv.slice(2));
 
+/**
+ * Determine CLI exit code from a watchdog summary.
+ * Returns 1 (failure) when the watchdog aborted — zero capabilities were
+ * evaluated, so the scheduler must NOT treat this as a successful
+ * monitoring run — or when new alerts need attention. Returns 0 otherwise.
+ */
+export function cliExitCode(summary) {
+  return summary.aborted || summary.new_alerts > 0 ? 1 : 0;
+}
+
 // Only run the CLI when executed directly, not when imported (tests).
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { alerts, resolved, summary } = await runWatchdog({
@@ -109,5 +119,5 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   console.log(
     `Watchdog: ${summary.capabilities_evaluated} capabilities, ${summary.new_alerts} new alert(s), ${summary.resolved} resolved.`
   );
-  process.exit(summary.new_alerts > 0 ? 1 : 0);
+  process.exit(cliExitCode(summary));
 }

@@ -12,7 +12,7 @@ import {
   attributionWindow,
 } from "../evaluateSlots.mjs";
 import { evaluateSlot, runWatchdog, diagnosticPacket } from "../runWatchdog.mjs";
-import { fetchAllWorkflowRuns } from "../watchdogCli.mjs";
+import { fetchAllWorkflowRuns, cliExitCode } from "../watchdogCli.mjs";
 import { getCapability } from "../../../runtimeCoverageRegistry.mjs";
 
 // --- fakes (same shape as the Slice 2/3 fakes, now window-aware) ----------
@@ -412,5 +412,20 @@ describe("diagnosticPacket", () => {
     expect(p.recovery.execution_path).toBe(cap.execution_path);
     expect(JSON.stringify(p)).not.toContain("CRON_SECRET");
     expect(JSON.stringify(p).toLowerCase()).not.toContain("bearer");
+  });
+});
+
+describe("cliExitCode", () => {
+  it("returns 1 when watchdog aborted, even with zero alerts", () => {
+    expect(cliExitCode({ aborted: true, new_alerts: 0 })).toBe(1);
+  });
+  it("returns 1 when new alerts need attention", () => {
+    expect(cliExitCode({ aborted: false, new_alerts: 2 })).toBe(1);
+  });
+  it("returns 0 on clean run with no alerts", () => {
+    expect(cliExitCode({ aborted: false, new_alerts: 0 })).toBe(0);
+  });
+  it("returns 1 when aborted with alerts", () => {
+    expect(cliExitCode({ aborted: true, new_alerts: 3 })).toBe(1);
   });
 });
