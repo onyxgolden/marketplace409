@@ -14,7 +14,7 @@
 // - A missing GitHub Actions run is never alone sufficient for
 //   confirmed-miss; durable evidence is required.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,7 +41,11 @@ function loadAlertState(stateFile) {
 
 function saveAlertState(stateFile, state) {
   mkdirSync(dirname(stateFile), { recursive: true });
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  // Atomic write (Slice 4 re-review): write temp + rename so a crash
+  // mid-write never leaves a corrupt state file.
+  const tmp = `${stateFile}.tmp.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(state, null, 2));
+  renameSync(tmp, stateFile);
 }
 
 /**
@@ -66,10 +70,12 @@ function freshestAttributable(collected) {
  * Evaluate one slot. Evidence is queried SCOPED TO THE SLOT WINDOW —
  * never the global latest record (Slice 4 review blocker 1).
  *
- * Blocker 2: a missing GitHub Actions run ALONE is never a confirmed
- * miss. For workflow-exclusive sources, confirmed-miss requires visible
- * run history (totalFetched > 0) with the slot window empty; zero
- * history at all is ambiguous.
+ * Blocker 2 (re-review): a missing GitHub Actions run ALONE is never a
+ * confirmed miss — and under the approved architecture, GitHub-only
+ * absence REMAINS ambiguous even with visible history. GitHub Actions
+ * history is secondary diagnostic evidence, not durable execution
+ * evidence. Confirmed-miss requires a healthy, empty execution-attempt
+ * log (Supabase) for the slot window.
  *
  * Blocker 3: a failed/incomplete workflow run in the window is not
  * success — it is ambiguous (ran but did not succeed).
@@ -120,8 +126,6 @@ export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
   let sawSuccess = false;
   let sawNonSuccess = null;
   let executionRecordHealthy = false;
-  let workflowHistoryVisible = false;
-  let workflowRunInWindow = false;
 
   for (const r of collected.results) {
     if (!r.ok || !ATTRIBUTABLE.has(r.attribution)) continue;
@@ -129,15 +133,16 @@ export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
       if (r.execution_record === true) executionRecordHealthy = true;
       if (r.evidence.rowCount > 0) sawSuccess = true;
     } else if (r.adapter === "github-actions") {
-      if (r.evidence.totalFetched > 0) workflowHistoryVisible = true;
       if (r.evidence.latest) {
-        workflowRunInWindow = true;
         if (r.evidence.latest.conclusion === "success") {
           sawSuccess = true;
         } else {
           sawNonSuccess = `workflow run in slot window concluded "${r.evidence.latest.conclusion}" — ran but did not succeed`;
         }
       }
+      // NOTE: no confirmed-miss from GitHub absence. Actions history is
+      // secondary diagnostic evidence; a missing run is ambiguous, never
+      // a confirmed miss (approved architecture).
     }
   }
 
@@ -148,19 +153,12 @@ export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
     return { state: "ambiguous", reason: sawNonSuccess, evidence_summary };
   }
   // No attributable evidence in the slot window.
+  // Confirmed-miss ONLY from a healthy, empty execution-attempt log
+  // (durable evidence). GitHub-only absence stays ambiguous.
   if (executionRecordHealthy) {
     return {
       state: "confirmed-miss",
       reason: "execution-attempt log healthy but empty for the slot window",
-      evidence_summary,
-    };
-  }
-  if (workflowHistoryVisible && !workflowRunInWindow) {
-    // History proves the query works; the slot is genuinely empty.
-    // (A missing run ALONE — no history at all — stays ambiguous.)
-    return {
-      state: "confirmed-miss",
-      reason: "workflow run history visible but no run in the slot window",
       evidence_summary,
     };
   }

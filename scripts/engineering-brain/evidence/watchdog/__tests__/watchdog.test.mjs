@@ -12,6 +12,7 @@ import {
   attributionWindow,
 } from "../evaluateSlots.mjs";
 import { evaluateSlot, runWatchdog, diagnosticPacket } from "../runWatchdog.mjs";
+import { fetchAllWorkflowRuns } from "../watchdogCli.mjs";
 import { getCapability } from "../../../runtimeCoverageRegistry.mjs";
 
 // --- fakes (same shape as the Slice 2/3 fakes, now window-aware) ----------
@@ -222,7 +223,7 @@ describe("evaluateSlot", () => {
     expect(r.reason).toContain("failure");
   });
 
-  it("workflow: history visible but slot empty → confirmed-miss (blocker 2)", async () => {
+  it("workflow: history visible but slot empty → ambiguous, never confirmed-miss (architecture)", async () => {
     const brain = getCapability("brain-nightly-sync");
     const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
     const deps = {
@@ -231,7 +232,7 @@ describe("evaluateSlot", () => {
       }),
     };
     const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
-    expect(r.state).toBe("confirmed-miss");
+    expect(r.state).toBe("ambiguous");
   });
 
   it("workflow: no history at all → ambiguous, never confirmed-miss (blocker 2)", async () => {
@@ -253,7 +254,7 @@ describe("evaluateSlot", () => {
       }),
     };
     const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
-    expect(r.state).toBe("confirmed-miss");
+    expect(r.state).toBe("ambiguous");
   });
 
   it("attributionWindow: midpoint-bounded for adjacent slots, wide for daily", () => {
@@ -311,6 +312,34 @@ describe("runWatchdog", () => {
     const keys = Object.keys(state).filter((k) => k.startsWith("rental-autopay-sweep|"));
     expect(keys.length).toBe(1);
     expect(state[keys[0]].resolved_at).toBeNull();
+  });
+});
+
+describe("fetchAllWorkflowRuns", () => {
+  const run = (startedAt) => ({ run_started_at: startedAt, conclusion: "success", status: "completed", html_url: "x" });
+
+  it("paginates until a short page (Slice 4 re-review)", async () => {
+    const calls = [];
+    const fetchFn = async (url) => {
+      calls.push(url);
+      const page = Number(new URL(url).searchParams.get("page"));
+      const perPage = Number(new URL(url).searchParams.get("per_page"));
+      expect(perPage).toBe(100);
+      const n = page === 1 ? 100 : 3;
+      return {
+        ok: true,
+        json: async () => ({ workflow_runs: Array.from({ length: n }, (_, i) => run(`2026-10-0${page}T0${i % 10}:00:00Z`)) }),
+      };
+    };
+    const runs = await fetchAllWorkflowRuns("o", "r", "wf.yml", "tok", { fetchFn });
+    expect(runs.length).toBe(103);
+    expect(calls.length).toBe(2);
+    expect(runs[0]).toMatchObject({ startedAt: expect.any(String), conclusion: "success" });
+  });
+
+  it("throws on API error", async () => {
+    const fetchFn = async () => ({ ok: false, status: 403, json: async () => ({}) });
+    await expect(fetchAllWorkflowRuns("o", "r", "wf.yml", "tok", { fetchFn })).rejects.toThrow("403");
   });
 });
 
