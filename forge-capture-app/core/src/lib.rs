@@ -54,6 +54,15 @@
 //! - [`library_index`] — the rebuildable local library index (Slice 4): a
 //!   derived cache only, never a source of truth. Window-title indexing is
 //!   opt-in and off by default; search works fully without it.
+//! - [`process_session`] — Process Training PT-1: the session manifest and
+//!   event contract, click-pair/drag classification (a low-level mouse
+//!   hook never delivers `WM_LBUTTONDBLCLK`, so this is synthesized),
+//!   sequence-gap detection, and the privacy/sensitivity decision. No
+//!   automatic "verified safe" status exists for any third-party window —
+//!   see the module's own doc comment for the five-round review that
+//!   produced that rule. Pure logic; the hook/UIA/GDI boundary that
+//!   produces the raw input lives in [`native`] and is orchestrated by the
+//!   Tauri shell.
 
 /// AI Edit job contract: the local spool layout, manifest schema, job-id
 /// validation, status resolution, and versioned result stems. Pure logic;
@@ -69,6 +78,7 @@ pub mod library_index;
 pub mod meeting;
 pub mod native;
 pub mod png;
+pub mod process_session;
 pub mod result;
 pub mod scroll;
 pub mod stitch;
