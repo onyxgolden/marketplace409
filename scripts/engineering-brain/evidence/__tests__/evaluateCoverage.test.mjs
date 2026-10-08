@@ -37,6 +37,16 @@ function sweepDeps(latestAt, count = 1) {
   };
 }
 
+function chargesDeps(latestAt, count = 1) {
+  return {
+    supabase: fakeSupabase({
+      countResult: okCount(count),
+      latestResult: okLatest(latestAt ? [{ id: "1", created_at: latestAt }] : []),
+    }),
+    githubApi: fakeGithub({ runs: [] }),
+  };
+}
+
 describe("evaluateCapability", () => {
   it("covered: attributable sweep execution inside the interval", async () => {
     const r = await evaluateCapability("rental-autopay-sweep", { now: NOW, deps: sweepDeps(twoHoursAgo) });
@@ -116,6 +126,56 @@ describe("evaluateCapability", () => {
   it("unknown: unknown capability id", async () => {
     const r = await evaluateCapability("nope", { now: NOW, deps: {} });
     expect(r.verdict).toBe("unknown");
+  });
+
+  it("unknown (not gap): no business effects — a correctly run sweep may have nothing to produce", async () => {
+    const r = await evaluateCapability("rental-generate-charges", { now: NOW, deps: chargesDeps(null, 0) });
+    expect(r.verdict).toBe("unknown");
+    expect(r.reason).toContain("indistinguishable from missed run");
+  });
+
+  it("unknown (not gap): stale business effects do not prove a missed sweep", async () => {
+    const r = await evaluateCapability("rental-generate-charges", { now: NOW, deps: chargesDeps(fortyHoursAgo) });
+    expect(r.verdict).toBe("unknown");
+    expect(r.reason).toContain("indistinguishable from missed run");
+  });
+
+  it("covered: fresh business effects still cover", async () => {
+    const r = await evaluateCapability("rental-generate-charges", { now: NOW, deps: chargesDeps(twoHoursAgo) });
+    expect(r.verdict).toBe("covered");
+  });
+
+  it("unknown (not gap): watchdog with no rows — conditional, nothing expected on a healthy cycle", async () => {
+    const deps = {
+      supabase: fakeSupabase({
+        countResult: okCount(0),
+        latestResult: okLatest([]),
+      }),
+      githubApi: fakeGithub({ runs: [] }),
+    };
+    const r = await evaluateCapability("rental-autopay-sweep-watchdog", { now: NOW, deps });
+    expect(r.verdict).toBe("unknown");
+    expect(r.reason).toContain("conditional");
+  });
+
+  it("unknown (not covered): watchdog rows observed but trigger unverified", async () => {
+    const deps = {
+      supabase: fakeSupabase({
+        countResult: okCount(2),
+        latestResult: okLatest([{ id: "1", started_at: twoHoursAgo }]),
+      }),
+      githubApi: fakeGithub({ runs: [] }),
+    };
+    const r = await evaluateCapability("rental-autopay-sweep-watchdog", { now: NOW, deps });
+    expect(r.verdict).toBe("unknown");
+    expect(r.reason).toContain("2 attributable row(s) observed");
+  });
+
+  it("unknown: future-dated evidence timestamp is rejected", async () => {
+    const future = new Date(NOW + 5 * 3600 * 1000).toISOString();
+    const r = await evaluateCapability("rental-autopay-sweep", { now: NOW, deps: sweepDeps(future) });
+    expect(r.verdict).toBe("unknown");
+    expect(r.reason).toContain("future");
   });
 });
 

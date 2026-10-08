@@ -46,7 +46,7 @@ export async function collectEvidence(capabilityId, { now, deps } = {}) {
   for (const a of spec.adapters) {
     const impl = ADAPTER_TYPES[a.type];
     if (!impl) {
-      results.push({ adapter: a.type, attribution: a.attribution || "unverified", ok: false, error: `unknown adapter type "${a.type}"` });
+      results.push({ adapter: a.type, attribution: a.attribution || "unverified", execution_record: a.execution_record === true, ok: false, error: `unknown adapter type "${a.type}"` });
       continue;
     }
     try {
@@ -54,6 +54,7 @@ export async function collectEvidence(capabilityId, { now, deps } = {}) {
       results.push({
         adapter: a.type,
         attribution: a.attribution || "unverified",
+        execution_record: a.execution_record === true,
         ok: r.ok === true,
         ...(r.ok === true ? { evidence: r.evidence } : { error: r.error || "adapter returned no error" }),
       });
@@ -61,6 +62,7 @@ export async function collectEvidence(capabilityId, { now, deps } = {}) {
       results.push({
         adapter: a.type,
         attribution: a.attribution || "unverified",
+        execution_record: a.execution_record === true,
         ok: false,
         error: `adapter threw: ${e && e.message ? e.message : String(e)}`,
       });

@@ -17,6 +17,7 @@
 // flip a verdict.
 
 import { collectEvidence } from "./collectEvidence.mjs";
+import { getAdapterSpec } from "./evidenceAdapters.mjs";
 import { getCapability } from "../runtimeCoverageRegistry.mjs";
 
 const ATTRIBUTABLE = new Set(["sweep-exclusive", "discriminator", "workflow-exclusive"]);
@@ -37,23 +38,36 @@ function hoursAgo(iso, now) {
   return (now - t) / 3600000;
 }
 
-function evaluateAttributable(result, intervalHours, now) {
+function evaluateAttributable(result, intervalHours, now, executionRecord) {
   // Returns { verdict: "covered"|"gap"|"unknown", reason }.
+  //
+  // The Slice 3 re-review restriction: zero or stale BUSINESS-EFFECT rows
+  // (charges, deliveries, attempts, invites) cannot prove a missed
+  // execution — a correctly run sweep may have nothing to produce. Only
+  // an execution-attempt log that writes on every invocation justifies
+  // "gap". Otherwise empty/stale is "unknown".
+  const FUTURE_SKEW_HOURS = 1;
   if (result.adapter === "supabase-table") {
     const ev = result.evidence;
     if (!ev || typeof ev.latestAt !== "string") {
-      // latestAt null (with rowCount 0) means nothing ran in the window.
       if (ev && ev.rowCount === 0 && ev.latestAt === null) {
-        return { verdict: "gap", reason: `no attributable rows in the last ${ev.windowHours}h` };
+        return executionRecord
+          ? { verdict: "gap", reason: `execution log empty in the last ${ev.windowHours}h — no run recorded` }
+          : { verdict: "unknown", reason: `no attributable business effects in the last ${ev.windowHours}h — idle run indistinguishable from missed run` };
       }
       return { verdict: "unknown", reason: "attributable evidence malformed (latestAt not a string)" };
     }
     const age = hoursAgo(ev.latestAt, now);
     if (age === null) return { verdict: "unknown", reason: `attributable latestAt not parseable: ${ev.latestAt}` };
+    if (age < -FUTURE_SKEW_HOURS) {
+      return { verdict: "unknown", reason: `attributable timestamp is in the future: ${ev.latestAt}` };
+    }
     if (age <= intervalHours) {
       return { verdict: "covered", reason: `attributable execution ${age.toFixed(1)}h ago (interval ${intervalHours}h)` };
     }
-    return { verdict: "gap", reason: `last attributable execution ${age.toFixed(1)}h ago, interval is ${intervalHours}h` };
+    return executionRecord
+      ? { verdict: "gap", reason: `last attributable execution ${age.toFixed(1)}h ago, interval is ${intervalHours}h` }
+      : { verdict: "unknown", reason: `last attributable business effect ${age.toFixed(1)}h ago (interval ${intervalHours}h) — idle run indistinguishable from missed run` };
   }
   if (result.adapter === "github-actions") {
     const latest = result.evidence && result.evidence.latest;
@@ -62,6 +76,9 @@ function evaluateAttributable(result, intervalHours, now) {
     }
     const age = hoursAgo(latest.startedAt, now);
     if (age === null) return { verdict: "unknown", reason: "workflow run startedAt not parseable" };
+    if (age < -FUTURE_SKEW_HOURS) {
+      return { verdict: "unknown", reason: `workflow run timestamp is in the future: ${latest.startedAt}` };
+    }
     if (latest.conclusion === "success" && age <= intervalHours) {
       return { verdict: "covered", reason: `workflow run succeeded ${age.toFixed(1)}h ago (interval ${intervalHours}h)` };
     }
@@ -91,15 +108,7 @@ export async function evaluateCapability(capabilityId, { now, deps } = {}) {
       corroborating: [],
     };
   }
-  const intervalHours = expectedIntervalHours(capability);
-  if (intervalHours === null) {
-    return {
-      capability_id: capabilityId,
-      verdict: "unknown",
-      reason: `unrecognized expected_cadence "${capability.expected_cadence}"`,
-      corroborating: [],
-    };
-  }
+  const spec = getAdapterSpec(capabilityId);
   const attributable = collected.results.filter((r) => r.ok && ATTRIBUTABLE.has(r.attribution));
   const corroborating = collected.results
     .filter((r) => !ATTRIBUTABLE.has(r.attribution))
@@ -114,6 +123,33 @@ export async function evaluateCapability(capabilityId, { now, deps } = {}) {
         : r.error,
     }));
 
+  // Conditional capabilities (e.g. the watchdog): no verified trigger or
+  // cadence, so no execution is expected on a healthy cycle. Checked
+  // before cadence — a conditional has no expected interval. Never gap,
+  // never covered — unknown, with observed rows noted.
+  if (spec && spec.evaluation_mode === "conditional") {
+    const observed = attributable
+      .filter((r) => r.adapter === "supabase-table" && r.evidence)
+      .map((r) => r.evidence.rowCount)
+      .join(", ");
+    return {
+      capability_id: capabilityId,
+      verdict: "unknown",
+      reason: `conditional recovery capability; trigger and cadence unverified — no execution expected on a healthy cycle${observed ? ` (${observed} attributable row(s) observed)` : ""}`,
+      corroborating,
+    };
+  }
+
+  const intervalHours = expectedIntervalHours(capability);
+  if (intervalHours === null) {
+    return {
+      capability_id: capabilityId,
+      verdict: "unknown",
+      reason: `unrecognized expected_cadence "${capability.expected_cadence}"`,
+      corroborating: [],
+    };
+  }
+
   if (attributable.length === 0) {
     return {
       capability_id: capabilityId,
@@ -126,7 +162,10 @@ export async function evaluateCapability(capabilityId, { now, deps } = {}) {
     };
   }
 
-  const evaluations = attributable.map((r) => ({ ...evaluateAttributable(r, intervalHours, at), source: r.attribution }));
+  const evaluations = attributable.map((r) => ({
+    ...evaluateAttributable(r, intervalHours, at, r.execution_record === true),
+    source: r.attribution,
+  }));
   const covered = evaluations.find((e) => e.verdict === "covered");
   if (covered) {
     return { capability_id: capabilityId, verdict: "covered", reason: covered.reason, corroborating };

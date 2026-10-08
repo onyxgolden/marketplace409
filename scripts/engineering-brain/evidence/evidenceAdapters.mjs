@@ -65,6 +65,9 @@ export const ADAPTER_SPECS = Object.freeze([
         ],
         attribution: "discriminator",
         attribution_basis: "The sweep records its own run rows with its sweep_name and trigger.",
+        // Execution-attempt log: the sweep writes started→completed/failed
+        // on EVERY invocation, so zero/stale rows genuinely mean missed runs.
+        execution_record: true,
       },
       { type: "github-actions", workflowFile: "rental-cron-sweeps.yml", attribution: "corroborating-only" },
     ],
@@ -199,6 +202,10 @@ export const ADAPTER_SPECS = Object.freeze([
   },
   {
     capability_id: "rental-autopay-sweep-watchdog",
+    // Conditional recovery: the watchdog only acts when the primary sweep
+    // misses. No verified trigger or cadence, so the evaluator reports
+    // unknown — never gap, never covered.
+    evaluation_mode: "conditional",
     adapters: [
       {
         type: "supabase-table",
@@ -298,6 +305,9 @@ export function validateAdapterSpecs() {
       if (a.attribution === "discriminator" && (!Array.isArray(a.filters) || a.filters.length === 0)) {
         errors.push(`${id}: discriminator attribution needs non-empty filters`);
       }
+      if (a.execution_record !== undefined && a.execution_record !== true && a.execution_record !== false) {
+        errors.push(`${id}: execution_record must be true or false when present`);
+      }
       if (a.type === "supabase-table" && Array.isArray(a.filters)) {
         for (const f of a.filters) {
           if (!f || typeof f.column !== "string" || (f.op !== "eq" && f.op !== "like")) {
@@ -305,6 +315,9 @@ export function validateAdapterSpecs() {
           }
         }
       }
+    }
+    if (spec.evaluation_mode !== undefined && spec.evaluation_mode !== "conditional") {
+      errors.push(`${id}: unknown evaluation_mode "${spec.evaluation_mode}"`);
     }
   }
   for (const u of UNSPECIFIED_CAPABILITIES) {
