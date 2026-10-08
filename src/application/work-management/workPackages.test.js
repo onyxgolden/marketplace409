@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createWorkPackage, updateWorkPackage, transitionWorkPackage,
-  getWorkPackageDetail, listWorkPackages, recordGateAttestation,
+  getWorkPackageDetail, listWorkPackages, listPackagePropertyOptions,
+  recordGateAttestation,
   freezeScopeBaseline, proposeScopeChange, decideScopeChange,
   createAsset, createAssetComponent, createLocation, recordInspectionObservation,
 } from "./workPackages.js";
@@ -57,6 +58,154 @@ describe("createWorkPackage", () => {
     expect(result.ok).toBe(false);
     expect(result.httpStatus).toBe(400);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+});
+
+// --- Residential Slice 2: package <-> property association ----------------
+// rental_units rows for owner_1: one canonical slug, one alias of Decker
+// stored raw, one unrelated house, one inactive unit (options exclude it).
+const UNITS = [
+  { id: "unit_1", property_id: "1900-w-decker", label: "1900 W. Decker", status: "active" },
+  { id: "unit_2", property_id: "1900-west-decker", label: "1900 West Decker", status: "active" },
+  { id: "unit_3", property_id: "4800-kent-ave", label: "4800 Kent Ave", status: "active" },
+  { id: "unit_4", property_id: "old-house", label: "Old House", status: "inactive" },
+];
+
+describe("package property association (Slice 2)", () => {
+  it("persists the canonical property on create, project_id untouched", async () => {
+    const insertChain = chain({ data: { ...PKG, property_id: "4800-kent-ave", project_id: "PROJ-9" }, error: null });
+    const db = mockDb([chain({ data: UNITS, error: null }), insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Renovation", project_id: "PROJ-9", property_id: "4800-kent-ave" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({
+      property_id: "4800-kent-ave", project_id: "PROJ-9",
+    }));
+    // The units lookup is owner-scoped.
+    expect(db.from).toHaveBeenCalledWith("rental_units");
+  });
+
+  it("normalizes an alias submission to the canonical slug at write", async () => {
+    const insertChain = chain({ data: { ...PKG, property_id: "1900-w-decker" }, error: null });
+    const db = mockDb([chain({ data: UNITS, error: null }), insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", property_id: "1900-west-decker" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({
+      property_id: "1900-w-decker",
+    }));
+  });
+
+  it("rejects an unknown property without consuming a package code", async () => {
+    const db = mockDb([chain({ data: UNITS, error: null })]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", property_id: "no-such-house" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(404);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-owner property with the same 404 (no existence leakage)", async () => {
+    // owner_1's units query returns nothing for another owner's house.
+    const db = mockDb([chain({ data: [], error: null })]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", property_id: "4800-kent-ave" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(404);
+    expect(result.error).toBe("Property not found.");
+  });
+
+  it("rejects a unit id offered as a property", async () => {
+    const db = mockDb([chain({ data: UNITS, error: null })]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", property_id: "unit_1" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/not a single unit/);
+  });
+
+  it("creates unassigned without querying rental_units", async () => {
+    const insertChain = chain({ data: { ...PKG, property_id: null }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover" } });
+    expect(result.ok).toBe(true);
+    expect(db.from).toHaveBeenCalledTimes(1);
+    expect(db.from).toHaveBeenCalledWith("forge_work_packages");
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ property_id: null }));
+  });
+
+  it("reassigns property A to B on edit", async () => {
+    const getChain = chain({ data: { ...PKG, property_id: "1900-w-decker" }, error: null });
+    const updateChain = chain({ data: { ...PKG, property_id: "4800-kent-ave" }, error: null });
+    const db = mockDb([getChain, chain({ data: UNITS, error: null }), updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { property_id: "4800-kent-ave" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      property_id: "4800-kent-ave",
+    }));
+  });
+
+  it("clears the property with an explicit null", async () => {
+    const getChain = chain({ data: { ...PKG, property_id: "4800-kent-ave" }, error: null });
+    const updateChain = chain({ data: { ...PKG, property_id: null }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { property_id: null } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      property_id: null,
+    }));
+  });
+
+  it("leaves the association unchanged when the field is absent", async () => {
+    const getChain = chain({ data: { ...PKG, property_id: "4800-kent-ave" }, error: null });
+    const updateChain = chain({ data: { ...PKG, title: "Renamed", property_id: "4800-kent-ave" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Renamed" } });
+    expect(result.ok).toBe(true);
+    const patchArg = updateChain.update.mock.calls[0][0];
+    expect(patchArg).not.toHaveProperty("property_id");
+  });
+
+  it("rejects property edits on terminal packages (before any resolution query)", async () => {
+    const db = mockDb([chain({ data: { ...PKG, status: "cancelled" }, error: null })]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { property_id: "4800-kent-ave" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+  });
+
+  it("normalizes an alias reassignment to the canonical slug", async () => {
+    const getChain = chain({ data: { ...PKG, property_id: null }, error: null });
+    const updateChain = chain({ data: { ...PKG, property_id: "1900-w-decker" }, error: null });
+    const db = mockDb([getChain, chain({ data: UNITS, error: null }), updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { property_id: "1900-west-decker" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      property_id: "1900-w-decker",
+    }));
+  });
+});
+
+describe("listPackagePropertyOptions (Slice 2)", () => {
+  it("returns one option per canonical house, aliases deduped, inactive excluded", async () => {
+    const db = mockDb([chain({ data: UNITS, error: null })]);
+    const result = await listPackagePropertyOptions(db, { ownerId: "owner_1" });
+    expect(result.ok).toBe(true);
+    expect(result.properties).toEqual([
+      { slug: "1900-w-decker", label: "1900 W. Decker" },
+      { slug: "4800-kent-ave", label: "4800 Kent Ave" },
+    ]);
+  });
+
+  it("returns no options when the owner has no properties", async () => {
+    const db = mockDb([chain({ data: [], error: null })]);
+    const result = await listPackagePropertyOptions(db, { ownerId: "owner_1" });
+    expect(result.properties).toEqual([]);
   });
 });
 

@@ -10,6 +10,7 @@ export async function GET(request) {
       ownerId: auth.ownerId,
       status: url.searchParams.get("status") || undefined,
       packageType: url.searchParams.get("packageType") || undefined,
+      propertyId: url.searchParams.get("propertyId") || undefined,
     });
     return ok(result);
   } catch (error) {

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
@@ -40,7 +41,9 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ title: pkg.title, description: pkg.description || "", planned_finish: pkg.planned_finish || "" });
+  const [editForm, setEditForm] = useState({ title: pkg.title, description: pkg.description || "", planned_finish: pkg.planned_finish || "", property_id: pkg.property_id || "" });
+  const [properties, setProperties] = useState(null);
+  const [propertiesError, setPropertiesError] = useState("");
   const [transitionTarget, setTransitionTarget] = useState("");
   const [transitionCtx, setTransitionCtx] = useState("");
   const [attestation, setAttestation] = useState({ gate: "", statement: "" });
@@ -64,6 +67,27 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     return { response, data };
   }
 
+  // Property options for the read-only label and the edit picker. The
+  // package stores only the canonical slug; the label comes from the
+  // owner's property list. Failing to load never blocks viewing the
+  // package — the slug itself is the fallback label.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/work-packages/property-options")
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Unable to load properties.");
+        return body.properties || [];
+      })
+      .then((options) => { if (!cancelled) setProperties(options); })
+      .catch((caught) => { if (!cancelled) setPropertiesError(caught.message); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const propertyLabel = pkg.property_id
+    ? (properties || []).find((property) => property.slug === pkg.property_id)?.label || pkg.property_id
+    : null;
+
   async function refresh() {
     const { response, data } = await call(`/api/work-packages/${pkg.id}`, "GET");
     if (!response.ok) return;
@@ -72,7 +96,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     setAttestations(data.attestations);
     setBaselines(data.baselines);
     setChanges(data.scopeChanges);
-    setEditForm({ title: data.package.title, description: data.package.description || "", planned_finish: data.package.planned_finish || "" });
+    setEditForm({ title: data.package.title, description: data.package.description || "", planned_finish: data.package.planned_finish || "", property_id: data.package.property_id || "" });
     setEditing(false);
     setTransitionTarget("");
     setTransitionCtx("");
@@ -81,7 +105,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
 
   async function onSaveEdit(event) {
     event.preventDefault();
-    const { response } = await call(`/api/work-packages/${pkg.id}`, "PATCH", editForm);
+    // property_id always present in the patch: a chosen slug assigns, an
+    // empty picker clears to null (server canonicalizes and validates).
+    const { response } = await call(`/api/work-packages/${pkg.id}`, "PATCH", {
+      ...editForm,
+      property_id: editForm.property_id || null,
+    });
     if (response.ok) refresh();
   }
 
@@ -180,6 +209,28 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
               <label className={label}>Planned finish</label>
               <input type="date" className={input} value={editForm.planned_finish} onChange={(e) => setEditForm({ ...editForm, planned_finish: e.target.value })} />
             </div>
+            <div>
+              <label className={label} htmlFor="edit_property_id">Property (optional)</label>
+              <select id="edit_property_id" className={input} value={editForm.property_id}
+                onChange={(e) => setEditForm({ ...editForm, property_id: e.target.value })}
+                disabled={properties === null && !propertiesError}>
+                <option value="">No property assigned</option>
+                {editForm.property_id && !(properties || []).some((property) => property.slug === editForm.property_id) && (
+                  <option value={editForm.property_id}>{editForm.property_id} (current)</option>
+                )}
+                {(properties || []).map((property) => (
+                  <option key={property.slug} value={property.slug}>{property.label}</option>
+                ))}
+              </select>
+              {properties === null && !propertiesError && (
+                <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
+              )}
+              {propertiesError && (
+                <p className="mt-1 text-xs text-red-700">
+                  Properties could not be loaded ({propertiesError}) — the current assignment is shown by its saved name below.
+                </p>
+              )}
+            </div>
             <div className="flex gap-2">
               <button type="submit" className={btnPrimary} disabled={busy}>Save</button>
               <button type="button" className={btnGhost} onClick={() => setEditing(false)}>Cancel</button>
@@ -191,6 +242,21 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
             <Field title="Type" value={pkg.package_type?.replace(/_/g, " ")} />
             <Field title="Priority" value={pkg.priority} />
             <Field title="Responsible party" value={pkg.responsible_party?.display_name} />
+            <div>
+              <dt className="text-xs font-medium text-slate-500">Property</dt>
+              <dd className="mt-0.5 text-sm text-slate-900">
+                {pkg.property_id ? (
+                  <Link
+                    href={`/forge/rental?recordType=property&recordId=${encodeURIComponent(pkg.property_id)}&propertyId=${encodeURIComponent(pkg.property_id)}`}
+                    className="font-medium text-blue-700 hover:underline"
+                  >
+                    {propertyLabel}
+                  </Link>
+                ) : (
+                  "No property assigned"
+                )}
+              </dd>
+            </div>
             <Field title="Planned start" value={pkg.planned_start} />
             <Field title="Planned finish" value={pkg.planned_finish} />
             <Field title="Actual start" value={pkg.actual_start} />

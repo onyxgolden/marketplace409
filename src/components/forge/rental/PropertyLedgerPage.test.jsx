@@ -321,18 +321,78 @@ describe("PropertyLedgerPage split display", () => {
     });
     for (let i = 0; i < 20; i += 1) {
       if (container.querySelector('[data-ledger-entry="manual"]')) break;
-      // eslint-disable-next-line no-await-in-loop
       await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
     }
     const descriptionButton = container.querySelector('[data-ledger-entry="manual"] button[title="View transaction detail"]');
     act(() => { descriptionButton.click(); });
     for (let i = 0; i < 20; i += 1) {
       if (container.textContent.includes("Split lines")) break;
-      // eslint-disable-next-line no-await-in-loop
       await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 25); }); });
     }
     expect(container.textContent).toMatch(/Split lines/);
     expect(container.textContent).toMatch(/\$300\.00/);
     expect(container.textContent).toMatch(/Filters/);
+  });
+});
+
+describe("PropertyLedgerPage work packages section (Slice 2)", () => {
+  const propertyPackages = [
+    { id: "wp-1", code: "WP-0001", title: "Roof replacement", status: "in_progress" },
+    { id: "wp-2", code: "WP-0002", title: "Unit turnover", status: "draft" },
+  ];
+
+  function stubFetchWithPackages({ packages, failPackages = false } = {}) {
+    stubFetch(async (url) => {
+      if (url === "/api/rental/property-ledger?propertyId=prop-1") {
+        return { ok: true, json: async () => ledgerPayload };
+      }
+      if (url === "/api/work-packages?propertyId=prop-1") {
+        if (failPackages) {
+          return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
+        }
+        return { ok: true, json: async () => ({ packages }) };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+  }
+
+  const section = (container) => container.querySelector("[data-property-work-packages]");
+
+  it("lists the property's packages with count and statuses, linked to their pages", async () => {
+    stubFetchWithPackages({ packages: propertyPackages });
+    const { container } = renderPage();
+    await act(async () => {});
+    const el = section(container);
+    expect(el).not.toBeNull();
+    expect(el.textContent).toContain("2 packages");
+    expect(el.textContent).toContain("WP-0001 — Roof replacement");
+    expect(el.textContent).toContain("in progress");
+    expect(el.textContent).toContain("draft");
+    const links = [...el.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toContain("/forge/work/wp-1");
+    expect(links).toContain("/forge/work/wp-2");
+  });
+
+  it("offers New work package with this property preselected", async () => {
+    stubFetchWithPackages({ packages: propertyPackages });
+    const { container } = renderPage();
+    await act(async () => {});
+    const links = [...section(container).querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toContain("/forge/work/new?propertyId=prop-1");
+  });
+
+  it("shows an empty state when the property has no packages", async () => {
+    stubFetchWithPackages({ packages: [] });
+    const { container } = renderPage();
+    await act(async () => {});
+    expect(section(container).textContent).toMatch(/No work packages for this property yet/);
+    expect(section(container).textContent).toContain("0 packages");
+  });
+
+  it("shows an inline error when packages fail to load", async () => {
+    stubFetchWithPackages({ failPackages: true });
+    const { container } = renderPage();
+    await act(async () => {});
+    expect(section(container).textContent).toMatch(/Work packages could not be loaded/);
   });
 });

@@ -13,6 +13,7 @@ import {
   WP_STATUS, WP_GATES, validatePackageInput, validateTransition, findTransition,
   derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus,
 } from "@/domains/work-management/workPackage.js";
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 
 const TABLES = Object.freeze({
   packages: "forge_work_packages",
@@ -45,7 +46,7 @@ async function getPackage(db, ownerId, packageId) {
 // are excluded by validatePackageInput; actual_* dates move only via
 // transitions; scope_baseline_id moves only via the freeze/change workflow.
 const EDITABLE_FIELDS = [
-  "title", "description", "package_type", "priority", "project_id",
+  "title", "description", "package_type", "priority", "project_id", "property_id",
   "responsible_party", "planned_start", "planned_finish",
   "asset_id", "equipment_tag", "unit", "area", "system", "location_id",
   "work_order_ref", "workscope_code",
@@ -54,11 +55,62 @@ const EDITABLE_FIELDS = [
   "progress_basis", "progress_updated_by",
 ];
 
+// -- Residential property association (Slice 2) -----------------------------
+// A package belongs to zero or one residential property. The stored value
+// is the canonical rental_units.property_id slug; submissions are
+// canonicalized through canonicalPropertySlug (explicit alias map) at
+// write. Assignment is validated against rental_units owned by the
+// workspace: the query is scoped eq("owner_id", ownerId) on top of
+// rental_units RLS, and failures never confirm whether a slug exists only
+// under another owner (unknown and cross-owner both return 404).
+
+async function fetchOwnerUnits(db, ownerId) {
+  const { data, error } = await db.from("rental_units")
+    .select("id, property_id, label, status")
+    .eq("owner_id", ownerId);
+  if (error) throw error;
+  return data || [];
+}
+
+// Resolve a client-supplied property value to the canonical slug to store.
+// null/undefined/empty clears the association (returns propertyId: null).
+// Unit IDs are a different identity than property slugs (slice 1): a value
+// that names a unit but no property is rejected instead of silently coerced.
+async function resolvePackageProperty(db, ownerId, rawValue) {
+  if (rawValue === undefined || rawValue === null) {
+    return { ok: true, propertyId: null };
+  }
+  if (typeof rawValue !== "string") {
+    return { ok: false, httpStatus: 400, error: "property_id must be a property slug." };
+  }
+  const submitted = rawValue.trim();
+  if (submitted === "") return { ok: true, propertyId: null };
+  const units = await fetchOwnerUnits(db, ownerId);
+  const propertySlugs = new Set();
+  const unitIds = new Set();
+  for (const unit of units) {
+    if (unit.property_id) propertySlugs.add(canonicalPropertySlug(unit.property_id));
+    if (unit.id) unitIds.add(unit.id);
+  }
+  const canonical = canonicalPropertySlug(submitted);
+  if (propertySlugs.has(canonical)) {
+    return { ok: true, propertyId: canonical };
+  }
+  if (unitIds.has(submitted)) {
+    return { ok: false, httpStatus: 400, error: "Assign the property, not a single unit." };
+  }
+  return { ok: false, httpStatus: 404, error: "Property not found." };
+}
+
 export async function createWorkPackage(db, { ownerId, actor, input }) {
   const validation = validatePackageInput(input);
   if (!validation.ok) {
     return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   }
+  // Property assignment is validated and canonicalized server-side even
+  // when the caller bypasses the UI picker; absent/empty means unassigned.
+  const property = await resolvePackageProperty(db, ownerId, input.property_id);
+  if (!property.ok) return property;
   const { data: seqNum, error: seqError } = await db.rpc("forge_work_next_package_number", { p_owner_id: ownerId });
   if (seqError) throw seqError;
   const now = new Date().toISOString();
@@ -71,6 +123,7 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
     package_type: input.package_type ?? "other",
     priority: input.priority ?? "normal",
     project_id: input.project_id ?? null,
+    property_id: property.propertyId,
     responsible_party: input.responsible_party ?? null,
     planned_start: input.planned_start ?? null,
     planned_finish: input.planned_finish ?? null,
@@ -104,10 +157,20 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   if (isTerminalStatus(pkg.status)) {
     return { ok: false, httpStatus: 409, error: `Package is ${pkg.status}; reopen it before editing.` };
   }
+  // Property reassignment/clearing is validated and canonicalized
+  // server-side, same as create. A missing property_id field leaves the
+  // current association unchanged; an explicit null clears it.
+  let resolvedPropertyId;
+  if (patch.property_id !== undefined) {
+    const resolved = await resolvePackageProperty(db, ownerId, patch.property_id);
+    if (!resolved.ok) return resolved;
+    resolvedPropertyId = resolved.propertyId;
+  }
   const filtered = {};
   for (const key of EDITABLE_FIELDS) {
     if (patch[key] !== undefined) filtered[key] = patch[key];
   }
+  if (resolvedPropertyId !== undefined) filtered.property_id = resolvedPropertyId;
   // Validate the FULLY MERGED candidate against persisted denominators and
   // earned amounts — never the patch alone. A patch of { earned_qty: 20 }
   // against a stored planned_qty of 10 must be rejected, not clamped.
@@ -325,14 +388,44 @@ export async function getWorkPackageDetail(db, { ownerId, packageId }) {
   };
 }
 
-export async function listWorkPackages(db, { ownerId, status, packageType }) {
-  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,updated_at")
+export async function listWorkPackages(db, { ownerId, status, packageType, propertyId }) {
+  let q = db.from(TABLES.packages).select("id,code,title,package_type,priority,status,planned_start,planned_finish,percent_complete,unit,area,system,property_id,updated_at")
     .eq("owner_id", ownerId).order("updated_at", { ascending: false });
   if (status) q = q.eq("status", status);
   if (packageType) q = q.eq("package_type", packageType);
+  // Property filter: the input is canonicalized, then matched with exact
+  // equality at the database. Packages store canonical slugs only (write
+  // path canonicalizes), so equality returns exactly that property's
+  // packages — alias-tagged submissions were normalized at write, and
+  // unassigned (NULL) rows never match an equality filter.
+  if (propertyId) q = q.eq("property_id", canonicalPropertySlug(propertyId));
   const { data, error } = await q;
   if (error) throw error;
   return { ok: true, packages: data || [] };
+}
+
+// Property options for the package picker: one option per canonical
+// property in the workspace, built from distinct owner-scoped
+// rental_units.property_id values (aliases deduped). Inactive units are
+// excluded, matching what the rental UI shows. The label prefers the unit
+// already carrying the canonical slug, else the first readable label seen.
+export async function listPackagePropertyOptions(db, { ownerId }) {
+  const units = await fetchOwnerUnits(db, ownerId);
+  const byCanonical = new Map();
+  for (const unit of units) {
+    if (!unit.property_id) continue;
+    if (unit.status === "inactive") continue;
+    const canonical = canonicalPropertySlug(unit.property_id);
+    const entry = byCanonical.get(canonical) || { slug: canonical, label: null };
+    if (!entry.label || unit.property_id === canonical) {
+      entry.label = unit.label || entry.label;
+    }
+    byCanonical.set(canonical, entry);
+  }
+  const properties = Array.from(byCanonical.values())
+    .map((property) => ({ slug: property.slug, label: property.label || property.slug }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return { ok: true, properties };
 }
 
 export async function recordGateAttestation(db, { ownerId, actor, packageId, gate, statement, notApplicable, naReason }) {

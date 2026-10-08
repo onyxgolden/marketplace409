@@ -67,4 +67,15 @@ describe("PATCH /api/work-packages/[packageId]", () => {
     const response = await PATCH(request({ title: "Renamed" }, "PATCH"), { params: params() });
     expect(response.status).toBe(409);
   });
+  it("passes a property assignment/clear patch through", async () => {
+    updateWorkPackage.mockResolvedValue({ ok: true, package: { id: "forge_wp_1", property_id: "1900-w-decker" } });
+    const response = await PATCH(request({ property_id: "1900-west-decker" }, "PATCH"), { params: params() });
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.package.property_id).toBe("1900-w-decker");
+    expect(updateWorkPackage).toHaveBeenCalledWith({}, {
+      ownerId: "owner_1", actor: "user_9", packageId: "forge_wp_1",
+      patch: { property_id: "1900-west-decker" },
+    });
+  });
 });
