@@ -97,6 +97,32 @@ count and an estimated byte budget, and never blocks a caller — it drops
 the oldest queued item and counts the drop rather than ever stalling the
 hook thread.
 
+## PT-1C — consent/session UI shell (fixture-only)
+
+A separate slice (`ui/process-training.js` + `ui/process-training-core.js`,
+its own "Process Training" tab in `index.html`) builds the consent/session
+*shell* ahead of any real UI wiring to the pipeline above: a guarded state
+machine (`idle -> preflight -> consented_preview -> review -> discarded`),
+an explicit per-session trust-scope choice (clarified after round-1
+review: the dialog preselects the safer `Default`/withhold option on
+every opening — `author_trusted` is never preselected or pre-checked,
+and neither option is itself a consent grant; consent only happens on
+the explicit "Start preview" click, never on opening or closing the
+dialog), and a review screen that maps the real
+`PipelineMessage` shape from `process_capture.rs` to a read-only view
+model — every variant (`Event`, `Gap`, `QueueOverflow` including
+`capture-capacity-exhausted`, `SessionReconciliationUncertain`) shown
+distinctly, never collapsed, never rounded up to a "complete" claim when
+a gap or reconciliation uncertainty is present.
+
+**This slice never captures anything.** `buildFixtureEvidence` generates
+demo data only; there is no IPC call anywhere in either file to either
+real session command, and a dedicated test (`process-training.test.js`)
+asserts that structurally by scanning both files' source for any
+reference to them. The disabled-capture banner is shown unconditionally,
+in every state. `SESSIONS_ENABLED` and the real pipeline are completely
+untouched by this slice.
+
 ## What is not yet wired
 
 - **No UI.** `process_capture_start_session`/`_stop_session` (Tauri
