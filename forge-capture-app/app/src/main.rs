@@ -118,12 +118,41 @@ struct AppState {
     /// `forge_capture_core::process_capture`'s own doc comment.
     process_capture: Mutex<Option<forge_capture_core::process_capture::ProcessCaptureHandle>>,
     /// Events the pipeline's sink has produced for the active session, in
-    /// arrival order. An `Arc` (not wrapped in another `Mutex` at this
-    /// level) so the sink closure handed to `process_capture::start` can
-    /// hold a cheap clone of the exact same buffer this field reads —
-    /// one buffer, not two. A later, UI-facing slice drains this into
-    /// durable `events.ndjson` writes; this sub-slice only wires the pipe.
-    process_capture_events: Arc<Mutex<Vec<forge_capture_core::process_capture::PipelineMessage>>>,
+    /// arrival order. Bounded (`BoundedDropOldest`, the same drop-oldest-
+    /// and-count policy the pipeline's own inter-thread queues use) —
+    /// review finding: an unbounded `Vec` here would accumulate forever,
+    /// including potentially huge RGBA frames, with no cap at all even
+    /// though every queue upstream of it is bounded. `Arc<Mutex<_>>` (not
+    /// `Mutex` wrapping an inner `Arc`) so the sink closure handed to
+    /// `process_capture::start` can hold a cheap clone of the exact same
+    /// buffer this field reads — one buffer, not two. A later, UI-facing
+    /// slice drains this into durable `events.ndjson` writes; this
+    /// sub-slice only wires the pipe.
+    process_capture_events: Arc<
+        Mutex<
+            forge_capture_core::process_capture::BoundedDropOldest<
+                forge_capture_core::process_capture::PipelineMessage,
+            >,
+        >,
+    >,
+}
+
+/// Size estimate for one `PipelineMessage`, for
+/// `AppState::process_capture_events`'s byte budget — dominated by a
+/// screenshot's RGBA buffer when one is present; everything else is a
+/// small, roughly-constant overhead.
+fn pipeline_message_size(message: &forge_capture_core::process_capture::PipelineMessage) -> usize {
+    use forge_capture_core::process_capture::PipelineMessage;
+    match message {
+        PipelineMessage::Event(event) => {
+            64 + event
+                .screenshot
+                .as_ref()
+                .map(|(_, _, rgba)| rgba.len())
+                .unwrap_or(0)
+        }
+        PipelineMessage::Gap(_) | PipelineMessage::QueueOverflow { .. } => 32,
+    }
 }
 
 /// One in-flight chunked media upload. The webview holds the encoded bytes
@@ -1349,7 +1378,11 @@ fn process_capture_start_session(
         persist_verbatim_metadata: persistVerbatimMetadata,
     };
     if let Ok(mut shared) = state.process_capture_events.lock() {
-        shared.clear();
+        *shared = forge_capture_core::process_capture::BoundedDropOldest::new(
+            512,
+            256 * 1024 * 1024,
+            pipeline_message_size,
+        );
     }
     let events_for_sink = state.process_capture_events.clone();
     let handle = process_capture::start(
@@ -3396,7 +3429,13 @@ fn main() {
             media_uploads: Mutex::new(HashMap::new()),
             meeting_uploads: Mutex::new(HashMap::new()),
             process_capture: Mutex::new(None),
-            process_capture_events: Arc::new(Mutex::new(Vec::new())),
+            process_capture_events: Arc::new(Mutex::new(
+                forge_capture_core::process_capture::BoundedDropOldest::new(
+                    512,
+                    256 * 1024 * 1024,
+                    pipeline_message_size,
+                ),
+            )),
         })
         .setup(|app| {
             // Best-effort capture shortcuts: register the four PrintScreen

@@ -178,6 +178,17 @@ pub struct GapMarker {
 pub enum PipelineMessage {
     Event(ProcessCaptureEvent),
     Gap(GapMarker),
+    /// A queue between pipeline stages dropped one or more items to stay
+    /// within its bound. `dropped_count` is that queue's running total,
+    /// not a delta — the caller can diff against the last value it saw.
+    /// Surfaced explicitly rather than only inferred from a later
+    /// sequence-id gap, since a drop that happens to be the *last* event
+    /// before a session stops would otherwise never show up as a gap at
+    /// all (nothing after it to reveal the hole).
+    QueueOverflow {
+        stage: &'static str,
+        dropped_count: u64,
+    },
 }
 
 /// Raw down/up transition the hook thread hands onward — plain data,
@@ -196,6 +207,18 @@ pub(crate) struct RawHookEvent {
     /// (not a COM/UIA call), so self-exclusion can happen immediately on
     /// the evidence thread without a second native round-trip.
     pub window_pid: u32,
+    /// The raw `HWND` value (as `isize`, so this type stays plain `Copy`
+    /// data safe to move across threads) for the window under the cursor
+    /// at hook time — the *same* window every later stage must use,
+    /// rather than each stage independently re-resolving "whatever is at
+    /// this point now" via its own fresh `WindowFromPoint` call. Threading
+    /// one resolved identity through the whole pipeline is what closes the
+    /// TOCTOU gap a design review caught: with three independent
+    /// `WindowFromPoint` calls at three different times (hook, capture,
+    /// evidence), a window change in between could let one process's
+    /// frame get authorized using a different process's identity. `0`
+    /// means no window was under the point at hook time.
+    pub hwnd_value: isize,
 }
 
 /// A captured frame, handed from the capture worker to the evidence
@@ -222,8 +245,11 @@ pub(crate) struct CapturedFrame {
 /// rather than ever stalling its caller — this is what keeps the hook
 /// thread's loop free regardless of how far behind a downstream stage
 /// falls. Pure, host-independent queueing logic; the threads that use it
-/// are Windows-only, but this type itself is not.
-pub(crate) struct BoundedDropOldest<T> {
+/// are Windows-only, but this type itself is not. Fully `pub` (not just
+/// `pub(crate)`) so the Tauri shell can apply the same bounded,
+/// drop-oldest-and-count policy to its own in-memory event buffer rather
+/// than accumulate an unbounded `Vec` of potentially huge RGBA frames.
+pub struct BoundedDropOldest<T> {
     inner: std::collections::VecDeque<T>,
     max_items: usize,
     max_bytes: usize,
@@ -327,11 +353,11 @@ mod win {
     use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetAncestor, GetClassNameW, GetMessageW,
-        GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, PostThreadMessageW,
-        SendMessageTimeoutW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-        WindowFromPoint, GA_ROOT, GWL_STYLE, HHOOK, MSG, MSLLHOOKSTRUCT, WH_MOUSE_LL,
-        WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_QUIT, WM_RBUTTONDOWN,
-        WM_RBUTTONUP,
+        GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsWindow, PeekMessageW,
+        PostThreadMessageW, SendMessageTimeoutW, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, WindowFromPoint, GA_ROOT, GWL_STYLE, HHOOK, MSG, MSLLHOOKSTRUCT,
+        PM_NOREMOVE, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+        WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP,
     };
 
     const BS_OWNERDRAW: i32 = 0x0000_000B;
@@ -343,6 +369,29 @@ mod win {
 
     const QUEUE_MAX_ITEMS: usize = 8;
     const QUEUE_MAX_BYTES: usize = 256 * 1024 * 1024;
+
+    /// Hard, structural kill switch — `start` refuses unconditionally while
+    /// this is `false`, regardless of what any caller passes as
+    /// `author_trusted_processes`. Review finding: "no caller exists yet"
+    /// is an accident of this sub-slice having no UI, not an authorization
+    /// boundary — `process_capture_start_session` is a registered Tauri
+    /// command, and any code able to invoke it could self-assert an
+    /// arbitrary trust list with nothing in the privileged Rust boundary
+    /// to stop it. This constant is that stop, until a later slice (under
+    /// its own review) replaces it with a real per-session, disclosed
+    /// consent flow and removes this line deliberately rather than by
+    /// accident. Flipping it is itself "the separate explicit
+    /// authorization" the design's safety gate requires — not something
+    /// this sub-slice does.
+    const SESSIONS_ENABLED: bool = false;
+
+    /// Reconstructs the `HWND` a `RawHookEvent`/`CapturedFrame` carries as
+    /// a plain `isize`. See `RawHookEvent::hwnd_value`'s doc comment for
+    /// why the same resolved window is threaded through every stage
+    /// instead of each stage re-resolving it independently.
+    fn hwnd_from_value(value: isize) -> HWND {
+        HWND(value as *mut std::ffi::c_void)
+    }
 
     fn now_ms() -> u64 {
         std::time::SystemTime::now()
@@ -592,12 +641,23 @@ mod win {
         }
     }
 
-    // Set only by the hook thread itself, read only by its own HOOKPROC
-    // (both always on the same OS thread — a low-level hook's callback
-    // runs on the thread that installed it) — thread-local, never shared.
+    // HOOK_HANDLE is set only by the hook thread itself, read only by its
+    // own HOOKPROC (both always on the same OS thread — a low-level
+    // hook's callback runs on the thread that installed it) — genuinely
+    // thread-local, never shared. SEQUENCE holds a clone of a *shared*
+    // `Arc<AtomicU64>` (set once, at hook-thread startup) rather than a
+    // private per-thread counter — `start` and the evidence thread both
+    // need to read the same counter's final value for end-of-session gap
+    // reconciliation (a trailing drop has nothing after it to reveal the
+    // gap via the ordinary pairwise sequence check, so the counter's own
+    // final value is the only way to detect one). Storing the `Arc` in a
+    // thread-local (rather than directly in a shared static) is only
+    // because `mouse_hook_proc` is a plain `extern "system" fn` with no
+    // closure capture; the counter it increments is still the one shared
+    // instance.
     thread_local! {
         static HOOK_HANDLE: std::cell::Cell<HHOOK> = const { std::cell::Cell::new(HHOOK(std::ptr::null_mut())) };
-        static SEQUENCE: AtomicU64 = const { AtomicU64::new(1) };
+        static SEQUENCE: std::cell::RefCell<Option<Arc<AtomicU64>>> = const { std::cell::RefCell::new(None) };
     }
 
     // The channel the HOOKPROC pushes into. Thread-local to the hook
@@ -640,8 +700,14 @@ mod win {
                 // resolution (no OpenProcess/QueryFullProcessImageNameW,
                 // which are real cross-process calls with no latency
                 // bound) -- self-exclusion only ever needs the PID.
-                let (window_pid, _hwnd) = pid_at_point(point);
-                let seq = SEQUENCE.with(|s| s.fetch_add(1, Ordering::SeqCst));
+                let (window_pid, hook_hwnd) = pid_at_point(point);
+                let seq = SEQUENCE
+                    .with(|s| {
+                        s.borrow()
+                            .as_ref()
+                            .map(|c| c.fetch_add(1, Ordering::SeqCst))
+                    })
+                    .unwrap_or(0);
                 let event = RawHookEvent {
                     sequence_id: seq,
                     hook_timestamp_ms: now_ms(),
@@ -650,6 +716,7 @@ mod win {
                     button,
                     is_down,
                     window_pid,
+                    hwnd_value: hook_hwnd.0 as isize,
                 };
                 HOOK_SINK.with(|sink| {
                     if let Some(queue) = sink.borrow().as_ref() {
@@ -668,13 +735,32 @@ mod win {
 
     /// Starts the three-thread pipeline. See this module's doc comment
     /// for the architecture; **nothing calls this function anywhere in
-    /// this codebase as of this sub-slice.**
+    /// this codebase as of this sub-slice** — and even a caller that did
+    /// would get `Err` unconditionally, since [`SESSIONS_ENABLED`] is
+    /// `false`. Blocks briefly (bounded by `STARTUP_TIMEOUT`) waiting for
+    /// both the hook thread and the evidence thread to report their own
+    /// startup result before returning, so a `SetWindowsHookExW` or COM
+    /// initialization failure is returned to the caller as `Err` rather
+    /// than silently leaving a handle that looks active but has no
+    /// working hook or evidence stage behind it.
     pub fn start(
         config: ProcessCaptureConfig,
         sink: Box<dyn Fn(PipelineMessage) + Send + 'static>,
     ) -> Result<ProcessCaptureHandle, CaptureError> {
+        if !SESSIONS_ENABLED {
+            return Err(CaptureError::NativeApi(
+                "process-capture sessions are not yet enabled; this is a structural kill switch \
+                 in process_capture.rs, not a missing caller — see SESSIONS_ENABLED's own doc \
+                 comment"
+                    .to_string(),
+            ));
+        }
+
+        const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
         let stop_flag = Arc::new(AtomicBool::new(false));
         let hook_thread_id: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
+        let sequence_counter = Arc::new(AtomicU64::new(1));
 
         let a_to_c: Arc<Mutex<BoundedDropOldest<RawHookEvent>>> = Arc::new(Mutex::new(
             BoundedDropOldest::new(QUEUE_MAX_ITEMS, QUEUE_MAX_BYTES, |_: &RawHookEvent| {
@@ -687,25 +773,42 @@ mod win {
             }),
         ));
 
+        let (a_ready_tx, a_ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+        let (b_ready_tx, b_ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
+
         // -- Thread A: the hook. --
         let a_stop = stop_flag.clone();
         let a_queue = a_to_c.clone();
         let a_tid_slot = hook_thread_id.clone();
+        let a_sequence = sequence_counter.clone();
         let hook_join = std::thread::spawn(move || {
             HOOK_SINK.with(|s| *s.borrow_mut() = Some(a_queue));
+            SEQUENCE.with(|s| *s.borrow_mut() = Some(a_sequence));
             let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
             if let Ok(mut slot) = a_tid_slot.lock() {
                 *slot = Some(tid);
+            }
+            // Force this thread's message queue to exist *before* install
+            // and *before* signaling ready, so a `PostThreadMessageW`
+            // issued the moment `start` returns can never race a queue
+            // that has not been created yet (which would silently fail,
+            // and `GetMessageW` below would then block forever with no
+            // quit message ever delivered — a deadlock in `stop`'s join).
+            let mut probe = MSG::default();
+            unsafe {
+                let _ = PeekMessageW(&mut probe, None, 0, 0, PM_NOREMOVE);
             }
             let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0) };
             let hook = match hook {
                 Ok(h) => h,
                 Err(_) => {
-                    let _ = last_error("SetWindowsHookExW");
+                    let e = last_error("SetWindowsHookExW");
+                    let _ = a_ready_tx.send(Err(e.to_string()));
                     return;
                 }
             };
             HOOK_HANDLE.with(|h| h.set(hook));
+            let _ = a_ready_tx.send(Ok(()));
             let mut msg = MSG::default();
             loop {
                 if a_stop.load(Ordering::SeqCst) {
@@ -738,7 +841,7 @@ mod win {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             };
-            if let Some(frame) = capture_window_at(raw.x, raw.y, raw) {
+            if let Some(frame) = capture_window_at(raw) {
                 if let Ok(mut q) = c_out.lock() {
                     q.push(frame);
                 }
@@ -748,15 +851,24 @@ mod win {
         // -- Thread B: the evidence thread. Owns IUIAutomation. --
         let b_stop = stop_flag.clone();
         let b_in = c_to_b.clone();
+        let b_a_queue = a_to_c.clone(); // read-only, to poll its dropped_count
+        let b_sequence = sequence_counter.clone();
         let self_pid = config.self_pid;
         let trusted = config.author_trusted_processes.clone();
+        let persist_verbatim_metadata = config.persist_verbatim_metadata;
         let evidence_join = std::thread::spawn(move || {
             let com_ok = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
             if com_ok.is_err() {
+                let _ = b_ready_tx.send(Err(format!("CoInitializeEx failed: {com_ok:?}")));
                 return;
             }
             let automation: Option<IUIAutomation> =
                 unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
+            // UIA itself failing to construct is not fatal -- `automation`
+            // stays `None` and every enrichment call already degrades to
+            // "no signal" gracefully. COM initializing is what matters for
+            // startup success.
+            let _ = b_ready_tx.send(Ok(()));
 
             let timing = ClickTimingConfig {
                 double_click_time_ms: unsafe {
@@ -785,12 +897,42 @@ mod win {
             };
             let mut classifier = ClickClassifier::new(timing);
             let mut last_seq: Option<u64> = None;
+            let mut last_a_dropped: u64 = 0;
+            let mut last_c_dropped: u64 = 0;
 
             loop {
                 if b_stop.load(Ordering::SeqCst) {
                     break;
                 }
-                let next = b_in.lock().ok().and_then(|mut q| q.pop());
+
+                // Queue-overflow accounting: a queue's own drop-oldest
+                // policy (BoundedDropOldest) already counts what it drops
+                // internally, but that count was never surfaced to the
+                // caller anywhere — polled here (diffed against the last
+                // seen value) and reported as its own message, since a
+                // queue-overflow drop that happens to be the pipeline's
+                // very last event has nothing after it to reveal a hole
+                // via the ordinary pairwise sequence-gap check below.
+                if let Ok(q) = b_a_queue.lock() {
+                    if q.dropped_count != last_a_dropped {
+                        last_a_dropped = q.dropped_count;
+                        sink(PipelineMessage::QueueOverflow {
+                            stage: "hook-to-capture",
+                            dropped_count: last_a_dropped,
+                        });
+                    }
+                }
+
+                let next = b_in.lock().ok().and_then(|mut q| {
+                    if q.dropped_count != last_c_dropped {
+                        last_c_dropped = q.dropped_count;
+                        sink(PipelineMessage::QueueOverflow {
+                            stage: "capture-to-evidence",
+                            dropped_count: last_c_dropped,
+                        });
+                    }
+                    q.pop()
+                });
                 let Some(frame) = next else {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                     continue;
@@ -849,31 +991,69 @@ mod win {
                 };
 
                 let (kind, point) = EventKind::from_classified(&classified);
-                let point_screen = POINT {
-                    x: point.0 as i32,
-                    y: point.1 as i32,
-                };
 
+                // Identity is resolved exactly once, at hook time
+                // (frame.raw.hwnd_value), and threaded through every
+                // stage from here on -- never re-resolved via a fresh
+                // WindowFromPoint in this thread. A second independent
+                // resolution here, made however long after the hook fired
+                // this thread took to get scheduled, is exactly the
+                // TOCTOU gap a design review caught: the window at a
+                // given point can change in between, which would let one
+                // process's already-captured frame get authorized using a
+                // *different* process's identity. The one validity check
+                // that is still needed here is whether that specific
+                // window still exists at all (`IsWindow`) -- it can have
+                // been destroyed between the hook observing the click and
+                // this thread getting to it, and a destroyed window's
+                // identity cannot be confirmed, so this step is withheld
+                // rather than guessed at.
+                let leaf_hwnd = hwnd_from_value(frame.raw.hwnd_value);
+                if leaf_hwnd.0.is_null() || !unsafe { IsWindow(Some(leaf_hwnd)) }.as_bool() {
+                    sink(PipelineMessage::Event(ProcessCaptureEvent {
+                        sequence_id: frame.raw.sequence_id,
+                        hook_timestamp_ms: frame.raw.hook_timestamp_ms,
+                        capture_timestamp_ms: now_ms(),
+                        kind,
+                        point,
+                        target: None,
+                        screenshot: None,
+                        privacy: PrivacyOutcome {
+                            trust: TrustLabel::Default,
+                            decision: SensitivityDecisionLabel::Withhold,
+                        },
+                    }));
+                    continue;
+                }
+
+                let evidence_point = POINT {
+                    x: frame.raw.x as i32,
+                    y: frame.raw.y as i32,
+                };
                 let mut evidence = TargetEvidence::default();
                 let mut uia_is_password = None;
                 if let Some(ref automation) = automation {
-                    let (ev, pw) = uia_enrich(automation, point_screen);
+                    let (ev, pw) = uia_enrich(automation, evidence_point);
                     evidence = ev;
                     uia_is_password = pw;
                 }
-                // The leaf control under the point is what owner-draw/
-                // password-char checks need (gather_signals, below). The
-                // trust decision is anchored to that control's TOP-LEVEL
-                // window's owning process instead -- the same window the
-                // capture worker scoped the screenshot to (see
-                // capture_window_at) -- so capture scope and trust scope
-                // are always the same window, never "whatever process
-                // owns the exact pixel under the cursor" vs. "whatever
-                // was captured."
-                let hwnd_for_native = unsafe { WindowFromPoint(point_screen) };
-                let root_hwnd = root_window(hwnd_for_native);
+                // The leaf control is what owner-draw/password-char
+                // checks need (gather_signals, below). The trust decision
+                // is anchored to that control's TOP-LEVEL window's owning
+                // process instead -- the same window the capture worker
+                // scoped the screenshot to (capture_window_at used this
+                // exact frame.raw.hwnd_value too) -- so capture scope and
+                // trust scope are always the same window, resolved once.
+                let root_hwnd = root_window(leaf_hwnd);
                 let (_root_pid, proc_name) = process_name_for_hwnd(root_hwnd);
                 evidence.process_name = proc_name.clone();
+                if !persist_verbatim_metadata {
+                    // Opt-in only -- see ProcessCaptureConfig's own doc
+                    // comment. control_type_id and process_name are
+                    // structural (not free text), kept either way.
+                    evidence.name = None;
+                    evidence.automation_id = None;
+                }
 
                 let trust = match &proc_name {
                     Some(name) if trusted.contains(name) => ProcessTrust::AuthorTrusted,
@@ -885,7 +1065,7 @@ mod win {
                 };
 
                 let decision = if matches!(trust, ProcessTrust::AuthorTrusted) {
-                    let signals = gather_signals(&evidence, uia_is_password, hwnd_for_native);
+                    let signals = gather_signals(&evidence, uia_is_password, leaf_hwnd);
                     decide_sensitivity(trust, &signals)
                 } else {
                     crate::process_session::SensitivityDecision::Withhold
@@ -942,10 +1122,64 @@ mod win {
                     },
                 }));
             }
+
+            // End-of-session reconciliation: the ordinary pairwise
+            // sequence-gap check (above, inside the loop) can only ever
+            // detect a gap between two events this thread actually saw —
+            // a drop that happens to be the *last* thing the hook ever
+            // assigned a sequenceId to has nothing after it to reveal the
+            // hole. The shared counter's final value is read here, after
+            // the loop has already stopped (so the hook thread is done
+            // incrementing it), and compared against the last sequenceId
+            // this thread actually processed.
+            let final_seq = b_sequence.load(Ordering::SeqCst);
+            if let Some(last) = last_seq {
+                if final_seq > last + 1 {
+                    sink(PipelineMessage::Gap(GapMarker {
+                        first_missing: last + 1,
+                        last_missing: final_seq - 1,
+                    }));
+                }
+            }
+
             unsafe {
                 CoUninitialize();
             }
         });
+
+        // Wait for both the hook thread and the evidence thread to report
+        // their own startup result before handing back a handle. A
+        // `SetWindowsHookExW` failure or a `CoInitializeEx` failure used
+        // to be silently swallowed inside the spawned thread while this
+        // function still returned `Ok(handle)` — a caller had no way to
+        // tell "the pipeline is genuinely running" from "one of its
+        // threads already gave up." On any failure (including a timeout
+        // or a sender dropped without sending, e.g. a panic), the
+        // partially-started pipeline is torn down the same way `stop`
+        // does before returning `Err`, rather than leaking threads.
+        let a_result = a_ready_rx.recv_timeout(STARTUP_TIMEOUT);
+        let b_result = b_ready_rx.recv_timeout(STARTUP_TIMEOUT);
+        let startup_failure = match (&a_result, &b_result) {
+            (Ok(Ok(())), Ok(Ok(()))) => None,
+            (Ok(Err(e)), _) => Some(format!("hook thread failed to start: {e}")),
+            (_, Ok(Err(e))) => Some(format!("evidence thread failed to start: {e}")),
+            (Err(_), _) => Some("hook thread did not report startup within the timeout".into()),
+            (_, Err(_)) => Some("evidence thread did not report startup within the timeout".into()),
+        };
+        if let Some(reason) = startup_failure {
+            stop_flag.store(true, Ordering::SeqCst);
+            if let Ok(guard) = hook_thread_id.lock() {
+                if let Some(tid) = *guard {
+                    unsafe {
+                        let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
+                    }
+                }
+            }
+            let _ = hook_join.join();
+            let _ = capture_join.join();
+            let _ = evidence_join.join();
+            return Err(CaptureError::NativeApi(reason));
+        }
 
         Ok(ProcessCaptureHandle {
             stop_flag,
@@ -965,12 +1199,17 @@ mod win {
     /// of what the trust decision later turns out to be. Still reuses the
     /// existing public `native::capture_rect`/`native::list_monitors` — no
     /// new GDI code, only a smaller, correctly-scoped rect passed to it.
-    fn capture_window_at(x: i64, y: i64, raw: RawHookEvent) -> Option<CapturedFrame> {
-        let point = POINT {
-            x: x as i32,
-            y: y as i32,
-        };
-        let leaf = unsafe { WindowFromPoint(point) };
+    ///
+    /// Takes the hook-time-resolved `HWND` directly (`raw.hwnd_value`)
+    /// rather than re-resolving one from `(x, y)` via a fresh
+    /// `WindowFromPoint` call here — a second independent resolution,
+    /// made however long after the hook fired this thread took to get
+    /// scheduled, is exactly the TOCTOU gap a design review caught: the
+    /// window at that exact pixel can change between the hook observing
+    /// the click and this function running.
+    fn capture_window_at(raw: RawHookEvent) -> Option<CapturedFrame> {
+        let (x, y) = (raw.x, raw.y);
+        let leaf = hwnd_from_value(raw.hwnd_value);
         if leaf.0.is_null() {
             return None;
         }
