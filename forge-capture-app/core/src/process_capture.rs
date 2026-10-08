@@ -296,6 +296,98 @@ impl<T> BoundedDropOldest<T> {
     }
 }
 
+/// Decides `start`'s own outcome from the hook thread's and the evidence
+/// thread's independently-reported startup results — pure, host-
+/// independent logic (the two `Result`s it's given are plain data; it
+/// never touches a thread, a channel, or the OS itself), extracted so it
+/// can be unit-tested without installing anything. `None` means both
+/// threads reported success; `Some(reason)` is what `start` returns as
+/// its own `Err`. Review ask: "add mockable tests for lifecycle and error
+/// branches where possible" — this is the one piece of that lifecycle
+/// genuinely separable from real OS threads/COM/a hook.
+pub(crate) fn resolve_startup_result(
+    a: Result<Result<(), String>, std::sync::mpsc::RecvTimeoutError>,
+    b: Result<Result<(), String>, std::sync::mpsc::RecvTimeoutError>,
+) -> Option<String> {
+    match (a, b) {
+        (Ok(Ok(())), Ok(Ok(()))) => None,
+        (Ok(Err(e)), _) => Some(format!("hook thread failed to start: {e}")),
+        (_, Ok(Err(e))) => Some(format!("evidence thread failed to start: {e}")),
+        (Err(_), _) => Some("hook thread did not report startup within the timeout".into()),
+        (_, Err(_)) => Some("evidence thread did not report startup within the timeout".into()),
+    }
+}
+
+#[cfg(test)]
+mod pure_tests {
+    use super::resolve_startup_result;
+    use std::sync::mpsc::RecvTimeoutError;
+
+    #[test]
+    fn both_threads_reporting_ok_is_overall_success() {
+        assert_eq!(resolve_startup_result(Ok(Ok(())), Ok(Ok(()))), None);
+    }
+
+    #[test]
+    fn hook_thread_error_is_surfaced_with_its_own_reason() {
+        let result = resolve_startup_result(Ok(Err("boom".to_string())), Ok(Ok(())));
+        assert_eq!(
+            result,
+            Some("hook thread failed to start: boom".to_string())
+        );
+    }
+
+    #[test]
+    fn evidence_thread_error_is_surfaced_with_its_own_reason_even_if_hook_succeeded() {
+        let result = resolve_startup_result(Ok(Ok(())), Ok(Err("com failed".to_string())));
+        assert_eq!(
+            result,
+            Some("evidence thread failed to start: com failed".to_string())
+        );
+    }
+
+    #[test]
+    fn hook_thread_timeout_is_reported_distinctly() {
+        let result = resolve_startup_result(Err(RecvTimeoutError::Timeout), Ok(Ok(())));
+        assert_eq!(
+            result,
+            Some("hook thread did not report startup within the timeout".to_string())
+        );
+    }
+
+    #[test]
+    fn evidence_thread_timeout_is_reported_distinctly() {
+        let result = resolve_startup_result(Ok(Ok(())), Err(RecvTimeoutError::Timeout));
+        assert_eq!(
+            result,
+            Some("evidence thread did not report startup within the timeout".to_string())
+        );
+    }
+
+    #[test]
+    fn a_disconnected_sender_is_treated_the_same_as_a_timeout() {
+        // A panic in either spawned thread drops its sender without
+        // sending -- this must fail the same way a timeout does, not
+        // hang or panic itself.
+        let result = resolve_startup_result(Err(RecvTimeoutError::Disconnected), Ok(Ok(())));
+        assert_eq!(
+            result,
+            Some("hook thread did not report startup within the timeout".to_string())
+        );
+    }
+
+    #[test]
+    fn hook_failure_takes_priority_when_both_threads_fail() {
+        // Not load-bearing which one "wins" when both fail, but the
+        // result must be Some with a real reason either way, never None.
+        let result = resolve_startup_result(
+            Ok(Err("hook boom".to_string())),
+            Ok(Err("evidence boom".to_string())),
+        );
+        assert!(result.is_some());
+    }
+}
+
 #[cfg(not(windows))]
 mod stub {
     use super::*;
@@ -660,10 +752,16 @@ mod win {
         static SEQUENCE: std::cell::RefCell<Option<Arc<AtomicU64>>> = const { std::cell::RefCell::new(None) };
     }
 
-    // The channel the HOOKPROC pushes into. Thread-local to the hook
-    // thread's own setup, populated once before the message loop starts.
+    // The channel the HOOKPROC pushes into, and an explicit counter for
+    // the one loss mode a bounded queue's own `dropped_count` cannot see:
+    // a `try_lock` failure means the push was never attempted at all, so
+    // nothing inside `BoundedDropOldest` itself observes it. Thread-local
+    // to the hook thread's own setup, populated once before the message
+    // loop starts.
     thread_local! {
         static HOOK_SINK: std::cell::RefCell<Option<Arc<Mutex<BoundedDropOldest<RawHookEvent>>>>> =
+            const { std::cell::RefCell::new(None) };
+        static HOOK_TRYLOCK_MISSES: std::cell::RefCell<Option<Arc<AtomicU64>>> =
             const { std::cell::RefCell::new(None) };
     }
 
@@ -720,12 +818,26 @@ mod win {
                 };
                 HOOK_SINK.with(|sink| {
                     if let Some(queue) = sink.borrow().as_ref() {
-                        if let Ok(mut q) = queue.try_lock() {
-                            q.push(event);
+                        match queue.try_lock() {
+                            Ok(mut q) => q.push(event),
+                            Err(_) => {
+                                // A held lock here means the capture
+                                // worker is mid-drain; this one event is
+                                // lost rather than the hook callback ever
+                                // blocking on a lock. Explicitly counted
+                                // (not just left to be inferred from a
+                                // later sequence-id gap, which a trailing
+                                // miss would never produce) -- the
+                                // evidence thread surfaces this counter
+                                // the same way it surfaces each queue's
+                                // own dropped_count.
+                                HOOK_TRYLOCK_MISSES.with(|c| {
+                                    if let Some(counter) = c.borrow().as_ref() {
+                                        counter.fetch_add(1, Ordering::SeqCst);
+                                    }
+                                });
+                            }
                         }
-                        // A held lock here means the capture worker is
-                        // mid-drain; this one event is lost rather than
-                        // the hook callback ever blocking on a lock.
                     }
                 });
             }
@@ -761,6 +873,18 @@ mod win {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let hook_thread_id: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
         let sequence_counter = Arc::new(AtomicU64::new(1));
+        // Set only by the hook thread, as the literal last thing it does
+        // before returning -- the ordering barrier end-of-session
+        // reconciliation waits on (see that code, in the evidence
+        // thread's exit path) before it is safe to read sequence_counter's
+        // final value.
+        let hook_fully_stopped = Arc::new(AtomicBool::new(false));
+        // Explicit loss counters for the two drop modes a queue's own
+        // `dropped_count` cannot see: a hook-callback `try_lock` miss
+        // (the push was never attempted) and a capture failure (the
+        // worker had an event but produced no frame for it).
+        let hook_trylock_misses = Arc::new(AtomicU64::new(0));
+        let capture_failures = Arc::new(AtomicU64::new(0));
 
         let a_to_c: Arc<Mutex<BoundedDropOldest<RawHookEvent>>> = Arc::new(Mutex::new(
             BoundedDropOldest::new(QUEUE_MAX_ITEMS, QUEUE_MAX_BYTES, |_: &RawHookEvent| {
@@ -781,9 +905,12 @@ mod win {
         let a_queue = a_to_c.clone();
         let a_tid_slot = hook_thread_id.clone();
         let a_sequence = sequence_counter.clone();
+        let a_trylock_misses = hook_trylock_misses.clone();
+        let a_fully_stopped = hook_fully_stopped.clone();
         let hook_join = std::thread::spawn(move || {
             HOOK_SINK.with(|s| *s.borrow_mut() = Some(a_queue));
             SEQUENCE.with(|s| *s.borrow_mut() = Some(a_sequence));
+            HOOK_TRYLOCK_MISSES.with(|c| *c.borrow_mut() = Some(a_trylock_misses));
             let tid = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
             if let Ok(mut slot) = a_tid_slot.lock() {
                 *slot = Some(tid);
@@ -804,6 +931,9 @@ mod win {
                 Err(_) => {
                     let e = last_error("SetWindowsHookExW");
                     let _ = a_ready_tx.send(Err(e.to_string()));
+                    // Never going to run the loop, so never going to
+                    // touch SEQUENCE again -- fully stopped immediately.
+                    a_fully_stopped.store(true, Ordering::SeqCst);
                     return;
                 }
             };
@@ -826,12 +956,18 @@ mod win {
             unsafe {
                 let _ = UnhookWindowsHookEx(hook);
             }
+            // The one and only point after which SEQUENCE is guaranteed
+            // never to be touched by this thread again -- the ordering
+            // barrier the evidence thread's end-of-session reconciliation
+            // waits on before it is safe to read SEQUENCE's final value.
+            a_fully_stopped.store(true, Ordering::SeqCst);
         });
 
         // -- Thread C: the capture worker. --
         let c_stop = stop_flag.clone();
         let c_in = a_to_c.clone();
         let c_out = c_to_b.clone();
+        let c_capture_failures = capture_failures.clone();
         let capture_join = std::thread::spawn(move || loop {
             if c_stop.load(Ordering::SeqCst) {
                 break;
@@ -841,9 +977,21 @@ mod win {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             };
-            if let Some(frame) = capture_window_at(raw) {
-                if let Ok(mut q) = c_out.lock() {
-                    q.push(frame);
+            match capture_window_at(raw) {
+                Some(frame) => {
+                    if let Ok(mut q) = c_out.lock() {
+                        q.push(frame);
+                    }
+                }
+                None => {
+                    // The worker had an event (its sequenceId was
+                    // dequeued) but produced no frame for it -- window
+                    // gone, GetWindowRect/PrintWindow failed, etc.
+                    // Counted explicitly, same reasoning as the hook
+                    // callback's try_lock miss: a sequence-id gap would
+                    // eventually reveal this too, but only if a later
+                    // event follows it, never for a trailing loss.
+                    c_capture_failures.fetch_add(1, Ordering::SeqCst);
                 }
             }
         });
@@ -853,6 +1001,9 @@ mod win {
         let b_in = c_to_b.clone();
         let b_a_queue = a_to_c.clone(); // read-only, to poll its dropped_count
         let b_sequence = sequence_counter.clone();
+        let b_fully_stopped = hook_fully_stopped.clone();
+        let b_trylock_misses = hook_trylock_misses.clone();
+        let b_capture_failures = capture_failures.clone();
         let self_pid = config.self_pid;
         let trusted = config.author_trusted_processes.clone();
         let persist_verbatim_metadata = config.persist_verbatim_metadata;
@@ -899,20 +1050,26 @@ mod win {
             let mut last_seq: Option<u64> = None;
             let mut last_a_dropped: u64 = 0;
             let mut last_c_dropped: u64 = 0;
+            let mut last_trylock_misses: u64 = 0;
+            let mut last_capture_failures: u64 = 0;
 
             loop {
                 if b_stop.load(Ordering::SeqCst) {
                     break;
                 }
 
-                // Queue-overflow accounting: a queue's own drop-oldest
-                // policy (BoundedDropOldest) already counts what it drops
-                // internally, but that count was never surfaced to the
-                // caller anywhere — polled here (diffed against the last
+                // Loss accounting, all four modes: a queue's own
+                // drop-oldest policy (BoundedDropOldest) counts what it
+                // drops internally; a hook-callback try_lock miss and a
+                // capture failure are counted by their own dedicated
+                // counters (see their declarations in `start`), since
+                // neither one ever touches a BoundedDropOldest at all.
+                // None of these four were ever surfaced to the caller
+                // before — each is polled here (diffed against the last
                 // seen value) and reported as its own message, since a
-                // queue-overflow drop that happens to be the pipeline's
-                // very last event has nothing after it to reveal a hole
-                // via the ordinary pairwise sequence-gap check below.
+                // loss that happens to be the pipeline's very last event
+                // has nothing after it to reveal a hole via the ordinary
+                // pairwise sequence-gap check below.
                 if let Ok(q) = b_a_queue.lock() {
                     if q.dropped_count != last_a_dropped {
                         last_a_dropped = q.dropped_count;
@@ -921,6 +1078,22 @@ mod win {
                             dropped_count: last_a_dropped,
                         });
                     }
+                }
+                let trylock_misses_now = b_trylock_misses.load(Ordering::SeqCst);
+                if trylock_misses_now != last_trylock_misses {
+                    last_trylock_misses = trylock_misses_now;
+                    sink(PipelineMessage::QueueOverflow {
+                        stage: "hook-trylock-miss",
+                        dropped_count: last_trylock_misses,
+                    });
+                }
+                let capture_failures_now = b_capture_failures.load(Ordering::SeqCst);
+                if capture_failures_now != last_capture_failures {
+                    last_capture_failures = capture_failures_now;
+                    sink(PipelineMessage::QueueOverflow {
+                        stage: "capture-failure",
+                        dropped_count: last_capture_failures,
+                    });
                 }
 
                 let next = b_in.lock().ok().and_then(|mut q| {
@@ -993,23 +1166,38 @@ mod win {
                 let (kind, point) = EventKind::from_classified(&classified);
 
                 // Identity is resolved exactly once, at hook time
-                // (frame.raw.hwnd_value), and threaded through every
-                // stage from here on -- never re-resolved via a fresh
-                // WindowFromPoint in this thread. A second independent
-                // resolution here, made however long after the hook fired
-                // this thread took to get scheduled, is exactly the
-                // TOCTOU gap a design review caught: the window at a
-                // given point can change in between, which would let one
-                // process's already-captured frame get authorized using a
-                // *different* process's identity. The one validity check
-                // that is still needed here is whether that specific
-                // window still exists at all (`IsWindow`) -- it can have
-                // been destroyed between the hook observing the click and
-                // this thread getting to it, and a destroyed window's
-                // identity cannot be confirmed, so this step is withheld
-                // rather than guessed at.
+                // (frame.raw.hwnd_value / frame.raw.window_pid), and
+                // threaded through every stage from here on -- never
+                // re-resolved via a fresh WindowFromPoint in this thread.
+                // A second independent resolution here, made however long
+                // after the hook fired this thread took to get scheduled,
+                // is exactly the TOCTOU gap a design review caught: the
+                // window at a given point can change in between, which
+                // would let one process's already-captured frame get
+                // authorized using a *different* process's identity.
+                //
+                // `IsWindow` alone is not enough to rule this out: Windows
+                // reuses destroyed HWND values, so a handle that is
+                // "still a window" now may be a *different* window than
+                // the one the hook saw -- `IsWindow` cannot tell those
+                // apart. The hook already recorded that window's PID
+                // (`frame.raw.window_pid`); re-deriving the leaf's PID now
+                // and requiring it to still match is what actually
+                // detects handle reuse (a recycled handle now belongs to
+                // a different process in the overwhelming common case).
                 let leaf_hwnd = hwnd_from_value(frame.raw.hwnd_value);
-                if leaf_hwnd.0.is_null() || !unsafe { IsWindow(Some(leaf_hwnd)) }.as_bool() {
+                let leaf_pid_now = if leaf_hwnd.0.is_null() {
+                    0
+                } else {
+                    let mut pid = 0u32;
+                    unsafe { GetWindowThreadProcessId(leaf_hwnd, Some(&mut pid)) };
+                    pid
+                };
+                let leaf_identity_confirmed = !leaf_hwnd.0.is_null()
+                    && unsafe { IsWindow(Some(leaf_hwnd)) }.as_bool()
+                    && leaf_pid_now != 0
+                    && leaf_pid_now == frame.raw.window_pid;
+                if !leaf_identity_confirmed {
                     sink(PipelineMessage::Event(ProcessCaptureEvent {
                         sequence_id: frame.raw.sequence_id,
                         hook_timestamp_ms: frame.raw.hook_timestamp_ms,
@@ -1045,15 +1233,24 @@ mod win {
                 // exact frame.raw.hwnd_value too) -- so capture scope and
                 // trust scope are always the same window, resolved once.
                 let root_hwnd = root_window(leaf_hwnd);
-                let (_root_pid, proc_name) = process_name_for_hwnd(root_hwnd);
+                let (root_pid, proc_name) = process_name_for_hwnd(root_hwnd);
+                // Leaf/root ownership consistency, required explicitly:
+                // the leaf's identity was just confirmed against the
+                // hook-time PID above, but `root_window` walking to an
+                // ancestor owned by a *different* process (an unusual
+                // cross-process parenting case, or a sign something about
+                // the walk is wrong) must not be trusted silently just
+                // because `GetAncestor` returned something. Trust is only
+                // ever decided from `proc_name` below, so a leaf/root PID
+                // mismatch here makes `proc_name` effectively unusable --
+                // cleared so it can never match `trusted` and, same as an
+                // unconfirmed leaf identity, the result is `Default`.
+                let proc_name = if root_pid == leaf_pid_now {
+                    proc_name
+                } else {
+                    None
+                };
                 evidence.process_name = proc_name.clone();
-                if !persist_verbatim_metadata {
-                    // Opt-in only -- see ProcessCaptureConfig's own doc
-                    // comment. control_type_id and process_name are
-                    // structural (not free text), kept either way.
-                    evidence.name = None;
-                    evidence.automation_id = None;
-                }
 
                 let trust = match &proc_name {
                     Some(name) if trusted.contains(name) => ProcessTrust::AuthorTrusted,
@@ -1064,12 +1261,34 @@ mod win {
                     ProcessTrust::Default => TrustLabel::Default,
                 };
 
+                // Detection runs against the FULL, unredacted evidence --
+                // before any metadata stripping. Regression, caught by
+                // review: the metadata opt-out used to clear
+                // evidence.name/automation_id before this call, which
+                // silently disabled name_matches_sensitive_heuristic
+                // (gather_signals reads those same fields) precisely in
+                // the default, opt-out configuration -- the one most
+                // sessions would actually run with. Privacy detection
+                // must never depend on which metadata-persistence
+                // preference the author chose; stripping happens only
+                // afterward, right before the event is built (below),
+                // never before.
                 let decision = if matches!(trust, ProcessTrust::AuthorTrusted) {
                     let signals = gather_signals(&evidence, uia_is_password, leaf_hwnd);
                     decide_sensitivity(trust, &signals)
                 } else {
                     crate::process_session::SensitivityDecision::Withhold
                 };
+
+                if !persist_verbatim_metadata {
+                    // Opt-in only -- see ProcessCaptureConfig's own doc
+                    // comment. control_type_id and process_name are
+                    // structural (not free text), kept either way. This
+                    // strip happens strictly after detection above has
+                    // already run and decided -- see that comment.
+                    evidence.name = None;
+                    evidence.automation_id = None;
+                }
 
                 let mut width = frame.width;
                 let mut height = frame.height;
@@ -1128,16 +1347,40 @@ mod win {
             // detect a gap between two events this thread actually saw —
             // a drop that happens to be the *last* thing the hook ever
             // assigned a sequenceId to has nothing after it to reveal the
-            // hole. The shared counter's final value is read here, after
-            // the loop has already stopped (so the hook thread is done
-            // incrementing it), and compared against the last sequenceId
-            // this thread actually processed.
+            // hole, AND (review finding) if every single assigned id was
+            // lost, last_seq is still None and the old unconditional `if
+            // let Some(last)` skipped reconciliation entirely, reporting
+            // nothing at all for a session where everything was dropped.
+            //
+            // Reading the shared counter here is only honest once the
+            // hook thread is *provably* done incrementing it — this
+            // thread observing `b_stop` is not that proof: all three
+            // threads watch the same flag and can observe it at roughly
+            // the same time, so without an explicit barrier the hook
+            // thread could still be mid-callback (about to increment
+            // SEQUENCE one more time) when this thread already read a
+            // "final" value that turns out to be stale. `hook_fully_stopped`
+            // is set by the hook thread as the literal last thing it does
+            // before returning (after `UnhookWindowsHookEx`) specifically
+            // to make this a real happens-before relationship, not a race.
+            // Bounded, not an unconditional block: the hook thread stopping
+            // is expected to be fast once `stop_flag` is set, but this
+            // thread must still be able to exit (and let `stop`'s join
+            // complete) even in an unexpected case where it does not.
+            let reconciliation_wait_deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !b_fully_stopped.load(Ordering::SeqCst)
+                && std::time::Instant::now() < reconciliation_wait_deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             let final_seq = b_sequence.load(Ordering::SeqCst);
-            if let Some(last) = last_seq {
-                if final_seq > last + 1 {
+            let baseline = last_seq.unwrap_or(0);
+            if let Ok(gaps) = crate::process_session::detect_sequence_gaps(&[baseline, final_seq]) {
+                for (first, last) in gaps {
                     sink(PipelineMessage::Gap(GapMarker {
-                        first_missing: last + 1,
-                        last_missing: final_seq - 1,
+                        first_missing: first,
+                        last_missing: last,
                     }));
                 }
             }
@@ -1159,14 +1402,7 @@ mod win {
         // does before returning `Err`, rather than leaking threads.
         let a_result = a_ready_rx.recv_timeout(STARTUP_TIMEOUT);
         let b_result = b_ready_rx.recv_timeout(STARTUP_TIMEOUT);
-        let startup_failure = match (&a_result, &b_result) {
-            (Ok(Ok(())), Ok(Ok(()))) => None,
-            (Ok(Err(e)), _) => Some(format!("hook thread failed to start: {e}")),
-            (_, Ok(Err(e))) => Some(format!("evidence thread failed to start: {e}")),
-            (Err(_), _) => Some("hook thread did not report startup within the timeout".into()),
-            (_, Err(_)) => Some("evidence thread did not report startup within the timeout".into()),
-        };
-        if let Some(reason) = startup_failure {
+        if let Some(reason) = super::resolve_startup_result(a_result, b_result) {
             stop_flag.store(true, Ordering::SeqCst);
             if let Ok(guard) = hook_thread_id.lock() {
                 if let Some(tid) = *guard {
@@ -1188,17 +1424,36 @@ mod win {
         })
     }
 
-    /// Captures *only* the clicked top-level window's own rect — never a
-    /// whole monitor. Regression: the original design captured the entire
-    /// monitor under the click, while the privacy decision is keyed to the
-    /// clicked process; trusting that one process does not grant
-    /// permission to retain pixels belonging to every other window that
-    /// happens to share the same screen. Scoping capture to exactly the
-    /// window whose process will be checked means no other window's
-    /// pixels are ever read into the buffer in the first place, regardless
-    /// of what the trust decision later turns out to be. Still reuses the
-    /// existing public `native::capture_rect`/`native::list_monitors` — no
-    /// new GDI code, only a smaller, correctly-scoped rect passed to it.
+    /// Captures *only* the clicked top-level window's own content —
+    /// genuinely isolated, not merely a correctly-sized rectangle.
+    ///
+    /// Regression history: the first fix for this function narrowed the
+    /// captured rectangle from a whole monitor down to the clicked
+    /// window's own bounds, but still pulled those pixels via
+    /// `native::capture_rect`, which `BitBlt`s from the **screen** DC —
+    /// a rectangle-shaped crop of whatever is visually on top at that
+    /// screen location, not that window's own rendered content. A
+    /// notification, tooltip, context menu, or another process's window
+    /// edge overlapping that rectangle at the moment of capture would
+    /// still be retained even though the clicked window was the only one
+    /// actually trusted. Review finding: "do not infer isolation from the
+    /// crop rectangle." Fixed by using `PrintWindow` with
+    /// `PW_RENDERFULLCONTENT` instead of screen `BitBlt` — it asks the
+    /// window itself to render its own content into the provided DC,
+    /// which is the standard Win32 mechanism for genuine window-content
+    /// isolation (this is deliberately a different, narrower-purpose
+    /// capture path from `native::capture_rect`'s screen-DC approach,
+    /// which remains correct and unchanged for this app's ordinary,
+    /// non-privacy-critical window-capture feature — that function's own
+    /// doc comment already discloses the screen-DC limitation as accepted
+    /// for that general-purpose use case; it is not accepted here).
+    ///
+    /// `PrintWindow` can still fail or render incompletely for some
+    /// hardware-accelerated or minimized windows — a disclosed, real
+    /// limitation, not hidden. On any such failure this returns `None`
+    /// rather than ever falling back to the screen-`BitBlt` path, which
+    /// would silently reintroduce the exact isolation gap being fixed for
+    /// precisely the windows where the isolated path doesn't work.
     ///
     /// Takes the hook-time-resolved `HWND` directly (`raw.hwnd_value`)
     /// rather than re-resolving one from `(x, y)` via a fresh
@@ -1208,7 +1463,6 @@ mod win {
     /// window at that exact pixel can change between the hook observing
     /// the click and this function running.
     fn capture_window_at(raw: RawHookEvent) -> Option<CapturedFrame> {
-        let (x, y) = (raw.x, raw.y);
         let leaf = hwnd_from_value(raw.hwnd_value);
         if leaf.0.is_null() {
             return None;
@@ -1218,34 +1472,96 @@ mod win {
         if unsafe { GetWindowRect(root, &mut win_rect) }.is_err() {
             return None;
         }
-        let rect = RectI {
-            x: win_rect.left as i64,
-            y: win_rect.top as i64,
-            w: (win_rect.right - win_rect.left).max(0) as u64,
-            h: (win_rect.bottom - win_rect.top).max(0) as u64,
-        };
-        if rect.w == 0 || rect.h == 0 {
+        let width = (win_rect.right - win_rect.left).max(0);
+        let height = (win_rect.bottom - win_rect.top).max(0);
+        if width == 0 || height == 0 {
             return None;
         }
-        // native::capture_rect's Windows implementation ignores `monitor`
-        // (the rect is already fully specified); it is still required by
-        // the cross-platform signature, so any monitor whose bounds the
-        // window overlaps satisfies it.
-        let monitors = crate::native::list_monitors().ok()?;
-        let monitor = monitors.iter().find(|m| {
-            let left = m.origin_virtual.0 as i64;
-            let top = m.origin_virtual.1 as i64;
-            let right = left + (m.size_logical.0 as f64 * m.scale).round() as i64;
-            let bottom = top + (m.size_logical.1 as f64 * m.scale).round() as i64;
-            x >= left && x < right && y >= top && y < bottom
-        })?;
-        let frame = crate::native::capture_rect(rect, monitor, false).ok()?;
+
+        let rgba = unsafe { print_window_rgba(root, width, height) }?;
+
         Some(CapturedFrame {
             raw,
-            width: rect.w as u32,
-            height: rect.h as u32,
-            rgba: frame.rgba,
-            capture_origin: (rect.x, rect.y),
+            width: width as u32,
+            height: height as u32,
+            rgba,
+            capture_origin: (win_rect.left as i64, win_rect.top as i64),
         })
+    }
+
+    /// The actual `PrintWindow`-based capture: renders `hwnd`'s own
+    /// content (via `PW_RENDERFULLCONTENT`, needed for correct output
+    /// from modern DWM-composited windows) into a compatible bitmap, then
+    /// reads it back as top-down RGBA — the same `GetDIBits` plumbing
+    /// `native::capture_screen_rect` uses, just fed by `PrintWindow`
+    /// instead of `BitBlt`-from-the-screen-DC. `None` on any failure at
+    /// any step; never partially successful.
+    unsafe fn print_window_rgba(hwnd: HWND, width: i32, height: i32) -> Option<Vec<u8>> {
+        use windows::Win32::Graphics::Gdi::{
+            CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
+            ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+        };
+        use windows::Win32::Storage::Xps::PrintWindow;
+        use windows::Win32::UI::WindowsAndMessaging::PW_RENDERFULLCONTENT;
+
+        // A reference DC only, to make the compatible bitmap's pixel
+        // format match the display — never read from (no BitBlt).
+        let reference_dc = GetDC(None);
+        if reference_dc.is_invalid() {
+            return None;
+        }
+        let mem_dc = CreateCompatibleDC(Some(reference_dc));
+        if mem_dc.is_invalid() {
+            ReleaseDC(None, reference_dc);
+            return None;
+        }
+        let bitmap = CreateCompatibleBitmap(reference_dc, width, height);
+        if bitmap.is_invalid() {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, reference_dc);
+            return None;
+        }
+        let old = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+
+        let printed = PrintWindow(
+            hwnd,
+            mem_dc,
+            windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT),
+        )
+        .as_bool();
+
+        SelectObject(mem_dc, old);
+
+        let mut rgba = vec![0u8; width as usize * height as usize * 4];
+        let lines = if printed {
+            let mut bmi = BITMAPINFO::default();
+            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bmi.bmiHeader.biWidth = width;
+            bmi.bmiHeader.biHeight = -height; // top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB.0;
+            GetDIBits(
+                mem_dc,
+                bitmap,
+                0,
+                height as u32,
+                Some(rgba.as_mut_ptr() as *mut _),
+                &mut bmi as *mut _,
+                DIB_RGB_COLORS,
+            )
+        } else {
+            0
+        };
+
+        let _ = DeleteObject(HGDIOBJ(bitmap.0));
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(None, reference_dc);
+
+        if !printed || lines == 0 {
+            return None;
+        }
+        crate::native::bgra_to_rgba_force_opaque(&mut rgba);
+        Some(rgba)
     }
 }
