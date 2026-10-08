@@ -11,12 +11,17 @@
 // window arithmetic is deterministic in tests.
 
 /**
- * Supabase table evidence: the latest row's time and the row count inside
- * the window, for one table + time column.
+ * Supabase table evidence: the latest row's time and the EXACT row count
+ * inside the window, for one table + time column.
  *
  * spec: { table, timeColumn, windowHours, idColumn? }
- * deps: { supabase: { from(table): { select(cols): { gte, order, limit } } } }
+ * deps: { supabase: { from(table): { select(cols, opts): { gte, order, limit } } } }
  *   — the fake/real client must support only the select chain used here.
+ *
+ * Two queries: a head-only exact count (no row cap — a capped count
+ * reported as exact was the Slice 2 review finding) and the latest row.
+ * The two must agree (count 0 <=> no latest row); disagreement fails
+ * closed rather than reporting a half-truth.
  */
 export async function fetchSupabaseTableEvidence(spec, deps, now) {
   const fail = (error) => ({ ok: false, error });
@@ -32,17 +37,58 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
     // Select exactly the columns needed: a renamed/missing column fails
     // loudly here (ok:false) instead of silently returning empty evidence.
     const idColumn = spec.idColumn || "id";
-    const res = await deps.supabase
-      .from(table)
+    const client = deps.supabase.from(table);
+
+    const badShape = (which, detail) =>
+      fail(`supabase ${which} query on ${table} returned a malformed response (${detail})`);
+
+    // Query 1: exact count, head-only — no rows travel, no cap applies.
+    const countRes = await client
+      .select(idColumn, { count: "exact", head: true })
+      .gte(timeColumn, windowStart);
+    if (!countRes || typeof countRes !== "object" || Array.isArray(countRes)) {
+      return badShape("count", "not an object");
+    }
+    if (countRes.error) {
+      return fail(`supabase count query failed on ${table}: ${countRes.error.message || countRes.error}`);
+    }
+    if (!Number.isInteger(countRes.count)) {
+      return badShape("count", "count is not an integer");
+    }
+
+    // Query 2: latest row in the window.
+    const latestRes = await client
       .select(`${idColumn},${timeColumn}`)
       .gte(timeColumn, windowStart)
       .order(timeColumn, { ascending: false })
-      .limit(1000);
-    if (res.error) {
-      return fail(`supabase query failed on ${table}: ${res.error.message || res.error}`);
+      .limit(1);
+    if (!latestRes || typeof latestRes !== "object" || Array.isArray(latestRes)) {
+      return badShape("latest-row", "not an object");
     }
-    const rows = Array.isArray(res.data) ? res.data : [];
-    const latestAt = rows.length > 0 ? rows[0][timeColumn] || null : null;
+    if (latestRes.error) {
+      return fail(`supabase latest-row query failed on ${table}: ${latestRes.error.message || latestRes.error}`);
+    }
+    if (!Array.isArray(latestRes.data)) {
+      // The Slice 2 review finding: non-array data must fail, never
+      // silently become "zero rows".
+      return badShape("latest-row", "data is not an array");
+    }
+    let latestAt = null;
+    if (latestRes.data.length > 0) {
+      const row = latestRes.data[0];
+      if (!row || typeof row !== "object" || typeof row[timeColumn] !== "string") {
+        return badShape("latest-row", `row is missing a usable "${timeColumn}"`);
+      }
+      latestAt = row[timeColumn];
+    }
+
+    // The two queries must agree; a race or a lying client fails closed.
+    if ((countRes.count === 0) !== (latestAt === null)) {
+      return fail(
+        `supabase evidence on ${table} is inconsistent: count=${countRes.count} but latestAt=${latestAt}`
+      );
+    }
+
     return {
       ok: true,
       evidence: {
@@ -50,7 +96,7 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
         table,
         timeColumn,
         windowHours,
-        rowCount: rows.length,
+        rowCount: countRes.count,
         latestAt,
         // latestAt null with rowCount 0 means "no evidence in window" —
         // a finding for Slice 3, not an adapter failure.

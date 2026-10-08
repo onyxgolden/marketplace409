@@ -54,3 +54,15 @@ and a test pins that every registry capability is either specified or
 explicitly unspecified. Capabilities whose evidence *is* verifiable keep
 their adapters even when another field (like the watchdog's trigger) is
 unable-to-verify — uncertainty stays exactly where it belongs.
+
+## Known limits for Slice 3 (evaluation)
+
+- A successful GitHub workflow run proves the workflow executed, not that
+  every job inside it succeeded. The 11 rental schedules share one
+  workflow file; Slice 3 must not treat one green run as proof all 11
+  jobs ran — it should consult the per-capability Supabase evidence first
+  and treat the Actions run as corroboration.
+- `rowCount` is an exact count from a head-only query (no row cap), and
+  the count/latest queries must agree or the adapter fails. Two queries
+  can race in theory; a disagreement fails closed rather than reporting
+  a half-truth.

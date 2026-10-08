@@ -13,13 +13,18 @@ import { CAPABILITIES } from "../../runtimeCoverageRegistry.mjs";
 
 // --- fakes ---------------------------------------------------------------
 
-function fakeSupabase({ rows = [], error = null, calls = [] } = {}) {
+// Thenable select chain modeling the real client: `await` resolves the
+// query. Head-mode (count) queries resolve countResult; row queries
+// resolve latestResult. Write methods exist so tests can prove they are
+// never used.
+function fakeSupabase({ countResult, latestResult, calls = [] } = {}) {
+  let headMode = false;
   const chain = {
-    select(cols) { calls.push(["select", cols]); return chain; },
+    select(cols, opts) { calls.push(["select", cols]); headMode = !!(opts && opts.head); return chain; },
     gte(col, val) { calls.push(["gte", col, val]); return chain; },
-    order(col, opts) { calls.push(["order", col, opts]); return chain; },
-    limit(n) { calls.push(["limit", n]); return Promise.resolve({ data: rows, error }); },
-    // write methods exist on the fake so a test can prove they are never used
+    order(col, opts) { calls.push(["order", col]); return chain; },
+    limit(n) { calls.push(["limit", n]); return chain; },
+    then(resolve) { resolve(headMode ? countResult : latestResult); },
     insert() { calls.push(["insert"]); return chain; },
     update() { calls.push(["update"]); return chain; },
     delete() { calls.push(["delete"]); return chain; },
@@ -27,6 +32,21 @@ function fakeSupabase({ rows = [], error = null, calls = [] } = {}) {
   };
   return { from(table) { calls.push(["from", table]); return chain; } };
 }
+
+const okCount = (n) => ({ data: [], count: n, error: null });
+const okLatest = (rows) => ({ data: rows, error: null });
+const dbError = (message) => ({ data: null, count: null, error: { message } });
+const ROWS = [
+  { id: "2", started_at: "2026-10-07T08:23:00Z" },
+  { id: "1", started_at: "2026-10-06T08:23:00Z" },
+];
+const depsFor = (over = {}) => ({
+  supabase: fakeSupabase({
+    countResult: okCount(ROWS.length),
+    latestResult: okLatest(ROWS),
+    ...over,
+  }),
+});
 
 function fakeGithub({ runs = [], throws = null, calls = [] } = {}) {
   return {
@@ -79,12 +99,8 @@ describe("adapter specs", () => {
 describe("supabase-table adapter", () => {
   const spec = { type: "supabase-table", table: "rental_sweep_runs", timeColumn: "started_at", windowHours: 36 };
 
-  it("returns row count and latest time from the fake", async () => {
-    const rows = [
-      { id: "2", started_at: "2026-10-07T08:23:00Z" },
-      { id: "1", started_at: "2026-10-06T08:23:00Z" },
-    ];
-    const r = await ADAPTER_TYPES["supabase-table"](spec, { supabase: fakeSupabase({ rows }) }, NOW);
+  it("returns the exact row count and latest time from the fake", async () => {
+    const r = await ADAPTER_TYPES["supabase-table"](spec, depsFor(), NOW);
     expect(r.ok).toBe(true);
     expect(r.evidence.rowCount).toBe(2);
     expect(r.evidence.latestAt).toBe("2026-10-07T08:23:00Z");
@@ -92,7 +108,11 @@ describe("supabase-table adapter", () => {
   });
 
   it("reports zero rows as evidence, not as failure", async () => {
-    const r = await ADAPTER_TYPES["supabase-table"](spec, { supabase: fakeSupabase({ rows: [] }) }, NOW);
+    const r = await ADAPTER_TYPES["supabase-table"](
+      spec,
+      depsFor({ countResult: okCount(0), latestResult: okLatest([]) }),
+      NOW
+    );
     expect(r.ok).toBe(true);
     expect(r.evidence.rowCount).toBe(0);
     expect(r.evidence.latestAt).toBeNull();
@@ -101,7 +121,7 @@ describe("supabase-table adapter", () => {
   it("fails closed on a database error", async () => {
     const r = await ADAPTER_TYPES["supabase-table"](
       spec,
-      { supabase: fakeSupabase({ error: { message: "column does not exist" } }) },
+      depsFor({ countResult: dbError("column does not exist"), latestResult: dbError("column does not exist") }),
       NOW
     );
     expect(r.ok).toBe(false);
@@ -113,9 +133,53 @@ describe("supabase-table adapter", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("fails closed when the count response is malformed (no silent zero)", async () => {
+    const r = await ADAPTER_TYPES["supabase-table"](
+      spec,
+      depsFor({ countResult: { data: [], error: null } }),
+      NOW
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("malformed");
+  });
+
+  it("fails closed when the latest-row data is not an array (no silent zero rows)", async () => {
+    const r = await ADAPTER_TYPES["supabase-table"](
+      spec,
+      depsFor({ latestResult: { data: "oops", error: null } }),
+      NOW
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("not an array");
+  });
+
+  it("fails closed when the latest row lacks a usable time column", async () => {
+    const r = await ADAPTER_TYPES["supabase-table"](
+      spec,
+      depsFor({ countResult: okCount(1), latestResult: okLatest([{ id: "1" }]) }),
+      NOW
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("started_at");
+  });
+
+  it("fails closed when count and latest row disagree", async () => {
+    const r = await ADAPTER_TYPES["supabase-table"](
+      spec,
+      depsFor({ countResult: okCount(2), latestResult: okLatest([]) }),
+      NOW
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("inconsistent");
+  });
+
   it("is read-only: only select-chain methods are ever called", async () => {
     const calls = [];
-    await ADAPTER_TYPES["supabase-table"](spec, { supabase: fakeSupabase({ calls }) }, NOW);
+    await ADAPTER_TYPES["supabase-table"](
+      spec,
+      { supabase: fakeSupabase({ calls, countResult: okCount(0), latestResult: okLatest([]) }) },
+      NOW
+    );
     const verbs = calls.map((c) => c[0]);
     expect(verbs).not.toContain("insert");
     expect(verbs).not.toContain("update");
@@ -126,9 +190,16 @@ describe("supabase-table adapter", () => {
 
   it("queries the window relative to the injected now (deterministic)", async () => {
     const calls = [];
-    await ADAPTER_TYPES["supabase-table"](spec, { supabase: fakeSupabase({ calls }) }, NOW);
-    const gte = calls.find((c) => c[0] === "gte");
-    expect(gte[2]).toBe(new Date(NOW - 36 * 3600 * 1000).toISOString());
+    await ADAPTER_TYPES["supabase-table"](
+      spec,
+      { supabase: fakeSupabase({ calls, countResult: okCount(0), latestResult: okLatest([]) }) },
+      NOW
+    );
+    const gtes = calls.filter((c) => c[0] === "gte");
+    expect(gtes.length).toBe(2); // count query + latest-row query
+    for (const gte of gtes) {
+      expect(gte[2]).toBe(new Date(NOW - 36 * 3600 * 1000).toISOString());
+    }
   });
 });
 
@@ -176,12 +247,13 @@ describe("github-actions adapter", () => {
 // --- collectEvidence ------------------------------------------------------
 
 describe("collectEvidence", () => {
+  const fullDeps = () => ({
+    supabase: fakeSupabase({ countResult: okCount(1), latestResult: okLatest([{ id: "1", started_at: "2026-10-07T08:23:00Z" }]) }),
+    githubApi: fakeGithub({ runs: [{ conclusion: "success", status: "completed", startedAt: "2026-10-07T08:23:00Z" }] }),
+  });
+
   it("collects all adapters for a capability", async () => {
-    const deps = {
-      supabase: fakeSupabase({ rows: [{ id: "1", started_at: "2026-10-07T08:23:00Z" }] }),
-      githubApi: fakeGithub({ runs: [{ conclusion: "success", status: "completed", startedAt: "2026-10-07T08:23:00Z" }] }),
-    };
-    const r = await collectEvidence("rental-autopay-sweep", { now: NOW, deps });
+    const r = await collectEvidence("rental-autopay-sweep", { now: NOW, deps: fullDeps() });
     expect(r.ok).toBe(true);
     expect(r.results).toHaveLength(2);
     expect(r.results.every((x) => x.ok)).toBe(true);
@@ -189,7 +261,7 @@ describe("collectEvidence", () => {
 
   it("fails the collection when one adapter fails, preserving per-adapter results", async () => {
     const deps = {
-      supabase: fakeSupabase({ error: { message: "boom" } }),
+      supabase: fakeSupabase({ countResult: dbError("boom"), latestResult: dbError("boom") }),
       githubApi: fakeGithub({ runs: [] }),
     };
     const r = await collectEvidence("rental-autopay-sweep", { now: NOW, deps });
@@ -211,12 +283,8 @@ describe("collectEvidence", () => {
   });
 
   it("is deterministic for the same fake inputs", async () => {
-    const mk = () => ({
-      supabase: fakeSupabase({ rows: [{ id: "1", started_at: "2026-10-07T08:23:00Z" }] }),
-      githubApi: fakeGithub({ runs: [] }),
-    });
-    const a = await collectEvidence("rental-autopay-sweep", { now: NOW, deps: mk() });
-    const b = await collectEvidence("rental-autopay-sweep", { now: NOW, deps: mk() });
+    const a = await collectEvidence("rental-autopay-sweep", { now: NOW, deps: fullDeps() });
+    const b = await collectEvidence("rental-autopay-sweep", { now: NOW, deps: fullDeps() });
     expect(a).toEqual(b);
   });
 });
