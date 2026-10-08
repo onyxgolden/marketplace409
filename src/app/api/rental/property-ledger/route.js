@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
+import { propertySlugsResolvingTo } from "@/domains/property/propertyAliases";
 import { buildPropertyLedger } from "@/application/rental/propertyLedger";
 
 // Dedicated property ledger read route — the Rentec-style per-property ledger:
@@ -20,6 +21,13 @@ const PAGE_SIZE = 1000;
 // ledger (and a wrong balance). Each query orders deterministically so paging is
 // stable; buildPropertyLedger re-sorts chronologically anyway, so the order chosen
 // here changes nothing downstream.
+// PostgREST `or(...)` filter values are comma-separated, so each value is
+// double-quoted: a stored slug or unit ID containing a reserved character
+// (comma, parenthesis, quote) can then never be parsed as filter syntax.
+// The slugs and unit IDs filtered on here are [a-z0-9-] in practice, but the
+// expanded multi-value filters below stay correct by construction.
+const orEqValue = (value) => `"${String(value).replace(/(["\\])/g, "\\$1")}"`;
+
 export async function fetchAllPages(buildQuery) {
   const rows = [];
   for (let start = 0; ; start += PAGE_SIZE) {
@@ -57,6 +65,17 @@ export async function GET(request) {
     const propertySlug = unit.property_id;
     const unitIds = (units || []).map((u) => u.id);
 
+    // Known limitations, deferred to separately scoped follow-ups (NOT fixed
+    // here — see the PR #589 ChatGPT review, 2026-10-08):
+    //  1. The units lookup above resolves ?propertyId= by exact match against
+    //     rental_units.property_id or id, so addressing this ledger by a
+    //     variant (alias) slug 404s. The UI addresses properties by their
+    //     canonical rental_units.property_id, so the ledger is reached by
+    //     canonical slug and every alias-tagged row shows once it is fetched.
+    //  2. GET /api/rental/owner-movements?propertyId= filters its movement
+    //     list by raw stored slug; canonicalized display filtering of that
+    //     list is likewise deferred.
+
     const paged = (promise) =>
       promise.then((data) => ({ data, error: null })).catch((caught) => ({ data: null, error: caught }));
 
@@ -73,10 +92,19 @@ export async function GET(request) {
       paged(fetchAllOwnerFinancialEvents(supabaseClient, effectiveOwnerId, {
         columns: "id, event_date, description, amount, transaction_kind, normalized_category, property_id, source_system, source_record_id, metadata, status, is_deleted, check_number, cleared, display_as, payee",
       })),
+      // Contractor payments are filtered at the database, before
+      // buildPropertyLedger runs, so the filter must name every stored slug
+      // the builder's canonicalized comparison would accept: the canonical
+      // slug plus each explicit alias key resolving to it
+      // (propertySlugsResolvingTo — finite, alias-map derived, no fuzzy
+      // matching). Unit IDs remain exact matches, never canonicalized.
+      // Owner scoping is the eq("owner_id") below, unchanged.
       paged(fetchAllPages(() => supabaseClient.from("rental_contractor_payments")
         .select("id, contractor_id, work_order_id, property_id, paid_at, amount_cents, payment_method, reference, invoice_reference, notes")
         .eq("owner_id", effectiveOwnerId)
-        .or([`property_id.eq.${propertySlug}`, ...unitIds.map((id) => `property_id.eq.${id}`)].join(","))
+        .or([...propertySlugsResolvingTo(propertySlug), ...unitIds]
+          .map((ref) => `property_id.eq.${orEqValue(ref)}`)
+          .join(","))
         .order("id", { ascending: true }))),
       paged(fetchAllPages(() => supabaseClient.from("rental_contractors")
         .select("id, business_name, trade")
