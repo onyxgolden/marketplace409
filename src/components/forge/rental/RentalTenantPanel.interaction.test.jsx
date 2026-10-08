@@ -21,30 +21,29 @@ describe("RentalTenantPanel tenant selection", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the selected tenant's own portal email", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) })));
+  async function mountPanel({ recordContext = null, onNavigate = null, initial = tenants } = {}) {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={initial} recordContext={recordContext} onNavigate={onNavigate} />));
+    return container;
+  }
 
-    // Rentec-parity R8: the record leads with the ledger tab; profile fields are one click away.
-    const openDetailsTab = async () => {
-      await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
-    };
-    await openDetailsTab();
+  it("shows the record tenant's own portal email", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ tenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) })));
+    await mountPanel({ recordContext: { recordType: "tenant", recordId: "tenant_1" } });
+
+    // Details-first (Rentec parity): the record page opens on the details tab; profile fields are visible immediately.
+    expect(container.querySelector('[data-record-tab="details"]').getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector('input[name="portalEmail"]').value).toBe("ashley@example.com");
-    const justinRow = [...container.querySelectorAll('tr[role="button"]')].find((row) => row.textContent.includes("Justin Graham"));
-    act(() => justinRow.click());
 
-    // Switching records resets to the ledger-first tab.
-    expect(container.querySelector('[data-record-tab="ledger"]').getAttribute("aria-selected")).toBe("true");
-    await openDetailsTab();
+    // A different record context shows that tenant's own email.
+    await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} recordContext={{ recordType: "tenant", recordId: "tenant_2" }} />));
     expect(container.querySelector('input[name="portalEmail"]').value).toBe("justin@example.com");
     expect(container.querySelector('input[name="portalEmail"]').getAttribute("aria-label")).toBe("Portal email for Justin Graham");
   });
 
-  it("opens the newly saved tenant and shows an unmistakable success message", async () => {
+  it("navigates to the newly saved tenant record and shows an unmistakable success message", async () => {
     const paula = { id: "tenant_3", display_name: "Paula Welch", displayName: "Paula Welch", email: "paula@example.com" };
     let savedTenants = tenants;
     const emptyHistory = { ledger: { entries: [], last3: [], unassigned: [], totals: { chargedCents: 0, paidCents: 0, refundedCents: 0 }, balanceCents: 0 }, deposits: { entries: [], heldCents: 0, requiredCents: 0 } };
@@ -58,17 +57,17 @@ describe("RentalTenantPanel tenant selection", () => {
       return { ok: true, json: async () => ({ tenants: savedTenants, leases: [], leaseMemberships: [], units: [], openCharges: [] }) };
     });
     vi.stubGlobal("fetch", fetch);
+    const onNavigate = vi.fn();
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={tenants} onNavigate={onNavigate} />));
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Add a new tenant")).click());
     const form = container.querySelector('input[name="displayName"]').form;
     container.querySelector('input[name="displayName"]').value = "Paula Welch";
     container.querySelector('input[name="email"]').value = "paula@example.com";
     await act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(container.textContent).toContain("New tenant added: Paula Welch");
-    // The new record opens ledger-first; the profile fields are on the details tab.
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
-    expect(container.querySelector('input[name="portalEmail"]').value).toBe("paula@example.com");
+    // The new record opens via navigation to its dedicated record page.
+    expect(onNavigate).toHaveBeenCalledWith("tenants", expect.objectContaining({ recordType: "tenant", recordId: "tenant_3" }));
     expect(container.querySelector('input[name="displayName"]')).toBeNull();
   });
 
@@ -92,10 +91,9 @@ describe("RentalTenantPanel tenant selection", () => {
     });
     vi.stubGlobal("fetch", fetch);
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={[duplicate]} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={[duplicate]} recordContext={{ recordType: "tenant", recordId: "tenant_9" }} />));
 
     // The delete action lives with the profile on the details tab.
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
     const deleteButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete unused duplicate");
     expect(deleteButton).not.toBeUndefined();
     act(() => deleteButton.click());
@@ -137,9 +135,8 @@ describe("RentalTenantPanel tenant selection", () => {
     });
     vi.stubGlobal("fetch", fetch);
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={[duplicate]} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={[duplicate]} recordContext={{ recordType: "tenant", recordId: "tenant_9" }} />));
 
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Delete unused duplicate").click());
     expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
     act(() => [...container.querySelector('[role="alertdialog"]').querySelectorAll("button")].find((button) => button.textContent === "Cancel").click());
@@ -159,9 +156,8 @@ describe("RentalTenantPanel tenant selection", () => {
     });
     vi.stubGlobal("fetch", fetch);
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={[tenant]} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={[tenant]} recordContext={{ recordType: "tenant", recordId: "tenant_1" }} />));
 
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
     const inviteButton = [...container.querySelectorAll("button")].find((button) => button.textContent === "Send invite email");
     expect(inviteButton).not.toBeUndefined();
     act(() => inviteButton.click());
@@ -206,9 +202,8 @@ describe("RentalTenantPanel tenant selection", () => {
     });
     vi.stubGlobal("fetch", fetch);
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-    await act(async () => root.render(<RentalTenantPanel initialTenants={[tenant]} />));
+    await act(async () => root.render(<RentalTenantPanel initialTenants={[tenant]} recordContext={{ recordType: "tenant", recordId: "tenant_1" }} />));
 
-    await act(async () => { container.querySelector('[data-record-tab="details"]').click(); });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Send invite email").click());
     expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
     act(() => [...container.querySelector('[role="alertdialog"]').querySelectorAll("button")].find((button) => button.textContent === "Cancel").click());

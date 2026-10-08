@@ -1,3 +1,7 @@
+// @vitest-environment jsdom
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { clearSWRCache, fetchWithDedupe } from "../../../hooks/swrCache";
@@ -52,13 +56,16 @@ describe("RentalSetupPanel new-unit creation", () => {
     expect(markup).toContain("Review and create property / unit");
     expect(markup).not.toContain("Save Kent Avenue unit");
   });
-  it("uses the wide property-address, tenant, and balance layout for saved properties", () => {
+  it("uses one-line property, address, tenant, status, and balance columns like the tenant index", () => {
     const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied" }]} />);
     expect(markup).toContain('data-list-size="wide"');
-    expect(markup).toContain("Property address");
-    expect(markup).toContain("Tenant");
+    expect(markup).toContain(">Property<");
+    expect(markup).toContain(">Address<");
+    expect(markup).toContain(">Tenant<");
+    expect(markup).toContain(">Status<");
     expect(markup).toContain("Active balance");
     expect(markup).toContain("930 Highland Drive");
+    expect(markup).not.toContain("Property address");
   });
   it("offers Add tenant instead of labeling an unleased property vacant", () => {
     const markup = renderToStaticMarkup(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "available" }]} />);
@@ -103,5 +110,47 @@ describe("RentalSetupPanel eyebrow and create form", () => {
     expect(markup).toContain("308 Paula St, Groves, TX 77605");
     expect(markup).toContain("930 Highland Drive");
     expect(markup).toContain(">Address</dt>");
+  });
+});
+
+describe("RentalSetupPanel property row context menu", () => {
+  let container;
+  let root;
+  afterEach(() => {
+    if (root) act(() => root.unmount());
+    container?.remove();
+    container = null;
+    root = null;
+    clearSWRCache();
+  });
+
+  it("right-clicking a property row opens the full property menu (tenant parity)", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root.render(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied" }]} />));
+    const row = [...container.querySelectorAll('tr[role="button"]')].find((r) => r.textContent.includes("930 Highland Drive"));
+    expect(row).not.toBeUndefined();
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 90 });
+    act(() => row.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    const menu = container.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    for (const label of ["View ledger", "Open full expenses ledger", "Edit property details", "Manage lease", "Rent & payments", "Financial setup", "Work orders", "Inspections", "File library", "Archive duplicate / inactive property"]) {
+      expect(menu.textContent).toContain(label);
+    }
+  });
+
+  it("keeps every property table cell on one line", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => root.render(<RentalSetupPanel initialUnits={[{ id: "unit_1", label: "930 Highland Drive", property_id: "930-highland-drive", status: "occupied", address_street: "930 Highland Drive", address_city: "Groves", address_state: "TX", address_zip: "77605" }]} />));
+    const row = [...container.querySelectorAll('tr[role="button"]')].find((r) => r.textContent.includes("930 Highland Drive"));
+    expect(row).not.toBeUndefined();
+    for (const cell of row.querySelectorAll("td")) {
+      // No stacked multi-line blocks: each cell's content is a single line.
+      expect(cell.querySelectorAll(":scope > .block").length).toBeLessThanOrEqual(1);
+    }
   });
 });

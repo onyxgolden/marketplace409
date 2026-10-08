@@ -83,7 +83,6 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const units = data?.units || [];
   const openCharges = data?.openCharges || [];
   const [showCreate, setShowCreate] = useState(openCreateTenant || initialTenants.length === 0);
-  const [selectedId, setSelectedId] = useState(initialTenants[0]?.id || null);
   const [working, setWorking] = useState(false);
   // In-app delete confirmation (replaces the native window.confirm): the dialog
   // below is part of the DOM, so it is visible and clickable in every browser —
@@ -92,14 +91,14 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const { menu: contextMenu, onContextMenu, openAt: openContextMenuAt, close: closeContextMenu } = useCardContextMenu();
-  // One-time adoption of the loaded dataset (mirrors the old fetch-on-mount): pick
-  // the first tenant when nothing is selected yet, and collapse the create form
-  // when tenants exist. Background refreshes never touch selection or the form.
+  // One-time adoption of the loaded dataset (mirrors the old fetch-on-mount):
+  // collapse the create form when tenants exist. Background refreshes never
+  // touch the form. Record navigation (not local selection state) decides
+  // whether the index or a tenant record page renders.
   const adoptedInitial = useRef(false);
   useEffect(() => {
     if (!data || adoptedInitial.current) return;
     adoptedInitial.current = true;
-    setSelectedId((current) => current || data.tenants?.[0]?.id || null);
     setShowCreate(openCreateTenant || (data.tenants?.length || 0) === 0);
   }, [data, openCreateTenant]);
   // Full-page ledger state: { tenant, initialView } where initialView is null |
@@ -110,17 +109,44 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
     if (tenant?.id) setLedgerTenant({ tenant, initialView });
   }, [closeContextMenu]);
   const onNavigate = useCallback((target, context) => navigate?.(target, labelRentalRecordContext(context, tenants, "display_name")), [navigate, tenants]);
+  // Record navigation (Rentec parity): the Tenants screen is an efficient
+  // index/list. Selecting a tenant opens the dedicated tenant record page --
+  // a deep-linkable full page (browser Back works) -- never a preview sidebar.
+  const recordTenantId = recordContext?.recordType === "tenant" ? recordContext.recordId : null;
+  const goToTenantRecord = useCallback((tenant) => {
+    if (!tenant?.id) return;
+    onNavigate("tenants", { recordType: "tenant", recordId: tenant.id, recordLabel: tenant.display_name });
+  }, [onNavigate]);
   // Rentec's triple-redundant ledger access: right-click menu, ⋮ button, and the
   // balance itself as a link — every path opens the same full-page ledger.
-  const tenantMenuItems = useCallback((tenant, context) => (tenant ? [
-    { label: "View Ledger", onSelect: () => openFullLedger(tenant) },
-    { label: "Post Income", onSelect: () => openFullLedger(tenant, "post-income") },
-    { label: "Post Charge", onSelect: () => onNavigate("charges", context) },
-    { label: "Print Statement", onSelect: () => openFullLedger(tenant, "print") },
-  ] : []), [openFullLedger, onNavigate]);
-  const openTenantMenuBelow = useCallback((buttonElement, tenant, context) => {
+  // Row right-click (Brandy's workflow): View Ledger, Tenant Details, View Property,
+  // Post Income, Post Charge, Print Statement. On the record page itself the
+  // "Tenant Details" item is omitted (you are already there).
+  const tenantMenuItems = useCallback((tenant, context, options = {}) => {
+    if (!tenant) return [];
+    const items = [
+      { label: "View Ledger", onSelect: () => openFullLedger(tenant) },
+    ];
+    if (!options.inRecord) {
+      items.push({ label: "Tenant Details", onSelect: () => goToTenantRecord(tenant) });
+    }
+    const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id);
+    const lease = leases.find((item) => leaseIds.includes(item.id) && item.status === "active")
+      || leases.find((item) => leaseIds.includes(item.id));
+    const unit = units.find((item) => item.id === lease?.unit_id);
+    if (unit) {
+      items.push({ label: "View Property", onSelect: () => onNavigate("setup", { recordType: "property", recordId: unit.id, recordLabel: unit.label }) });
+    }
+    items.push(
+      { label: "Post Income", onSelect: () => openFullLedger(tenant, "post-income") },
+      { label: "Post Charge", onSelect: () => onNavigate("charges", context) },
+      { label: "Print Statement", onSelect: () => openFullLedger(tenant, "print") },
+    );
+    return items;
+  }, [openFullLedger, goToTenantRecord, onNavigate, leases, leaseMemberships, units]);
+  const openTenantMenuBelow = useCallback((buttonElement, tenant, context, options = {}) => {
     const rect = buttonElement?.getBoundingClientRect?.();
-    openContextMenuAt(rect ? rect.left : 120, rect ? rect.bottom + 6 : 120, tenantMenuItems(tenant, context));
+    openContextMenuAt(rect ? rect.left : 120, rect ? rect.bottom + 6 : 120, tenantMenuItems(tenant, context, options));
   }, [openContextMenuAt, tenantMenuItems]);
   // Mutations revalidate the cached master dataset; selection is preserved because
   // refresh() never blanks the list.
@@ -134,15 +160,16 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
           email: form.get("email"), phone: form.get("phone") || null, status: "invited" } }) });
       const result = await response.json();
       if (!response.ok) {
-        if (result.existingTenant?.id) { setSelectedId(result.existingTenant.id); setShowCreate(false); }
+        if (result.existingTenant?.id) { setShowCreate(false); goToTenantRecord(result.existingTenant); }
         throw new Error(result.error || "Unable to save tenant.");
       }
       const savedId = result.tenant.id;
       formElement.reset();
       await refresh();
-      setSelectedId(savedId);
       setShowCreate(false);
-      setMessage(`New tenant added: ${result.tenant.displayName}. The saved tenant is open below.`);
+      setMessage(`New tenant added: ${result.tenant.displayName}. The saved tenant record is open.`);
+      // The closure's tenant list is stale post-refresh, so label explicitly.
+      navigate?.("tenants", { recordType: "tenant", recordId: savedId, recordLabel: result.tenant.displayName });
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   async function deleteUnusedTenant(tenant) {
@@ -154,6 +181,8 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
       if (!response.ok) throw new Error(result.error || "Unable to delete the unused tenant.");
       await refresh();
       setMessage(`Deleted unused duplicate: ${result.deletedTenant.display_name}.`);
+      // Deletion only happens from the record page; return to the index.
+      if (recordTenantId && tenant.id === recordTenantId) navigate?.("tenants");
     } catch (error) { setMessage(error.message); } finally { setWorking(false); }
   }
   function cancelDeleteTarget() { setDeleteTarget(null); setDeleteConfirmText(""); }
@@ -260,39 +289,44 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         onOpenBankLedger={() => navigate?.("bank-ledger")} />
     </section>;
   }
-  return <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-setup>
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{termLabel("tenant", { capitalize: true })} setup</p>
-        <h2 className="mt-1 text-3xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("tenant", { plural: true, capitalize: true })}</h2>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p></div>
-      {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
-    </div>
-    {message && <p role="status" className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
-    {isLoading && <div className="mt-4"><ForgeLoadingState label="Loading tenants…" /></div>}
-    {isRefreshing && tenants.length > 0 && <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
-    {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
-    {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={selectedId} onSelect={setSelectedId} getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
-      columns={[
-        { header: "Tenant", render: (tenant) => <><strong className="block text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{tenant.email} · {tenantInviteLabel(tenant)}</span></> },
-        { header: "Property", render: (tenant) => { const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units); return propertyLabel || <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>; } },
-        { header: "Active balance", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
-          ? <span className="text-slate-500 dark:text-slate-400">—</span>
-          : <button type="button" onClick={() => openFullLedger(tenant)}
-              title={`View the full ledger for ${tenant.display_name}`}
-              aria-label={`View the full ledger for ${tenant.display_name} — balance ${money.format(balanceCents / 100)}`}
-              className="underline decoration-dotted underline-offset-4 hover:opacity-80">
-              <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>
-            </button>; } },
-      ]}>
-      {(() => { const selected = tenants.find((item) => item.id === selectedId) || tenants[0]; const household=tenantHouseholdForSelection(selected,tenants,leases,leaseMemberships,units); const tenant=household.primaryTenant; const context={recordType:"tenant",recordId:tenant?.id};
-        return tenant && <div data-rental-tenant-detail {...{ [CARD_REGION_ATTRIBUTE]: "" }}
-        onContextMenu={(event) => onContextMenu(event, tenantMenuItems(tenant, context))}
+  // Record mode: the dedicated tenant record page. The Tenants index never
+  // previews records in a sidebar -- selecting a tenant navigates here via a
+  // deep-linkable URL (browser Back works). Dense professional record: compact
+  // headers and dividers instead of oversized preview cards.
+  const recordTenant = recordTenantId ? tenants.find((item) => item.id === recordTenantId) : null;
+  if (recordTenant) {
+    const household = tenantHouseholdForSelection(recordTenant, tenants, leases, leaseMemberships, units);
+    const tenant = household.primaryTenant || recordTenant;
+    const context = { recordType: "tenant", recordId: tenant.id };
+    const recordMenuItems = tenantMenuItems(tenant, context, { inRecord: true });
+    const tenantLeaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id);
+    const tenantMovedIn = leases.some((lease) => tenantLeaseIds.includes(lease.id) && lease.status === "active");
+    return <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-record>
+      <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
+      {message && <p role="status" className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
+      <div data-rental-tenant-detail {...{ [CARD_REGION_ATTRIBUTE]: "" }}
+        onContextMenu={(event) => onContextMenu(event, recordMenuItems)}
         title="Right-click for tenant actions">
-        <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
-        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Tenant household</p><h3 className="mt-2 text-2xl font-black text-slate-950 dark:text-white">{household.unit?.label || "No active property"}</h3></div><div className="flex items-center gap-2"><button type="button" aria-label={`More actions for ${tenant.display_name}`} aria-haspopup="menu" title="More actions"
-          onClick={(event) => openTenantMenuBelow(event.currentTarget, tenant, context)}
-          className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button><RentalRecordActions label="Tenant actions" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/></div></div>
-        <LeaseSummary lease={household.lease} unit={household.unit}/>
+        <button type="button" onClick={() => navigate?.("tenants")}
+          className="text-sm font-black text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">← Tenants</button>
+        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Tenant record</p>
+            <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">{tenant.display_name}</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              {propertyLabelForTenant(tenant, leases, leaseMemberships, units) || "No active lease"}
+              {" · "}{tenantMovedIn ? "Moved In" : "Inactive"}
+              {" · "}{tenantInviteLabel(tenant)}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label={`More actions for ${tenant.display_name}`} aria-haspopup="menu" title="More actions"
+              onClick={(event) => openTenantMenuBelow(event.currentTarget, tenant, context, { inRecord: true })}
+              className="rounded-xl border border-slate-300 px-3 py-2 text-lg font-black leading-none text-slate-600 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">⋮</button>
+            <RentalRecordActions label="Tenant actions" actions={[{label:"Rent & payments",onSelect:()=>onNavigate?.("charges",context)},{label:"Manage lease",onSelect:()=>onNavigate?.("leases",context)},{label:"Messaging",onSelect:()=>onNavigate?.("communications",context)},{label:"Inspections",onSelect:()=>onNavigate?.("inspections",context)},{label:"File library",onSelect:()=>onNavigate?.("documents",context)}]}/>
+          </div>
+        </div>
+        <LeaseSummaryStrip lease={household.lease} unit={household.unit}/>
         <TenantRecordTabs
           key={tenant.id}
           tenantId={tenant.id}
@@ -304,9 +338,9 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
         <TenantPaymentHistory key={tenant.id} tenantId={tenant.id} tenantName={tenant.display_name} onOpenFullLedger={() => openFullLedger(tenant)} />
         <TenantProfileCard title="Primary tenant" tenant={tenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===tenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={tenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride}/>
         <CustomFieldsEditor groups={[{ entity: "tenant", recordId: tenant.id }]} />
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/60 p-5 dark:border-slate-700 dark:bg-slate-950/30" data-tenant-notice-log>
+        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700" data-tenant-notice-log>
           <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">Generated notices</p>
-          <NoticeLogList tenantId={tenant.id} tenantName={tenant.display_name} compact />
+          <div className="mt-2"><NoticeLogList tenantId={tenant.id} tenantName={tenant.display_name} compact /></div>
         </div>
         {!leaseMemberships.some((item) => item.tenant_id === tenant.id) && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30"><p className="text-sm font-bold text-red-900 dark:text-red-200">This tenant is not assigned to any lease.</p><button type="button" disabled={working} onClick={() => { setDeleteTarget(tenant); setDeleteConfirmText(""); }} className="mt-3 rounded-lg bg-red-700 px-4 py-2 text-sm font-black text-white disabled:opacity-50">Delete unused duplicate</button></div>}
         {deleteTarget && <div role="alertdialog" aria-modal="true" aria-labelledby="delete-unused-tenant-title" aria-describedby="delete-unused-tenant-desc"
@@ -328,12 +362,52 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
             </div>
           </div>
         </div>}
-        <div className="mt-6 space-y-4"><h3 className="text-xl font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3>{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===coTenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div>
+        <div className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="text-lg font-black text-slate-950 dark:text-white">Co-tenants / spouse</h3><div className="mt-2 space-y-4">{household.coTenants.length ? household.coTenants.map((coTenant)=><TenantProfileCard key={coTenant.id} title="Co-tenant" tenant={coTenant} working={working} updateProfile={updateProfile} updateEmail={updateEmail} loadTenants={refresh} sendInviteEmail={sendInviteEmail} leaseId={household.lease?.id} lateFeeOverride={(data?.lateFeeTenantOverrides||[]).find((item)=>item.tenant_id===coTenant.id)||null} saveLateFeeOverride={saveLateFeeOverride} workspacePaymentPolicy={data?.paymentPolicy||"allow_any_amount"} paymentPolicyOverride={coTenant.payment_policy||null} savePaymentPolicyOverride={savePaymentPolicyOverride} makePrimary={household.lease ? ()=>makePrimary(household.lease.id,coTenant.id) : null}/>) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No co-tenant is assigned to this lease.</p>}</div></div>
         <a href="/auth?next=/forge/rental/portal" className="mt-5 inline-block text-sm font-bold text-sky-700 underline hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">Open tenant sign-in</a></>}
         />
-        </div>; })()}
- (feat(rentec-parity): R11 payment policies + per-tenant override)
-    </RentalRecordBrowser>}
+      </div>
+    </section>;
+  }
+  // Index mode: the Tenants screen is an efficient list. No Household preview
+  // sidebar -- record data lives on the dedicated tenant record page.
+  return <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900" data-rental-tenant-setup>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><p className="text-xs font-black uppercase tracking-[0.2em] text-sky-700 dark:text-sky-400">{termLabel("tenant", { capitalize: true })} setup</p>
+        <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">{termLabel("tenant", { plural: true, capitalize: true })}</h2>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Review saved tenants first. Creation remains separate from portal access and lease assignment.</p></div>
+      {tenants.length > 0 && !showCreate && <button type="button" onClick={() => setShowCreate(true)} className={`shrink-0 rounded-xl px-5 py-3 text-sm font-black transition ${goldControlClassName}`}>+ Add a new tenant</button>}
+    </div>
+    <CardContextMenu menu={contextMenu} onClose={closeContextMenu} />
+    {message && <p role="status" className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-slate-800 dark:border-sky-900 dark:bg-sky-950/40 dark:text-slate-200">{message}</p>}
+    {isLoading && <div className="mt-4"><ForgeLoadingState label="Loading tenants…" /></div>}
+    {isRefreshing && tenants.length > 0 && <p className="mt-3 text-xs font-bold text-slate-400 dark:text-slate-500">Updating…</p>}
+    {loadError && !data && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">{loadError}</p>}
+    {recordTenantId && data && <p role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">That tenant record wasn&apos;t found. Showing the full tenant list.</p>}
+    {tenants.length > 0 && <RentalRecordBrowser title="Tenants" records={tenants} selectedId={null}
+      onSelect={(id) => goToTenantRecord(tenants.find((item) => item.id === id))}
+      getThumbnail={(tenant) => tenant.photo_url} listSize="wide"
+      onRowContextMenu={(event, tenant) => onContextMenu(event, tenantMenuItems(tenant, { recordType: "tenant", recordId: tenant.id }))}
+      columns={[
+        { header: "Tenant", render: (tenant) => <strong className="block truncate text-sm text-slate-950 dark:text-white">{tenant.display_name}</strong> },
+        { header: "Email", render: (tenant) => <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{tenant.email}</span> },
+        { header: "Invite", width: "130px", render: (tenant) => <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{tenantInviteLabel(tenant)}</span> },
+        { header: "Property", width: "200px", render: (tenant) => { const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id); const lease = leases.find((item) => leaseIds.includes(item.id) && item.status === "active") || leases.find((item) => leaseIds.includes(item.id)); const unit = units.find((item) => item.id === lease?.unit_id); const propertyLabel = propertyLabelForTenant(tenant, leases, leaseMemberships, units);
+          if (!propertyLabel) return <span className="font-bold text-red-600 dark:text-red-400">No active lease</span>;
+          return unit
+            ? <button type="button" onClick={(event) => { event.stopPropagation(); onNavigate("setup", { recordType: "property", recordId: unit.id, recordLabel: unit.label }); }} title={`View property ${unit.label}`} className="block truncate text-left font-bold text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">{propertyLabel}</button>
+            : <span className="block truncate">{propertyLabel}</span>; } },
+        { header: "Status", width: "110px", render: (tenant) => { const leaseIds = leaseMemberships.filter((membership) => membership.tenant_id === tenant.id).map((membership) => membership.lease_id); const movedIn = leases.some((lease) => leaseIds.includes(lease.id) && lease.status === "active"); return movedIn
+          ? <span className="font-bold text-emerald-700 dark:text-emerald-400">Moved In</span>
+          : <span className="font-bold text-slate-500 dark:text-slate-400">Inactive</span>; } },
+        { header: "Active balance", width: "130px", align: "right", render: (tenant) => { const balanceCents = activeBalanceCentsForTenant(tenant, leases, leaseMemberships, openCharges); return balanceCents === null
+          ? <span className="text-slate-500 dark:text-slate-400">—</span>
+          : <button type="button" onClick={(event) => { event.stopPropagation(); openFullLedger(tenant); }}
+              title={`View the full ledger for ${tenant.display_name}`}
+              aria-label={`View the full ledger for ${tenant.display_name} — balance ${money.format(balanceCents / 100)}`}
+              className="underline decoration-dotted underline-offset-4 hover:opacity-80">
+              <strong className={balanceCents > 0 ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"}>{money.format(balanceCents / 100)}</strong>
+            </button>; } },
+      ]} />}
     {showCreate && <form onSubmit={save} className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
       <label className="text-sm font-bold text-slate-900 dark:text-white">Tenant name<input name="displayName" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
       <label className="text-sm font-bold text-slate-900 dark:text-white">Email<input name="email" type="email" required className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-600 dark:bg-slate-900 dark:text-white" /></label>
@@ -343,11 +417,13 @@ export default function RentalTenantPanel({ initialTenants = [], onNavigate: nav
   </section>;
 }
 
-// Rentec-parity R8: the tenant record leads with the ledger -- the money view is
-// the record home, and the profile/details card is the second tab. Keyed by tenant
-// id by the caller so switching records always resets to the ledger tab.
+// Rentec-parity: the tenant record leads with the details -- the info view is
+// the record home (contact, lease, deposit, activity), and the ledger is the
+// second tab. Matches Rentec's tenant detail panel; the full-page ledger
+// remains one click away via View Ledger. Keyed by tenant id by the caller so
+// switching records always resets to the details tab.
 function TenantRecordTabs({ tenantId, tenantName, unitLabel, onOpenPropertyLedger, onOpenBankLedger, details }) {
-  const [recordTab, setRecordTab] = useState("ledger");
+  const [recordTab, setRecordTab] = useState("details");
   const tabClass = (active) => `rounded-t-xl px-4 py-2.5 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 ${
     active
       ? "bg-white text-slate-950 shadow-[inset_0_-2px_0_0_#0284c7] dark:bg-slate-900 dark:text-white"
@@ -355,25 +431,39 @@ function TenantRecordTabs({ tenantId, tenantName, unitLabel, onOpenPropertyLedge
   }`;
   return <>
     <div role="tablist" aria-label={`Record views for ${tenantName}`} className="mt-5 flex gap-1 border-b border-slate-200 dark:border-slate-700">
-      <button type="button" role="tab" aria-selected={recordTab === "ledger"} data-record-tab="ledger"
-        onClick={() => setRecordTab("ledger")} className={tabClass(recordTab === "ledger")}>Ledger</button>
       <button type="button" role="tab" aria-selected={recordTab === "details"} data-record-tab="details"
         onClick={() => setRecordTab("details")} className={tabClass(recordTab === "details")}>Tenant details</button>
+      <button type="button" role="tab" aria-selected={recordTab === "ledger"} data-record-tab="ledger"
+        onClick={() => setRecordTab("ledger")} className={tabClass(recordTab === "ledger")}>Ledger</button>
     </div>
-    {recordTab === "ledger" ? (
+    {recordTab === "details" ? (
+      <div role="tabpanel" aria-label="Tenant details" className="mt-4">{details}</div>
+    ) : (
       <div role="tabpanel" aria-label="Tenant ledger" className="mt-4">
         <TenantLedgerPage tenantId={tenantId} tenantName={tenantName} unitLabel={unitLabel}
           closeLabel="Tenant details" onClose={() => setRecordTab("details")}
           onOpenPropertyLedger={onOpenPropertyLedger} onOpenBankLedger={onOpenBankLedger} />
       </div>
-    ) : (
-      <div role="tabpanel" aria-label="Tenant details" className="mt-4">{details}</div>
     )}
   </>;
 }
 
-function LeaseSummary({lease,unit}) { return <div className="mt-5 grid gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30 sm:grid-cols-2 lg:grid-cols-4"><Info label="Property" value={unit?.label||lease?.property_id}/><Info label="Lease status" value={lease?.status}/><Info label="Lease dates" value={lease?`${lease.start_date} to ${lease.end_date||"Open-ended"}`:null}/><Info label="Monthly rent" value={lease?money.format(Number(lease.monthly_rent_cents||0)/100):null}/></div> }
-function Info({label,value}) { return <div><p className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p><p className="mt-1 font-bold text-slate-950 dark:text-white">{value||"Not recorded"}</p></div> }
+// Dense lease strip: a bordered definition row, not an oversized preview card.
+function LeaseSummaryStrip({lease,unit}) {
+  const items = [
+    ["Property", unit?.label || lease?.property_id],
+    ["Lease status", lease?.status],
+    ["Lease dates", lease ? `${lease.start_date} to ${lease.end_date || "Open-ended"}` : null],
+    ["Monthly rent", lease ? money.format(Number(lease.monthly_rent_cents || 0) / 100) : null],
+  ].filter(([, value]) => value);
+  if (!items.length) return null;
+  return <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 border-y border-slate-200 py-3 dark:border-slate-700">
+    {items.map(([label, value]) => <div key={label} className="flex items-baseline gap-2">
+      <dt className="text-xs font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</dt>
+      <dd className="text-sm font-bold text-slate-950 dark:text-white">{value}</dd>
+    </div>)}
+  </dl>;
+}
 function Field({label,name,defaultValue="",type="text",step}) { return <label className="text-sm font-bold text-slate-900 dark:text-white">{label}<input name={name} type={type} step={step} defaultValue={defaultValue??""} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label> }
 function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadTenants,makePrimary,sendInviteEmail,leaseId,lateFeeOverride,saveLateFeeOverride,workspacePaymentPolicy,paymentPolicyOverride,savePaymentPolicyOverride}) {
   // Join-up invite confirmation (mirrors the borrower-invite pattern: checkbox
@@ -383,8 +473,9 @@ function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadT
   const [inviteAck, setInviteAck] = useState(false);
   const [inviteConfirmText, setInviteConfirmText] = useState("");
   function openInviteConfirm() { setShowInviteConfirm(true); setInviteAck(false); setInviteConfirmText(""); }
-  return <article className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-950/40">
-  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">{title}</p><h4 className="mt-1 text-xl font-black text-slate-950 dark:text-white">{tenant.display_name}</h4></div>{makePrimary&&<button type="button" disabled={working} onClick={makePrimary} className="rounded-lg border border-sky-500 px-3 py-2 text-sm font-bold text-sky-800 dark:text-sky-300">Make primary tenant</button>}</div>
+  // Dense record section: a headed section with a top divider, not a floating card.
+  return <section aria-label={title} className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
+  <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">{title}</p><h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">{tenant.display_name}</h4></div>{makePrimary&&<button type="button" disabled={working} onClick={makePrimary} className="rounded-lg border border-sky-500 px-3 py-2 text-sm font-bold text-sky-800 dark:text-sky-300">Make primary tenant</button>}</div>
   <div className="mt-4"><RentalPhotoUpload entityType="tenant" entityId={tenant.id} photoUrl={tenant.photo_url} onUploaded={loadTenants}/></div>
   <form key={`email-${tenant.id}`} onSubmit={(event)=>updateEmail(event,tenant.id)} className="mt-4 flex flex-wrap items-end gap-3"><label className="min-w-[260px] flex-1 text-sm font-bold text-slate-900 dark:text-white">Contact / portal email<input name="portalEmail" type="email" required defaultValue={tenant.email} aria-label={`Portal email for ${tenant.display_name}`} className="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white"/></label><button disabled={working} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white dark:bg-amber-400 dark:text-slate-950">Update email</button></form>
   {!tenant.auth_user_id && <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
@@ -426,16 +517,16 @@ function TenantProfileCard({title,tenant,working,updateProfile,updateEmail,loadT
   </form>
   <LateFeeOverrideForm tenant={tenant} override={lateFeeOverride} working={working} onSave={saveLateFeeOverride}/>
   <PaymentPolicyOverrideForm tenant={tenant} override={paymentPolicyOverride} workspacePolicy={workspacePaymentPolicy} working={working} onSave={savePaymentPolicyOverride}/>
-</article> }
+</section> }
 
 // Per-tenant automatic late-fee override. Blank fields fall back to the
 // portfolio default; exempt skips the tenant entirely.
 function LateFeeOverrideForm({tenant,override,working,onSave}) {
   const inputClassName="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white";
   const formKey=`latefee-override-${tenant.id}-${override?.updated_at||"none"}`;
-  return <form key={formKey} onSubmit={(event)=>onSave(event,tenant.id,false)} className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+  return <form key={formKey} onSubmit={(event)=>onSave(event,tenant.id,false)} className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
     <p className="text-xs font-black uppercase tracking-wide text-red-700 dark:text-red-400">Late-fee override</p>
-    <h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Automatic late fees for {tenant.display_name}</h4>
+    <h4 className="mt-1 text-base font-black text-slate-950 dark:text-white">Automatic late fees for {tenant.display_name}</h4>
     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Blank fields fall back to the portfolio default. Exempt skips this tenant entirely.</p>
     {override
       ? <p className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm font-bold text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">Override active{override.exempt?" — exempt from automatic late fees":" — custom terms apply"}.</p>
@@ -462,9 +553,9 @@ function PaymentPolicyOverrideForm({tenant,override,workspacePolicy,working,onSa
   const inputClassName="mt-1 w-full rounded-lg border border-slate-300 bg-white p-2 dark:border-slate-600 dark:bg-slate-900 dark:text-white";
   const formKey=`payment-policy-override-${tenant.id}-${override||"inherit"}`;
   const effective=override||workspacePolicy||"allow_any_amount";
-  return <form key={formKey} onSubmit={(event)=>onSave(event,tenant.id,false)} aria-label="Payment policy override" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+  return <form key={formKey} onSubmit={(event)=>onSave(event,tenant.id,false)} aria-label="Payment policy override" className="mt-6 border-t border-slate-200 pt-4 dark:border-slate-700">
     <p className="text-xs font-black uppercase tracking-wide text-sky-700 dark:text-sky-400">Payment policy override</p>
-    <h4 className="mt-1 text-lg font-black text-slate-950 dark:text-white">Payment rules for {tenant.display_name}</h4>
+    <h4 className="mt-1 text-base font-black text-slate-950 dark:text-white">Payment rules for {tenant.display_name}</h4>
     {override
       ? <p className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm font-bold text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">Override active — this tenant follows <strong>{paymentPolicyLabel(override)}</strong> instead of the portfolio default.</p>
       : <p className="mt-3 text-sm font-bold text-slate-500 dark:text-slate-400">No override — inherits the portfolio default: <strong>{paymentPolicyLabel(workspacePolicy)}</strong>.</p>}
