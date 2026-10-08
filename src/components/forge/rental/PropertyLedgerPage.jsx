@@ -341,6 +341,8 @@ export default function PropertyLedgerPage({ propertyId, propertyLabel, properti
         </>
       )}
 
+      {propertyId && <PropertyWorkPackages propertyId={propertyId} />}
+
       {detailEntry && (
         <PropertyTransactionDetailModal
           key={detailEntry.id}
@@ -663,4 +665,82 @@ function formatEditValue(value) {
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "number") return money.format(value);
   return String(value);
+}
+
+// Work packages assigned to this property (Residential Slice 2). Reads the
+// owner-scoped work-packages list filtered by the exact canonical property
+// key; the section is read-only navigation — package lifecycle actions live
+// on the package pages. "New work package" lands on the create form with
+// this property preselected.
+function PropertyWorkPackages({ propertyId }) {
+  const [load, setLoad] = useState({ slug: null, error: "", packages: null });
+
+  // State is stamped with the slug it belongs to, so a stale result never
+  // renders under a new property and no state reset is needed in the
+  // effect body (react-hooks/set-state-in-effect).
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/work-packages?propertyId=${encodeURIComponent(propertyId)}`)
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Unable to load work packages.");
+        return body.packages || [];
+      })
+      .then((packages) => { if (!cancelled) setLoad({ slug: propertyId, error: "", packages }); })
+      .catch((caught) => { if (!cancelled) setLoad({ slug: propertyId, error: caught.message, packages: null }); });
+    return () => { cancelled = true; };
+  }, [propertyId]);
+
+  const loading = load.slug !== propertyId;
+  const packages = loading ? null : load.packages;
+  const error = loading ? "" : load.error;
+
+  return (
+    <div className="mt-8 border-t border-slate-200 pt-5 dark:border-slate-700" data-property-work-packages>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-xl font-black text-slate-950 dark:text-white">
+          Work packages
+          {packages && (
+            <span className="ml-2 align-middle text-sm font-bold text-slate-500 dark:text-slate-400">
+              {packages.length} {packages.length === 1 ? "package" : "packages"}
+            </span>
+          )}
+        </h3>
+        <a
+          href={`/forge/work/new?propertyId=${encodeURIComponent(propertyId)}`}
+          className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 transition hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          New work package
+        </a>
+      </div>
+
+      {loading && <p className="mt-3 text-sm font-bold text-slate-400">Loading work packages…</p>}
+      {error && (
+        <p role="alert" className="mt-3 rounded-xl bg-red-50 p-4 text-sm font-bold text-red-800 dark:bg-red-950/40 dark:text-red-300">
+          Work packages could not be loaded ({error}).
+        </p>
+      )}
+      {!loading && !error && packages?.length === 0 && (
+        <p className="mt-3 rounded-xl border border-dashed border-slate-300 p-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          No work packages for this property yet. Create the first one with the property already selected.
+        </p>
+      )}
+      {!loading && !error && packages?.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {packages.map((pkg) => (
+            <li key={pkg.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 dark:border-slate-700">
+              <a href={`/forge/work/${pkg.id}`} className="min-w-0">
+                <span className="block truncate text-sm font-black text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-300">
+                  {pkg.code} — {pkg.title}
+                </span>
+              </a>
+              <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                {String(pkg.status || "").replace(/_/g, " ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

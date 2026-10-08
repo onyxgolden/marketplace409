@@ -1,16 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WP_PACKAGE_TYPES, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
 
-export default function WorkPackageCreateForm() {
+// initialPropertyId preselects the property the owner came from (e.g. the
+// "New work package" action on a property page). It is matched against the
+// loaded options by canonical slug; if it is not one of the owner's
+// properties the picker stays on "No property assigned" rather than
+// silently choosing something else.
+export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [properties, setProperties] = useState(null);
+  const [propertiesError, setPropertiesError] = useState("");
+  const [propertyId, setPropertyId] = useState("");
   const [form, setForm] = useState({
     title: "", description: "", package_type: "other", priority: "normal",
     planned_start: "", planned_finish: "",
@@ -18,6 +27,30 @@ export default function WorkPackageCreateForm() {
     equipment_tag: "", unit: "", area: "", system: "",
     work_order_ref: "", workscope_code: "",
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/work-packages/property-options")
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "Unable to load properties.");
+        return body.properties || [];
+      })
+      .then((options) => {
+        if (cancelled) return;
+        setProperties(options);
+        if (initialPropertyId) {
+          const canonical = canonicalPropertySlug(initialPropertyId);
+          if (options.some((option) => option.slug === canonical)) {
+            setPropertyId(canonical);
+          }
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) setPropertiesError(caught.message);
+      });
+    return () => { cancelled = true; };
+  }, [initialPropertyId]);
 
   function set(key) {
     return (event) => setForm((prev) => ({ ...prev, [key]: event.target.value }));
@@ -34,6 +67,7 @@ export default function WorkPackageCreateForm() {
         title: form.title, description: form.description || null,
         package_type: form.package_type, priority: form.priority,
         planned_start: form.planned_start || null, planned_finish: form.planned_finish || null,
+        property_id: propertyId || null,
         responsible_party: form.responsible_party
           ? { domain: "contractor", type: "contractor", display_name: form.responsible_party }
           : null,
@@ -89,6 +123,28 @@ export default function WorkPackageCreateForm() {
           <div className="sm:col-span-2">
             <label className={label} htmlFor="responsible_party">Responsible party</label>
             <input id="responsible_party" className={input} placeholder="Crew or contractor name" value={form.responsible_party} onChange={set("responsible_party")} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={label} htmlFor="property_id">Property (optional)</label>
+            <select id="property_id" className={input} value={propertyId}
+              onChange={(event) => setPropertyId(event.target.value)}
+              disabled={properties === null && !propertiesError}>
+              <option value="">No property assigned</option>
+              {(properties || []).map((property) => (
+                <option key={property.slug} value={property.slug}>{property.label}</option>
+              ))}
+            </select>
+            {properties === null && !propertiesError && (
+              <p className="mt-1 text-xs text-slate-500">Loading properties…</p>
+            )}
+            {propertiesError && (
+              <p className="mt-1 text-xs text-red-700">
+                Properties could not be loaded ({propertiesError}) — this package will be saved with no property assigned.
+              </p>
+            )}
+            {properties !== null && properties.length === 0 && !propertiesError && (
+              <p className="mt-1 text-xs text-slate-500">No properties yet — the package can still be created without one.</p>
+            )}
           </div>
         </div>
       </section>

@@ -43,7 +43,26 @@ describe("GET /api/work-packages", () => {
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.packages).toHaveLength(1);
-    expect(listWorkPackages).toHaveBeenCalledWith({}, { ownerId: "owner_1", status: "draft", packageType: undefined });
+    expect(listWorkPackages).toHaveBeenCalledWith({}, { ownerId: "owner_1", status: "draft", packageType: undefined, propertyId: undefined });
+  });
+  it("passes the property filter through to the service", async () => {
+    listWorkPackages.mockResolvedValue({ ok: true, packages: [] });
+    const response = await GET(request(null, "GET", "?propertyId=1900-west-decker"));
+    expect(response.status).toBe(200);
+    expect(listWorkPackages).toHaveBeenCalledWith({}, {
+      ownerId: "owner_1", status: undefined, packageType: undefined, propertyId: "1900-west-decker",
+    });
+  });
+  it("creates a package with a property assignment", async () => {
+    createWorkPackage.mockResolvedValue({ ok: true, package: { id: "forge_wp_1", code: "WP-0007", property_id: "1900-w-decker" } });
+    const response = await POST(request({ title: "Turnover", property_id: "1900-west-decker" }, "POST"));
+    const body = await response.json();
+    expect(response.status).toBe(201);
+    expect(body.package.property_id).toBe("1900-w-decker");
+    expect(createWorkPackage).toHaveBeenCalledWith({}, {
+      ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", property_id: "1900-west-decker" },
+    });
   });
 });
 
