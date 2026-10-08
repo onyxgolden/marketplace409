@@ -323,16 +323,54 @@ impl ClickClassifier {
 /// ids the evidence thread actually saw; it never guesses whether a given
 /// gap was caused by overload versus, e.g., `Click`/`Drag` resolution
 /// consuming an id as part of a pair.
-pub fn detect_sequence_gaps(seen: &[u64]) -> Vec<(u64, u64)> {
+///
+/// The ascending-order guarantee above is architectural, not assumed
+/// silently here: a later id that is not strictly greater than the one
+/// before it means something upstream broke that guarantee (a duplicate,
+/// a reordering, a second producer), and this function reports that as
+/// [`SequenceError::NotStrictlyIncreasing`] rather than quietly skipping
+/// it, which is what the naive `if b > a + 1` check used to do for a
+/// non-increasing pair. All arithmetic is checked, not merely reasoned
+/// about as safe — `b <= a` is handled above before any `+`/`-`, which
+/// also happens to make the arithmetic provably panic-free (if `b > a`
+/// then `a < u64::MAX`, so `a + 1` cannot overflow; `checked_add`/
+/// `checked_sub` enforce that in code instead of only in a comment).
+pub fn detect_sequence_gaps(seen: &[u64]) -> Result<Vec<(u64, u64)>, SequenceError> {
     let mut gaps = Vec::new();
     for pair in seen.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        if b > a + 1 {
-            gaps.push((a + 1, b - 1));
+        if b <= a {
+            return Err(SequenceError::NotStrictlyIncreasing { prev: a, next: b });
+        }
+        if let (Some(first_missing), Some(last_missing)) = (a.checked_add(1), b.checked_sub(1)) {
+            if first_missing <= last_missing {
+                gaps.push((first_missing, last_missing));
+            }
         }
     }
-    gaps
+    Ok(gaps)
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SequenceError {
+    /// `next` was not strictly greater than `prev` — the architecture's
+    /// ascending-order guarantee (see [`detect_sequence_gaps`]) was
+    /// violated somewhere upstream.
+    NotStrictlyIncreasing { prev: u64, next: u64 },
+}
+
+impl std::fmt::Display for SequenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SequenceError::NotStrictlyIncreasing { prev, next } => write!(
+                f,
+                "sequence ids must be strictly increasing: {next} did not follow {prev}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SequenceError {}
 
 // ---------------------------------------------------------------------
 // Privacy / sensitivity decision
@@ -697,28 +735,72 @@ mod tests {
 
     #[test]
     fn contiguous_sequence_has_no_gaps() {
-        assert_eq!(detect_sequence_gaps(&[1, 2, 3, 4]), vec![]);
+        assert_eq!(detect_sequence_gaps(&[1, 2, 3, 4]), Ok(vec![]));
     }
 
     #[test]
     fn a_single_dropped_event_is_reported_as_a_one_wide_gap() {
-        assert_eq!(detect_sequence_gaps(&[1, 2, 4, 5]), vec![(3, 3)]);
+        assert_eq!(detect_sequence_gaps(&[1, 2, 4, 5]), Ok(vec![(3, 3)]));
     }
 
     #[test]
     fn multiple_dropped_events_are_reported_as_a_wide_gap() {
-        assert_eq!(detect_sequence_gaps(&[1, 10]), vec![(2, 9)]);
+        assert_eq!(detect_sequence_gaps(&[1, 10]), Ok(vec![(2, 9)]));
     }
 
     #[test]
     fn several_separate_gaps_are_each_reported() {
-        assert_eq!(detect_sequence_gaps(&[1, 3, 3, 6]), vec![(2, 2), (4, 5)]);
+        assert_eq!(
+            detect_sequence_gaps(&[1, 3, 6, 8]),
+            Ok(vec![(2, 2), (4, 5), (7, 7)])
+        );
     }
 
     #[test]
     fn fewer_than_two_ids_has_no_gaps() {
-        assert_eq!(detect_sequence_gaps(&[]), vec![]);
-        assert_eq!(detect_sequence_gaps(&[1]), vec![]);
+        assert_eq!(detect_sequence_gaps(&[]), Ok(vec![]));
+        assert_eq!(detect_sequence_gaps(&[1]), Ok(vec![]));
+    }
+
+    #[test]
+    fn a_duplicate_id_is_reported_as_a_sequence_error_not_silently_skipped() {
+        assert_eq!(
+            detect_sequence_gaps(&[1, 3, 3, 6]),
+            Err(SequenceError::NotStrictlyIncreasing { prev: 3, next: 3 })
+        );
+    }
+
+    #[test]
+    fn a_decreasing_id_is_reported_as_a_sequence_error() {
+        assert_eq!(
+            detect_sequence_gaps(&[1, 5, 2]),
+            Err(SequenceError::NotStrictlyIncreasing { prev: 5, next: 2 })
+        );
+    }
+
+    #[test]
+    fn adjacent_to_u64_max_never_panics_and_reports_no_gap() {
+        // b > a here (MAX-1 < MAX), so this must not hit the overflow this
+        // regression is specifically about -- a naive `a + 1` would have
+        // panicked (debug) or wrapped (release) when a == u64::MAX, which
+        // this input deliberately sits one id away from.
+        assert_eq!(detect_sequence_gaps(&[u64::MAX - 1, u64::MAX]), Ok(vec![]));
+    }
+
+    #[test]
+    fn a_repeated_u64_max_is_a_sequence_error_not_an_overflow_panic() {
+        // The one input that would actually reach `a == u64::MAX` on the
+        // left side of a pair is caught by the strictly-increasing check
+        // before any arithmetic runs at all, which is what makes the
+        // arithmetic provably panic-free rather than merely untested at
+        // the boundary.
+        assert_eq!(
+            detect_sequence_gaps(&[u64::MAX, u64::MAX]),
+            Err(SequenceError::NotStrictlyIncreasing {
+                prev: u64::MAX,
+                next: u64::MAX
+            })
+        );
     }
 
     // -- decide_sensitivity --
