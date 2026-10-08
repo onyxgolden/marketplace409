@@ -66,3 +66,39 @@ unable-to-verify — uncertainty stays exactly where it belongs.
   the count/latest queries must agree or the adapter fails. Two queries
   can race in theory; a disagreement fails closed rather than reporting
   a half-truth.
+
+## Slice 3 — coverage evaluation
+
+`evaluateCoverage.mjs` turns collected evidence into per-capability
+verdicts: `covered`, `gap`, or `unknown`. The attribution restriction is
+the core rule — **only evidence attributable to the specific capability
+can produce `covered`**:
+
+| Attribution | Can cover? | Meaning |
+|---|---|---|
+| `sweep-exclusive` | yes | Table written only by this sweep |
+| `discriminator` | yes | Shared table + filters isolating this capability's rows |
+| `workflow-exclusive` | yes | One workflow file per capability |
+| `corroborating-only` | no | Reported, never flips a verdict |
+| `unverified` | no | Reported, never flips a verdict |
+
+- `covered`: attributable evidence shows execution inside the expected
+  interval (daily → 30h, twice daily → 16h).
+- `gap`: ONLY for execution-attempt logs (tables that write on every
+  invocation, flagged `execution_record: true` — currently just
+  `rental_sweep_runs` for the primary sweep) and for workflow-exclusive
+  capabilities with no recent successful run. A missed run is claimed
+  only where a run must have left a mark.
+- `unknown`: everything else — evidence unavailable, unattributable, or
+  malformed; zero/stale BUSINESS-EFFECT rows (charges, deliveries,
+  attempts, invites), where a correctly executed sweep may simply have
+  had nothing to produce ("idle run indistinguishable from missed run");
+  conditional capabilities (the watchdog) whose trigger and cadence are
+  unverified — never gap, never covered, with observed rows noted.
+- Future-dated evidence timestamps (beyond 1h clock skew) are rejected
+  as `unknown`, never treated as fresh.
+- Discriminator filters (`eq`/`like`) are applied to both Supabase
+  queries and recorded in the evidence; malformed filters fail closed.
+- `evaluateCoverageCli.mjs` runs the evaluation live (`--all` or
+  `--capability <id>`, `--out <file>`); read-only, fails closed without
+  `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `GITHUB_TOKEN`.
