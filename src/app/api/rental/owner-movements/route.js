@@ -60,6 +60,11 @@ async function listMovements(supabaseClient, ownerId, { kind, status, propertyId
     .order("id", { ascending: false });
   if (kind) query = query.eq("kind", kind);
   if (status) query = query.eq("status", status);
+  // Known limitation (deferred, deliberately NOT addressed here): this list
+  // filter matches the raw stored slug, so movements recorded under a variant
+  // slug of the same house (see src/domains/property/propertyAliases.js) are
+  // not shown when filtering by the canonical slug. Canonicalized display
+  // filtering is a separately scoped follow-up (PR #589 review, 2026-10-08).
   if (propertyId) query = query.eq("property_id", propertyId);
   if (from) query = query.gte("movement_date", from);
   if (to) query = query.lte("movement_date", to);

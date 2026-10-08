@@ -20,6 +20,15 @@
 // does: an expense financial_events row is suppressed when it references the contractor
 // payment id AND the amounts agree. Income rows are never suppressed by a contractor
 // link — an income event is money coming in, not the same money as the contractor debit.
+//
+// Property identity: property-slug comparisons resolve BOTH sides through
+// canonicalPropertySlug (the explicit alias map in
+// src/domains/property/propertyAliases.js) so the variant slugs two historical
+// import pipelines wrote for the same house match here. Unit-ID comparisons
+// stay exact membership — a unit ID is an identifier, never a property slug,
+// and is never canonicalized. A null property_id never matches this ledger.
+
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
 
 const SAFE_SOURCES = new Set(["manual", "rentec", "rentec_api"]);
 const EXCLUDED_STATUSES = new Set(["inactive", "deleted"]);
@@ -45,10 +54,27 @@ const toEventCents = (decimalAmount) => signedCents(Math.round(Number(decimalAmo
 
 const label = (value) => String(value ?? "").replaceAll("_", " ");
 
+// Property-slug comparison: canonicalized on BOTH sides through
+// canonicalPropertySlug (explicit alias map only) so the variant slugs the
+// two historical import pipelines wrote for one house resolve together.
+function propertySlugMatches(slug, propertyId) {
+  if (!slug || !propertyId) return false;
+  return canonicalPropertySlug(slug) === canonicalPropertySlug(propertyId);
+}
+
+// Unit-ID comparison: exact membership only — unit IDs are identifiers, not
+// property slugs, so they are never canonicalized or alias-resolved.
+function unitIdMatches(id, unitIds) {
+  return Boolean(id) && unitIds.has(id);
+}
+
+// Rows keyed by a property reference (financial_events.property_id, contractor
+// payments, lease.property_id) historically hold either the property slug or
+// one of the property's unit IDs; accept either, slug path canonicalized,
+// unit path exact. A null slug never matches.
 function propertyMatches(slug, propertyId, unitIds) {
   if (!slug) return false;
-  if (slug === propertyId) return true;
-  return unitIds.has(slug);
+  return propertySlugMatches(slug, propertyId) || unitIdMatches(slug, unitIds);
 }
 
 function contractorPaymentIdOf(event) {
@@ -78,13 +104,17 @@ export function buildPropertyLedger({
   const unitIdSet = new Set(unitIds);
   const contractorById = new Map(contractors.map((c) => [c.id, c]));
   // Lease -> property mapping for the income side: a payment belongs to this property
-  // when its lease's property_id (or unit_id) matches.
+  // when its lease's property slug (canonicalized) matches, or when its unit_id is
+  // exactly one of this property's unit IDs. lease.unit_id is a unit ID, not a
+  // property slug, so it takes the exact path only — the previous combined
+  // helper also equated a unit_id string equal to the property slug, which
+  // conflated the two kinds of identifier and is removed deliberately.
   const leasePropertyMatches = new Map();
   for (const lease of leases) {
     leasePropertyMatches.set(
       lease.id,
       propertyMatches(lease.property_id, propertyId, unitIdSet) ||
-        propertyMatches(lease.unit_id, propertyId, unitIdSet),
+        unitIdMatches(lease.unit_id, unitIdSet),
     );
   }
 

@@ -16,6 +16,8 @@
 // All money math is whole cents; financial_events.amount is a decimal, so it
 // is rounded deliberately to cents before it enters any sum.
 
+import { canonicalPropertySlug } from "@/domains/property/propertyAliases";
+
 const EXCLUDED_STATUSES = new Set(["inactive", "deleted"]);
 
 const toCents = (decimalAmount) => {
@@ -28,12 +30,16 @@ const asDate = (value) => (value ? String(value).slice(0, 10) : null);
 // A movement with property_id null is portfolio/workspace level: it always
 // counts (an owner draw against the operating account isn't property-specific
 // unless tagged). A movement tagged to a property counts only for that
-// property's view.
+// property's view. Property comparison resolves BOTH sides through
+// canonicalPropertySlug — the historical import pipelines wrote the same
+// houses under variant slugs (explicit alias map only, never fuzzy), so a raw
+// === would split one house into two views. Null is preserved as null:
+// canonicalization never allocates an untagged row to a property.
 const movementInScope = (movement, propertyId) =>
-  !propertyId || !movement.property_id || movement.property_id === propertyId;
+  !propertyId || !movement.property_id || canonicalPropertySlug(movement.property_id) === canonicalPropertySlug(propertyId);
 
 const eventInScope = (event, propertyId) =>
-  !propertyId || !event.property_id || event.property_id === propertyId;
+  !propertyId || !event.property_id || canonicalPropertySlug(event.property_id) === canonicalPropertySlug(propertyId);
 
 const isLiveEvent = (event) => event.is_deleted !== true && !EXCLUDED_STATUSES.has(event.status);
 
