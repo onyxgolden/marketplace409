@@ -293,6 +293,40 @@ describe("github-actions adapter", () => {
     expect(r.evidence.latest.conclusion).toBe("success");
   });
 
+  it("returns ALL in-window runs for aggregation, not just the latest", async () => {
+    const runs = [
+      { conclusion: "failure", status: "completed", startedAt: "2026-10-07T09:20:00Z", htmlUrl: "https://x/2" },
+      { conclusion: "success", status: "completed", startedAt: "2026-10-07T09:05:00Z", htmlUrl: "https://x/1" },
+    ];
+    const r = await ADAPTER_TYPES["github-actions"](
+      spec,
+      { githubApi: fakeGithub({ runs }) },
+      NOW,
+      { slotWindow: { startIso: "2026-10-07T08:00:00.000Z", endIso: "2026-10-07T10:00:00.000Z" } }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.evidence.runCount).toBe(2);
+    expect(r.evidence.runs).toHaveLength(2);
+    // Newest-first; both conclusions visible to the evaluator.
+    expect(r.evidence.runs.map((x) => x.conclusion)).toEqual(["failure", "success"]);
+    expect(r.evidence.latest.conclusion).toBe("failure");
+  });
+
+  it("fails closed when any in-window run is malformed", async () => {
+    const runs = [
+      { conclusion: "success", status: "completed", startedAt: "2026-10-07T09:05:00Z", htmlUrl: "https://x/1" },
+      { status: "completed", startedAt: "2026-10-07T09:06:00Z" }, // missing conclusion
+    ];
+    const r = await ADAPTER_TYPES["github-actions"](
+      spec,
+      { githubApi: fakeGithub({ runs }) },
+      NOW,
+      { slotWindow: { startIso: "2026-10-07T08:00:00.000Z", endIso: "2026-10-07T10:00:00.000Z" } }
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("conclusion");
+  });
+
   it("reports no runs as evidence, not failure", async () => {
     const r = await ADAPTER_TYPES["github-actions"](spec, { githubApi: fakeGithub({ runs: [] }) }, NOW);
     expect(r.ok).toBe(true);

@@ -257,6 +257,41 @@ describe("evaluateSlot", () => {
     expect(r.state).toBe("ambiguous");
   });
 
+  it("workflow: earlier success + later failure in same window → observed-success (aggregation blocker)", async () => {
+    // The adapter used to return only the latest run; a later failure then
+    // hid the earlier success and the slot was wrongly "ambiguous".
+    const brain = getCapability("brain-nightly-sync");
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = {
+      githubApi: fakeGithub({
+        runs: [
+          // API returns newest-first: failure is latest, success earlier —
+          // both inside the [08:00, 09:30] attribution window.
+          { conclusion: "failure", status: "completed", startedAt: "2026-10-07T09:20:00.000Z", htmlUrl: "x" },
+          { conclusion: "success", status: "completed", startedAt: "2026-10-07T09:05:00.000Z", htmlUrl: "x" },
+        ],
+      }),
+    };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("observed-success");
+  });
+
+  it("workflow: all runs failed in window → ambiguous (no success to aggregate)", async () => {
+    const brain = getCapability("brain-nightly-sync");
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = {
+      githubApi: fakeGithub({
+        runs: [
+          { conclusion: "failure", status: "completed", startedAt: "2026-10-07T09:20:00.000Z", htmlUrl: "x" },
+          { conclusion: "cancelled", status: "completed", startedAt: "2026-10-07T09:05:00.000Z", htmlUrl: "x" },
+        ],
+      }),
+    };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("ambiguous");
+    expect(r.reason).toContain("failure");
+  });
+
   it("attributionWindow: midpoint-bounded for adjacent slots, wide for daily", () => {
     const brain = getCapability("brain-nightly-sync");
     const dual = attributionWindow(brain, { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 });
@@ -312,6 +347,28 @@ describe("runWatchdog", () => {
     const keys = Object.keys(state).filter((k) => k.startsWith("rental-autopay-sweep|"));
     expect(keys.length).toBe(1);
     expect(state[keys[0]].resolved_at).toBeNull();
+  });
+
+  it("corrupt state file: aborts without overwriting (fail-closed blocker)", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(stateFile, "{ this is not valid json !!!");
+    const before = readFileSync(stateFile, "utf8");
+    const result = await runWatchdog({ now: NOW, deps: depsFor(null), repoRoot: null, stateFile });
+    // Run aborts safely: no alerts, no evaluations, file untouched.
+    expect(result.summary.aborted).toBe(true);
+    expect(result.summary.abort_reason).toContain("not valid JSON");
+    expect(result.alerts).toHaveLength(0);
+    expect(result.summary.capabilities_evaluated).toBe(0);
+    expect(readFileSync(stateFile, "utf8")).toBe(before);
+  });
+
+  it("non-object state file: aborts without overwriting", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(stateFile, '"just a string, not an object"');
+    const before = readFileSync(stateFile, "utf8");
+    const result = await runWatchdog({ now: NOW, deps: depsFor(null), repoRoot: null, stateFile });
+    expect(result.summary.aborted).toBe(true);
+    expect(readFileSync(stateFile, "utf8")).toBe(before);
   });
 });
 

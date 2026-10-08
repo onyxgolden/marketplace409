@@ -171,28 +171,46 @@ export async function fetchGithubActionsEvidence(spec, deps, now, opts = {}) {
           totalFetched: allRuns.length,
           slotWindow: slotWindow ? { ...slotWindow } : null,
           latest: null,
+          runs: [],
         },
       };
     }
-    const latest = runs[0];
-    for (const f of ["conclusion", "status", "startedAt"]) {
-      if (latest[f] === undefined) {
-        return fail(`latest run is missing field "${f}"`);
+    // Validate every in-window run, not just the latest — the evaluator
+    // aggregates all of them (a success anywhere in the window counts).
+    const normalized = [];
+    for (const run of runs) {
+      for (const f of ["conclusion", "status", "startedAt"]) {
+        if (run[f] === undefined) {
+          return fail(`a run in the window is missing field "${f}"`);
+        }
       }
+      normalized.push({
+        conclusion: run.conclusion,
+        status: run.status,
+        startedAt: run.startedAt,
+        url: run.htmlUrl || null,
+      });
     }
+    // Latest = most recently started (runs are expected newest-first from
+    // the API, but sort defensively so "latest" is well-defined).
+    normalized.sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0));
+    const latest = normalized[0];
     return {
       ok: true,
       evidence: {
         source: `github-actions:${spec.workflowFile}`,
-        runCount: runs.length,
+        runCount: normalized.length,
         totalFetched: allRuns.length,
         slotWindow: slotWindow ? { ...slotWindow } : null,
         latest: {
           conclusion: latest.conclusion,
           status: latest.status,
           startedAt: latest.startedAt,
-          url: latest.htmlUrl || null,
+          url: latest.url,
         },
+        // All in-window runs, newest-first. The evaluator examines every
+        // conclusion — a single "latest" hid mixed success/failure windows.
+        runs: normalized,
       },
     };
   } catch (e) {

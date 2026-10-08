@@ -31,12 +31,21 @@ function slotKey(capabilityId, expectedAt) {
 }
 
 function loadAlertState(stateFile) {
+  if (!existsSync(stateFile)) return {};
+  // Fail closed on malformed state: throw so the caller aborts WITHOUT
+  // overwriting the file. Silently resetting to {} would destroy
+  // deduplication history (review blocker).
+  const raw = readFileSync(stateFile, "utf8");
+  let parsed;
   try {
-    if (!existsSync(stateFile)) return {};
-    return JSON.parse(readFileSync(stateFile, "utf8"));
-  } catch {
-    return {};
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`alert state file is not valid JSON: ${e.message}`);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("alert state file does not contain a JSON object");
+  }
+  return parsed;
 }
 
 function saveAlertState(stateFile, state) {
@@ -116,7 +125,7 @@ export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
     detail: r.ok
       ? r.adapter === "supabase-table"
         ? `${r.evidence.rowCount} rows in slot window, latest ${r.evidence.latestAt}`
-        : `runs in slot window: ${r.evidence.runCount} (fetched ${r.evidence.totalFetched}), latest ${r.evidence.latest ? `${r.evidence.latest.conclusion} at ${r.evidence.latest.startedAt}` : "none"}`
+        : `runs in slot window: ${r.evidence.runCount} (fetched ${r.evidence.totalFetched}), conclusions: ${(r.evidence.runs || []).map((x) => x.conclusion).join(", ") || "none"}`
       : r.error,
   }));
   if (!collected.ok) {
@@ -133,11 +142,15 @@ export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
       if (r.execution_record === true) executionRecordHealthy = true;
       if (r.evidence.rowCount > 0) sawSuccess = true;
     } else if (r.adapter === "github-actions") {
-      if (r.evidence.latest) {
-        if (r.evidence.latest.conclusion === "success") {
+      // Aggregate ALL in-window runs, not just the latest. A success
+      // anywhere in the window proves the capability executed — a later
+      // failure does not erase the earlier success (review blocker).
+      const runs = Array.isArray(r.evidence.runs) ? r.evidence.runs : (r.evidence.latest ? [r.evidence.latest] : []);
+      for (const run of runs) {
+        if (run.conclusion === "success") {
           sawSuccess = true;
-        } else {
-          sawNonSuccess = `workflow run in slot window concluded "${r.evidence.latest.conclusion}" — ran but did not succeed`;
+        } else if (!sawNonSuccess) {
+          sawNonSuccess = `workflow run in slot window concluded "${run.conclusion}" — ran but did not succeed`;
         }
       }
       // NOTE: no confirmed-miss from GitHub absence. Actions history is
@@ -213,7 +226,28 @@ export function diagnosticPacket(capability, slot, evaluation, evaluatedAt) {
  */
 export async function runWatchdog({ now, deps, repoRoot, stateFile }) {
   const at = Number.isFinite(now) ? now : Date.now();
-  const state = loadAlertState(stateFile);
+  let state;
+  try {
+    state = loadAlertState(stateFile);
+  } catch (e) {
+    // Fail closed: a corrupt/unreadable state file must NOT be overwritten
+    // (that would destroy deduplication history). Abort the run; the
+    // operator fixes or removes the file explicitly.
+    const reason = `alert state unreadable: ${e.message}`;
+    console.error(`watchdog: ${reason} (${stateFile}); aborting without writing`);
+    return {
+      alerts: [],
+      resolved: [],
+      summary: {
+        evaluated_at: new Date(at).toISOString(),
+        capabilities_evaluated: 0,
+        new_alerts: 0,
+        resolved: 0,
+        aborted: true,
+        abort_reason: reason,
+      },
+    };
+  }
   const alerts = [];
   const resolved = [];
 
