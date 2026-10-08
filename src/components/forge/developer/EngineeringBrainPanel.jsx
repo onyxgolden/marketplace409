@@ -2,6 +2,7 @@
 import { useCallback, useState } from "react";
 import { goldControlClassName } from "@/components/forge/forgeMetallicTheme";
 import { useStaleWhileRevalidate } from "@/hooks/useStaleWhileRevalidate";
+import BrainHealthDashboard from "@/components/forge/developer/BrainHealthDashboard";
 import {
   ForgeEmptyState,
   ForgeErrorState,
@@ -248,6 +249,14 @@ export default function EngineeringBrainPanel() {
             />
           </div>
         ) : null}
+        <div className="mt-8 border-t border-slate-200 pt-6 dark:border-slate-700">
+          <h2 className="text-lg font-black">Engineering health</h2>
+          <p className="mt-1 text-xs font-semibold text-slate-500 dark:text-slate-400">
+            Read-only overview of runtime coverage, index freshness, known defects, and findings.
+            Advisory only — nothing here triggers repairs or changes.
+          </p>
+          <BrainHealthDashboard />
+        </div>
       </div>
     </main>
   );

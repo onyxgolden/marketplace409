@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import { aggregateHealth, HEALTH_STATES } from "../aggregateHealth.mjs";
+
+const NOW = Date.parse("2026-10-08T12:00:00.000Z");
+
+const caps = [
+  { id: "a", name: "A", monitoring_status: "covered", execution_path: "x", expected_cadence: "daily" },
+  { id: "b", name: "B", monitoring_status: "partially-covered", monitoring_note: "note", execution_path: "y" },
+  { id: "c", name: "C", monitoring_status: "uncovered", execution_path: "z" },
+];
+
+const freshRun = {
+  generated_at: "2026-10-08T10:00:00.000Z",
+  commit_sha: "abc123",
+  extractor_version: "9",
+};
+
+describe("aggregateHealth", () => {
+  it("aggregates coverage counts by monitoring status", () => {
+    const h = aggregateHealth({ capabilities: caps, latestRun: freshRun, bugFixCount: 5, now: NOW });
+    expect(h.runtimeCoverage.totalCapabilities).toBe(3);
+    expect(h.runtimeCoverage.byMonitoringStatus).toEqual({
+      covered: 1,
+      "partially-covered": 1,
+      uncovered: 1,
+    });
+    expect(h.runtimeCoverage.state).toBe("confirmed");
+  });
+
+  it("marks index stale when older than 36h", () => {
+    const oldRun = { ...freshRun, generated_at: "2026-10-06T10:00:00.000Z" };
+    const h = aggregateHealth({ capabilities: caps, latestRun: oldRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).toBe("stale");
+  });
+
+  it("marks index unavailable when no run exists", () => {
+    const h = aggregateHealth({ capabilities: caps, latestRun: null, bugFixCount: null, now: NOW });
+    expect(h.index.state).toBe("unavailable");
+    expect(h.index.generatedAt).toBeNull();
+    expect(h.bugCatalog.state).toBe("unavailable");
+  });
+
+  it("never reports the watchdog as actively monitoring", () => {
+    const h = aggregateHealth({ capabilities: caps, latestRun: freshRun, bugFixCount: 1, now: NOW });
+    expect(h.watchdog.state).toBe("not-enabled");
+    expect(h.watchdog.enabled).toBe(false);
+    expect(h.watchdog.detail).toMatch(/not actively monitoring/i);
+    expect(h.watchdog.detail).not.toMatch(/monitoring.*active/i);
+  });
+
+  it("handles empty capabilities without fabricating", () => {
+    const h = aggregateHealth({ capabilities: [], latestRun: freshRun, bugFixCount: 0, now: NOW });
+    expect(h.runtimeCoverage.state).toBe("unavailable");
+    expect(h.runtimeCoverage.totalCapabilities).toBe(0);
+  });
+
+  it("exposes all documented health states", () => {
+    expect(HEALTH_STATES).toEqual(
+      expect.arrayContaining(["confirmed", "suspected", "unavailable", "stale", "not-enabled"]),
+    );
+  });
+
+  it("marks index unavailable on invalid timestamp (never fresh/confirmed)", () => {
+    const badRun = { ...freshRun, generated_at: "not-a-timestamp" };
+    const h = aggregateHealth({ capabilities: caps, latestRun: badRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).toBe("unavailable");
+    expect(h.index.state).not.toBe("confirmed");
+    expect(h.index.detail).toMatch(/invalid/i);
+  });
+
+  it("marks index unavailable on empty timestamp string", () => {
+    const badRun = { ...freshRun, generated_at: "" };
+    // empty string is falsy -> hits the !latestRun.generated_at branch
+    const h = aggregateHealth({ capabilities: caps, latestRun: badRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).toBe("unavailable");
+    expect(h.index.state).not.toBe("confirmed");
+  });
+
+  it("marks index stale (never confirmed) on future-dated timestamp", () => {
+    const futureRun = { ...freshRun, generated_at: "2026-10-09T12:00:00.000Z" }; // 24h after NOW
+    const h = aggregateHealth({ capabilities: caps, latestRun: futureRun, bugFixCount: 5, now: NOW });
+    expect(h.index.state).not.toBe("confirmed");
+    expect(h.index.state).toBe("stale");
+    expect(h.index.detail).toMatch(/future/i);
+  });
+
+  it("marks bug catalog unavailable when count succeeds but rows fail (never 'no defects')", () => {
+    const h = aggregateHealth({
+      capabilities: caps, latestRun: freshRun, bugFixCount: 5, bugFixRowsOk: false, now: NOW,
+    });
+    expect(h.bugCatalog.state).toBe("unavailable");
+    expect(h.bugCatalog.state).not.toBe("confirmed");
+    expect(h.bugCatalog.count).toBe(5);
+    expect(h.bugCatalog.rowsOk).toBe(false);
+    expect(h.bugCatalog.detail).toMatch(/unknown/i);
+    expect(h.bugCatalog.detail).not.toMatch(/no .*defect/i);
+  });
+
+  it("marks bug catalog unavailable when count is unknown", () => {
+    const h = aggregateHealth({
+      capabilities: caps, latestRun: freshRun, bugFixCount: null, bugFixRowsOk: false, now: NOW,
+    });
+    expect(h.bugCatalog.state).toBe("unavailable");
+    expect(h.bugCatalog.count).toBeNull();
+  });
+
+  it("confirms bug catalog when count is zero and rows loaded OK (genuinely empty)", () => {
+    const h = aggregateHealth({
+      capabilities: caps, latestRun: freshRun, bugFixCount: 0, bugFixRowsOk: true, now: NOW,
+    });
+    expect(h.bugCatalog.state).toBe("confirmed");
+    expect(h.bugCatalog.count).toBe(0);
+    expect(h.bugCatalog.rowsOk).toBe(true);
+  });
+
+  it("defaults bugFixRowsOk to true for backward compatibility", () => {
+    const h = aggregateHealth({ capabilities: caps, latestRun: freshRun, bugFixCount: 3, now: NOW });
+    expect(h.bugCatalog.state).toBe("confirmed");
+    expect(h.bugCatalog.rowsOk).toBe(true);
+  });
+});
