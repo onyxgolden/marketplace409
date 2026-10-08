@@ -33,6 +33,9 @@ function capabilityFinding(cap) {
   return {
     id: `coverage:${cap.id}`,
     kind: "coverage-gap",
+    // Structured, authoritative monitoring status. Severity derivation must
+    // read this field — never parse the display text in `what`.
+    monitoringStatus: status,
     what: `Runtime capability "${cap.name || cap.id}" is ${status}.`,
     subsystem: cap.execution_path || cap.id,
     whyItMatters: whyMap[status] || whyMap["unable-to-verify"],

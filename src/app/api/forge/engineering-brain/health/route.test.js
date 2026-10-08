@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({ createClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: mocks.createClient }));
 
 import { GET } from "./route";
+import { getRegistry } from "../../../../../../scripts/engineering-brain/runtimeCoverageRegistry.mjs";
 
 const PROGRAMMER_EMAIL = "jasonmorgan99@gmail.com";
 
@@ -92,5 +93,42 @@ describe("GET /api/forge/engineering-brain/health", () => {
     const response = await GET();
     const body = await response.json();
     expect(body.health.index.state).toBe("unavailable");
+  });
+
+  it("marks regressionExposureEvaluated false when no changedPaths given", async () => {
+    mocks.createClient.mockResolvedValue(fakeSupabaseClient());
+    const response = await GET();
+    const body = await response.json();
+    expect(body.regressionExposureEvaluated).toBe(false);
+  });
+
+  it("flows exposures end-to-end: endpoint → severity boost → evidence packet", async () => {
+    // Use a real registry capability so the subsystem matching is genuine.
+    const cap = getRegistry().find((c) => c.monitoring_status !== "covered" && c.execution_path);
+    expect(cap).toBeDefined();
+    const fragment = String(cap.execution_path).split(",").map((s) => s.trim()).filter(Boolean)[0];
+    expect(fragment).toBeTruthy();
+
+    const bugWithOverlap = [
+      { sha: "bbb222", date: "2026-10-02", subject: "Fix overlap", pr: 2, class: "c", files: [fragment] },
+    ];
+    mocks.createClient.mockResolvedValue(fakeSupabaseClient({ bugs: bugWithOverlap, bugCount: 1 }));
+    const req = new Request(
+      `http://localhost/api/forge/engineering-brain/health?changedPaths=${encodeURIComponent(fragment)}`,
+    );
+    const response = await GET(req);
+    const body = await response.json();
+    expect(body.regressionExposureEvaluated).toBe(true);
+
+    // Severity boost: the matching coverage finding gains the exposure boost.
+    const item = body.triage.find((t) => t.id === `coverage:${cap.id}`);
+    expect(item).toBeDefined();
+    expect(item.severityReason).toMatch(/regression-exposure/);
+
+    // Evidence packet: the exposure section is populated, not silently empty.
+    const packet = body.packets[`coverage:${cap.id}`];
+    expect(packet).toBeDefined();
+    expect(packet.historical.regressionExposures.length).toBeGreaterThan(0);
+    expect(packet.historical.regressionNote).toMatch(/advisory/i);
   });
 });

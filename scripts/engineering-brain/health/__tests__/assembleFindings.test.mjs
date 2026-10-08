@@ -27,6 +27,14 @@ describe("assembleFindings", () => {
     expect(gap.whyItMatters.toLowerCase()).not.toMatch(/root cause/);
   });
 
+  it("carries structured monitoringStatus on coverage findings", () => {
+    const f = assembleFindings({ capabilities: caps, bugFixes: [] });
+    const gap = f.find((x) => x.id === "coverage:gap-cap");
+    const dark = f.find((x) => x.id === "coverage:dark-cap");
+    expect(gap.monitoringStatus).toBe("partially-covered");
+    expect(dark.monitoringStatus).toBe("uncovered");
+  });
+
   it("deduplicates repeated signals by stable id", () => {
     const dupCaps = [...caps, { ...caps[1] }]; // same id twice
     const f = assembleFindings({ capabilities: dupCaps, bugFixes: [] });
