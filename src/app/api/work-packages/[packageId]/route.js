@@ -24,7 +24,11 @@ export async function PATCH(request, { params }) {
       ownerId: auth.ownerId, actor: auth.actor, packageId, patch: body || {},
     });
     if (!result.ok) return fail(result);
-    return ok({ success: true, package: result.package });
+    return ok({
+      success: true,
+      package: result.package,
+      ...(result.budgetRevision ? { budgetRevision: result.budgetRevision } : {}),
+    });
   } catch (error) {
     return serverError("Work package update error", error);
   }

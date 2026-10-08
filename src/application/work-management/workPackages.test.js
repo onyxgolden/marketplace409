@@ -610,3 +610,98 @@ describe("industrial authorities", () => {
     }));
   });
 });
+
+describe("planned package budget (Slice 3)", () => {
+  it("creates packages with planned_cost_cents NULL and rejects an untracked create-time budget", async () => {
+    const insertChain = chain({ data: { ...PKG, planned_cost_cents: null }, error: null });
+    const db = mockDb([insertChain]);
+    const result = await createWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover" } });
+    expect(result.ok).toBe(true);
+    expect(insertChain.insert).toHaveBeenCalledWith(expect.objectContaining({ planned_cost_cents: null }));
+
+    const rejectedDb = mockDb([]);
+    const rejected = await createWorkPackage(rejectedDb, { ownerId: "owner_1", actor: "user_9",
+      input: { title: "Turnover", planned_budget: "1250.00" } });
+    expect(rejected).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(rejectedDb.rpc).not.toHaveBeenCalled();
+    expect(rejectedDb.from).not.toHaveBeenCalled();
+  });
+
+  it("sets $1,250.00 through the guarded atomic budget RPC", async () => {
+    const pkg = { ...PKG, planned_cost_cents: null, version: 3 };
+    const updated = { ...pkg, planned_cost_cents: 125000, version: 4 };
+    const revision = { id: "rev_1", old_planned_cost_cents: null, new_planned_cost_cents: 125000 };
+    const db = mockDb([chain({ data: pkg, error: null })], async () => ({
+      data: { ok: true, package: updated, revision }, error: null,
+    }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: {
+        planned_budget: "1250.00", budget_reason: "Initial budget", expected_version: 3,
+      } });
+    expect(result.ok).toBe(true);
+    expect(result.package.planned_cost_cents).toBe(125000);
+    expect(result.budgetRevision).toEqual(revision);
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_update_package_budget", {
+      p_owner_id: "owner_1",
+      p_package_id: "forge_wp_1",
+      p_expected_version: 3,
+      p_new_planned_cost_cents: 125000,
+      p_reason: "Initial budget",
+    });
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 409 for a stale budget edit before calling the RPC", async () => {
+    const db = mockDb([chain({ data: { ...PKG, version: 3 }, error: null })],
+      async () => ({ data: { ok: true }, error: null }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: {
+        planned_cost_cents: 125000, budget_reason: "Updated estimate", expected_version: 2,
+      } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 409 });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects negative, overflow, and extra-decimal budget inputs with 400", async () => {
+    for (const patch of [
+      { planned_cost_cents: -1, budget_reason: "Bad", expected_version: 3 },
+      { planned_cost_cents: Number.MAX_SAFE_INTEGER + 1, budget_reason: "Bad", expected_version: 3 },
+      { planned_budget: "12.345", budget_reason: "Bad", expected_version: 3 },
+      { planned_budget: "-12.00", budget_reason: "Bad", expected_version: 3 },
+    ]) {
+      const db = mockDb([chain({ data: PKG, error: null })], async () => ({ data: { ok: true }, error: null }));
+      const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+        packageId: "forge_wp_1", patch });
+      expect(result).toMatchObject({ ok: false, httpStatus: 400 });
+      expect(db.rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it("requires a reason and retains the terminal-package rule for budget edits", async () => {
+    const noReasonDb = mockDb([chain({ data: PKG, error: null })], async () => ({ data: { ok: true }, error: null }));
+    const noReason = await updateWorkPackage(noReasonDb, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_cost_cents: 100, expected_version: 3 } });
+    expect(noReason).toMatchObject({ ok: false, httpStatus: 400 });
+    expect(noReasonDb.rpc).not.toHaveBeenCalled();
+
+    const terminalDb = mockDb([chain({ data: { ...PKG, status: "verified_closed" }, error: null })],
+      async () => ({ data: { ok: true }, error: null }));
+    const terminal = await updateWorkPackage(terminalDb, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: {
+        planned_cost_cents: 100, budget_reason: "Late change", expected_version: 3,
+      } });
+    expect(terminal).toMatchObject({ ok: false, httpStatus: 409 });
+    expect(terminalDb.rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps an RPC version conflict to 409", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })],
+      async () => ({ data: { ok: false, error: "conflict" }, error: null }));
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: {
+        planned_cost_cents: 100, budget_reason: "Updated estimate", expected_version: 3,
+      } });
+    expect(result).toMatchObject({ ok: false, httpStatus: 409 });
+  });
+});

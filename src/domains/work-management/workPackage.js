@@ -5,6 +5,11 @@
 // Implements docs/forge-work-management/work-package-domain.md and
 // docs/forge-work-management/lifecycle.md.
 
+import {
+  normalizePlannedCostCents,
+  parsePlannedBudgetToCents,
+} from "./packageCosts.js";
+
 export const WP_STATUS = Object.freeze({
   DRAFT: "draft",
   PLANNED: "planned",
@@ -291,6 +296,14 @@ export function validatePackageInput(input, { isEdit = false } = {}) {
     if (Number(input.earned_manhours) < 0 || Number(input.earned_manhours) > Number(input.planned_manhours)) {
       errors.push("earned_manhours must be within 0..planned_manhours.");
     }
+  }
+  if (input.planned_cost_cents !== undefined) {
+    const planned = normalizePlannedCostCents(input.planned_cost_cents);
+    if (!planned.ok) errors.push(planned.error);
+  }
+  if (input.planned_budget !== undefined) {
+    const planned = parsePlannedBudgetToCents(input.planned_budget);
+    if (!planned.ok) errors.push(`planned budget ${planned.error}`);
   }
   // percent_complete is never hand-set on create/edit; it is derived or
   // rule-credited through the progress path. (A stored null carried through

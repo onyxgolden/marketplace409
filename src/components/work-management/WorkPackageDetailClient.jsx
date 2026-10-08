@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
 import WorkPackageLinks from "./WorkPackageLinks.jsx";
 import WorkPackageDocuments from "./WorkPackageDocuments.jsx";
+import WorkPackageBudgetPanel from "./WorkPackageBudgetPanel.jsx";
 
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm";
 const label = "block text-xs font-medium text-slate-600 mb-1";
@@ -49,6 +50,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   const [attestation, setAttestation] = useState({ gate: "", statement: "" });
   const [baselineItems, setBaselineItems] = useState("");
   const [changeForm, setChangeForm] = useState({ changeType: "addition", description: "" });
+  const [costRefreshKey, setCostRefreshKey] = useState(0);
 
   const allowed = allowedTransitionsFrom(pkg);
   const target = transitionTarget ? findTransition(pkg, transitionTarget) : null;
@@ -270,6 +272,12 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
         {pkg.description && !editing && <p className="mt-4 text-sm text-slate-600">{pkg.description}</p>}
       </section>
 
+      <WorkPackageBudgetPanel
+        packageId={pkg.id}
+        isTerminal={isTerminal}
+        refreshKey={costRefreshKey}
+      />
+
       <section className="rounded-lg border border-slate-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-slate-900">Lifecycle</h2>
         <p className="mt-1 text-sm text-slate-600">
@@ -369,7 +377,11 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
         )}
       </section>
 
-      <WorkPackageLinks packageId={pkg.id} initialLinks={initialLinks} />
+      <WorkPackageLinks
+        packageId={pkg.id}
+        initialLinks={initialLinks}
+        onLinksChanged={() => setCostRefreshKey((key) => key + 1)}
+      />
 
       <WorkPackageDocuments packageId={pkg.id} initialLinks={initialLinks} />
 

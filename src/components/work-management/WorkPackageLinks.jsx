@@ -15,7 +15,7 @@ const btnGhost = `${btn} border border-slate-300 text-slate-700 hover:bg-slate-5
 // the user picks a relationship and identifies the other record. Relationship
 // types are shown in plain English; the fixed orientation from the
 // vocabulary decides which end the package sits on.
-export default function WorkPackageLinks({ packageId, initialLinks = [] }) {
+export default function WorkPackageLinks({ packageId, initialLinks = [], onLinksChanged = null }) {
   const [links, setLinks] = useState(initialLinks);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -39,6 +39,7 @@ export default function WorkPackageLinks({ packageId, initialLinks = [] }) {
     setError("");
     try {
       setLinks(await fetchLinks());
+      if (onLinksChanged) onLinksChanged();
     } catch (e) {
       setError(e.message);
     }
@@ -93,7 +94,7 @@ export default function WorkPackageLinks({ packageId, initialLinks = [] }) {
   }
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5">
+    <section id="work-package-links" className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Links</h2>
       <p className="mt-1 text-xs text-slate-500">
         Connections to schedules, drawings, documents, vendors, and equipment.

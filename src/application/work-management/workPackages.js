@@ -14,6 +14,10 @@ import {
   derivePercentComplete, hashScopeMembership, deriveCurrentBaseline, isTerminalStatus,
 } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
+import {
+  normalizePlannedCostCents,
+  parsePlannedBudgetToCents,
+} from "@/domains/work-management/packageCosts.js";
 
 const TABLES = Object.freeze({
   packages: "forge_work_packages",
@@ -107,6 +111,15 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
   if (!validation.ok) {
     return { ok: false, httpStatus: 400, error: validation.errors.join(" ") };
   }
+  // A budget is never set as an untracked side effect of package creation.
+  // It is set from the package detail Budget and spending panel through the
+  // guarded RPC, which writes the initial append-only revision atomically.
+  if (input.planned_cost_cents !== undefined || input.planned_budget !== undefined) {
+    return {
+      ok: false, httpStatus: 400,
+      error: "Set the planned budget after creating the package so the initial budget is recorded in the audit history.",
+    };
+  }
   // Property assignment is validated and canonicalized server-side even
   // when the caller bypasses the UI picker; absent/empty means unassigned.
   const property = await resolvePackageProperty(db, ownerId, input.property_id);
@@ -124,6 +137,7 @@ export async function createWorkPackage(db, { ownerId, actor, input }) {
     priority: input.priority ?? "normal",
     project_id: input.project_id ?? null,
     property_id: property.propertyId,
+    planned_cost_cents: null,
     responsible_party: input.responsible_party ?? null,
     planned_start: input.planned_start ?? null,
     planned_finish: input.planned_finish ?? null,
@@ -156,6 +170,64 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   if (isTerminalStatus(pkg.status)) {
     return { ok: false, httpStatus: 409, error: `Package is ${pkg.status}; reopen it before editing.` };
+  }
+  // Planned-budget changes travel only through the guarded RPC: the package
+  // update and its append-only revision are one database transaction. They
+  // are deliberately not mixed with ordinary package edits, so a budget save
+  // can never be partially applied alongside unrelated fields.
+  if (patch.planned_cost_cents !== undefined || patch.planned_budget !== undefined) {
+    const budgetKeys = new Set([
+      "planned_cost_cents", "planned_budget", "budget_reason", "expected_version",
+    ]);
+    if (Object.keys(patch).some((key) => !budgetKeys.has(key))) {
+      return { ok: false, httpStatus: 400, error: "Save the planned budget separately from other package edits." };
+    }
+    if (!Number.isSafeInteger(patch.expected_version)) {
+      return { ok: false, httpStatus: 400, error: "expected_version is required for a budget change." };
+    }
+    if (pkg.version !== undefined && pkg.version !== null && patch.expected_version !== pkg.version) {
+      return { ok: false, httpStatus: 409, error: "Package changed while editing; refresh and retry." };
+    }
+    if (typeof patch.budget_reason !== "string" || patch.budget_reason.trim().length === 0) {
+      return { ok: false, httpStatus: 400, error: "A reason is required for a budget change." };
+    }
+    if (patch.budget_reason.trim().length > 500) {
+      return { ok: false, httpStatus: 400, error: "Budget change reason must be 500 characters or fewer." };
+    }
+    let planned;
+    if (patch.planned_budget !== undefined) {
+      planned = parsePlannedBudgetToCents(patch.planned_budget);
+      if (!planned.ok) return { ok: false, httpStatus: 400, error: planned.error };
+      if (patch.planned_cost_cents !== undefined) {
+        const cents = normalizePlannedCostCents(patch.planned_cost_cents);
+        if (!cents.ok) return { ok: false, httpStatus: 400, error: cents.error };
+        if (cents.cents !== planned.cents) {
+          return { ok: false, httpStatus: 400, error: "planned_budget and planned_cost_cents disagree." };
+        }
+      }
+    } else {
+      planned = normalizePlannedCostCents(patch.planned_cost_cents);
+      if (!planned.ok) return { ok: false, httpStatus: 400, error: planned.error };
+    }
+    const { data, error } = await db.rpc("forge_work_update_package_budget", {
+      p_owner_id: ownerId,
+      p_package_id: packageId,
+      p_expected_version: patch.expected_version,
+      p_new_planned_cost_cents: planned.cents,
+      p_reason: patch.budget_reason.trim(),
+    });
+    if (error) throw error;
+    if (!data || data.ok !== true) {
+      const err = (data && data.error) || "unknown";
+      if (err === "not_found") return { ok: false, httpStatus: 404, error: "Work package not found." };
+      if (err === "conflict") return { ok: false, httpStatus: 409, error: "Package changed while editing; refresh and retry." };
+      if (err === "terminal") return { ok: false, httpStatus: 409, error: `Package is ${pkg.status}; reopen it before editing.` };
+      if (err === "forbidden") return { ok: false, httpStatus: 403, error: "No workspace access for this package." };
+      if (err === "invalid_budget") return { ok: false, httpStatus: 400, error: "planned_cost_cents must be a nonnegative safe integer." };
+      if (err === "reason_required") return { ok: false, httpStatus: 400, error: "A reason is required for a budget change." };
+      throw new Error(`forge_work_update_package_budget: ${err}`);
+    }
+    return { ok: true, package: data.package, budgetRevision: data.revision || null };
   }
   // Property reassignment/clearing is validated and canonicalized
   // server-side, same as create. A missing property_id field leaves the
