@@ -48,12 +48,13 @@ function baseSeverity(finding) {
     case "evidence-unavailable":
       return "high";
     case "coverage-gap": {
-      // Derive from the finding's own description of status. The finding
-      // was built from monitoring_status; map conservatively.
-      const what = String(finding.what || "").toLowerCase();
-      if (what.includes("uncovered") && !what.includes("partially")) return "high";
-      if (what.includes("partially")) return "medium";
-      return "medium"; // unable-to-verify and unknown → medium
+      // Derive from the finding's structured monitoringStatus (authoritative,
+      // carried through from the registry via assembleFindings). Never parse
+      // the display text in `what` — wording can mislead; the field cannot.
+      const status = String(finding.monitoringStatus || "").toLowerCase();
+      if (status === "uncovered") return "high";
+      if (status === "partially-covered") return "medium";
+      return "medium"; // unable-to-verify and unknown/missing → medium
     }
     case "known-defect-repaired":
       return "low";

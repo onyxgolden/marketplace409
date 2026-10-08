@@ -5,6 +5,7 @@ const findings = [
   {
     id: "coverage:dark-cap",
     kind: "coverage-gap",
+    monitoringStatus: "uncovered",
     what: 'Runtime capability "Dark" is uncovered.',
     subsystem: "cron3",
     whyItMatters: "No monitoring evidence exists.",
@@ -16,6 +17,7 @@ const findings = [
   {
     id: "coverage:gap-cap",
     kind: "coverage-gap",
+    monitoringStatus: "partially-covered",
     what: 'Runtime capability "Gappy" is partially-covered.',
     subsystem: "cron2",
     whyItMatters: "Partial coverage.",
@@ -134,5 +136,52 @@ describe("prioritizeFindings", () => {
     expect(out[0].severity).toBe("high"); // medium + exposure boost
     expect(out[0].severityReason).toMatch(/regression-exposure/);
     expect(out[0].severityReason).toMatch(/not proof of regression/i);
+  });
+
+  it("derives severity from monitoringStatus, not display text", () => {
+    // Misleading what-text must not change the outcome: the structured
+    // monitoringStatus field is authoritative.
+    const misleadingUncovered = {
+      id: "coverage:mis1",
+      kind: "coverage-gap",
+      monitoringStatus: "partially-covered",
+      what: 'Runtime capability "X" is uncovered and alarming.', // lies
+      subsystem: "s1",
+      confidence: "medium",
+      evidenceLinks: [],
+    };
+    const misleadingCovered = {
+      id: "coverage:mis2",
+      kind: "coverage-gap",
+      monitoringStatus: "uncovered",
+      what: 'Runtime capability "Y" is covered.', // lies
+      subsystem: "s2",
+      confidence: "medium",
+      evidenceLinks: [],
+    };
+    const out = prioritizeFindings({
+      findings: [misleadingUncovered, misleadingCovered],
+      capabilities: [],
+    });
+    const byId = Object.fromEntries(out.map((f) => [f.id, f]));
+    expect(byId["coverage:mis1"].severity).toBe("medium"); // partially-covered, not high
+    expect(byId["coverage:mis2"].severity).toBe("high"); // uncovered, not medium
+  });
+
+  it("fails safe to medium when monitoringStatus is missing", () => {
+    const out = prioritizeFindings({
+      findings: [
+        {
+          id: "coverage:nostatus",
+          kind: "coverage-gap",
+          what: 'Runtime capability "Z" is uncovered.', // would have been high via text parsing
+          subsystem: "s3",
+          confidence: "medium",
+          evidenceLinks: [],
+        },
+      ],
+      capabilities: [],
+    });
+    expect(out[0].severity).toBe("medium"); // missing status → conservative medium, never text-derived high
   });
 });

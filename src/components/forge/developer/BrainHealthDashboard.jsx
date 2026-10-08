@@ -132,7 +132,7 @@ export function HandoffDraftBuilder({ findings }) {
 // Slice 6: triage queue view. Ordered by severity; each item expands to its
 // evidence packet (current vs historical) with a per-item handoff draft.
 // Advisory only — never claims broken/regression/root-cause/resolved.
-export function TriageQueueView({ triage, packets }) {
+export function TriageQueueView({ triage, packets, regressionExposureEvaluated }) {
   const [expandedId, setExpandedId] = useState(null);
   const [draftItemId, setDraftItemId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
@@ -203,6 +203,11 @@ export function TriageQueueView({ triage, packets }) {
         Ordered by severity, then confidence and freshness. Advisory only — items recommend
         investigation, never assert root cause or resolution. Select an item for its evidence packet.
       </p>
+      {regressionExposureEvaluated === false ? (
+        <p className="mt-1 text-xs italic text-slate-400 dark:text-slate-500">
+          Regression exposure: not evaluated (no changed-paths context at snapshot time).
+        </p>
+      ) : null}
       <ul className="mt-3 flex max-h-96 flex-col gap-3 overflow-auto">
         {triage.map((item) => {
           const expanded = expandedId === item.id;
@@ -315,7 +320,7 @@ export default function BrainHealthDashboard() {
     );
   }
 
-  const { health, findings, triage, packets } = data;
+  const { health, findings, triage, packets, regressionExposureEvaluated } = data;
   const coverage = health.runtimeCoverage;
 
   return (
@@ -401,7 +406,7 @@ export default function BrainHealthDashboard() {
       <HandoffDraftBuilder findings={findings} />
 
       {/* Slice 6: deterministic triage queue */}
-      <TriageQueueView triage={triage} packets={packets} />
+      <TriageQueueView triage={triage} packets={packets} regressionExposureEvaluated={regressionExposureEvaluated} />
 
       <p className="text-xs text-slate-400">
         Snapshot generated {health.generatedAt}. Advisory only — findings recommend investigation, never assert root cause.

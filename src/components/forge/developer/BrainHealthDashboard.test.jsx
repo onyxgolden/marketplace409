@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.stubGlobal("fetch", vi.fn());
-import BrainHealthDashboard, { HandoffDraftBuilder } from "./BrainHealthDashboard";
+import BrainHealthDashboard, { HandoffDraftBuilder, TriageQueueView } from "./BrainHealthDashboard";
 
 const FINDINGS = [
   {
@@ -47,5 +47,35 @@ describe("HandoffDraftBuilder", () => {
   it("handles zero findings without crashing", () => {
     const markup = renderToStaticMarkup(<HandoffDraftBuilder findings={[]} />);
     expect(markup).toContain("Review handoff draft");
+  });
+});
+
+describe("TriageQueueView", () => {
+  const triageItem = {
+    id: "coverage:dark-cap",
+    kind: "coverage-gap",
+    what: 'Runtime capability "Dark" is uncovered.',
+    subsystem: "cron3",
+    severity: "high",
+    triageState: "needs-review",
+    severityReason: "base:high",
+    confidence: "high",
+    whyItMatters: "No monitoring evidence exists.",
+    nextStep: "Verify manually.",
+    evidenceLinks: [],
+  };
+
+  it("shows 'not evaluated' when regression exposure was not evaluated", () => {
+    const markup = renderToStaticMarkup(
+      <TriageQueueView triage={[triageItem]} packets={{}} regressionExposureEvaluated={false} />,
+    );
+    expect(markup).toContain("not evaluated (no changed-paths context at snapshot time)");
+  });
+
+  it("does not show 'not evaluated' when exposures were evaluated", () => {
+    const markup = renderToStaticMarkup(
+      <TriageQueueView triage={[triageItem]} packets={{}} regressionExposureEvaluated={true} />,
+    );
+    expect(markup).not.toContain("not evaluated (no changed-paths context)");
   });
 });
