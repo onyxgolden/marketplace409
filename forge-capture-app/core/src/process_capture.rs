@@ -199,13 +199,22 @@ pub(crate) struct RawHookEvent {
 }
 
 /// A captured frame, handed from the capture worker to the evidence
-/// thread, carrying the window/process info gathered alongside it.
+/// thread. The captured region is always exactly the clicked top-level
+/// window's own rect — never a whole monitor — so no pixels belonging to
+/// any other window are ever read into this buffer in the first place,
+/// regardless of what the privacy decision later turns out to be: trust
+/// is granted per process, so the capture scope must match that exactly,
+/// not merely "whatever happens to share the same screen."
 pub(crate) struct CapturedFrame {
     pub raw: RawHookEvent,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-    pub monitor_origin: (i64, i64),
+    /// Top-left of the captured rect in the same physical/virtual-desktop
+    /// space as `raw.x`/`raw.y` — the window's own origin now, not a
+    /// monitor's, though the "subtract this to get local buffer
+    /// coordinates" math downstream is unchanged either way.
+    pub capture_origin: (i64, i64),
 }
 
 /// Non-blocking, bounded-by-count-and-bytes handoff. `send` never blocks:
@@ -317,11 +326,12 @@ mod win {
     };
     use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetClassNameW, GetMessageW, GetWindowLongPtrW,
-        GetWindowThreadProcessId, PostThreadMessageW, SendMessageTimeoutW, SetWindowsHookExW,
-        TranslateMessage, UnhookWindowsHookEx, WindowFromPoint, GWL_STYLE, HHOOK, MSG,
-        MSLLHOOKSTRUCT, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-        WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+        CallNextHookEx, DispatchMessageW, GetAncestor, GetClassNameW, GetMessageW,
+        GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, PostThreadMessageW,
+        SendMessageTimeoutW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+        WindowFromPoint, GA_ROOT, GWL_STYLE, HHOOK, MSG, MSLLHOOKSTRUCT, WH_MOUSE_LL,
+        WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_QUIT, WM_RBUTTONDOWN,
+        WM_RBUTTONUP,
     };
 
     const BS_OWNERDRAW: i32 = 0x0000_000B;
@@ -351,19 +361,53 @@ mod win {
         String::from_utf16_lossy(&buf[..end])
     }
 
-    /// Owning process name (lowercase, no path) for the window at `point`,
-    /// and that window's PID. Best-effort: an inaccessible process yields
-    /// `None` for the name but still the PID, which is enough for the
-    /// self-exclusion check.
-    fn window_and_process_at(point: POINT) -> (u32, Option<String>, HWND) {
+    /// The leaf window at `point` and its owning PID only — `WindowFromPoint`
+    /// plus `GetWindowThreadProcessId`, both local, non-blocking, bounded
+    /// reads of window-manager data (no cross-process call). This is the
+    /// *only* window/process lookup safe to run inside the hook callback;
+    /// it deliberately does not resolve a process name, which needs
+    /// `OpenProcess`/`QueryFullProcessImageNameW` — real cross-process
+    /// calls with no bound on their latency, and a value the hook callback
+    /// never needed anyway (self-exclusion compares PIDs, never names).
+    fn pid_at_point(point: POINT) -> (u32, HWND) {
         let hwnd = unsafe { WindowFromPoint(point) };
         if hwnd.0.is_null() {
-            return (0, None, hwnd);
+            return (0, hwnd);
         }
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-        let name = process_image_name(pid);
-        (pid, name, hwnd)
+        (pid, hwnd)
+    }
+
+    /// The top-level window owning `hwnd` — `GetAncestor(hwnd, GA_ROOT)`,
+    /// falling back to `hwnd` itself if it has no further ancestor (it is
+    /// already top-level) or the call fails. Used so capture scope and the
+    /// trust decision are both anchored to the same window: the one whose
+    /// process the author actually trusted, not whatever leaf control
+    /// happened to be under the cursor.
+    fn root_window(hwnd: HWND) -> HWND {
+        if hwnd.0.is_null() {
+            return hwnd;
+        }
+        let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+        if root.0.is_null() {
+            hwnd
+        } else {
+            root
+        }
+    }
+
+    /// Owning process name (lowercase, no path) for `hwnd` and its PID.
+    /// Only ever called on the evidence thread, which is allowed to block —
+    /// `OpenProcess`/`QueryFullProcessImageNameW` are real cross-process
+    /// calls, never safe inside the hook callback (see `pid_at_point`).
+    fn process_name_for_hwnd(hwnd: HWND) -> (u32, Option<String>) {
+        if hwnd.0.is_null() {
+            return (0, None);
+        }
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        (pid, process_image_name(pid))
     }
 
     fn process_image_name(pid: u32) -> Option<String> {
@@ -592,8 +636,11 @@ mod win {
                 };
                 // Self-exclusion's PID lookup and the hook-time bounded
                 // push are the only work this callback does -- both are
-                // local, non-blocking Win32 calls (no COM, no GDI).
-                let (window_pid, _name, _hwnd) = window_and_process_at(point);
+                // local, non-blocking Win32 calls, with no process-name
+                // resolution (no OpenProcess/QueryFullProcessImageNameW,
+                // which are real cross-process calls with no latency
+                // bound) -- self-exclusion only ever needs the PID.
+                let (window_pid, _hwnd) = pid_at_point(point);
                 let seq = SEQUENCE.with(|s| s.fetch_add(1, Ordering::SeqCst));
                 let event = RawHookEvent {
                     sequence_id: seq,
@@ -691,7 +738,7 @@ mod win {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             };
-            if let Some(frame) = capture_monitor_at(raw.x, raw.y, raw) {
+            if let Some(frame) = capture_window_at(raw.x, raw.y, raw) {
                 if let Ok(mut q) = c_out.lock() {
                     q.push(frame);
                 }
@@ -749,18 +796,37 @@ mod win {
                     continue;
                 };
 
-                // Sequence-gap detection: honest, not silent.
+                // Sequence-gap detection: honest, not silent. Regression:
+                // `Ok(vec![])` is the normal, gap-free, contiguous case —
+                // matching on `Ok(_)` alone and resetting unconditionally
+                // reset the classifier's pending state before every single
+                // event, including right before a down's own matching up,
+                // which meant no down/up pair could ever resolve. The
+                // classifier is reset only when a real gap was found, or
+                // defensively on a sequence anomaly (`Err`) — never on the
+                // ordinary contiguous path.
                 if let Some(prev) = last_seq {
-                    if let Ok(gaps) =
-                        crate::process_session::detect_sequence_gaps(&[prev, frame.raw.sequence_id])
-                    {
-                        for (first, last) in gaps {
-                            sink(PipelineMessage::Gap(GapMarker {
-                                first_missing: first,
-                                last_missing: last,
-                            }));
+                    match crate::process_session::detect_sequence_gaps(&[
+                        prev,
+                        frame.raw.sequence_id,
+                    ]) {
+                        Ok(gaps) if !gaps.is_empty() => {
+                            for (first, last) in gaps {
+                                sink(PipelineMessage::Gap(GapMarker {
+                                    first_missing: first,
+                                    last_missing: last,
+                                }));
+                            }
+                            classifier.reset();
                         }
-                        classifier.reset();
+                        Ok(_) => {}
+                        Err(_) => {
+                            // A non-increasing sequence id should not be
+                            // possible given the single-producer
+                            // architecture; if it ever happens, reset
+                            // defensively rather than risk mis-pairing.
+                            classifier.reset();
+                        }
                     }
                 }
                 last_seq = Some(frame.raw.sequence_id);
@@ -795,7 +861,18 @@ mod win {
                     evidence = ev;
                     uia_is_password = pw;
                 }
-                let (_pid2, proc_name, hwnd_for_native) = window_and_process_at(point_screen);
+                // The leaf control under the point is what owner-draw/
+                // password-char checks need (gather_signals, below). The
+                // trust decision is anchored to that control's TOP-LEVEL
+                // window's owning process instead -- the same window the
+                // capture worker scoped the screenshot to (see
+                // capture_window_at) -- so capture scope and trust scope
+                // are always the same window, never "whatever process
+                // owns the exact pixel under the cursor" vs. "whatever
+                // was captured."
+                let hwnd_for_native = unsafe { WindowFromPoint(point_screen) };
+                let root_hwnd = root_window(hwnd_for_native);
+                let (_root_pid, proc_name) = process_name_for_hwnd(root_hwnd);
                 evidence.process_name = proc_name.clone();
 
                 let trust = match &proc_name {
@@ -824,8 +901,8 @@ mod win {
                     crate::process_session::SensitivityDecision::RedactRegion => {
                         if let Some(rect) = evidence.bounding_rect_physical {
                             let local = RectI {
-                                x: rect.x - frame.monitor_origin.0,
-                                y: rect.y - frame.monitor_origin.1,
+                                x: rect.x - frame.capture_origin.0,
+                                y: rect.y - frame.capture_origin.1,
                                 w: rect.w,
                                 h: rect.h,
                             };
@@ -877,11 +954,44 @@ mod win {
         })
     }
 
-    /// Captures the whole monitor containing `(x, y)` via the existing
-    /// public `native::capture_rect`/`native::list_monitors` — no new GDI
-    /// code, reusing the same primitive every other capture path in this
-    /// app already uses.
-    fn capture_monitor_at(x: i64, y: i64, raw: RawHookEvent) -> Option<CapturedFrame> {
+    /// Captures *only* the clicked top-level window's own rect — never a
+    /// whole monitor. Regression: the original design captured the entire
+    /// monitor under the click, while the privacy decision is keyed to the
+    /// clicked process; trusting that one process does not grant
+    /// permission to retain pixels belonging to every other window that
+    /// happens to share the same screen. Scoping capture to exactly the
+    /// window whose process will be checked means no other window's
+    /// pixels are ever read into the buffer in the first place, regardless
+    /// of what the trust decision later turns out to be. Still reuses the
+    /// existing public `native::capture_rect`/`native::list_monitors` — no
+    /// new GDI code, only a smaller, correctly-scoped rect passed to it.
+    fn capture_window_at(x: i64, y: i64, raw: RawHookEvent) -> Option<CapturedFrame> {
+        let point = POINT {
+            x: x as i32,
+            y: y as i32,
+        };
+        let leaf = unsafe { WindowFromPoint(point) };
+        if leaf.0.is_null() {
+            return None;
+        }
+        let root = root_window(leaf);
+        let mut win_rect = windows::Win32::Foundation::RECT::default();
+        if unsafe { GetWindowRect(root, &mut win_rect) }.is_err() {
+            return None;
+        }
+        let rect = RectI {
+            x: win_rect.left as i64,
+            y: win_rect.top as i64,
+            w: (win_rect.right - win_rect.left).max(0) as u64,
+            h: (win_rect.bottom - win_rect.top).max(0) as u64,
+        };
+        if rect.w == 0 || rect.h == 0 {
+            return None;
+        }
+        // native::capture_rect's Windows implementation ignores `monitor`
+        // (the rect is already fully specified); it is still required by
+        // the cross-platform signature, so any monitor whose bounds the
+        // window overlaps satisfies it.
         let monitors = crate::native::list_monitors().ok()?;
         let monitor = monitors.iter().find(|m| {
             let left = m.origin_virtual.0 as i64;
@@ -890,23 +1000,13 @@ mod win {
             let bottom = top + (m.size_logical.1 as f64 * m.scale).round() as i64;
             x >= left && x < right && y >= top && y < bottom
         })?;
-        let left = monitor.origin_virtual.0 as i64;
-        let top = monitor.origin_virtual.1 as i64;
-        let w = (monitor.size_logical.0 as f64 * monitor.scale).round() as u64;
-        let h = (monitor.size_logical.1 as f64 * monitor.scale).round() as u64;
-        let rect = RectI {
-            x: left,
-            y: top,
-            w,
-            h,
-        };
         let frame = crate::native::capture_rect(rect, monitor, false).ok()?;
         Some(CapturedFrame {
             raw,
-            width: w as u32,
-            height: h as u32,
+            width: rect.w as u32,
+            height: rect.h as u32,
             rgba: frame.rgba,
-            monitor_origin: (left, top),
+            capture_origin: (rect.x, rect.y),
         })
     }
 }
