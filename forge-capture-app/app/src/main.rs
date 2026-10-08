@@ -151,7 +151,9 @@ fn pipeline_message_size(message: &forge_capture_core::process_capture::Pipeline
                 .map(|(_, _, rgba)| rgba.len())
                 .unwrap_or(0)
         }
-        PipelineMessage::Gap(_) | PipelineMessage::QueueOverflow { .. } => 32,
+        PipelineMessage::Gap(_)
+        | PipelineMessage::QueueOverflow { .. }
+        | PipelineMessage::SessionReconciliationUncertain { .. } => 32,
     }
 }
 
@@ -1907,11 +1909,12 @@ fn capture_region_backdrop(monitors: &[Monitor], monitor_id: &str) -> Result<Vec
 /// solid-color desktop is also uniform, so this only raises the
 /// blank-frame *warning* (retry / proceed / cancel), never a hard abort.
 fn solid_frame_rgba(rgba: &[u8]) -> bool {
-    if rgba.len() < 8 || rgba.len() % 4 != 0 {
+    if rgba.len() < 8 || !rgba.len().is_multiple_of(4) {
         return false;
     }
     let (first, rest) = rgba.split_at(4);
-    rest.chunks_exact(4).all(|px| px == first)
+    let (chunks, _) = rest.as_chunks::<4>();
+    chunks.iter().all(|px| px == first)
 }
 
 /// Watchdog: if a region pick is still pending after 60 s (the overlay never

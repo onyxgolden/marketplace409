@@ -189,6 +189,18 @@ pub enum PipelineMessage {
         stage: &'static str,
         dropped_count: u64,
     },
+    /// End-of-session reconciliation could not confirm the hook thread
+    /// had fully stopped (incrementing the shared sequence counter)
+    /// before the wait deadline passed. Emitted *instead of* a terminal
+    /// `Gap` in that case — reading the counter and reporting a range as
+    /// if it were the definitive final state would be presenting an
+    /// unconfirmed snapshot as fact; this says plainly that the trailing
+    /// portion of the session is unknown, not confirmed-complete.
+    /// `last_processed_seq` is the last sequence id this thread actually
+    /// finished processing, for whatever partial accounting is possible.
+    SessionReconciliationUncertain {
+        last_processed_seq: Option<u64>,
+    },
 }
 
 /// Raw down/up transition the hook thread hands onward — plain data,
@@ -318,9 +330,41 @@ pub(crate) fn resolve_startup_result(
     }
 }
 
+/// The per-frame byte budget `validate_frame_dimensions` enforces.
+/// Deliberately generous for any real monitor/window (a 7680×4320 8K
+/// frame is ~133 MB) while still rejecting a malformed or extreme window
+/// rect before any allocation is attempted.
+pub(crate) const MAX_FRAME_BYTES: usize = 256 * 1024 * 1024;
+/// Per-dimension cap, matching real hardware limits with headroom —
+/// GDI's own `CreateCompatibleBitmap` has comparable practical ceilings.
+pub(crate) const MAX_FRAME_DIMENSION: i32 = 16384;
+
+/// Validates a window rect's width/height are sane *before* any
+/// allocation or GDI call is attempted, returning the exact RGBA byte
+/// length to allocate on success. Pure, host-independent arithmetic/logic
+/// — extracted specifically so a malformed or extreme rect (whether from
+/// a buggy window, a deliberately hostile one, or corrupted state) cannot
+/// cause an excessive allocation, an integer overflow, or a process
+/// termination; rejected here, before `CreateCompatibleBitmap`/`vec![]`
+/// ever run, rather than discovered after the fact.
+pub(crate) fn validate_frame_dimensions(width: i32, height: i32) -> Option<usize> {
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    if width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION {
+        return None;
+    }
+    let pixels = (width as usize).checked_mul(height as usize)?;
+    let bytes = pixels.checked_mul(4)?;
+    if bytes > MAX_FRAME_BYTES {
+        return None;
+    }
+    Some(bytes)
+}
+
 #[cfg(test)]
 mod pure_tests {
-    use super::resolve_startup_result;
+    use super::{resolve_startup_result, validate_frame_dimensions, MAX_FRAME_DIMENSION};
     use std::sync::mpsc::RecvTimeoutError;
 
     #[test]
@@ -385,6 +429,65 @@ mod pure_tests {
             Ok(Err("evidence boom".to_string())),
         );
         assert!(result.is_some());
+    }
+
+    // -- validate_frame_dimensions --
+
+    #[test]
+    fn an_ordinary_window_size_is_accepted_with_the_right_byte_length() {
+        assert_eq!(validate_frame_dimensions(1920, 1080), Some(1920 * 1080 * 4));
+    }
+
+    #[test]
+    fn a_generously_large_but_real_monitor_size_is_still_accepted() {
+        // 8K, ~133 MB -- within MAX_FRAME_BYTES, well below any real
+        // display's actual limits.
+        assert_eq!(validate_frame_dimensions(7680, 4320), Some(7680 * 4320 * 4));
+    }
+
+    #[test]
+    fn zero_or_negative_dimensions_are_rejected() {
+        assert_eq!(validate_frame_dimensions(0, 100), None);
+        assert_eq!(validate_frame_dimensions(100, 0), None);
+        assert_eq!(validate_frame_dimensions(-1, 100), None);
+        assert_eq!(validate_frame_dimensions(100, -1), None);
+    }
+
+    #[test]
+    fn a_dimension_beyond_the_per_axis_cap_is_rejected() {
+        assert_eq!(validate_frame_dimensions(MAX_FRAME_DIMENSION + 1, 10), None);
+        assert_eq!(validate_frame_dimensions(10, MAX_FRAME_DIMENSION + 1), None);
+    }
+
+    #[test]
+    fn a_dimension_at_exactly_the_per_axis_cap_is_still_accepted_if_the_byte_budget_allows() {
+        // MAX_FRAME_DIMENSION alone is accepted; only the product against
+        // the other axis determines whether the byte budget is exceeded.
+        assert_eq!(
+            validate_frame_dimensions(MAX_FRAME_DIMENSION, 1),
+            Some(MAX_FRAME_DIMENSION as usize * 4)
+        );
+    }
+
+    #[test]
+    fn a_product_within_axis_caps_but_exceeding_the_byte_budget_is_rejected() {
+        // Both axes individually legal, but width * height * 4 exceeds
+        // MAX_FRAME_BYTES -- this is exactly the "malformed/extreme rect"
+        // case the review finding is about: no single dimension looks
+        // absurd, but the allocation would be.
+        assert_eq!(
+            validate_frame_dimensions(MAX_FRAME_DIMENSION, MAX_FRAME_DIMENSION),
+            None
+        );
+    }
+
+    #[test]
+    fn near_i32_max_dimensions_never_panic_via_overflow_and_are_rejected() {
+        // Exercises the checked_mul path specifically -- a naive
+        // `width * height * 4` with i32/usize casts could overflow for
+        // inputs this large; this must return None, never panic.
+        assert_eq!(validate_frame_dimensions(i32::MAX, i32::MAX), None);
+        assert_eq!(validate_frame_dimensions(i32::MAX, 1), None);
     }
 }
 
@@ -536,6 +639,27 @@ mod win {
         } else {
             root
         }
+    }
+
+    /// `true` only when `hwnd` still denotes a live window *and* that
+    /// window's current owning PID still equals `expected_pid` (the PID
+    /// recorded at hook time). `IsWindow` alone proves a handle currently
+    /// denotes *some* window, never that it is the *same* window — Windows
+    /// reuses destroyed HWND values, so a recycled handle can belong to a
+    /// different process by the time anything downstream of the hook gets
+    /// to it. Shared by both the capture worker (gates capture itself,
+    /// not just the later persist decision — see `capture_window_at`'s own
+    /// doc comment for why that distinction matters) and the evidence
+    /// thread (re-checked again, since still more time passes before
+    /// persistence). Local, non-blocking (`GetWindowThreadProcessId`
+    /// only) — safe to call from either thread.
+    fn identity_matches(hwnd: HWND, expected_pid: u32) -> bool {
+        if hwnd.0.is_null() || !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+            return false;
+        }
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        pid != 0 && pid == expected_pid
     }
 
     /// Owning process name (lowercase, no path) for `hwnd` and its PID.
@@ -1374,15 +1498,32 @@ mod win {
             {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            let final_seq = b_sequence.load(Ordering::SeqCst);
-            let baseline = last_seq.unwrap_or(0);
-            if let Ok(gaps) = crate::process_session::detect_sequence_gaps(&[baseline, final_seq]) {
-                for (first, last) in gaps {
-                    sink(PipelineMessage::Gap(GapMarker {
-                        first_missing: first,
-                        last_missing: last,
-                    }));
+            // Regression, caught by review: the wait above used to be
+            // treated as good enough regardless of whether it actually
+            // confirmed `hook_fully_stopped` -- on a timeout, the counter
+            // was still read and reported as a definitive final gap,
+            // which could be wrong (the hook might still be about to
+            // increment it) and silently present an unconfirmed snapshot
+            // as fact. Only a *confirmed* stop makes reading the counter
+            // honest; a timeout reports explicit uncertainty instead of a
+            // possibly-false-precise range.
+            if b_fully_stopped.load(Ordering::SeqCst) {
+                let final_seq = b_sequence.load(Ordering::SeqCst);
+                let baseline = last_seq.unwrap_or(0);
+                if let Ok(gaps) =
+                    crate::process_session::detect_sequence_gaps(&[baseline, final_seq])
+                {
+                    for (first, last) in gaps {
+                        sink(PipelineMessage::Gap(GapMarker {
+                            first_missing: first,
+                            last_missing: last,
+                        }));
+                    }
                 }
+            } else {
+                sink(PipelineMessage::SessionReconciliationUncertain {
+                    last_processed_seq: last_seq,
+                });
             }
 
             unsafe {
@@ -1454,6 +1595,32 @@ mod win {
     /// rather than ever falling back to the screen-`BitBlt` path, which
     /// would silently reintroduce the exact isolation gap being fixed for
     /// precisely the windows where the isolated path doesn't work.
+    /// `PrintWindow` reporting success is an OS-API success signal only —
+    /// it is not a content-correctness guarantee (the target could render
+    /// stale, partial, or blank content and still return success); the
+    /// one further check genuinely available without a known-good
+    /// reference to compare against is rejecting an entirely blank
+    /// buffer (see `print_window_rgba`'s own doc comment), which this
+    /// design does not claim is a complete answer to that limitation,
+    /// only a cheap, real floor.
+    ///
+    /// Identity is verified (`identity_matches`, against `raw.window_pid`
+    /// recorded at hook time) *before* any capture work is attempted here
+    /// — not only later, before persisting (the evidence thread still
+    /// re-checks independently, since more time passes before that
+    /// decision). Review finding: capturing first and validating only
+    /// before persist left a window where pixels could be pulled from an
+    /// already-stale/reused handle even though they would ultimately be
+    /// discarded — gating capture itself closes that window to near zero
+    /// rather than relying solely on a later discard. What this still
+    /// cannot rule out: the *same process* destroying a window and
+    /// recreating a new one that happens to reuse the identical HWND
+    /// value in between — PID equality cannot distinguish two different
+    /// window instances owned by the same process. This residual
+    /// limitation is disclosed, not hidden; there is no practical Win32
+    /// API that exposes a window "instance identity" distinct from its
+    /// (reusable) handle value and its (unchanged, same-process) owning
+    /// PID.
     ///
     /// Takes the hook-time-resolved `HWND` directly (`raw.hwnd_value`)
     /// rather than re-resolving one from `(x, y)` via a fresh
@@ -1464,7 +1631,7 @@ mod win {
     /// the click and this function running.
     fn capture_window_at(raw: RawHookEvent) -> Option<CapturedFrame> {
         let leaf = hwnd_from_value(raw.hwnd_value);
-        if leaf.0.is_null() {
+        if !identity_matches(leaf, raw.window_pid) {
             return None;
         }
         let root = root_window(leaf);
@@ -1472,13 +1639,15 @@ mod win {
         if unsafe { GetWindowRect(root, &mut win_rect) }.is_err() {
             return None;
         }
-        let width = (win_rect.right - win_rect.left).max(0);
-        let height = (win_rect.bottom - win_rect.top).max(0);
-        if width == 0 || height == 0 {
-            return None;
-        }
+        let width = win_rect.right - win_rect.left;
+        let height = win_rect.bottom - win_rect.top;
+        // Rejects a malformed/extreme rect (checked arithmetic, a sane
+        // per-axis cap, and an explicit byte budget) *before* any
+        // allocation or GDI call — see `validate_frame_dimensions`'s own
+        // doc comment.
+        super::validate_frame_dimensions(width, height)?;
 
-        let rgba = unsafe { print_window_rgba(root, width, height) }?;
+        let rgba = print_window_rgba_bounded(root, width, height)?;
 
         Some(CapturedFrame {
             raw,
@@ -1489,13 +1658,62 @@ mod win {
         })
     }
 
+    /// How long a single `PrintWindow` attempt is allowed to run before
+    /// it is treated as a capture failure and abandoned.
+    const PRINT_WINDOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// Runs the actual `PrintWindow`-based capture on a dedicated,
+    /// short-lived helper thread and waits for it with a hard timeout —
+    /// never on the capture worker thread itself.
+    ///
+    /// Review finding: `PrintWindow` asks another process to render; an
+    /// unresponsive, hung, or hostile target can block that call
+    /// indefinitely. Calling it directly on the capture worker thread (as
+    /// the previous round did) meant a single stuck target could block
+    /// that thread forever — and since `ProcessCaptureHandle::stop` joins
+    /// the capture thread with no timeout of its own, a hung capture
+    /// could make `stop` itself hang forever too.
+    ///
+    /// Rust has no safe way to forcibly cancel a blocked native call, so
+    /// this bounds the *wait*, not the call itself: a dedicated thread is
+    /// spawned per attempt, the result is sent back over a channel, and
+    /// this function returns as soon as either the result arrives or
+    /// `PRINT_WINDOW_TIMEOUT` elapses — whichever is first. On a timeout,
+    /// the capture worker thread is freed immediately and treats this as
+    /// an ordinary capture failure (counted the same as any other). The
+    /// spawned helper thread itself is *not* killed — if the target truly
+    /// never responds, that one thread remains blocked for the life of
+    /// the process, a disclosed, accepted trade-off rather than a hidden
+    /// one: it never blocks the three main pipeline threads, never blocks
+    /// `stop`'s join, and only accumulates per genuinely-hung target
+    /// (expected to be rare), not per ordinary capture.
+    fn print_window_rgba_bounded(root: HWND, width: i32, height: i32) -> Option<Vec<u8>> {
+        let root_value = root.0 as isize;
+        let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+        std::thread::spawn(move || {
+            let hwnd = hwnd_from_value(root_value);
+            let result = unsafe { print_window_rgba(hwnd, width, height) };
+            // Ignored if the receiver already gave up on timeout -- that
+            // is exactly the case this function exists to make harmless.
+            let _ = tx.send(result);
+        });
+        // `unwrap_or_default` here means exactly "timeout or a sent
+        // `None` both collapse to `None`" -- not a silent swallow of a
+        // real result.
+        rx.recv_timeout(PRINT_WINDOW_TIMEOUT).unwrap_or_default()
+    }
+
     /// The actual `PrintWindow`-based capture: renders `hwnd`'s own
     /// content (via `PW_RENDERFULLCONTENT`, needed for correct output
     /// from modern DWM-composited windows) into a compatible bitmap, then
     /// reads it back as top-down RGBA — the same `GetDIBits` plumbing
     /// `native::capture_screen_rect` uses, just fed by `PrintWindow`
     /// instead of `BitBlt`-from-the-screen-DC. `None` on any failure at
-    /// any step; never partially successful.
+    /// any step, including an entirely blank result (see this function's
+    /// caller's doc comment for what that is, and is not, evidence of);
+    /// never partially successful. Always called from the dedicated
+    /// helper thread `print_window_rgba_bounded` spawns — never directly
+    /// from the capture worker thread, which must never block on this.
     unsafe fn print_window_rgba(hwnd: HWND, width: i32, height: i32) -> Option<Vec<u8>> {
         use windows::Win32::Graphics::Gdi::{
             CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
@@ -1532,6 +1750,9 @@ mod win {
 
         SelectObject(mem_dc, old);
 
+        // Byte length already validated by the caller
+        // (`validate_frame_dimensions`, via `capture_window_at`) — not
+        // recomputed from an unchecked width*height*4 here.
         let mut rgba = vec![0u8; width as usize * height as usize * 4];
         let lines = if printed {
             let mut bmi = BITMAPINFO::default();
@@ -1559,6 +1780,16 @@ mod win {
         ReleaseDC(None, reference_dc);
 
         if !printed || lines == 0 {
+            return None;
+        }
+        // PrintWindow succeeding is an API-level signal only (see this
+        // function's own doc comment) -- an entirely blank buffer most
+        // likely means the render silently produced nothing useful
+        // despite reporting success, so it is treated as a failure
+        // rather than persisted as a suspiciously-empty "successful"
+        // capture. This is a cheap, real floor, not a claim that any
+        // non-blank result is proven correct.
+        if rgba.iter().all(|&b| b == 0) {
             return None;
         }
         crate::native::bgra_to_rgba_force_opaque(&mut rgba);
