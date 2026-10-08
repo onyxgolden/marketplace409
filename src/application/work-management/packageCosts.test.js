@@ -140,4 +140,29 @@ describe("getPackageCostSummary", () => {
     expect(result.summary.actualCostCents).toBe(0);
     expect(result.summary.excludedEvents[0].code).toBe("event_not_found");
   });
+
+  it("fails closed when a property-assigned package is linked to a property-less event", async () => {
+    const db = dbFor({ events: [{ ...EVENT, property_id: null }] });
+    const result = await getPackageCostSummary(db, { ownerId: OWNER, packageId: PKG.id });
+    expect(result.summary.actualCostCents).toBe(0);
+    expect(result.summary.includedEventCount).toBe(0);
+    expect(result.summary.excludedEvents[0].code).toBe("property_unassigned_event");
+  });
+
+  it("reports totals as unavailable instead of an imprecise number when the aggregate overflows", async () => {
+    const db = dbFor({
+      links: [
+        LINK,
+        { ...LINK, id: "link_2", source_id: "event_2" },
+      ],
+      events: [
+        { ...EVENT, amount: "45035996273705.00" },
+        { ...EVENT, id: "event_2", amount: "45035996273705.00", event_date: "2026-10-02" },
+      ],
+    });
+    const result = await getPackageCostSummary(db, { ownerId: OWNER, packageId: PKG.id });
+    expect(result.summary.totalsError?.code).toBe("actual_total_overflow");
+    expect(result.summary.actualCostCents).toBeNull();
+    expect(result.summary.varianceCents).toBeNull();
+  });
 });

@@ -125,13 +125,18 @@ export default function WorkPackageBudgetPanel({
   }
 
   const variance = summary?.varianceCents;
-  const varianceText = !summary || !summary.hasPlan
+  const totalsUnavailable = Boolean(summary?.totalsError);
+  const varianceText = !summary
     ? "No budget set"
-    : variance > 0
-      ? `Over budget by ${money(variance)}`
-      : variance < 0
-        ? `Under budget by ${money(Math.abs(variance))}`
-        : "On budget";
+    : totalsUnavailable
+      ? "Unavailable"
+      : !summary.hasPlan
+        ? "No budget set"
+        : variance > 0
+          ? `Over budget by ${money(variance)}`
+          : variance < 0
+            ? `Under budget by ${money(Math.abs(variance))}`
+            : "On budget";
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="Budget and spending">
@@ -163,7 +168,9 @@ export default function WorkPackageBudgetPanel({
             </div>
             <div>
               <dt className="text-xs font-medium text-slate-500">Recorded spending</dt>
-              <dd className="mt-0.5 text-sm font-medium text-slate-900">{money(summary.actualCostCents)} recorded</dd>
+              <dd className="mt-0.5 text-sm font-medium text-slate-900">
+                {totalsUnavailable ? "Unavailable" : `${money(summary.actualCostCents)} recorded`}
+              </dd>
               <dd className="mt-0.5 text-xs text-slate-500">
                 {summary.includedEventCount === 0
                   ? "No eligible linked financial events yet."

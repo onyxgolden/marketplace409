@@ -246,7 +246,22 @@ export function buildPackageCostSummary({
 
     const amountCents = Math.abs(amount.cents);
     if (pkg?.property_id) {
-      if (event.property_id && !propertyMatches(event.property_id, pkg.property_id, unitIdSet)) {
+      // Assigned package: fail closed. The event must carry a POSITIVE
+      // matching association — canonical property slug or exact known unit
+      // id. A property-less event (null/blank event property_id) can never
+      // prove it belongs to this property, so it is excluded rather than
+      // silently assigning unallocated portfolio spending to this property.
+      const eventProperty = typeof event.property_id === "string"
+        ? event.property_id.trim()
+        : event.property_id;
+      if (!eventProperty) {
+        item = exclusion(
+          "property_unassigned_event",
+          eventId,
+          "A linked financial event has no property association, so it was excluded from this property's package actuals.",
+          amountCents,
+        );
+      } else if (!propertyMatches(eventProperty, pkg.property_id, unitIdSet)) {
         item = exclusion("property_mismatch", eventId, "A linked financial event belongs to a different property and was excluded.", amountCents);
       }
     } else if (event.property_id) {
@@ -326,14 +341,43 @@ export function buildPackageCostSummary({
   excludedEvents.sort((a, b) => String(a.eventId).localeCompare(String(b.eventId)));
   ambiguousEventIds.sort();
 
-  const actualCostCents = Number(actualCentsTotal);
+  // Fail closed on aggregate precision: individual amounts are safe-integer
+  // validated, but their BigInt sum (or the planned-vs-actual difference) can
+  // exceed the exact JS integer range. Never hand callers an imprecise
+  // Number — report the totals as unavailable with an explicit error state.
+  let actualCostCents = null;
+  let varianceCents = null;
+  let totalsError = null;
+  if (actualCentsTotal > MAX_SAFE_CENTS) {
+    totalsError = {
+      code: "actual_total_overflow",
+      message: "The linked spending total is too large to count exactly, so package totals are unavailable instead of approximated.",
+    };
+  } else {
+    actualCostCents = Number(actualCentsTotal);
+    if (plannedCostCents !== null) {
+      const variance = actualCentsTotal - BigInt(plannedCostCents);
+      if (variance > MAX_SAFE_CENTS || variance < -MAX_SAFE_CENTS) {
+        totalsError = {
+          code: "variance_total_overflow",
+          message: "The planned-versus-recorded difference is too large to count exactly, so package totals are unavailable instead of approximated.",
+        };
+        actualCostCents = null;
+      } else {
+        varianceCents = Number(variance);
+      }
+    }
+  }
+  if (totalsError) addWarning(totalsError.code, totalsError.message);
+
   return Object.freeze({
     packageId,
     packagePropertyId: pkg?.property_id || null,
     scope: pkg?.property_id ? "assigned_property" : "unassigned",
     plannedCostCents,
     actualCostCents,
-    varianceCents: plannedCostCents === null ? null : actualCostCents - plannedCostCents,
+    varianceCents,
+    totalsError: totalsError ? Object.freeze(totalsError) : null,
     hasPlan: plannedCostCents !== null,
     includedEventCount: includedEvents.length,
     includedEventIds: includedEvents.map((event) => event.eventId),

@@ -200,6 +200,67 @@ describe("buildPackageCostSummary", () => {
     expect(result.excludedEvents[0].code).toBe("property_mismatch");
   });
 
+  it("fails closed for a property-assigned package when a linked event has no property association", () => {
+    const result = summary({ events: [event({ property_id: null })] });
+    expect(result.actualCostCents).toBe(0);
+    expect(result.includedEventCount).toBe(0);
+    expect(result.excludedEvents).toHaveLength(1);
+    expect(result.excludedEvents[0].code).toBe("property_unassigned_event");
+    expect(result.excludedEvents[0].amountCents).toBe(12535);
+    expect(result.warnings.map((warning) => warning.code)).toContain("property_unassigned_event");
+  });
+
+  it("treats a blank event property id as no association for an assigned package", () => {
+    const result = summary({ events: [event({ property_id: "  " })] });
+    expect(result.actualCostCents).toBe(0);
+    expect(result.excludedEvents[0].code).toBe("property_unassigned_event");
+  });
+
+  it("fails closed instead of emitting an imprecise aggregate total", () => {
+    // Each amount is individually safe (4,503,599,627,370,500 cents), but the
+    // sum 9,007,199,254,741,000 cents exceeds Number.MAX_SAFE_INTEGER.
+    const result = summary({
+      links: [
+        link({ id: "link_1", source_id: "event_1" }),
+        link({ id: "link_2", source_id: "event_2" }),
+      ],
+      events: [
+        event({ id: "event_1", amount: "45035996273705.00" }),
+        event({ id: "event_2", amount: "45035996273705.00", event_date: "2026-10-02" }),
+      ],
+    });
+    expect(result.totalsError?.code).toBe("actual_total_overflow");
+    expect(result.actualCostCents).toBeNull();
+    expect(result.varianceCents).toBeNull();
+    expect(result.includedEventCount).toBe(2);
+    expect(result.warnings.map((warning) => warning.code)).toContain("actual_total_overflow");
+  });
+
+  it("withholds variance instead of approximating it when the aggregate overflows", () => {
+    const result = summary({
+      package: { ...PACKAGE, planned_cost_cents: 15000 },
+      links: [
+        link({ id: "link_1", source_id: "event_1" }),
+        link({ id: "link_2", source_id: "event_2" }),
+      ],
+      events: [
+        event({ id: "event_1", amount: "45035996273705.00" }),
+        event({ id: "event_2", amount: "45035996273705.00", event_date: "2026-10-02" }),
+      ],
+    });
+    expect(result.hasPlan).toBe(true);
+    expect(result.totalsError).not.toBeNull();
+    expect(result.actualCostCents).toBeNull();
+    expect(result.varianceCents).toBeNull();
+  });
+
+  it("counts an aggregate exactly at the safe-integer boundary exactly", () => {
+    const result = summary({ events: [event({ amount: "90071992547409.91" })] });
+    expect(result.totalsError).toBeNull();
+    expect(result.actualCostCents).toBe(9007199254740991);
+    expect(result.varianceCents).toBe(9007199254740991 - 15000);
+  });
+
   it("for an unassigned package, includes only events with no property association", () => {
     const pkg = { ...PACKAGE, property_id: null };
     const included = summary({ package: pkg, events: [event({ property_id: null })] });

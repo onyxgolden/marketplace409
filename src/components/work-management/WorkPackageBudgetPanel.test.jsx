@@ -24,6 +24,7 @@ const SUMMARY = {
   duplicateLinkCount: 0,
   suppressedContractorEventCount: 0,
   suppressedContractorAmountCents: 0,
+  totalsError: null,
   warnings: [],
   packageStatus: "in_progress",
   packageVersion: 3,
@@ -139,6 +140,26 @@ describe("WorkPackageBudgetPanel (Slice 3)", () => {
     await settle();
     expect(container.textContent).toContain("Budget and spending could not be loaded (summary unavailable)");
     expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Retry")).toBe(true);
+  });
+
+  it("shows totals as unavailable instead of a misleading zero when the aggregate overflowed", async () => {
+    const message = "The linked spending total is too large to count exactly, so package totals are unavailable instead of approximated.";
+    stubFetch({
+      summary: {
+        ...SUMMARY,
+        actualCostCents: null,
+        varianceCents: null,
+        totalsError: { code: "actual_total_overflow", message },
+        warnings: [{ code: "actual_total_overflow", eventId: null, message }],
+      },
+    });
+    const { container } = renderPanel();
+    await settle();
+    expect(container.textContent).toContain("Recorded spending");
+    expect(container.textContent).toContain("Unavailable");
+    expect(container.textContent).not.toContain("$0.00 recorded");
+    expect(container.textContent).not.toContain("On budget");
+    expect(container.textContent).toContain("too large to count exactly");
   });
 
   it("saves a confirmed budget revision with reason and optimistic version", async () => {
