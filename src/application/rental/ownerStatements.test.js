@@ -205,3 +205,104 @@ describe("buildOwnerStatement", () => {
     expect(() => buildOwnerStatement({})).toThrow();
   });
 });
+
+describe("canonical property identity (import-pipeline aliases)", () => {
+  // The two historical import pipelines wrote one house under two slugs:
+  // canonical "1900-w-decker" (rental_units identity) vs alias
+  // "1900-west-decker". Second pair: "185-laxon" vs "185-laxon-st".
+  const CANONICAL = "1900-w-decker";
+  const ALIAS = "1900-west-decker";
+  const CANONICAL_B = "185-laxon";
+  const ALIAS_B = "185-laxon-st";
+
+  it("alias-tagged events and movements land in the canonical property view, in both query directions", () => {
+    const events = [
+      income({ id: "a1", property_id: ALIAS, amount: 1600 }),
+      income({ id: "a2", property_id: CANONICAL, amount: 100, event_date: "2026-09-06" }),
+      income({ id: "b1", property_id: ALIAS_B, amount: 700 }),
+      income({ id: "x1", property_id: "999-nowhere", amount: 500 }),
+    ];
+    const moves = [
+      movement({ id: "am1", property_id: ALIAS, amount: 300 }),
+      movement({ id: "am2", property_id: null, amount: 50 }),
+      movement({ id: "bm1", property_id: ALIAS_B, amount: 200 }),
+    ];
+
+    const byCanonical = buildOwnerBalance({ financialEvents: events, cashMovements: moves, propertyId: CANONICAL });
+    expect(byCanonical.incomeCents).toBe(170000); // 1600 alias + 100 canonical; B and unrelated excluded
+    expect(byCanonical.disbursementCents).toBe(35000); // 300 alias + 50 untagged (portfolio-level, preserved)
+
+    // Reverse direction: asking by the alias slug sees the same house.
+    const byAlias = buildOwnerBalance({ financialEvents: events, cashMovements: moves, propertyId: ALIAS });
+    expect(byAlias.incomeCents).toBe(170000);
+    expect(byAlias.disbursementCents).toBe(35000);
+
+    // Second alias pair resolves the same way.
+    const other = buildOwnerBalance({ financialEvents: events, cashMovements: moves, propertyId: CANONICAL_B });
+    expect(other.incomeCents).toBe(70000);
+    expect(other.disbursementCents).toBe(25000); // 200 alias-B + 50 untagged
+
+    // Portfolio totals are unchanged by canonicalization.
+    const portfolio = buildOwnerBalance({ financialEvents: events, cashMovements: moves });
+    expect(portfolio.incomeCents).toBe(290000);
+    expect(portfolio.disbursementCents).toBe(55000);
+  });
+
+  it("null property IDs keep their existing treatment: unassigned stays in the property view, never allocated", () => {
+    const result = buildOwnerBalance({
+      financialEvents: [
+        income({ id: "n1", property_id: null, amount: 400 }),
+        income({ id: "a1", property_id: ALIAS, amount: 1600 }),
+        income({ id: "x1", property_id: "999-nowhere", amount: 500 }),
+      ],
+      cashMovements: [movement({ id: "n2", property_id: null, amount: 75 })],
+      propertyId: CANONICAL,
+    });
+    // Null event + null movement still count (existing rule); unrelated house excluded.
+    expect(result.incomeCents).toBe(200000);
+    expect(result.disbursementCents).toBe(7500);
+  });
+
+  it("statement lines keep raw source property IDs while scope follows the canonical identity", () => {
+    const events = [
+      income({ id: "seed", property_id: ALIAS, event_date: "2026-08-20", amount: 1600 }), // beginning balance
+      income({ id: "a1", property_id: ALIAS, event_date: "2026-09-05", amount: 1600 }),
+      expense({ id: "a2", property_id: CANONICAL, event_date: "2026-09-08", amount: 250 }),
+      income({ id: "x1", property_id: "999-nowhere", event_date: "2026-09-09", amount: 500 }),
+    ];
+    const moves = [movement({ id: "am1", property_id: ALIAS, amount: 300, movement_date: "2026-09-12" })];
+    const inputSnapshot = JSON.stringify({ events, moves });
+
+    const byCanonical = buildOwnerStatement({
+      financialEvents: events,
+      cashMovements: moves,
+      periodStart: "2026-09-01",
+      periodEnd: "2026-09-30",
+      propertyId: CANONICAL,
+    });
+    expect(byCanonical.propertyId).toBe(CANONICAL); // requested slug preserved for backward compatibility
+    expect(byCanonical.beginningBalanceCents).toBe(160000);
+    expect(byCanonical.incomeLines).toHaveLength(1);
+    expect(byCanonical.incomeLines[0].id).toBe("event:a1");
+    expect(byCanonical.incomeLines[0].propertyId).toBe(ALIAS); // raw source slug retained on the line
+    expect(byCanonical.expenseLines).toHaveLength(1);
+    expect(byCanonical.expenseLines[0].propertyId).toBe(CANONICAL);
+    expect(byCanonical.disbursementLines).toHaveLength(1);
+    expect(byCanonical.disbursementLines[0].propertyId).toBe(ALIAS);
+    expect(byCanonical.endingBalanceCents).toBe(160000 + 160000 - 25000 - 30000);
+
+    // Asking by the alias yields the identical statement scope.
+    const byAlias = buildOwnerStatement({
+      financialEvents: events,
+      cashMovements: moves,
+      periodStart: "2026-09-01",
+      periodEnd: "2026-09-30",
+      propertyId: ALIAS,
+    });
+    expect(byAlias.endingBalanceCents).toBe(byCanonical.endingBalanceCents);
+    expect(byAlias.incomeLines.map((line) => line.id)).toEqual(byCanonical.incomeLines.map((line) => line.id));
+
+    // Inputs are never mutated: stored/raw property IDs are not rewritten.
+    expect(JSON.stringify({ events, moves })).toBe(inputSnapshot);
+  });
+});

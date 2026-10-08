@@ -229,3 +229,163 @@ describe("buildPropertyLedger", () => {
     expect(ledger.entries[0].notes).toBeNull();
   });
 });
+
+describe("buildPropertyLedger — canonical property identity (import-pipeline aliases)", () => {
+  // Canonical "1900-w-decker" (rental_units identity) vs alias
+  // "1900-west-decker" written by the other import pipeline.
+  const CANON = "1900-w-decker";
+  const ALIAS = "1900-west-decker";
+  const UNIT_D = "unit-decker-1";
+
+  const aliasInput = (overrides = {}) => ({
+    propertyId: CANON,
+    propertyLabel: "1900 W Decker",
+    unitIds: [UNIT_D],
+    financialEvents: [],
+    contractorPayments: [],
+    contractors: [],
+    rentalPayments: [],
+    leases: [],
+    tenantsById: {},
+    ...overrides,
+  });
+
+  const ev = (overrides = {}) => ({
+    id: "e1",
+    property_id: ALIAS,
+    event_date: "2026-09-01",
+    description: "Rent",
+    amount: "1600.00",
+    transaction_kind: "income",
+    normalized_category: "rental_income",
+    source_system: "rentec",
+    status: "active",
+    is_deleted: false,
+    metadata: {},
+    ...overrides,
+  });
+
+  it("alias financial events and alias contractor payments appear under the canonical property", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      financialEvents: [ev()],
+      contractorPayments: [
+        { id: "cp1", property_id: ALIAS, paid_at: "2026-09-03", amount_cents: 45000, contractor_id: "c1" },
+      ],
+      contractors: [{ id: "c1", business_name: "BC Roofing", trade: "Roofing" }],
+    }));
+    expect(ledger.entries.map((e) => e.id).sort()).toEqual(["contractor:cp1", "event:e1"]);
+    expect(ledger.totalCreditCents).toBe(160000);
+    expect(ledger.totalDebitCents).toBe(45000);
+    expect(ledger.balanceCents).toBe(160000 - 45000);
+  });
+
+  it("resolves in both directions: querying by the alias slug finds canonical rows", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      propertyId: ALIAS,
+      financialEvents: [ev({ id: "e1", property_id: CANON }), ev({ id: "e2", property_id: ALIAS, event_date: "2026-09-02", amount: "100.00" })],
+    }));
+    expect(ledger.entryCount).toBe(2);
+    expect(ledger.totalCreditCents).toBe(170000);
+  });
+
+  it("mixed canonical + alias rows each count exactly once — no double-count, no drop", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      financialEvents: [
+        ev({ id: "e1", property_id: CANON }),
+        ev({ id: "e2", property_id: ALIAS, event_date: "2026-09-02" }),
+        ev({ id: "e3", property_id: ALIAS, event_date: "2026-09-03", description: "Repairs", amount: "200.00", transaction_kind: "expense", normalized_category: "property_repairs", source_system: "manual" }),
+      ],
+    }));
+    expect(ledger.entryCount).toBe(3);
+    expect(ledger.totalCreditCents).toBe(320000);
+    expect(ledger.totalDebitCents).toBe(20000);
+    expect(ledger.balanceCents).toBe(300000);
+    const byId = new Map(ledger.entries.map((e) => [e.id, e]));
+    // Chronological running balance: +1600 (09-01), +1600 (09-02), -200 (09-03).
+    expect(byId.get("event:e1").balanceAfterCents).toBe(160000);
+    expect(byId.get("event:e2").balanceAfterCents).toBe(320000);
+    expect(byId.get("event:e3").balanceAfterCents).toBe(300000);
+  });
+
+  it("excludes unrelated houses and never matches a null property_id", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      financialEvents: [
+        ev({ id: "x1", property_id: "185-laxon-st" }), // a different house's alias
+        ev({ id: "n1", property_id: null }),
+        ev({ id: "a1", property_id: ALIAS }),
+      ],
+      contractorPayments: [
+        { id: "cp9", property_id: null, paid_at: "2026-09-03", amount_cents: 100, contractor_id: "c1" },
+      ],
+    }));
+    expect(ledger.entries.map((e) => e.id)).toEqual(["event:a1"]);
+  });
+
+  it("rental payments arrive through a lease whose property_id is the alias", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      leases: [{ id: "lease_1", property_id: ALIAS, unit_id: UNIT_D }],
+      rentalPayments: [
+        { id: "pay_1", lease_id: "lease_1", tenant_id: "t1", amount_cents: 160000, refunded_amount_cents: 0, status: "succeeded", provider: "stripe", received_at: "2026-09-01T10:00:00Z" },
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(1);
+    expect(ledger.entries[0].creditCents).toBe(160000);
+  });
+
+  it("unit IDs stay exact: a unit_id that merely spells the alias slug is not a property match", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      leases: [{ id: "lease_9", property_id: "other-house", unit_id: ALIAS }],
+      rentalPayments: [
+        { id: "pay_1", lease_id: "lease_9", tenant_id: "t1", amount_cents: 160000, refunded_amount_cents: 0, status: "succeeded", provider: "stripe", received_at: "2026-09-01T10:00:00Z" },
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(0);
+  });
+
+  it("unit-scoped events (property_id = unit ID) still match alongside aliases", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      financialEvents: [
+        ev({ id: "u1", property_id: UNIT_D, description: "Unit supplies", amount: "25.00", transaction_kind: "expense", normalized_category: "supplies", source_system: "manual" }),
+        ev({ id: "a1", property_id: ALIAS, event_date: "2026-09-04" }),
+      ],
+    }));
+    expect(ledger.entries.map((e) => e.id).sort()).toEqual(["event:a1", "event:u1"]);
+  });
+
+  it("contractor suppression still collapses an explicitly linked event across the alias boundary", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      contractorPayments: [
+        { id: "cp1", property_id: CANON, paid_at: "2026-08-10", amount_cents: 45000, contractor_id: "c1" },
+      ],
+      financialEvents: [
+        ev({ id: "e1", property_id: ALIAS, event_date: "2026-08-10", description: "Roof", amount: "450.00", transaction_kind: "expense", normalized_category: "property_repairs", source_system: "manual", source_record_id: "rental_contractor_payment_cp1" }),
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(1);
+    expect(ledger.entries[0].id).toBe("contractor:cp1");
+    expect(ledger.suppressedDuplicateCount).toBe(1);
+  });
+
+  it("possible-duplicate flagging is preserved across alias sources", () => {
+    const ledger = buildPropertyLedger(aliasInput({
+      financialEvents: [ev({ id: "e1", property_id: ALIAS, source_system: "manual" })],
+      leases: [{ id: "lease_1", property_id: CANON, unit_id: UNIT_D }],
+      rentalPayments: [
+        { id: "pay_1", lease_id: "lease_1", tenant_id: "t1", amount_cents: 160000, refunded_amount_cents: 0, status: "succeeded", provider: "stripe", received_at: "2026-09-01T12:00:00Z" },
+      ],
+    }));
+    expect(ledger.entries).toHaveLength(2);
+    expect(ledger.possibleDuplicateCount).toBe(2);
+    expect(ledger.totalCreditCents).toBe(320000);
+  });
+
+  it("does not mutate its inputs while canonicalizing", () => {
+    const input = aliasInput({
+      financialEvents: [ev()],
+      leases: [{ id: "lease_1", property_id: ALIAS, unit_id: UNIT_D }],
+    });
+    const snapshot = JSON.stringify(input);
+    buildPropertyLedger(input);
+    expect(JSON.stringify(input)).toBe(snapshot);
+  });
+});
