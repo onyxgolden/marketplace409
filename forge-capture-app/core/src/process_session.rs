@@ -1,0 +1,787 @@
+//! Process Training (PT-1) session and event contract.
+//!
+//! Pure logic only, same division as every other module here: the session
+//! manifest/event schema, click-pair/drag classification, sequence-gap
+//! detection, and the privacy/sensitivity decision are all host-independent
+//! and unit-tested on any platform. The actual Windows low-level mouse hook,
+//! UI Automation calls, and GDI screenshot capture that *produce* the raw
+//! input this module classifies and decides over live in `native.rs`
+//! (`#[cfg(windows)]`) and are wired into a three-thread pipeline by the
+//! Tauri shell (`app/src/main.rs`) — hook thread (enqueue raw events only,
+//! assigns `sequenceId`, never blocks) → capture worker (GDI `BitBlt`) →
+//! evidence thread (UI Automation, the decision below, the durable write).
+//! That architecture, and the five-round review that produced it, are
+//! recorded in `forge-ai-drop`'s `forge-capture-pt1-design-review.md`
+//! through `-rereview5.md` (final verdict: GO, commit `ef775709`).
+//!
+//! # The privacy model this module encodes (the part five rounds of review
+//! were spent getting right)
+//!
+//! There is no automatic "verified safe" status for any third-party
+//! window. [`CoverageState::Default`] withholds a screenshot outright.
+//! [`CoverageState::AuthorTrusted`] is an explicit, disclosed, session-
+//! scoped grant the caller makes per process (never a persisted or global
+//! setting) — detection still runs and still redacts/withholds on a
+//! positive hit even inside a trusted app; trusting the app means
+//! accepting detection may be incomplete, not disabling detection.
+//! [`decide_sensitivity`] never treats the *absence* of a detection signal
+//! as proof of safety — only an explicit positive "not sensitive" result
+//! from a signal that actually ran counts for anything, and even then only
+//! inside an already-trusted process.
+
+use serde::{Deserialize, Serialize};
+
+pub const PROCESS_SESSION_SCHEMA_VERSION: u32 = 1;
+pub const PROCESS_SESSION_KIND: &str = "process-session";
+
+// ---------------------------------------------------------------------
+// Session manifest
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionStatus {
+    Recording,
+    Paused,
+    Stopped,
+    /// Set only by crash-recovery scanning on the next launch, never by the
+    /// recorder itself — see [`is_crash_recoverable`].
+    CrashRecoverable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionManifest {
+    pub schema_version: u32,
+    pub kind: String,
+    pub session_id: String,
+    pub status: SessionStatus,
+    /// ISO-8601 UTC.
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub event_count: u64,
+    /// Raw hook events dropped by queue-overload backpressure — see
+    /// [`detect_sequence_gaps`]. Zero in the overwhelming common case;
+    /// surfaced to the author rather than hidden.
+    pub dropped_event_count: u64,
+}
+
+impl SessionManifest {
+    pub fn new(session_id: String, started_at: String) -> Self {
+        SessionManifest {
+            schema_version: PROCESS_SESSION_SCHEMA_VERSION,
+            kind: PROCESS_SESSION_KIND.to_string(),
+            session_id,
+            status: SessionStatus::Recording,
+            started_at,
+            ended_at: None,
+            event_count: 0,
+            dropped_event_count: 0,
+        }
+    }
+
+    pub fn to_json(&self) -> Result<String, ProcessSessionError> {
+        serde_json::to_string(self).map_err(|e| ProcessSessionError::Json(e.to_string()))
+    }
+}
+
+/// A session left in `Recording`/`Paused` with no `endedAt` is the crash
+/// signature: the recorder never reached a clean `Stop`. Pure predicate —
+/// the Tauri shell applies it to whatever `session.json` it finds on
+/// launch and decides whether to offer recovery; this module never reads a
+/// directory itself.
+pub fn is_crash_recoverable(status: SessionStatus, ended_at: &Option<String>) -> bool {
+    matches!(status, SessionStatus::Recording | SessionStatus::Paused) && ended_at.is_none()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessSessionError {
+    KindMismatch { found: String },
+    UnsupportedSchemaVersion { found: u32 },
+    MissingSchemaVersion,
+    Json(String),
+}
+
+impl std::fmt::Display for ProcessSessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessSessionError::KindMismatch { found } => write!(
+                f,
+                "process-session kind mismatch: expected {PROCESS_SESSION_KIND}, found {found}"
+            ),
+            ProcessSessionError::UnsupportedSchemaVersion { found } => write!(
+                f,
+                "unsupported process-session schema version {found} (this build reads {PROCESS_SESSION_SCHEMA_VERSION})"
+            ),
+            ProcessSessionError::MissingSchemaVersion => {
+                write!(f, "process-session manifest is missing schemaVersion")
+            }
+            ProcessSessionError::Json(e) => write!(f, "process-session JSON error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ProcessSessionError {}
+
+/// Strict parse: schema version checked against the raw JSON value before
+/// deserializing the rest, same reasoning as every other sidecar in this
+/// program — a newer, structurally different schema is reported as
+/// unsupported, never silently misparsed.
+pub fn parse_manifest(input: &str) -> Result<SessionManifest, ProcessSessionError> {
+    let value: serde_json::Value =
+        serde_json::from_str(input).map_err(|e| ProcessSessionError::Json(e.to_string()))?;
+    let version = value
+        .get("schemaVersion")
+        .and_then(|v| v.as_u64())
+        .ok_or(ProcessSessionError::MissingSchemaVersion)?;
+    if version != PROCESS_SESSION_SCHEMA_VERSION as u64 {
+        return Err(ProcessSessionError::UnsupportedSchemaVersion {
+            found: version as u32,
+        });
+    }
+    let manifest: SessionManifest =
+        serde_json::from_value(value).map_err(|e| ProcessSessionError::Json(e.to_string()))?;
+    if manifest.kind != PROCESS_SESSION_KIND {
+        return Err(ProcessSessionError::KindMismatch {
+            found: manifest.kind.clone(),
+        });
+    }
+    Ok(manifest)
+}
+
+// ---------------------------------------------------------------------
+// Raw input, as the hook thread hands it onward (no COM/UIA/GDI involved)
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+/// One raw button transition as the hook thread observed it. `sequenceId`
+/// is assigned once, at the hook thread, and is authoritative for ordering
+/// everywhere downstream — see [`detect_sequence_gaps`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawButtonEvent {
+    pub sequence_id: u64,
+    pub hook_timestamp_ms: u64,
+    pub x: i64,
+    pub y: i64,
+    pub button: MouseButton,
+    pub is_down: bool,
+}
+
+// ---------------------------------------------------------------------
+// Click-pair / drag / double-click classification
+// ---------------------------------------------------------------------
+
+/// The OS's own double-click timing/distance settings
+/// (`GetDoubleClickTime`, `SM_CXDOUBLECLK`/`SM_CYDOUBLECLK`) and drag
+/// threshold (`SM_CXDRAG`/`SM_CYDRAG`), read once at startup by the shell
+/// and handed in here — this module never reads them itself, so it is
+/// testable with deterministic, arbitrary values rather than the real,
+/// user-configurable OS settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClickTimingConfig {
+    pub double_click_time_ms: u64,
+    pub double_click_box_w: i64,
+    pub double_click_box_h: i64,
+    pub drag_threshold_w: i64,
+    pub drag_threshold_h: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassifiedClick {
+    Click { x: i64, y: i64 },
+    DoubleClick { x: i64, y: i64 },
+    Drag { from: (i64, i64), to: (i64, i64) },
+}
+
+/// `WH_MOUSE_LL` never delivers `WM_LBUTTONDBLCLK` (that message is
+/// synthesized downstream, in `USER32`'s window-message dispatch for a
+/// window with the `CS_DBLCLKS` class style — strictly after where a
+/// low-level hook observes input). This classifier synthesizes the
+/// double-click/drag distinction itself from consecutive down/up pairs,
+/// rather than assuming the OS hands it over.
+#[derive(Debug, Clone)]
+pub struct ClickClassifier {
+    config: ClickTimingConfig,
+    /// A down seen but not yet paired with its up.
+    pending_down: Option<RawButtonEvent>,
+    /// The down half of the most recently *resolved* pair (into a `Click`,
+    /// `Drag`, or `DoubleClick`) — the baseline the next down is compared
+    /// against for double-click timing/distance. Deliberately a separate
+    /// field from `pending_down`: that one is consumed (`take`n) the
+    /// moment its up resolves it, so without this second field there
+    /// would be nothing left to compare the *next* down against.
+    last_resolved_down: Option<RawButtonEvent>,
+}
+
+impl ClickClassifier {
+    pub fn new(config: ClickTimingConfig) -> Self {
+        ClickClassifier {
+            config,
+            pending_down: None,
+            last_resolved_down: None,
+        }
+    }
+
+    /// Resets all state. Called after a detected sequence gap (a dropped
+    /// event could be exactly the down or up half of a pair, or the first
+    /// half of a double-click, that we would otherwise mis-match) and on
+    /// Pause, so a paused session never carries stale state into its next
+    /// Resume.
+    pub fn reset(&mut self) {
+        self.pending_down = None;
+        self.last_resolved_down = None;
+    }
+
+    /// Feed one raw button transition. Returns a classification once a
+    /// complete down→up pair resolves, or immediately on a down that
+    /// qualifies as the second half of a double-click (that down is then
+    /// considered fully resolved — its own matching up, if one arrives, is
+    /// swallowed rather than double-counted as a second event).
+    pub fn feed(&mut self, event: RawButtonEvent) -> Option<ClassifiedClick> {
+        if event.is_down {
+            let is_double = self
+                .last_resolved_down
+                .is_some_and(|prev| self.is_double_click(prev, event));
+            if is_double {
+                self.pending_down = None;
+                self.last_resolved_down = Some(event);
+                return Some(ClassifiedClick::DoubleClick {
+                    x: event.x,
+                    y: event.y,
+                });
+            }
+            self.pending_down = Some(event);
+            return None;
+        }
+        // Button up: resolve against the buffered down, if any and if it's
+        // the same button (an up for a different button than the pending
+        // down means the down was orphaned by a dropped event, or this up
+        // belongs to a down already resolved as a double-click — discard
+        // rather than mis-pair or double-count).
+        let down = self.pending_down.take()?;
+        if down.button != event.button {
+            return None;
+        }
+        self.last_resolved_down = Some(down);
+        let dx = (event.x - down.x).abs();
+        let dy = (event.y - down.y).abs();
+        if dx > self.config.drag_threshold_w || dy > self.config.drag_threshold_h {
+            Some(ClassifiedClick::Drag {
+                from: (down.x, down.y),
+                to: (event.x, event.y),
+            })
+        } else {
+            Some(ClassifiedClick::Click {
+                x: down.x,
+                y: down.y,
+            })
+        }
+    }
+
+    fn is_double_click(&self, prev_down: RawButtonEvent, new_down: RawButtonEvent) -> bool {
+        if prev_down.button != new_down.button {
+            return false;
+        }
+        let dt = new_down
+            .hook_timestamp_ms
+            .saturating_sub(prev_down.hook_timestamp_ms);
+        if dt > self.config.double_click_time_ms {
+            return false;
+        }
+        (new_down.x - prev_down.x).abs() <= self.config.double_click_box_w
+            && (new_down.y - prev_down.y).abs() <= self.config.double_click_box_h
+    }
+}
+
+// ---------------------------------------------------------------------
+// Sequence-gap detection
+// ---------------------------------------------------------------------
+
+/// `sequenceId`s observed so far (in the order they were actually
+/// processed — always ascending, since every stage is a single-consumer
+/// FIFO over the previous one). Returns the inclusive `(first_missing,
+/// last_missing)` range for each gap a bounded, non-blocking queue's
+/// drop-oldest overload policy left behind. Pure arithmetic over whatever
+/// ids the evidence thread actually saw; it never guesses whether a given
+/// gap was caused by overload versus, e.g., `Click`/`Drag` resolution
+/// consuming an id as part of a pair.
+pub fn detect_sequence_gaps(seen: &[u64]) -> Vec<(u64, u64)> {
+    let mut gaps = Vec::new();
+    for pair in seen.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if b > a + 1 {
+            gaps.push((a + 1, b - 1));
+        }
+    }
+    gaps
+}
+
+// ---------------------------------------------------------------------
+// Privacy / sensitivity decision
+// ---------------------------------------------------------------------
+
+/// Whether the author has explicitly granted this process a session-scoped
+/// trust decision. Never a persisted or global setting — the shell asks
+/// this fresh for the session's own in-memory grant list every time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessTrust {
+    AuthorTrusted,
+    Default,
+}
+
+/// Detection signals already gathered by the caller (UIA + native checks
+/// happen in `native.rs`/the evidence thread; this module only decides
+/// given the results — it never calls UIA or Win32 itself, which is what
+/// keeps it host-independent and unit-testable). `None` means the signal
+/// did not run or did not produce an answer — never treated the same as
+/// `Some(false)`.
+#[derive(Debug, Clone, Default)]
+pub struct SensitivitySignals {
+    /// UI Automation `IsPassword`, when UIA answered at all.
+    pub uia_is_password: Option<bool>,
+    /// Native `EM_GETPASSWORDCHAR` result for a real Edit/RichEdit control
+    /// (only ever attempted on a control already confirmed to be one of
+    /// those classes — ambiguous/other classes leave this `None`).
+    pub native_password_char_set: Option<bool>,
+    /// An owner-draw style bit was found on this or an ancestor control in
+    /// the captured region (`BS_OWNERDRAW`/`LBS_OWNERDRAWFIXED`/etc.) —
+    /// the parent paints it, so this control's real content is opaque.
+    pub owner_drawn: bool,
+    /// The window/control's class was not on the closed, structurally-
+    /// transparent allowlist (`Edit`, `RichEdit20W`/`50W`, `Button`,
+    /// `Static`, `ComboBox`, `ListBox`, …), or its tree could not be
+    /// walked at all (a UIA error, or a UIA/native enumeration mismatch).
+    pub unrecognized_or_unwalkable: bool,
+    /// The control's name/automation-id/window-title matched the
+    /// conservative sensitive-content name heuristic.
+    pub name_heuristic_matched: bool,
+    /// A trustworthy small bounding rectangle is available for the
+    /// specific region that would need redaction (from UIA
+    /// `BoundingRectangle`, or a native `GetWindowRect` on a control whose
+    /// class is itself the field — never a container/browser-render-host
+    /// rect, which can be far larger than the actual field).
+    pub trustworthy_rect_available: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensitivityDecision {
+    /// No positive signal fired; the process is `AuthorTrusted`; persist
+    /// the screenshot as captured.
+    ProceedNormally,
+    /// A positive signal fired, a trustworthy rect is available, and the
+    /// process is `AuthorTrusted`; persist with that region redacted.
+    RedactRegion,
+    /// Either the process is `Default` (not explicitly trusted) or a
+    /// positive signal fired without a trustworthy rect to redact — in
+    /// both cases the screenshot for this step is not persisted at all.
+    Withhold,
+}
+
+/// The decision this whole design exists to get right. Two rules, applied
+/// in order:
+///
+/// 1. **No automatic safety for any third-party window.** A `Default`
+///    (not explicitly author-trusted) process always withholds, regardless
+///    of what the signals say — there is no structural check that proves a
+///    third-party window's rendering is safe (see the module doc comment),
+///    so nothing here is ever allowed to conclude "safe" on its own for an
+///    untrusted process.
+/// 2. **Inside an `AuthorTrusted` process, detection still runs and still
+///    wins.** Any positive signal (`owner_drawn`, `unrecognized_or_unwalkable`,
+///    an explicit `Some(true)` from either password check, or a name-
+///    heuristic match) means this region is sensitive-or-unconfirmable. If
+///    a trustworthy rect exists for it, redact; if not, withhold the whole
+///    step rather than guess at an untrustworthy region. Only when *zero*
+///    positive signals fired does trust alone let the screenshot through
+///    unmasked — and that still only happens inside `AuthorTrusted`, never
+///    by default.
+pub fn decide_sensitivity(
+    trust: ProcessTrust,
+    signals: &SensitivitySignals,
+) -> SensitivityDecision {
+    if matches!(trust, ProcessTrust::Default) {
+        return SensitivityDecision::Withhold;
+    }
+    let positive_signal = signals.owner_drawn
+        || signals.unrecognized_or_unwalkable
+        || signals.uia_is_password == Some(true)
+        || signals.native_password_char_set == Some(true)
+        || signals.name_heuristic_matched;
+    if !positive_signal {
+        return SensitivityDecision::ProceedNormally;
+    }
+    if signals.trustworthy_rect_available {
+        SensitivityDecision::RedactRegion
+    } else {
+        SensitivityDecision::Withhold
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- SessionManifest / crash recovery --
+
+    #[test]
+    fn new_manifest_round_trips() {
+        let m = SessionManifest::new("s-1".to_string(), "2026-10-08T00:00:00Z".to_string());
+        let json = m.to_json().unwrap();
+        let back = parse_manifest(&json).unwrap();
+        assert_eq!(back, m);
+        assert_eq!(back.status, SessionStatus::Recording);
+    }
+
+    #[test]
+    fn unsupported_schema_version_fails_closed_both_directions() {
+        let newer = r#"{"schemaVersion":2,"kind":"process-session","sessionId":"s","status":"recording","startedAt":"t","endedAt":null,"eventCount":0,"droppedEventCount":0}"#;
+        assert_eq!(
+            parse_manifest(newer).unwrap_err(),
+            ProcessSessionError::UnsupportedSchemaVersion { found: 2 }
+        );
+        let zero = r#"{"schemaVersion":0,"kind":"process-session","sessionId":"s","status":"recording","startedAt":"t","endedAt":null,"eventCount":0,"droppedEventCount":0}"#;
+        assert_eq!(
+            parse_manifest(zero).unwrap_err(),
+            ProcessSessionError::UnsupportedSchemaVersion { found: 0 }
+        );
+    }
+
+    #[test]
+    fn missing_schema_version_fails_closed() {
+        let bad = r#"{"kind":"process-session","sessionId":"s","status":"recording","startedAt":"t","endedAt":null,"eventCount":0,"droppedEventCount":0}"#;
+        assert_eq!(
+            parse_manifest(bad).unwrap_err(),
+            ProcessSessionError::MissingSchemaVersion
+        );
+    }
+
+    #[test]
+    fn wrong_kind_is_rejected() {
+        let bad = r#"{"schemaVersion":1,"kind":"something-else","sessionId":"s","status":"recording","startedAt":"t","endedAt":null,"eventCount":0,"droppedEventCount":0}"#;
+        assert_eq!(
+            parse_manifest(bad).unwrap_err(),
+            ProcessSessionError::KindMismatch {
+                found: "something-else".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn recording_with_no_ended_at_is_crash_recoverable() {
+        assert!(is_crash_recoverable(SessionStatus::Recording, &None));
+        assert!(is_crash_recoverable(SessionStatus::Paused, &None));
+    }
+
+    #[test]
+    fn stopped_or_ended_is_never_crash_recoverable() {
+        assert!(!is_crash_recoverable(SessionStatus::Stopped, &None));
+        assert!(!is_crash_recoverable(
+            SessionStatus::Recording,
+            &Some("2026-10-08T00:00:00Z".to_string())
+        ));
+    }
+
+    // -- ClickClassifier --
+
+    fn config() -> ClickTimingConfig {
+        ClickTimingConfig {
+            double_click_time_ms: 500,
+            double_click_box_w: 4,
+            double_click_box_h: 4,
+            drag_threshold_w: 4,
+            drag_threshold_h: 4,
+        }
+    }
+
+    fn down(seq: u64, t: u64, x: i64, y: i64) -> RawButtonEvent {
+        RawButtonEvent {
+            sequence_id: seq,
+            hook_timestamp_ms: t,
+            x,
+            y,
+            button: MouseButton::Left,
+            is_down: true,
+        }
+    }
+
+    fn up(seq: u64, t: u64, x: i64, y: i64) -> RawButtonEvent {
+        RawButtonEvent {
+            sequence_id: seq,
+            hook_timestamp_ms: t,
+            x,
+            y,
+            button: MouseButton::Left,
+            is_down: false,
+        }
+    }
+
+    #[test]
+    fn a_simple_down_up_with_no_movement_is_a_click() {
+        let mut c = ClickClassifier::new(config());
+        assert_eq!(c.feed(down(1, 0, 100, 100)), None);
+        assert_eq!(
+            c.feed(up(2, 50, 100, 100)),
+            Some(ClassifiedClick::Click { x: 100, y: 100 })
+        );
+    }
+
+    #[test]
+    fn movement_beyond_the_drag_threshold_is_a_drag() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        assert_eq!(
+            c.feed(up(2, 50, 200, 100)),
+            Some(ClassifiedClick::Drag {
+                from: (100, 100),
+                to: (200, 100)
+            })
+        );
+    }
+
+    #[test]
+    fn movement_within_the_drag_threshold_is_still_a_click() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        assert_eq!(
+            c.feed(up(2, 50, 102, 101)),
+            Some(ClassifiedClick::Click { x: 100, y: 100 })
+        );
+    }
+
+    #[test]
+    fn two_downs_within_time_and_distance_classify_as_a_double_click() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        c.feed(up(2, 10, 100, 100));
+        assert_eq!(
+            c.feed(down(3, 100, 101, 100)),
+            Some(ClassifiedClick::DoubleClick { x: 101, y: 100 })
+        );
+    }
+
+    #[test]
+    fn a_second_down_outside_the_time_window_is_not_a_double_click() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        c.feed(up(2, 10, 100, 100));
+        assert_eq!(c.feed(down(3, 600, 100, 100)), None);
+    }
+
+    #[test]
+    fn a_second_down_outside_the_distance_box_is_not_a_double_click() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        c.feed(up(2, 10, 100, 100));
+        assert_eq!(c.feed(down(3, 100, 200, 100)), None);
+    }
+
+    #[test]
+    fn an_up_with_no_pending_down_is_ignored_not_mismatched() {
+        let mut c = ClickClassifier::new(config());
+        assert_eq!(c.feed(up(1, 0, 100, 100)), None);
+    }
+
+    #[test]
+    fn an_up_for_a_different_button_than_the_pending_down_does_not_pair() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        let mismatched_up = RawButtonEvent {
+            sequence_id: 2,
+            hook_timestamp_ms: 10,
+            x: 100,
+            y: 100,
+            button: MouseButton::Right,
+            is_down: false,
+        };
+        assert_eq!(c.feed(mismatched_up), None);
+    }
+
+    #[test]
+    fn reset_clears_pending_state_after_a_gap() {
+        let mut c = ClickClassifier::new(config());
+        c.feed(down(1, 0, 100, 100));
+        c.reset();
+        // The up that follows a reset must not pair with the discarded down.
+        assert_eq!(c.feed(up(5, 10, 999, 999)), None);
+    }
+
+    // -- detect_sequence_gaps --
+
+    #[test]
+    fn contiguous_sequence_has_no_gaps() {
+        assert_eq!(detect_sequence_gaps(&[1, 2, 3, 4]), vec![]);
+    }
+
+    #[test]
+    fn a_single_dropped_event_is_reported_as_a_one_wide_gap() {
+        assert_eq!(detect_sequence_gaps(&[1, 2, 4, 5]), vec![(3, 3)]);
+    }
+
+    #[test]
+    fn multiple_dropped_events_are_reported_as_a_wide_gap() {
+        assert_eq!(detect_sequence_gaps(&[1, 10]), vec![(2, 9)]);
+    }
+
+    #[test]
+    fn several_separate_gaps_are_each_reported() {
+        assert_eq!(detect_sequence_gaps(&[1, 3, 3, 6]), vec![(2, 2), (4, 5)]);
+    }
+
+    #[test]
+    fn fewer_than_two_ids_has_no_gaps() {
+        assert_eq!(detect_sequence_gaps(&[]), vec![]);
+        assert_eq!(detect_sequence_gaps(&[1]), vec![]);
+    }
+
+    // -- decide_sensitivity --
+
+    #[test]
+    fn default_trust_always_withholds_even_with_zero_signals() {
+        let signals = SensitivitySignals::default();
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::Default, &signals),
+            SensitivityDecision::Withhold
+        );
+    }
+
+    #[test]
+    fn default_trust_withholds_even_when_every_signal_says_safe() {
+        let signals = SensitivitySignals {
+            uia_is_password: Some(false),
+            native_password_char_set: Some(false),
+            owner_drawn: false,
+            unrecognized_or_unwalkable: false,
+            name_heuristic_matched: false,
+            trustworthy_rect_available: true,
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::Default, &signals),
+            SensitivityDecision::Withhold
+        );
+    }
+
+    #[test]
+    fn trusted_process_with_no_positive_signal_proceeds_normally() {
+        let signals = SensitivitySignals {
+            uia_is_password: Some(false),
+            native_password_char_set: Some(false),
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::ProceedNormally
+        );
+    }
+
+    #[test]
+    fn trusted_process_with_no_signal_at_all_still_proceeds_normally() {
+        // Absence of a signal (None) is not a positive hit, but it also
+        // never counts as a confirmed "not sensitive" on its own — this
+        // test documents that, with zero signals run at all, trust is what
+        // lets the screenshot through, not an inferred negative.
+        let signals = SensitivitySignals::default();
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::ProceedNormally
+        );
+    }
+
+    #[test]
+    fn uia_confirmed_password_with_a_rect_redacts_rather_than_withholds() {
+        let signals = SensitivitySignals {
+            uia_is_password: Some(true),
+            trustworthy_rect_available: true,
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::RedactRegion
+        );
+    }
+
+    #[test]
+    fn native_confirmed_password_char_with_a_rect_redacts() {
+        let signals = SensitivitySignals {
+            native_password_char_set: Some(true),
+            trustworthy_rect_available: true,
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::RedactRegion
+        );
+    }
+
+    #[test]
+    fn sensitive_without_a_trustworthy_rect_withholds_rather_than_guesses() {
+        let signals = SensitivitySignals {
+            uia_is_password: Some(true),
+            trustworthy_rect_available: false,
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::Withhold
+        );
+    }
+
+    #[test]
+    fn owner_drawn_control_is_treated_as_a_positive_signal_even_without_uia() {
+        let signals = SensitivitySignals {
+            owner_drawn: true,
+            trustworthy_rect_available: false,
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::Withhold
+        );
+    }
+
+    #[test]
+    fn unrecognized_or_unwalkable_class_is_treated_as_a_positive_signal() {
+        let signals = SensitivitySignals {
+            unrecognized_or_unwalkable: true,
+            trustworthy_rect_available: false,
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::Withhold
+        );
+    }
+
+    #[test]
+    fn name_heuristic_match_alone_is_a_positive_signal() {
+        let signals = SensitivitySignals {
+            name_heuristic_matched: true,
+            trustworthy_rect_available: true,
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::AuthorTrusted, &signals),
+            SensitivityDecision::RedactRegion
+        );
+    }
+
+    #[test]
+    fn a_false_password_result_alone_does_not_prove_safety_without_trust() {
+        // Named regression for the original Blocker 1 finding: a negative
+        // password check must never, by itself, establish "whole screenshot
+        // is safe" outside of the AuthorTrusted boundary.
+        let signals = SensitivitySignals {
+            uia_is_password: Some(false),
+            ..SensitivitySignals::default()
+        };
+        assert_eq!(
+            decide_sensitivity(ProcessTrust::Default, &signals),
+            SensitivityDecision::Withhold
+        );
+    }
+}
