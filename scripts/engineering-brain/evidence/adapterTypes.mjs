@@ -14,8 +14,12 @@
  * Supabase table evidence: the latest row's time and the EXACT row count
  * inside the window, for one table + time column.
  *
- * spec: { table, timeColumn, windowHours, idColumn? }
- * deps: { supabase: { from(table): { select(cols, opts): { gte, order, limit } } } }
+ * spec: { table, timeColumn, windowHours, idColumn?, filters? }
+ *   filters: [{ column, op: "eq"|"like", value }] — ANDed equality/prefix
+ *   conditions that attribute rows to the specific capability (e.g.
+ *   triggered_by='schedule'). Applied to BOTH queries and recorded in
+ *   the evidence, so Slice 3 can see exactly what was claimed.
+ * deps: { supabase: { from(table): { select(cols, opts): { gte, eq, like, order, limit } } } }
  *   — the fake/real client must support only the select chain used here.
  *
  * Two queries: a head-only exact count (no row cap — a capped count
@@ -42,10 +46,26 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
     const badShape = (which, detail) =>
       fail(`supabase ${which} query on ${table} returned a malformed response (${detail})`);
 
+    // Attribution filters (Slice 3): ANDed conditions applied to both
+    // queries. Unknown ops fail closed — never silently ignored.
+    const filters = spec.filters || [];
+    for (const f of filters) {
+      if (!f || typeof f.column !== "string" || (f.op !== "eq" && f.op !== "like")) {
+        return fail(`supabase adapter on ${table}: malformed filter ${JSON.stringify(f)}`);
+      }
+    }
+    const applyFilters = (q) => {
+      let chain = q;
+      for (const f of filters) {
+        chain = f.op === "eq" ? chain.eq(f.column, f.value) : chain.like(f.column, f.value);
+      }
+      return chain;
+    };
+
     // Query 1: exact count, head-only — no rows travel, no cap applies.
-    const countRes = await client
-      .select(idColumn, { count: "exact", head: true })
-      .gte(timeColumn, windowStart);
+    const countRes = await applyFilters(
+      client.select(idColumn, { count: "exact", head: true }).gte(timeColumn, windowStart)
+    );
     if (!countRes || typeof countRes !== "object" || Array.isArray(countRes)) {
       return badShape("count", "not an object");
     }
@@ -57,11 +77,13 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
     }
 
     // Query 2: latest row in the window.
-    const latestRes = await client
-      .select(`${idColumn},${timeColumn}`)
-      .gte(timeColumn, windowStart)
-      .order(timeColumn, { ascending: false })
-      .limit(1);
+    const latestRes = await applyFilters(
+      client
+        .select(`${idColumn},${timeColumn}`)
+        .gte(timeColumn, windowStart)
+        .order(timeColumn, { ascending: false })
+        .limit(1)
+    );
     if (!latestRes || typeof latestRes !== "object" || Array.isArray(latestRes)) {
       return badShape("latest-row", "not an object");
     }
@@ -96,6 +118,7 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
         table,
         timeColumn,
         windowHours,
+        filters: filters.map((f) => ({ column: f.column, op: f.op, value: f.value })),
         rowCount: countRes.count,
         latestAt,
         // latestAt null with rowCount 0 means "no evidence in window" —

@@ -22,6 +22,8 @@ function fakeSupabase({ countResult, latestResult, calls = [] } = {}) {
   const chain = {
     select(cols, opts) { calls.push(["select", cols]); headMode = !!(opts && opts.head); return chain; },
     gte(col, val) { calls.push(["gte", col, val]); return chain; },
+    eq(col, val) { calls.push(["eq", col, val]); return chain; },
+    like(col, val) { calls.push(["like", col, val]); return chain; },
     order(col, opts) { calls.push(["order", col]); return chain; },
     limit(n) { calls.push(["limit", n]); return chain; },
     then(resolve) { resolve(headMode ? countResult : latestResult); },
@@ -91,6 +93,18 @@ describe("adapter specs", () => {
     // The watchdog's trigger is unable-to-verify, but its evidence table is
     // real — it keeps its adapter. Uncertainty stays exactly where it is.
     expect(getAdapterSpec("rental-autopay-sweep-watchdog")).toBeDefined();
+  });
+
+  it("every adapter carries a valid attribution, and discriminators have filters", () => {
+    const valid = ["sweep-exclusive", "discriminator", "workflow-exclusive", "corroborating-only", "unverified"];
+    for (const s of ADAPTER_SPECS) {
+      for (const a of s.adapters) {
+        expect(valid, `${s.capability_id}: bad attribution`).toContain(a.attribution);
+        if (a.attribution === "discriminator") {
+          expect(a.filters && a.filters.length > 0, `${s.capability_id}: discriminator without filters`).toBe(true);
+        }
+      }
+    }
   });
 });
 
@@ -200,6 +214,67 @@ describe("supabase-table adapter", () => {
     for (const gte of gtes) {
       expect(gte[2]).toBe(new Date(NOW - 36 * 3600 * 1000).toISOString());
     }
+  });
+
+  it("applies attribution filters to both queries and records them", async () => {
+    const calls = [];
+    const filtered = {
+      type: "supabase-table",
+      table: "rental_sweep_runs",
+      timeColumn: "started_at",
+      windowHours: 36,
+      filters: [
+        { column: "sweep_name", op: "eq", value: "rental-autopay" },
+        { column: "triggered_by", op: "eq", value: "schedule" },
+      ],
+    };
+    const r = await ADAPTER_TYPES["supabase-table"](
+      filtered,
+      { supabase: fakeSupabase({ calls, countResult: okCount(1), latestResult: okLatest([{ id: "1", started_at: "2026-10-07T08:23:00Z" }]) }) },
+      NOW
+    );
+    expect(r.ok).toBe(true);
+    const eqs = calls.filter((c) => c[0] === "eq");
+    expect(eqs.length).toBe(4); // two filters x two queries
+    expect(r.evidence.filters).toEqual([
+      { column: "sweep_name", op: "eq", value: "rental-autopay" },
+      { column: "triggered_by", op: "eq", value: "schedule" },
+    ]);
+  });
+
+  it("supports like filters", async () => {
+    const calls = [];
+    const filtered = {
+      type: "supabase-table",
+      table: "rent_charges",
+      timeColumn: "created_at",
+      windowHours: 36,
+      filters: [{ column: "source_key", op: "like", value: "rent:%" }],
+    };
+    const r = await ADAPTER_TYPES["supabase-table"](
+      filtered,
+      { supabase: fakeSupabase({ calls, countResult: okCount(1), latestResult: okLatest([{ id: "1", created_at: "2026-10-07T08:23:00Z" }]) }) },
+      NOW
+    );
+    expect(r.ok).toBe(true);
+    expect(calls.filter((c) => c[0] === "like").length).toBe(2);
+  });
+
+  it("fails closed on a malformed filter", async () => {
+    const bad = {
+      type: "supabase-table",
+      table: "rent_charges",
+      timeColumn: "created_at",
+      windowHours: 36,
+      filters: [{ column: "source_key", op: "regex", value: "rent:%" }],
+    };
+    const r = await ADAPTER_TYPES["supabase-table"](
+      bad,
+      { supabase: fakeSupabase({ countResult: okCount(1), latestResult: okLatest([]) }) },
+      NOW
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("malformed filter");
   });
 });
 
