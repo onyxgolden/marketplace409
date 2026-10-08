@@ -473,6 +473,41 @@ pub fn decide_sensitivity(
     }
 }
 
+/// Conservative, case-insensitive substring match against a control's
+/// name/automation-id/window-title, feeding
+/// [`SensitivitySignals::name_heuristic_matched`]. Deliberately a second,
+/// independent signal from UIA `IsPassword`/the native password-char check
+/// — a heuristic can never be a comprehensive secret-content detector, so
+/// it only ever adds a positive signal, never clears one (see
+/// [`decide_sensitivity`]'s own doc comment for why absence of a signal
+/// is never treated as proof of safety). Pure string matching; the caller
+/// gathers the text from UIA/native Win32 calls.
+pub fn name_matches_sensitive_heuristic(text: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        "password",
+        "passwd",
+        "pwd",
+        "passcode",
+        "pin",
+        "ssn",
+        "social security",
+        "card number",
+        "cardnumber",
+        "cvv",
+        "cvc",
+        "security code",
+        "routing number",
+        "account number",
+        "secret",
+        "token",
+        "api key",
+        "apikey",
+        "private key",
+    ];
+    let lower = text.to_lowercase();
+    NEEDLES.iter().any(|needle| lower.contains(needle))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,5 +982,32 @@ mod tests {
             decide_sensitivity(ProcessTrust::Default, &signals),
             SensitivityDecision::Withhold
         );
+    }
+
+    // -- name_matches_sensitive_heuristic --
+
+    #[test]
+    fn matches_common_sensitive_field_names_case_insensitively() {
+        assert!(name_matches_sensitive_heuristic("Password"));
+        assert!(name_matches_sensitive_heuristic("PASSCODE"));
+        assert!(name_matches_sensitive_heuristic("Social Security Number"));
+        assert!(name_matches_sensitive_heuristic("Card Number"));
+        assert!(name_matches_sensitive_heuristic("cvv"));
+        assert!(name_matches_sensitive_heuristic("Routing Number"));
+        assert!(name_matches_sensitive_heuristic("txtApiKey"));
+    }
+
+    #[test]
+    fn does_not_match_ordinary_field_names() {
+        assert!(!name_matches_sensitive_heuristic("First Name"));
+        assert!(!name_matches_sensitive_heuristic("Email Address"));
+        assert!(!name_matches_sensitive_heuristic("Save"));
+        assert!(!name_matches_sensitive_heuristic(""));
+    }
+
+    #[test]
+    fn matches_as_a_substring_within_a_longer_label() {
+        assert!(name_matches_sensitive_heuristic("Enter your password here"));
+        assert!(name_matches_sensitive_heuristic("txtPIN_1"));
     }
 }

@@ -54,6 +54,12 @@
 //! - [`library_index`] — the rebuildable local library index (Slice 4): a
 //!   derived cache only, never a source of truth. Window-title indexing is
 //!   opt-in and off by default; search works fully without it.
+//! - [`process_capture`] — Process Training PT-1: the Windows-only hook/
+//!   capture-worker/UI-Automation-evidence pipeline that feeds real input
+//!   into [`process_session`]'s pure decision logic. Nothing in this
+//!   crate calls its entry point — see the module's own doc comment for
+//!   why that line matters and what "implemented but not activated"
+//!   means in practice.
 //! - [`process_session`] — Process Training PT-1: the session manifest and
 //!   event contract, click-pair/drag classification (a low-level mouse
 //!   hook never delivers `WM_LBUTTONDBLCLK`, so this is synthesized),
@@ -78,6 +84,7 @@ pub mod library_index;
 pub mod meeting;
 pub mod native;
 pub mod png;
+pub mod process_capture;
 pub mod process_session;
 pub mod result;
 pub mod scroll;

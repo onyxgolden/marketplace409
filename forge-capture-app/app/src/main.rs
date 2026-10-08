@@ -32,6 +32,7 @@ use forge_capture_core::engines::{
 use forge_capture_core::library_index::{LibraryIndex, LibraryIndexEntry};
 use forge_capture_core::native;
 use forge_capture_core::png::{decode_own, encode_rgba, png_dimensions};
+use forge_capture_core::process_capture::{self, ProcessCaptureConfig};
 use forge_capture_core::result::ScrollingResult;
 use forge_capture_core::scroll::{
     AbortFlag, ProgressCallback, ScrollDirection, ScrollEngineKind, ScrollLimits, ScrollRequest,
@@ -111,6 +112,49 @@ struct AppState {
     /// crash mid-recording leaves a recoverable partial that
     /// `meeting_recover` finalizes on the next launch.
     meeting_uploads: Mutex<HashMap<String, MeetingUpload>>,
+    /// The running PT-1 process-capture pipeline, if a session is active.
+    /// `None` until `process_capture_start_session` is called — which, as
+    /// of this sub-slice, no startup path or test ever does; see
+    /// `forge_capture_core::process_capture`'s own doc comment.
+    process_capture: Mutex<Option<forge_capture_core::process_capture::ProcessCaptureHandle>>,
+    /// Events the pipeline's sink has produced for the active session, in
+    /// arrival order. Bounded (`BoundedDropOldest`, the same drop-oldest-
+    /// and-count policy the pipeline's own inter-thread queues use) —
+    /// review finding: an unbounded `Vec` here would accumulate forever,
+    /// including potentially huge RGBA frames, with no cap at all even
+    /// though every queue upstream of it is bounded. `Arc<Mutex<_>>` (not
+    /// `Mutex` wrapping an inner `Arc`) so the sink closure handed to
+    /// `process_capture::start` can hold a cheap clone of the exact same
+    /// buffer this field reads — one buffer, not two. A later, UI-facing
+    /// slice drains this into durable `events.ndjson` writes; this
+    /// sub-slice only wires the pipe.
+    process_capture_events: Arc<
+        Mutex<
+            forge_capture_core::process_capture::BoundedDropOldest<
+                forge_capture_core::process_capture::PipelineMessage,
+            >,
+        >,
+    >,
+}
+
+/// Size estimate for one `PipelineMessage`, for
+/// `AppState::process_capture_events`'s byte budget — dominated by a
+/// screenshot's RGBA buffer when one is present; everything else is a
+/// small, roughly-constant overhead.
+fn pipeline_message_size(message: &forge_capture_core::process_capture::PipelineMessage) -> usize {
+    use forge_capture_core::process_capture::PipelineMessage;
+    match message {
+        PipelineMessage::Event(event) => {
+            64 + event
+                .screenshot
+                .as_ref()
+                .map(|(_, _, rgba)| rgba.len())
+                .unwrap_or(0)
+        }
+        PipelineMessage::Gap(_)
+        | PipelineMessage::QueueOverflow { .. }
+        | PipelineMessage::SessionReconciliationUncertain { .. } => 32,
+    }
 }
 
 /// One in-flight chunked media upload. The webview holds the encoded bytes
@@ -1301,6 +1345,82 @@ fn rebuild_library_index_in(
     Ok(index_path.to_string_lossy().into_owned())
 }
 
+/// Process Training (PT-1) — starts the hook/capture-worker/UI-Automation-
+/// evidence pipeline (`forge_capture_core::process_capture`). **Not
+/// invoked by any startup path, any test, or any other command in this
+/// codebase as of this sub-slice** — no UI exists yet to call it, and no
+/// Rust test exercises it either, since doing so would install a real,
+/// live, global mouse hook on whatever machine runs the test. Wiring it
+/// up to a Tauri command is the deliberate "implemented, not activated"
+/// line the approved design's safety gate asks for: the capability exists
+/// in the built binary, but nothing in this program's own operation ever
+/// calls it. `authorTrustedProcesses` must be exactly the lowercase
+/// executable names the caller has already shown the author the required
+/// disclosure for — this command does not show any UI itself.
+#[tauri::command]
+#[allow(non_snake_case)]
+fn process_capture_start_session(
+    authorTrustedProcesses: Vec<String>,
+    persistVerbatimMetadata: bool,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut slot = state
+        .process_capture
+        .lock()
+        .map_err(|_| "process capture state poisoned".to_string())?;
+    if slot.is_some() {
+        return Err("a process-capture session is already running".to_string());
+    }
+    let config = ProcessCaptureConfig {
+        self_pid: std::process::id(),
+        author_trusted_processes: authorTrustedProcesses
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect(),
+        persist_verbatim_metadata: persistVerbatimMetadata,
+    };
+    if let Ok(mut shared) = state.process_capture_events.lock() {
+        *shared = forge_capture_core::process_capture::BoundedDropOldest::new(
+            512,
+            256 * 1024 * 1024,
+            pipeline_message_size,
+        );
+    }
+    let events_for_sink = state.process_capture_events.clone();
+    let handle = process_capture::start(
+        config,
+        Box::new(move |message| {
+            if let Ok(mut v) = events_for_sink.lock() {
+                v.push(message);
+            }
+        }),
+    )
+    .map_err(err)?;
+    *slot = Some(handle);
+    Ok(())
+}
+
+/// Stops a running PT-1 session: signals all three pipeline threads,
+/// joins them, and drops `IUIAutomation`/the hook before returning. Safe
+/// to call even though nothing in this codebase ever starts a session —
+/// included for completeness and so the command pair is symmetric for
+/// whatever UI eventually calls it.
+#[tauri::command]
+fn process_capture_stop_session(state: State<AppState>) -> Result<(), String> {
+    let handle = state
+        .process_capture
+        .lock()
+        .map_err(|_| "process capture state poisoned".to_string())?
+        .take();
+    match handle {
+        Some(h) => {
+            h.stop();
+            Ok(())
+        }
+        None => Err("no process-capture session is running".to_string()),
+    }
+}
+
 /// Rung 5 — payload for the "Save to FORGE" upload. Returns the stored
 /// raster bytes (base64) plus the sidecar's MIME type so the UI can build the
 /// multipart POST. Screenshots produced by this app are PNG/JPEG/WebP; the
@@ -1789,11 +1909,12 @@ fn capture_region_backdrop(monitors: &[Monitor], monitor_id: &str) -> Result<Vec
 /// solid-color desktop is also uniform, so this only raises the
 /// blank-frame *warning* (retry / proceed / cancel), never a hard abort.
 fn solid_frame_rgba(rgba: &[u8]) -> bool {
-    if rgba.len() < 8 || rgba.len() % 4 != 0 {
+    if rgba.len() < 8 || !rgba.len().is_multiple_of(4) {
         return false;
     }
     let (first, rest) = rgba.split_at(4);
-    rest.chunks_exact(4).all(|px| px == first)
+    let (chunks, _) = rest.as_chunks::<4>();
+    chunks.iter().all(|px| px == first)
 }
 
 /// Watchdog: if a region pick is still pending after 60 s (the overlay never
@@ -3310,6 +3431,14 @@ fn main() {
             printscreen_active: AtomicBool::new(false),
             media_uploads: Mutex::new(HashMap::new()),
             meeting_uploads: Mutex::new(HashMap::new()),
+            process_capture: Mutex::new(None),
+            process_capture_events: Arc::new(Mutex::new(
+                forge_capture_core::process_capture::BoundedDropOldest::new(
+                    512,
+                    256 * 1024 * 1024,
+                    pipeline_message_size,
+                ),
+            )),
         })
         .setup(|app| {
             // Best-effort capture shortcuts: register the four PrintScreen
@@ -3336,6 +3465,8 @@ fn main() {
             load_capture_tags,
             save_capture_tags,
             rebuild_library_index,
+            process_capture_start_session,
+            process_capture_stop_session,
             export_capture,
             begin_region_pick,
             overlay_context,
