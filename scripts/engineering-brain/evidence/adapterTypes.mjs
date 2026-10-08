@@ -12,42 +12,46 @@
 
 /**
  * Supabase table evidence: the latest row's time and the EXACT row count
- * inside the window, for one table + time column.
+ * inside the query window, for one table + time column.
  *
  * spec: { table, timeColumn, windowHours, idColumn?, filters? }
- *   filters: [{ column, op: "eq"|"like", value }] — ANDed equality/prefix
- *   conditions that attribute rows to the specific capability (e.g.
- *   triggered_by='schedule'). Applied to BOTH queries and recorded in
- *   the evidence, so Slice 3 can see exactly what was claimed.
- * deps: { supabase: { from(table): { select(cols, opts): { gte, eq, like, order, limit } } } }
- *   — the fake/real client must support only the select chain used here.
+ *   filters: [{ column, op: "eq"|"like", value }] — ANDed conditions.
+ * deps: { supabase: ... }
+ * now: epoch ms (used only when no explicit window is given).
+ * opts.slotWindow: { startIso, endIso } — when present, BOTH queries are
+ *   scoped to exactly this window (Slice 4 review: query the slot, not
+ *   the latest record). Otherwise the trailing windowHours window is used.
  *
- * Two queries: a head-only exact count (no row cap — a capped count
- * reported as exact was the Slice 2 review finding) and the latest row.
- * The two must agree (count 0 <=> no latest row); disagreement fails
- * closed rather than reporting a half-truth.
+ * Two queries: a head-only exact count and the latest row, both in the
+ * same window. They must agree; disagreement fails closed.
  */
-export async function fetchSupabaseTableEvidence(spec, deps, now) {
+export async function fetchSupabaseTableEvidence(spec, deps, now, opts = {}) {
   const fail = (error) => ({ ok: false, error });
   try {
     if (!deps || !deps.supabase || typeof deps.supabase.from !== "function") {
       return fail("supabase client not provided");
     }
     const { table, timeColumn, windowHours } = spec;
-    if (!table || !timeColumn || !Number.isFinite(windowHours) || windowHours <= 0) {
-      return fail("spec needs table, timeColumn, and a positive windowHours");
+    if (!table || !timeColumn) {
+      return fail("spec needs table and timeColumn");
     }
-    const windowStart = new Date(now - windowHours * 3600 * 1000).toISOString();
-    // Select exactly the columns needed: a renamed/missing column fails
-    // loudly here (ok:false) instead of silently returning empty evidence.
+    let startIso, endIso;
+    if (opts.slotWindow && opts.slotWindow.startIso && opts.slotWindow.endIso) {
+      startIso = opts.slotWindow.startIso;
+      endIso = opts.slotWindow.endIso;
+    } else {
+      if (!Number.isFinite(windowHours) || windowHours <= 0) {
+        return fail("spec needs windowHours or an explicit slotWindow");
+      }
+      startIso = new Date(now - windowHours * 3600 * 1000).toISOString();
+      endIso = new Date(now).toISOString();
+    }
     const idColumn = spec.idColumn || "id";
     const client = deps.supabase.from(table);
 
     const badShape = (which, detail) =>
       fail(`supabase ${which} query on ${table} returned a malformed response (${detail})`);
 
-    // Attribution filters (Slice 3): ANDed conditions applied to both
-    // queries. Unknown ops fail closed — never silently ignored.
     const filters = spec.filters || [];
     for (const f of filters) {
       if (!f || typeof f.column !== "string" || (f.op !== "eq" && f.op !== "like")) {
@@ -55,17 +59,15 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
       }
     }
     const applyFilters = (q) => {
-      let chain = q;
+      let chain = q.gte(timeColumn, startIso).lt(timeColumn, endIso);
       for (const f of filters) {
         chain = f.op === "eq" ? chain.eq(f.column, f.value) : chain.like(f.column, f.value);
       }
       return chain;
     };
 
-    // Query 1: exact count, head-only — no rows travel, no cap applies.
-    const countRes = await applyFilters(
-      client.select(idColumn, { count: "exact", head: true }).gte(timeColumn, windowStart)
-    );
+    // Query 1: exact count in window, head-only.
+    const countRes = await applyFilters(client.select(idColumn, { count: "exact", head: true }));
     if (!countRes || typeof countRes !== "object" || Array.isArray(countRes)) {
       return badShape("count", "not an object");
     }
@@ -80,7 +82,6 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
     const latestRes = await applyFilters(
       client
         .select(`${idColumn},${timeColumn}`)
-        .gte(timeColumn, windowStart)
         .order(timeColumn, { ascending: false })
         .limit(1)
     );
@@ -117,7 +118,8 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
         source: `supabase:${table}`,
         table,
         timeColumn,
-        windowHours,
+        windowHours: opts.slotWindow ? null : windowHours,
+        slotWindow: opts.slotWindow ? { startIso, endIso } : null,
         filters: filters.map((f) => ({ column: f.column, op: f.op, value: f.value })),
         rowCount: countRes.count,
         latestAt,
@@ -131,13 +133,17 @@ export async function fetchSupabaseTableEvidence(spec, deps, now) {
 }
 
 /**
- * GitHub Actions evidence: the latest run of one workflow file.
+ * GitHub Actions evidence: recent runs of one workflow file.
  *
  * spec: { workflowFile }  (e.g. "rental-cron-sweeps.yml")
- * deps: { githubApi: { listWorkflowRuns(owner, repo, workflowFile): Promise<runs[]> } }
+ * deps: { githubApi: { listWorkflowRuns(workflowFile): Promise<runs[]> } }
  *   runs[]: [{ conclusion, status, startedAt, htmlUrl }]
+ * opts.slotWindow: { startIso, endIso } — when present, only runs started
+ *   inside the window are considered (Slice 4 review: query the slot).
+ *   `totalFetched` always reports how many runs the API returned, so the
+ *   evaluator can distinguish "API working, slot empty" from "no history".
  */
-export async function fetchGithubActionsEvidence(spec, deps, now) {
+export async function fetchGithubActionsEvidence(spec, deps, now, opts = {}) {
   const fail = (error) => ({ ok: false, error });
   try {
     if (!deps || !deps.githubApi || typeof deps.githubApi.listWorkflowRuns !== "function") {
@@ -146,30 +152,65 @@ export async function fetchGithubActionsEvidence(spec, deps, now) {
     if (!spec.workflowFile) {
       return fail("spec needs workflowFile");
     }
-    const runs = await deps.githubApi.listWorkflowRuns(spec.workflowFile);
-    if (!Array.isArray(runs)) {
+    const allRuns = await deps.githubApi.listWorkflowRuns(spec.workflowFile);
+    if (!Array.isArray(allRuns)) {
       return fail("github api returned a non-array run list");
     }
+    const slotWindow = opts.slotWindow && opts.slotWindow.startIso && opts.slotWindow.endIso
+      ? opts.slotWindow
+      : null;
+    const runs = slotWindow
+      ? allRuns.filter((r) => typeof r.startedAt === "string" && r.startedAt >= slotWindow.startIso && r.startedAt < slotWindow.endIso)
+      : allRuns;
     if (runs.length === 0) {
-      return { ok: true, evidence: { source: `github-actions:${spec.workflowFile}`, runCount: 0, latest: null } };
+      return {
+        ok: true,
+        evidence: {
+          source: `github-actions:${spec.workflowFile}`,
+          runCount: 0,
+          totalFetched: allRuns.length,
+          slotWindow: slotWindow ? { ...slotWindow } : null,
+          latest: null,
+          runs: [],
+        },
+      };
     }
-    const latest = runs[0];
-    for (const f of ["conclusion", "status", "startedAt"]) {
-      if (latest[f] === undefined) {
-        return fail(`latest run is missing field "${f}"`);
+    // Validate every in-window run, not just the latest — the evaluator
+    // aggregates all of them (a success anywhere in the window counts).
+    const normalized = [];
+    for (const run of runs) {
+      for (const f of ["conclusion", "status", "startedAt"]) {
+        if (run[f] === undefined) {
+          return fail(`a run in the window is missing field "${f}"`);
+        }
       }
+      normalized.push({
+        conclusion: run.conclusion,
+        status: run.status,
+        startedAt: run.startedAt,
+        url: run.htmlUrl || null,
+      });
     }
+    // Latest = most recently started (runs are expected newest-first from
+    // the API, but sort defensively so "latest" is well-defined).
+    normalized.sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0));
+    const latest = normalized[0];
     return {
       ok: true,
       evidence: {
         source: `github-actions:${spec.workflowFile}`,
-        runCount: runs.length,
+        runCount: normalized.length,
+        totalFetched: allRuns.length,
+        slotWindow: slotWindow ? { ...slotWindow } : null,
         latest: {
           conclusion: latest.conclusion,
           status: latest.status,
           startedAt: latest.startedAt,
-          url: latest.htmlUrl || null,
+          url: latest.url,
         },
+        // All in-window runs, newest-first. The evaluator examines every
+        // conclusion — a single "latest" hid mixed success/failure windows.
+        runs: normalized,
       },
     };
   } catch (e) {
