@@ -670,6 +670,73 @@ mod pure_tests {
             let _ = join.join();
         }
     }
+
+    /// Review finding (round 6): the admission-control budget must be a
+    /// single process-lifetime counter shared across session restarts,
+    /// not something freshly allocated per session — otherwise a helper
+    /// thread stuck (timed out, never returned) in one session gets a
+    /// brand-new four-slot allowance handed to the *next* session as if
+    /// nothing were wrong, letting repeated stop/start cycles against
+    /// the same hung target accumulate unboundedly many live stuck
+    /// threads process-wide. This test models exactly that lifecycle —
+    /// saturate, end a session, start another, confirm no new helper is
+    /// admitted until an old one truly exits — using one shared counter
+    /// reused, unmodified, across both simulated sessions (what the real
+    /// fix uses the process-lifetime `IN_FLIGHT_PRINTWINDOW_HELPERS`
+    /// static for). No Windows hook activation is needed to exercise
+    /// this: the property under test is purely about whether the
+    /// counter itself is reset between sessions, not about any real
+    /// `PrintWindow` call.
+    #[test]
+    fn a_slot_left_stuck_by_one_session_is_still_counted_against_the_next_session() {
+        const MAX: usize = 4;
+        let process_wide_in_flight = AtomicUsize::new(0);
+
+        // "Session 1": every slot is taken by a helper that then gets
+        // abandoned -- timed out, never released -- the exact
+        // leaked-thread case this mechanism exists to bound.
+        for _ in 0..MAX {
+            assert!(try_acquire_capture_slot(&process_wide_in_flight, MAX));
+        }
+        // "Session 1" ends (its stop() runs). Ending a session must not
+        // touch this counter at all -- the stuck helpers are still out
+        // there, still holding their slots, whether or not anything
+        // else about that session has stopped.
+        assert_eq!(
+            process_wide_in_flight.load(std::sync::atomic::Ordering::SeqCst),
+            MAX
+        );
+
+        // "Session 2" starts. If the counter were freshly allocated per
+        // session (the bug this round fixes), this would see zero and
+        // hand out up to MAX more helpers on top of the four already
+        // stuck. Because it is the *same* counter, it correctly sees no
+        // budget left and refuses -- repeatedly, across several more
+        // simulated attempts from this "new session."
+        for _ in 0..5 {
+            assert!(
+                !try_acquire_capture_slot(&process_wide_in_flight, MAX),
+                "a new session must not get a fresh allowance while the \
+                 previous session's stuck helpers still hold every slot"
+            );
+        }
+        assert_eq!(
+            process_wide_in_flight.load(std::sync::atomic::Ordering::SeqCst),
+            MAX
+        );
+
+        // One of the original stuck helpers from "session 1" finally
+        // returns (the target became responsive again, however late)
+        // and releases its slot -- only now can "session 2" admit
+        // exactly one new helper, proving the budget really is shared
+        // across the restart, not reset by it.
+        release_capture_slot(&process_wide_in_flight);
+        assert!(try_acquire_capture_slot(&process_wide_in_flight, MAX));
+        assert_eq!(
+            process_wide_in_flight.load(std::sync::atomic::Ordering::SeqCst),
+            MAX
+        );
+    }
 }
 
 #[cfg(not(windows))]
@@ -1190,17 +1257,17 @@ mod win {
         // worker had an event but produced no frame for it).
         let hook_trylock_misses = Arc::new(AtomicU64::new(0));
         let capture_failures = Arc::new(AtomicU64::new(0));
-        // Review finding: a per-capture PrintWindow timeout bounds how
-        // long one caller waits, but not how many abandoned helper
-        // threads (each holding GDI handles/memory) can accumulate
-        // against a persistently hung target. `in_flight_printwindow_helpers`
-        // is the shared admission-control counter `try_acquire_capture_slot`/
-        // `release_capture_slot` operate on; `capture_capacity_exhausted`
-        // is its own explicit loss counter (same pattern as the other
-        // three below) for when capture fails closed because every slot
-        // is genuinely stuck, not because of an ordinary per-frame
-        // failure.
-        let in_flight_printwindow_helpers = Arc::new(AtomicUsize::new(0));
+        // Review finding (round 6): the in-flight PrintWindow helper
+        // budget must NOT be a fresh per-session counter -- see
+        // `IN_FLIGHT_PRINTWINDOW_HELPERS`'s own doc comment for why a
+        // process-lifetime `static` is used instead, and why there is
+        // deliberately no local `Arc<AtomicUsize>` allocated here the
+        // way there was before this round. `capture_capacity_exhausted`
+        // remains its own per-session explicit loss counter (same
+        // pattern as the other three below) -- it only reports how many
+        // times *this* session's own captures failed closed due to
+        // exhaustion, which is legitimately session-scoped information,
+        // unlike the admission-control budget itself.
         let capture_capacity_exhausted = Arc::new(AtomicU64::new(0));
 
         let a_to_c: Arc<Mutex<BoundedDropOldest<RawHookEvent>>> = Arc::new(Mutex::new(
@@ -1285,7 +1352,6 @@ mod win {
         let c_in = a_to_c.clone();
         let c_out = c_to_b.clone();
         let c_capture_failures = capture_failures.clone();
-        let c_in_flight_printwindow_helpers = in_flight_printwindow_helpers.clone();
         let c_capture_capacity_exhausted = capture_capacity_exhausted.clone();
         let capture_join = std::thread::spawn(move || loop {
             if c_stop.load(Ordering::SeqCst) {
@@ -1296,11 +1362,7 @@ mod win {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             };
-            match capture_window_at(
-                raw,
-                &c_in_flight_printwindow_helpers,
-                &c_capture_capacity_exhausted,
-            ) {
+            match capture_window_at(raw, &c_capture_capacity_exhausted) {
                 Some(frame) => {
                     if let Ok(mut q) = c_out.lock() {
                         q.push(frame);
@@ -1854,15 +1916,16 @@ mod win {
     /// window at that exact pixel can change between the hook observing
     /// the click and this function running.
     ///
-    /// `in_flight_printwindow_helpers`/`capture_capacity_exhausted` are
-    /// the shared, session-scoped admission-control state for the
-    /// resource bound described on `print_window_rgba_bounded`'s own doc
-    /// comment — a slot is reserved here, before any helper thread is
-    /// spawned, and released only once the real `PrintWindow` call
-    /// actually finishes (inside that helper, however long it takes).
+    /// `capture_capacity_exhausted` is the session-scoped explicit loss
+    /// counter for when capture fails closed because every slot of the
+    /// *process-wide* admission-control budget is genuinely stuck — see
+    /// `IN_FLIGHT_PRINTWINDOW_HELPERS`'s own doc comment for why that
+    /// budget itself is deliberately not session-scoped. A slot is
+    /// reserved here, before any helper thread is spawned, and released
+    /// only once the real `PrintWindow` call actually finishes (inside
+    /// that helper, however long it takes).
     fn capture_window_at(
         raw: RawHookEvent,
-        in_flight_printwindow_helpers: &Arc<AtomicUsize>,
         capture_capacity_exhausted: &Arc<AtomicU64>,
     ) -> Option<CapturedFrame> {
         let leaf = hwnd_from_value(raw.hwnd_value);
@@ -1892,19 +1955,21 @@ mod win {
         // spawning anything; if every slot is already held by a
         // genuinely-stuck helper, this capture fails closed immediately
         // (nothing is captured, nothing new is spawned) rather than
-        // piling on yet another thread. See `print_window_rgba_bounded`
+        // piling on yet another thread. `IN_FLIGHT_PRINTWINDOW_HELPERS`
+        // is a process-lifetime `static`, not a per-session counter —
+        // see its own doc comment for why that distinction is itself a
+        // review finding this round fixed. See `print_window_rgba_bounded`
         // and `try_acquire_capture_slot`'s own doc comments for the full
         // reasoning and the deterministic saturation/recovery tests.
         if !super::try_acquire_capture_slot(
-            in_flight_printwindow_helpers,
+            &IN_FLIGHT_PRINTWINDOW_HELPERS,
             super::MAX_INFLIGHT_PRINTWINDOW_HELPERS,
         ) {
             capture_capacity_exhausted.fetch_add(1, Ordering::SeqCst);
             return None;
         }
 
-        let rgba =
-            print_window_rgba_bounded(root, width, height, in_flight_printwindow_helpers.clone())?;
+        let rgba = print_window_rgba_bounded(root, width, height)?;
 
         Some(CapturedFrame {
             raw,
@@ -1921,6 +1986,34 @@ mod win {
     /// function's own doc comment and `capture_window_at`'s for how the
     /// two work together.
     const PRINT_WINDOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    /// Review finding (round 6): the admission-control budget
+    /// `try_acquire_capture_slot`/`release_capture_slot` operate on must
+    /// be a single **process-lifetime** counter, not something freshly
+    /// allocated per session. The previous round allocated a fresh
+    /// `Arc::new(AtomicUsize::new(0))` inside `start()` on every call —
+    /// a timed-out helper thread spawned by one session is never killed
+    /// (Rust cannot force-cancel a blocked native call) and can still be
+    /// blocked on `PrintWindow` long after that session's `stop()` has
+    /// returned, holding a slot in *that session's* now-discarded
+    /// counter. A later `start()` created an entirely new counter
+    /// starting back at zero, handing out a fresh four-helper allowance
+    /// as if nothing were stuck — so repeated stop/start cycles against
+    /// the same hung target could accumulate unboundedly many live,
+    /// stuck OS threads and GDI handles process-wide, exactly defeating
+    /// the bound this mechanism exists to enforce.
+    ///
+    /// Fixed by making the counter itself outlive any one session: a
+    /// `static` initialized once for the life of the process, shared by
+    /// every `start()`/`stop()` cycle that ever runs in it. A helper
+    /// thread stuck from a session that has already stopped still holds
+    /// its reservation against this same counter, so a subsequent
+    /// session correctly sees reduced headroom (or none) rather than a
+    /// fresh allowance, until that old helper actually finishes and
+    /// releases its slot — see `pure_tests` for a deterministic test of
+    /// exactly this saturate → end-session → start-new-session →
+    /// still-blocked → eventually-released sequence.
+    static IN_FLIGHT_PRINTWINDOW_HELPERS: AtomicUsize = AtomicUsize::new(0);
 
     /// Runs the actual `PrintWindow`-based capture on a dedicated,
     /// short-lived helper thread and waits for it with a hard timeout —
@@ -1952,33 +2045,34 @@ mod win {
     /// itself a resource-exhaustion path, independent of this timeout.
     /// `capture_window_at` now reserves a slot from the shared
     /// `MAX_INFLIGHT_PRINTWINDOW_HELPERS` budget (via
-    /// `try_acquire_capture_slot`) *before* ever calling this function,
-    /// and `in_flight` here is that same reservation, passed through so
-    /// the spawned helper can release it — via `release_capture_slot` —
-    /// at the moment the real `PrintWindow` call actually returns, no
-    /// matter how long that took. A helper that never returns therefore
-    /// never releases its slot: that is the enforced bound, not a bug.
-    /// Once every slot is held this way, `capture_window_at` fails every
-    /// further capture closed (see its own doc comment) until a stuck
-    /// helper eventually completes and its slot is released, at which
-    /// point capture resumes automatically with no separate re-enable
-    /// step.
-    fn print_window_rgba_bounded(
-        root: HWND,
-        width: i32,
-        height: i32,
-        in_flight: Arc<AtomicUsize>,
-    ) -> Option<Vec<u8>> {
+    /// `try_acquire_capture_slot`, against the process-lifetime
+    /// `IN_FLIGHT_PRINTWINDOW_HELPERS` static — see its own doc comment
+    /// for why a per-session counter was wrong) *before* ever calling
+    /// this function; this function's own job is just to release that
+    /// same reservation — via `release_capture_slot` — at the moment the
+    /// real `PrintWindow` call actually returns, no matter how long that
+    /// took, and regardless of whether the session that requested it has
+    /// since stopped. A helper that never returns therefore never
+    /// releases its slot: that is the enforced bound, not a bug. Once
+    /// every slot is held this way, `capture_window_at` fails every
+    /// further capture closed (see its own doc comment) — in this
+    /// session or any later one — until a stuck helper eventually
+    /// completes and its slot is released, at which point capture
+    /// resumes automatically with no separate re-enable step.
+    fn print_window_rgba_bounded(root: HWND, width: i32, height: i32) -> Option<Vec<u8>> {
         let root_value = root.0 as isize;
         let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
         std::thread::spawn(move || {
             let hwnd = hwnd_from_value(root_value);
             let result = unsafe { print_window_rgba(hwnd, width, height) };
             // Released only now, after the real call has actually
-            // finished -- not when a waiting receiver gives up. See
-            // `release_capture_slot`'s own doc comment for why that
-            // distinction is the entire point.
-            super::release_capture_slot(&in_flight);
+            // finished -- not when a waiting receiver gives up, and
+            // against the same process-lifetime static no matter which
+            // session (if any still exists) originally requested this
+            // capture. See `release_capture_slot`'s and
+            // `IN_FLIGHT_PRINTWINDOW_HELPERS`'s own doc comments for why
+            // that distinction is the entire point.
+            super::release_capture_slot(&IN_FLIGHT_PRINTWINDOW_HELPERS);
             // Ignored if the receiver already gave up on timeout -- that
             // is exactly the case this function exists to make harmless.
             let _ = tx.send(result);
