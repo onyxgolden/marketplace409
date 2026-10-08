@@ -17,6 +17,7 @@
     <button id="tab-image" class="tab active" role="tab" aria-selected="true" type="button">Image</button>
     <button id="tab-video" class="tab" role="tab" aria-selected="false" type="button">Video</button>
     <button id="tab-meeting" class="tab" role="tab" aria-selected="false" type="button">Meeting</button>
+    <button id="tab-training" class="tab" role="tab" aria-selected="false" type="button">Process Training</button>
   </div>
 
   <main>
@@ -125,6 +126,11 @@
     <section id="panel-meeting" role="tabpanel" aria-labelledby="tab-meeting" hidden>
       <div id="meeting-mount"></div>
     </section>
+
+    <!-- ===================== PROCESS TRAINING (PT-1C) =================== -->
+    <section id="panel-training" role="tabpanel" aria-labelledby="tab-training" hidden>
+      <div id="process-training-mount"></div>
+    </section>
   </main>
 
   <dialog id="help-dialog">
@@ -188,5 +194,6 @@
   <script type="module" src="main.js"></script>
   <script type="module" src="record.js"></script>
   <script type="module" src="meeting.js"></script>
+  <script type="module" src="process-training.js"></script>
 </body>
 </html>
