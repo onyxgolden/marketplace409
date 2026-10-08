@@ -362,9 +362,74 @@ pub(crate) fn validate_frame_dimensions(width: i32, height: i32) -> Option<usize
     Some(bytes)
 }
 
+/// Hard upper bound on `PrintWindow` helper threads allowed to be in
+/// flight at once (spawned by `win::print_window_rgba_bounded`, which
+/// never joins one that times out — see that function's own doc
+/// comment for why a safe forced cancellation isn't available). Review
+/// finding: a per-capture timeout bounds how long *one* caller waits,
+/// but nothing previously bounded how many abandoned helpers — each
+/// holding an OS thread and GDI handles/memory — could accumulate
+/// against a persistently hung or hostile target. This cap turns that
+/// into a bounded, disclosed degradation: once this many helpers are
+/// genuinely stuck at once, every further capture attempt fails closed
+/// immediately (nothing is captured, nothing new is spawned) rather
+/// than piling another thread on top of ones that never returned. If a
+/// stuck helper eventually does return — the target becomes responsive
+/// again, however late — its slot is released and capture resumes
+/// automatically; there is no separate re-enable step, and no crash or
+/// hang in the three main pipeline threads either way.
+pub(crate) const MAX_INFLIGHT_PRINTWINDOW_HELPERS: usize = 4;
+
+/// Attempts to atomically reserve one of `max` capture slots tracked by
+/// `in_flight`. Returns `true` (a slot was reserved; the caller must
+/// release it — via [`release_capture_slot`] — exactly once, whenever
+/// the unit of work it is guarding actually finishes, however long that
+/// takes) or `false` (already at capacity; the caller must not start
+/// anything and must fail closed instead).
+///
+/// Pure, lock-free, host-independent compare-and-swap arithmetic — the
+/// actual resource being bounded (an OS thread plus GDI handles, for the
+/// real `PrintWindow` caller) lives entirely outside this function. That
+/// split is what makes the admission-control logic itself unit-testable
+/// without needing a real stuck thread (see `pure_tests` below, which
+/// exercises saturation and release with injected fake workers standing
+/// in for a hung `PrintWindow` call).
+pub(crate) fn try_acquire_capture_slot(
+    in_flight: &std::sync::atomic::AtomicUsize,
+    max: usize,
+) -> bool {
+    use std::sync::atomic::Ordering;
+    let mut current = in_flight.load(Ordering::SeqCst);
+    loop {
+        if current >= max {
+            return false;
+        }
+        match in_flight.compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+/// Releases a slot previously reserved by [`try_acquire_capture_slot`].
+/// Must be called exactly once per successful reservation, and only once
+/// the guarded work has actually finished — for the real `PrintWindow`
+/// helper thread, that means after `print_window_rgba` itself returns,
+/// no matter how long that took. A slot whose work never finishes, and
+/// is therefore never released, is not a bug: it *is* the enforced
+/// bound — once enough slots are stuck this way, capture fails closed
+/// until one of them eventually completes.
+pub(crate) fn release_capture_slot(in_flight: &std::sync::atomic::AtomicUsize) {
+    in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[cfg(test)]
 mod pure_tests {
-    use super::{resolve_startup_result, validate_frame_dimensions, MAX_FRAME_DIMENSION};
+    use super::{
+        release_capture_slot, resolve_startup_result, try_acquire_capture_slot,
+        validate_frame_dimensions, MAX_FRAME_DIMENSION,
+    };
+    use std::sync::atomic::AtomicUsize;
     use std::sync::mpsc::RecvTimeoutError;
 
     #[test]
@@ -489,6 +554,122 @@ mod pure_tests {
         assert_eq!(validate_frame_dimensions(i32::MAX, i32::MAX), None);
         assert_eq!(validate_frame_dimensions(i32::MAX, 1), None);
     }
+
+    // -- try_acquire_capture_slot / release_capture_slot --
+
+    #[test]
+    fn slots_up_to_the_limit_are_all_acquired() {
+        let in_flight = AtomicUsize::new(0);
+        for _ in 0..4 {
+            assert!(try_acquire_capture_slot(&in_flight, 4));
+        }
+        assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn the_slot_past_the_limit_is_refused_not_granted() {
+        let in_flight = AtomicUsize::new(0);
+        for _ in 0..4 {
+            assert!(try_acquire_capture_slot(&in_flight, 4));
+        }
+        // The limit itself is never exceeded: a refusal must not have
+        // incremented the counter.
+        assert!(!try_acquire_capture_slot(&in_flight, 4));
+        assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn releasing_a_slot_allows_a_new_acquire() {
+        let in_flight = AtomicUsize::new(0);
+        for _ in 0..4 {
+            assert!(try_acquire_capture_slot(&in_flight, 4));
+        }
+        assert!(!try_acquire_capture_slot(&in_flight, 4));
+        release_capture_slot(&in_flight);
+        assert!(try_acquire_capture_slot(&in_flight, 4));
+    }
+
+    #[test]
+    fn a_limit_of_zero_refuses_every_acquire() {
+        let in_flight = AtomicUsize::new(0);
+        assert!(!try_acquire_capture_slot(&in_flight, 0));
+        assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// Deterministic saturation/recovery test with injected fake workers
+    /// standing in for a real, hung `PrintWindow` call — review finding:
+    /// "test the stuck-helper saturation/stop path deterministically with
+    /// injected fake workers." Each fake worker acquires a slot, then
+    /// blocks on its own `mpsc::Receiver` until this test explicitly
+    /// releases it — simulating a `PrintWindow` call against an
+    /// unresponsive target, without any real OS call or real timing
+    /// dependency.
+    #[test]
+    fn repeated_timeouts_against_the_same_stuck_target_saturate_then_recover() {
+        use std::sync::atomic::Ordering;
+        use std::sync::Arc;
+
+        const MAX: usize = 4;
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let mut release_txs = Vec::new();
+        let mut joins = Vec::new();
+
+        // Saturate every slot with a fake worker that never finishes
+        // until released -- exactly what repeated captures against one
+        // persistently-hung window would do to a real `PrintWindow`
+        // helper thread.
+        for _ in 0..MAX {
+            assert!(try_acquire_capture_slot(&in_flight, MAX));
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let worker_in_flight = in_flight.clone();
+            let join = std::thread::spawn(move || {
+                // Blocks until the test releases it -- standing in for a
+                // PrintWindow call that never returns on its own.
+                let _ = release_rx.recv();
+                release_capture_slot(&worker_in_flight);
+            });
+            release_txs.push(release_tx);
+            joins.push(join);
+        }
+
+        // Every slot is occupied by a still-stuck fake worker: a further
+        // capture attempt must be refused, not queued, not spawned.
+        assert!(
+            !try_acquire_capture_slot(&in_flight, MAX),
+            "capture must fail closed once every slot is genuinely stuck"
+        );
+        assert_eq!(in_flight.load(Ordering::SeqCst), MAX);
+
+        // Repeating the attempt several more times (standing in for
+        // several more clicks against the same hung target) must never
+        // exceed the limit and must never spawn anything new.
+        for _ in 0..10 {
+            assert!(!try_acquire_capture_slot(&in_flight, MAX));
+        }
+        assert_eq!(in_flight.load(Ordering::SeqCst), MAX);
+
+        // The target becomes responsive again: release exactly one
+        // stuck worker and confirm exactly one new slot becomes
+        // available -- not more, not fewer.
+        release_txs[0].send(()).unwrap();
+        joins.remove(0).join().unwrap();
+        // The release happens on another thread; wait for the count to
+        // actually drop rather than racing it (bounded, not a sleep
+        // guess -- the join above already guarantees the decrement has
+        // happened by the time it returns).
+        assert_eq!(in_flight.load(Ordering::SeqCst), MAX - 1);
+        assert!(try_acquire_capture_slot(&in_flight, MAX));
+        assert_eq!(in_flight.load(Ordering::SeqCst), MAX);
+
+        // Clean up the remaining fake workers so the test does not leak
+        // real OS threads of its own.
+        for tx in release_txs.drain(1..) {
+            let _ = tx.send(());
+        }
+        for join in joins.drain(1..) {
+            let _ = join.join();
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -532,7 +713,7 @@ mod win {
         ProcessTrust, RawButtonEvent, SensitivitySignals,
     };
     use crate::result::CaptureError;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
     use windows::Win32::Foundation::CloseHandle;
@@ -1009,6 +1190,18 @@ mod win {
         // worker had an event but produced no frame for it).
         let hook_trylock_misses = Arc::new(AtomicU64::new(0));
         let capture_failures = Arc::new(AtomicU64::new(0));
+        // Review finding: a per-capture PrintWindow timeout bounds how
+        // long one caller waits, but not how many abandoned helper
+        // threads (each holding GDI handles/memory) can accumulate
+        // against a persistently hung target. `in_flight_printwindow_helpers`
+        // is the shared admission-control counter `try_acquire_capture_slot`/
+        // `release_capture_slot` operate on; `capture_capacity_exhausted`
+        // is its own explicit loss counter (same pattern as the other
+        // three below) for when capture fails closed because every slot
+        // is genuinely stuck, not because of an ordinary per-frame
+        // failure.
+        let in_flight_printwindow_helpers = Arc::new(AtomicUsize::new(0));
+        let capture_capacity_exhausted = Arc::new(AtomicU64::new(0));
 
         let a_to_c: Arc<Mutex<BoundedDropOldest<RawHookEvent>>> = Arc::new(Mutex::new(
             BoundedDropOldest::new(QUEUE_MAX_ITEMS, QUEUE_MAX_BYTES, |_: &RawHookEvent| {
@@ -1092,6 +1285,8 @@ mod win {
         let c_in = a_to_c.clone();
         let c_out = c_to_b.clone();
         let c_capture_failures = capture_failures.clone();
+        let c_in_flight_printwindow_helpers = in_flight_printwindow_helpers.clone();
+        let c_capture_capacity_exhausted = capture_capacity_exhausted.clone();
         let capture_join = std::thread::spawn(move || loop {
             if c_stop.load(Ordering::SeqCst) {
                 break;
@@ -1101,7 +1296,11 @@ mod win {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 continue;
             };
-            match capture_window_at(raw) {
+            match capture_window_at(
+                raw,
+                &c_in_flight_printwindow_helpers,
+                &c_capture_capacity_exhausted,
+            ) {
                 Some(frame) => {
                     if let Ok(mut q) = c_out.lock() {
                         q.push(frame);
@@ -1128,6 +1327,7 @@ mod win {
         let b_fully_stopped = hook_fully_stopped.clone();
         let b_trylock_misses = hook_trylock_misses.clone();
         let b_capture_failures = capture_failures.clone();
+        let b_capture_capacity_exhausted = capture_capacity_exhausted.clone();
         let self_pid = config.self_pid;
         let trusted = config.author_trusted_processes.clone();
         let persist_verbatim_metadata = config.persist_verbatim_metadata;
@@ -1176,23 +1376,26 @@ mod win {
             let mut last_c_dropped: u64 = 0;
             let mut last_trylock_misses: u64 = 0;
             let mut last_capture_failures: u64 = 0;
+            let mut last_capture_capacity_exhausted: u64 = 0;
 
             loop {
                 if b_stop.load(Ordering::SeqCst) {
                     break;
                 }
 
-                // Loss accounting, all four modes: a queue's own
+                // Loss accounting, all five modes: a queue's own
                 // drop-oldest policy (BoundedDropOldest) counts what it
-                // drops internally; a hook-callback try_lock miss and a
-                // capture failure are counted by their own dedicated
-                // counters (see their declarations in `start`), since
-                // neither one ever touches a BoundedDropOldest at all.
-                // None of these four were ever surfaced to the caller
-                // before — each is polled here (diffed against the last
-                // seen value) and reported as its own message, since a
-                // loss that happens to be the pipeline's very last event
-                // has nothing after it to reveal a hole via the ordinary
+                // drops internally; a hook-callback try_lock miss, a
+                // capture failure, and a capture-capacity exhaustion
+                // (every PrintWindow helper slot genuinely stuck at
+                // once) are each counted by their own dedicated counter
+                // (see their declarations in `start`), since none of
+                // them ever touch a BoundedDropOldest at all. None of
+                // these five were ever surfaced to the caller before —
+                // each is polled here (diffed against the last seen
+                // value) and reported as its own message, since a loss
+                // that happens to be the pipeline's very last event has
+                // nothing after it to reveal a hole via the ordinary
                 // pairwise sequence-gap check below.
                 if let Ok(q) = b_a_queue.lock() {
                     if q.dropped_count != last_a_dropped {
@@ -1217,6 +1420,15 @@ mod win {
                     sink(PipelineMessage::QueueOverflow {
                         stage: "capture-failure",
                         dropped_count: last_capture_failures,
+                    });
+                }
+                let capture_capacity_exhausted_now =
+                    b_capture_capacity_exhausted.load(Ordering::SeqCst);
+                if capture_capacity_exhausted_now != last_capture_capacity_exhausted {
+                    last_capture_capacity_exhausted = capture_capacity_exhausted_now;
+                    sink(PipelineMessage::QueueOverflow {
+                        stage: "capture-capacity-exhausted",
+                        dropped_count: last_capture_capacity_exhausted,
                     });
                 }
 
@@ -1620,7 +1832,19 @@ mod win {
     /// limitation is disclosed, not hidden; there is no practical Win32
     /// API that exposes a window "instance identity" distinct from its
     /// (reusable) handle value and its (unchanged, same-process) owning
-    /// PID.
+    /// PID. Same-PID matching is a real, useful reduction in risk, never
+    /// a strong identity guarantee — it is trusted exactly that far and
+    /// no further, here and everywhere else it's used in this pipeline.
+    ///
+    /// Review finding (round 4): the root ancestor used to be derived
+    /// from the leaf (`root_window(leaf)`) and handed straight to
+    /// `GetWindowRect`/`PrintWindow` with no identity check of its own —
+    /// only the leaf's PID had been confirmed. `GetAncestor(_, GA_ROOT)`
+    /// ordinarily stays within the same process as its leaf, but Win32
+    /// does not *guarantee* that (cross-process ownership chains are
+    /// rare but possible), so the root is now re-checked with the same
+    /// `identity_matches` call, against the same hook-time-recorded PID,
+    /// before it is used for anything.
     ///
     /// Takes the hook-time-resolved `HWND` directly (`raw.hwnd_value`)
     /// rather than re-resolving one from `(x, y)` via a fresh
@@ -1629,12 +1853,26 @@ mod win {
     /// scheduled, is exactly the TOCTOU gap a design review caught: the
     /// window at that exact pixel can change between the hook observing
     /// the click and this function running.
-    fn capture_window_at(raw: RawHookEvent) -> Option<CapturedFrame> {
+    ///
+    /// `in_flight_printwindow_helpers`/`capture_capacity_exhausted` are
+    /// the shared, session-scoped admission-control state for the
+    /// resource bound described on `print_window_rgba_bounded`'s own doc
+    /// comment — a slot is reserved here, before any helper thread is
+    /// spawned, and released only once the real `PrintWindow` call
+    /// actually finishes (inside that helper, however long it takes).
+    fn capture_window_at(
+        raw: RawHookEvent,
+        in_flight_printwindow_helpers: &Arc<AtomicUsize>,
+        capture_capacity_exhausted: &Arc<AtomicU64>,
+    ) -> Option<CapturedFrame> {
         let leaf = hwnd_from_value(raw.hwnd_value);
         if !identity_matches(leaf, raw.window_pid) {
             return None;
         }
         let root = root_window(leaf);
+        if !identity_matches(root, raw.window_pid) {
+            return None;
+        }
         let mut win_rect = windows::Win32::Foundation::RECT::default();
         if unsafe { GetWindowRect(root, &mut win_rect) }.is_err() {
             return None;
@@ -1647,7 +1885,26 @@ mod win {
         // doc comment.
         super::validate_frame_dimensions(width, height)?;
 
-        let rgba = print_window_rgba_bounded(root, width, height)?;
+        // Review finding: a per-capture timeout alone is not a resource
+        // bound -- nothing previously limited how many abandoned
+        // PrintWindow helper threads could accumulate against a
+        // persistently hung target. A slot must be reserved *before*
+        // spawning anything; if every slot is already held by a
+        // genuinely-stuck helper, this capture fails closed immediately
+        // (nothing is captured, nothing new is spawned) rather than
+        // piling on yet another thread. See `print_window_rgba_bounded`
+        // and `try_acquire_capture_slot`'s own doc comments for the full
+        // reasoning and the deterministic saturation/recovery tests.
+        if !super::try_acquire_capture_slot(
+            in_flight_printwindow_helpers,
+            super::MAX_INFLIGHT_PRINTWINDOW_HELPERS,
+        ) {
+            capture_capacity_exhausted.fetch_add(1, Ordering::SeqCst);
+            return None;
+        }
+
+        let rgba =
+            print_window_rgba_bounded(root, width, height, in_flight_printwindow_helpers.clone())?;
 
         Some(CapturedFrame {
             raw,
@@ -1659,7 +1916,10 @@ mod win {
     }
 
     /// How long a single `PrintWindow` attempt is allowed to run before
-    /// it is treated as a capture failure and abandoned.
+    /// the *caller* treats it as a capture failure and moves on. This is
+    /// a wait bound only, not a resource bound by itself -- see this
+    /// function's own doc comment and `capture_window_at`'s for how the
+    /// two work together.
     const PRINT_WINDOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
     /// Runs the actual `PrintWindow`-based capture on a dedicated,
@@ -1669,7 +1929,7 @@ mod win {
     /// Review finding: `PrintWindow` asks another process to render; an
     /// unresponsive, hung, or hostile target can block that call
     /// indefinitely. Calling it directly on the capture worker thread (as
-    /// the previous round did) meant a single stuck target could block
+    /// an earlier round did) meant a single stuck target could block
     /// that thread forever — and since `ProcessCaptureHandle::stop` joins
     /// the capture thread with no timeout of its own, a hung capture
     /// could make `stop` itself hang forever too.
@@ -1683,16 +1943,42 @@ mod win {
     /// an ordinary capture failure (counted the same as any other). The
     /// spawned helper thread itself is *not* killed — if the target truly
     /// never responds, that one thread remains blocked for the life of
-    /// the process, a disclosed, accepted trade-off rather than a hidden
-    /// one: it never blocks the three main pipeline threads, never blocks
-    /// `stop`'s join, and only accumulates per genuinely-hung target
-    /// (expected to be rare), not per ordinary capture.
-    fn print_window_rgba_bounded(root: HWND, width: i32, height: i32) -> Option<Vec<u8>> {
+    /// the process.
+    ///
+    /// Review finding (round 4): a per-capture timeout alone does not
+    /// bound *how many* such abandoned helpers can accumulate — each one
+    /// holds an OS thread plus GDI handles/memory, so an unbounded
+    /// number of them against a persistently hung or hostile target is
+    /// itself a resource-exhaustion path, independent of this timeout.
+    /// `capture_window_at` now reserves a slot from the shared
+    /// `MAX_INFLIGHT_PRINTWINDOW_HELPERS` budget (via
+    /// `try_acquire_capture_slot`) *before* ever calling this function,
+    /// and `in_flight` here is that same reservation, passed through so
+    /// the spawned helper can release it — via `release_capture_slot` —
+    /// at the moment the real `PrintWindow` call actually returns, no
+    /// matter how long that took. A helper that never returns therefore
+    /// never releases its slot: that is the enforced bound, not a bug.
+    /// Once every slot is held this way, `capture_window_at` fails every
+    /// further capture closed (see its own doc comment) until a stuck
+    /// helper eventually completes and its slot is released, at which
+    /// point capture resumes automatically with no separate re-enable
+    /// step.
+    fn print_window_rgba_bounded(
+        root: HWND,
+        width: i32,
+        height: i32,
+        in_flight: Arc<AtomicUsize>,
+    ) -> Option<Vec<u8>> {
         let root_value = root.0 as isize;
         let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
         std::thread::spawn(move || {
             let hwnd = hwnd_from_value(root_value);
             let result = unsafe { print_window_rgba(hwnd, width, height) };
+            // Released only now, after the real call has actually
+            // finished -- not when a waiting receiver gives up. See
+            // `release_capture_slot`'s own doc comment for why that
+            // distinction is the entire point.
+            super::release_capture_slot(&in_flight);
             // Ignored if the receiver already gave up on timeout -- that
             // is exactly the case this function exists to make harmless.
             let _ = tx.send(result);
