@@ -99,3 +99,25 @@ export const SLOT_STATES = Object.freeze([
   "ambiguous",
   "configuration-error",
 ]);
+
+/**
+ * Attribution window for a slot: evidence belongs to the NEAREST expected
+ * slot (Slice 4 review blocker 1). The window is bounded by the midpoints
+ * to the previous and next expected slots, so a run serving an adjacent
+ * slot (e.g. the 10:05 run for a dual-fire 09:00/10:00 pair) is never
+ * attributed to this slot. Defaults to [expected - 1h, expected + grace]
+ * when a neighbor is far away (daily slots).
+ */
+export function attributionWindow(capability, slot) {
+  const t = Date.parse(slot.expected_at);
+  // Regenerate with a probe a day after the slot so the NEXT slot exists.
+  const all = expectedSlots(capability, t + 86400000);
+  const idx = all.findIndex((s) => s.expected_at === slot.expected_at);
+  const prev = idx >= 0 ? all[idx + 1] : undefined;
+  const next = idx > 0 ? all[idx - 1] : undefined;
+  let start = t - 3600000;
+  let end = t + slot.grace_hours * 3600000;
+  if (prev) start = Math.max(start, (Date.parse(prev.expected_at) + t) / 2);
+  if (next) end = Math.min(end, (t + Date.parse(next.expected_at)) / 2);
+  return { startIso: new Date(start).toISOString(), endIso: new Date(end).toISOString() };
+}

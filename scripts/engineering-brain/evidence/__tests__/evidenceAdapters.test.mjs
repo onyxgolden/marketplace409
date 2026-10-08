@@ -22,6 +22,7 @@ function fakeSupabase({ countResult, latestResult, calls = [] } = {}) {
   const chain = {
     select(cols, opts) { calls.push(["select", cols]); headMode = !!(opts && opts.head); return chain; },
     gte(col, val) { calls.push(["gte", col, val]); return chain; },
+    lt(col, val) { calls.push(["lt", col, val]); return chain; },
     eq(col, val) { calls.push(["eq", col, val]); return chain; },
     like(col, val) { calls.push(["like", col, val]); return chain; },
     order(col, opts) { calls.push(["order", col]); return chain; },

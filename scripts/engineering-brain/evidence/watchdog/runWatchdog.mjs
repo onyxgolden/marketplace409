@@ -18,7 +18,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { expectedSlots } from "./evaluateSlots.mjs";
+import { expectedSlots, attributionWindow } from "./evaluateSlots.mjs";
 import { collectEvidence } from "../collectEvidence.mjs";
 import { getAdapterSpec } from "../evidenceAdapters.mjs";
 import { CAPABILITIES, getCapability } from "../../runtimeCoverageRegistry.mjs";
@@ -46,7 +46,7 @@ function saveAlertState(stateFile, state) {
 
 /**
  * Latest attributable timestamp from collected results, or null.
- * Returns { at, source } for the freshest attributable evidence.
+ * (Kept for diagnostic summaries; slot states use slot-scoped queries.)
  */
 function freshestAttributable(collected) {
   let best = null;
@@ -62,21 +62,17 @@ function freshestAttributable(collected) {
   return best;
 }
 
-function hasExecutionRecord(collected) {
-  return collected.results.some(
-    (r) => r.ok && ATTRIBUTABLE.has(r.attribution) && r.execution_record === true
-  );
-}
-
-function hasWorkflowExclusive(collected) {
-  return collected.results.some(
-    (r) => r.ok && r.attribution === "workflow-exclusive"
-  );
-}
-
 /**
- * Evaluate one slot. Returns { state, reason, evidence_summary }.
- * repoRoot is used for the configuration check (workflow files exist).
+ * Evaluate one slot. Evidence is queried SCOPED TO THE SLOT WINDOW —
+ * never the global latest record (Slice 4 review blocker 1).
+ *
+ * Blocker 2: a missing GitHub Actions run ALONE is never a confirmed
+ * miss. For workflow-exclusive sources, confirmed-miss requires visible
+ * run history (totalFetched > 0) with the slot window empty; zero
+ * history at all is ambiguous.
+ *
+ * Blocker 3: a failed/incomplete workflow run in the window is not
+ * success — it is ambiguous (ran but did not succeed).
  */
 export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
   const at = Number.isFinite(now) ? now : Date.now();
@@ -103,52 +99,74 @@ export async function evaluateSlot(capability, slot, { now, deps, repoRoot }) {
     }
   }
 
-  const collected = await collectEvidence(capability.id, { now: at, deps });
+  // Slot-scoped evidence: the attribution window (nearest-slot bounded).
+  // Evidence is queried FOR THE SLOT — never the global latest record.
+  const slotWindow = attributionWindow(capability, slot);
+  const collected = await collectEvidence(capability.id, { now: at, deps, slotWindow });
   const evidence_summary = collected.results.map((r) => ({
     adapter: r.adapter,
     attribution: r.attribution,
     ok: r.ok,
     detail: r.ok
       ? r.adapter === "supabase-table"
-        ? `${r.evidence.rowCount} rows, latest ${r.evidence.latestAt}`
-        : `latest run ${r.evidence.latest ? `${r.evidence.latest.conclusion} at ${r.evidence.latest.startedAt}` : "none"}`
+        ? `${r.evidence.rowCount} rows in slot window, latest ${r.evidence.latestAt}`
+        : `runs in slot window: ${r.evidence.runCount} (fetched ${r.evidence.totalFetched}), latest ${r.evidence.latest ? `${r.evidence.latest.conclusion} at ${r.evidence.latest.startedAt}` : "none"}`
       : r.error,
   }));
   if (!collected.ok) {
     return { state: "ambiguous", reason: `evidence unavailable: ${collected.error}`, evidence_summary };
   }
 
-  const best = freshestAttributable(collected);
-  const windowStart = expectedMs - 3600000;
-  const windowEnd = expectedMs + graceMs;
-  if (best) {
-    const t = Date.parse(best.at);
-    if (Number.isFinite(t) && t >= windowStart && t <= windowEnd) {
-      return {
-        state: "observed-success",
-        reason: `attributable evidence at ${best.at} (${best.source}) inside the slot window`,
-        evidence_summary,
-      };
+  let sawSuccess = false;
+  let sawNonSuccess = null;
+  let executionRecordHealthy = false;
+  let workflowHistoryVisible = false;
+  let workflowRunInWindow = false;
+
+  for (const r of collected.results) {
+    if (!r.ok || !ATTRIBUTABLE.has(r.attribution)) continue;
+    if (r.adapter === "supabase-table") {
+      if (r.execution_record === true) executionRecordHealthy = true;
+      if (r.evidence.rowCount > 0) sawSuccess = true;
+    } else if (r.adapter === "github-actions") {
+      if (r.evidence.totalFetched > 0) workflowHistoryVisible = true;
+      if (r.evidence.latest) {
+        workflowRunInWindow = true;
+        if (r.evidence.latest.conclusion === "success") {
+          sawSuccess = true;
+        } else {
+          sawNonSuccess = `workflow run in slot window concluded "${r.evidence.latest.conclusion}" — ran but did not succeed`;
+        }
+      }
     }
   }
 
-  // No attributable evidence in the slot window. Confirmed-miss only
-  // where a mark is mandatory: execution-attempt logs and
-  // workflow-exclusive runs. Otherwise ambiguous (idle vs missed).
-  if (hasExecutionRecord(collected) || hasWorkflowExclusive(collected)) {
+  if (sawSuccess) {
+    return { state: "observed-success", reason: "attributable evidence inside the slot window", evidence_summary };
+  }
+  if (sawNonSuccess) {
+    return { state: "ambiguous", reason: sawNonSuccess, evidence_summary };
+  }
+  // No attributable evidence in the slot window.
+  if (executionRecordHealthy) {
     return {
       state: "confirmed-miss",
-      reason: best
-        ? `no attributable evidence in the slot window; freshest is ${best.at}`
-        : "no attributable evidence in the slot window",
+      reason: "execution-attempt log healthy but empty for the slot window",
+      evidence_summary,
+    };
+  }
+  if (workflowHistoryVisible && !workflowRunInWindow) {
+    // History proves the query works; the slot is genuinely empty.
+    // (A missing run ALONE — no history at all — stays ambiguous.)
+    return {
+      state: "confirmed-miss",
+      reason: "workflow run history visible but no run in the slot window",
       evidence_summary,
     };
   }
   return {
     state: "ambiguous",
-    reason: best
-      ? `freshest attributable evidence ${best.at} is outside the slot window; business effects cannot confirm a miss`
-      : "no attributable evidence in the slot window; business effects cannot confirm a miss",
+    reason: "no attributable evidence in the slot window; cannot confirm a miss",
     evidence_summary,
   };
 }

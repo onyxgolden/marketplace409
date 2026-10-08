@@ -9,32 +9,53 @@ import {
   chicagoUtcOffsetHours,
   effectiveCronsForDate,
   expectedSlots,
+  attributionWindow,
 } from "../evaluateSlots.mjs";
 import { evaluateSlot, runWatchdog, diagnosticPacket } from "../runWatchdog.mjs";
 import { getCapability } from "../../../runtimeCoverageRegistry.mjs";
 
-// --- fakes (same shape as the Slice 2/3 fakes) ---------------------------
+// --- fakes (same shape as the Slice 2/3 fakes, now window-aware) ----------
 
-function fakeSupabase({ countResult, latestResult } = {}) {
-  let headMode = false;
-  const chain = {
-    select(cols, opts) { headMode = !!(opts && opts.head); return chain; },
-    gte() { return chain; },
-    eq() { return chain; },
-    like() { return chain; },
-    order() { return chain; },
-    limit() { return chain; },
-    then(resolve) { resolve(headMode ? countResult : latestResult); },
+function fakeSupabase({ rows = [] } = {}) {
+  // rows: [{ id, <timeColumn>: ISO }]. Applies gte/lt bounds like the real query.
+  // from() returns a FRESH chain per call, like the real client.
+  const newChain = () => {
+    let headMode = false;
+    let gteIso = null;
+    let ltIso = null;
+    let timeColumn = "started_at";
+    const chain = {
+      select(cols, opts) { headMode = !!(opts && opts.head); return chain; },
+      gte(col, iso) { gteIso = iso; return chain; },
+      lt(col, iso) { ltIso = iso; return chain; },
+      eq() { return chain; },
+      like() { return chain; },
+      order(col) { timeColumn = col; return chain; },
+      limit() { return chain; },
+      then(resolve) {
+        const matched = rows.filter((r) =>
+          (gteIso === null || r[timeColumn] >= gteIso) && (ltIso === null || r[timeColumn] < ltIso));
+        if (headMode) resolve({ data: [], count: matched.length, error: null });
+        else {
+          const sorted = [...matched].sort((a, b) =>
+            (b[timeColumn] || "") < (a[timeColumn] || "") ? -1 : 1);
+          resolve({ data: sorted.slice(0, 1), error: null });
+        }
+      },
+    };
+    return chain;
   };
-  return { from() { return chain; } };
+  return { from() { return newChain(); } };
 }
 
 function fakeGithub({ runs = [] } = {}) {
   return { async listWorkflowRuns() { return runs; } };
 }
 
-const okCount = (n) => ({ data: [], count: n, error: null });
-const okLatest = (rows) => ({ data: rows, error: null });
+const sweepDeps = (rows) => ({
+  supabase: fakeSupabase({ rows }),
+  githubApi: fakeGithub({ runs: [] }),
+});
 
 // 2026-10-07 12:00 UTC = 07:00 CDT (October is daylight time).
 const NOW = Date.UTC(2026, 9, 7, 12, 0, 0);
@@ -103,59 +124,58 @@ describe("expectedSlots", () => {
 
 // --- slot states ------------------------------------------------------------
 
-function sweepDeps(latestAt, count = 1) {
+function sweepDepsRows(rows) {
   return {
-    supabase: fakeSupabase({
-      countResult: okCount(count),
-      latestResult: okLatest(latestAt ? [{ id: "1", started_at: latestAt }] : []),
-    }),
+    supabase: fakeSupabase({ rows }),
     githubApi: fakeGithub({ runs: [] }),
   };
 }
 
 describe("evaluateSlot", () => {
   const cap = () => getCapability("rental-autopay-sweep");
+  // Slot: 2026-10-07 07:30 UTC, grace 3h → window [06:30, 10:30].
+  const slot = { capability_id: "rental-autopay-sweep", expected_at: "2026-10-07T07:30:00.000Z", grace_hours: 3 };
 
   it("pending: grace has not expired", async () => {
-    const slot = { capability_id: "rental-autopay-sweep", expected_at: new Date(NOW - 3600000).toISOString(), grace_hours: 3 };
-    const r = await evaluateSlot(cap(), slot, { now: NOW, deps: sweepDeps(null, 0), repoRoot: null });
+    const early = { ...slot, expected_at: new Date(NOW - 3600000).toISOString() };
+    const r = await evaluateSlot(cap(), early, { now: NOW, deps: sweepDepsRows([]), repoRoot: null });
     expect(r.state).toBe("pending");
   });
 
   it("observed-success: attributable evidence inside the slot window", async () => {
-    const slot = { capability_id: "rental-autopay-sweep", expected_at: "2026-10-07T07:30:00.000Z", grace_hours: 3 };
     const r = await evaluateSlot(cap(), slot, {
       now: NOW,
-      deps: sweepDeps("2026-10-07T08:00:00.000Z"),
+      deps: sweepDepsRows([{ id: "1", started_at: "2026-10-07T08:00:00.000Z" }]),
       repoRoot: null,
     });
     expect(r.state).toBe("observed-success");
   });
 
+  it("does NOT associate a later run with the earlier slot (blocker 1)", async () => {
+    // Run at 11:00 belongs to a later slot, not this one.
+    const r = await evaluateSlot(cap(), slot, {
+      now: NOW,
+      deps: sweepDepsRows([{ id: "2", started_at: "2026-10-07T11:00:00.000Z" }]),
+      repoRoot: null,
+    });
+    expect(r.state).toBe("confirmed-miss");
+  });
+
   it("confirmed-miss: execution log healthy but empty for the slot", async () => {
-    const slot = { capability_id: "rental-autopay-sweep", expected_at: "2026-10-07T07:30:00.000Z", grace_hours: 3 };
-    const r = await evaluateSlot(cap(), slot, { now: NOW, deps: sweepDeps(null, 0), repoRoot: null });
+    const r = await evaluateSlot(cap(), slot, { now: NOW, deps: sweepDepsRows([]), repoRoot: null });
     expect(r.state).toBe("confirmed-miss");
   });
 
   it("ambiguous: business effects cannot confirm a miss", async () => {
     const charges = getCapability("rental-generate-charges");
-    const slot = { capability_id: "rental-generate-charges", expected_at: "2026-10-07T06:00:00.000Z", grace_hours: 3 };
-    const deps = {
-      supabase: fakeSupabase({ countResult: okCount(0), latestResult: okLatest([]) }),
-      githubApi: fakeGithub({ runs: [] }),
-    };
-    const r = await evaluateSlot(charges, slot, { now: NOW, deps, repoRoot: null });
+    const s = { capability_id: "rental-generate-charges", expected_at: "2026-10-07T06:00:00.000Z", grace_hours: 3 };
+    const r = await evaluateSlot(charges, s, { now: NOW, deps: sweepDepsRows([]), repoRoot: null });
     expect(r.state).toBe("ambiguous");
   });
 
   it("ambiguous: evidence adapter failure", async () => {
-    const slot = { capability_id: "rental-autopay-sweep", expected_at: "2026-10-07T07:30:00.000Z", grace_hours: 3 };
     const deps = {
-      supabase: fakeSupabase({
-        countResult: { data: null, count: null, error: { message: "down" } },
-        latestResult: { data: null, count: null, error: { message: "down" } },
-      }),
+      supabase: { from() { throw new Error("down"); } },
       githubApi: fakeGithub({ runs: [] }),
     };
     const r = await evaluateSlot(cap(), slot, { now: NOW, deps, repoRoot: null });
@@ -164,14 +184,90 @@ describe("evaluateSlot", () => {
 
   it("configuration-error: registry names a workflow file missing from the repo", async () => {
     const brain = getCapability("brain-nightly-sync");
-    const slot = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
-    const r = await evaluateSlot(brain, slot, {
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const r = await evaluateSlot(brain, s, {
       now: NOW,
       deps: { githubApi: fakeGithub({ runs: [] }) },
       repoRoot: "/nonexistent-repo-root",
     });
     expect(r.state).toBe("configuration-error");
     expect(r.reason).toContain("engineering-brain-sync.yml");
+  });
+
+  it("workflow: successful run in window → observed-success", async () => {
+    const brain = getCapability("brain-nightly-sync");
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = {
+      githubApi: fakeGithub({
+        runs: [
+          { conclusion: "success", status: "completed", startedAt: "2026-10-07T09:05:00.000Z", htmlUrl: "x" },
+          { conclusion: "success", status: "completed", startedAt: "2026-10-06T09:05:00.000Z", htmlUrl: "x" },
+        ],
+      }),
+    };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("observed-success");
+  });
+
+  it("workflow: failed run in window is NOT success (blocker 3)", async () => {
+    const brain = getCapability("brain-nightly-sync");
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = {
+      githubApi: fakeGithub({
+        runs: [{ conclusion: "failure", status: "completed", startedAt: "2026-10-07T09:05:00.000Z", htmlUrl: "x" }],
+      }),
+    };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("ambiguous");
+    expect(r.reason).toContain("failure");
+  });
+
+  it("workflow: history visible but slot empty → confirmed-miss (blocker 2)", async () => {
+    const brain = getCapability("brain-nightly-sync");
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = {
+      githubApi: fakeGithub({
+        runs: [{ conclusion: "success", status: "completed", startedAt: "2026-10-06T09:05:00.000Z", htmlUrl: "x" }],
+      }),
+    };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("confirmed-miss");
+  });
+
+  it("workflow: no history at all → ambiguous, never confirmed-miss (blocker 2)", async () => {
+    const brain = getCapability("brain-nightly-sync");
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = { githubApi: fakeGithub({ runs: [] }) };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("ambiguous");
+  });
+
+  it("workflow: later run is not associated with the earlier slot (blocker 1)", async () => {
+    const brain = getCapability("brain-nightly-sync");
+    // 09:00 slot; the 10:05 run belongs to the 10:00 slot. The attribution
+    // window is midpoint-bounded to [08:00, 09:30], excluding it.
+    const s = { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 };
+    const deps = {
+      githubApi: fakeGithub({
+        runs: [{ conclusion: "success", status: "completed", startedAt: "2026-10-07T10:05:00.000Z", htmlUrl: "x" }],
+      }),
+    };
+    const r = await evaluateSlot(brain, s, { now: NOW, deps, repoRoot: null });
+    expect(r.state).toBe("confirmed-miss");
+  });
+
+  it("attributionWindow: midpoint-bounded for adjacent slots, wide for daily", () => {
+    const brain = getCapability("brain-nightly-sync");
+    const dual = attributionWindow(brain, { capability_id: "brain-nightly-sync", expected_at: "2026-10-07T09:00:00.000Z", grace_hours: 2 });
+    // Next slot 10:00 → midpoint 09:30 bounds the end.
+    expect(dual.endIso).toBe("2026-10-07T09:30:00.000Z");
+    expect(dual.startIso).toBe("2026-10-07T08:00:00.000Z");
+
+    const sweep = getCapability("rental-autopay-sweep");
+    const daily = attributionWindow(sweep, { capability_id: "rental-autopay-sweep", expected_at: "2026-10-07T07:30:00.000Z", grace_hours: 3 });
+    // Daily neighbors are 24h away; the default window applies.
+    expect(daily.startIso).toBe("2026-10-07T06:30:00.000Z");
+    expect(daily.endIso).toBe("2026-10-07T10:30:00.000Z");
   });
 });
 
@@ -183,7 +279,7 @@ describe("runWatchdog", () => {
     stateFile = join(mkdtempSync(join(tmpdir(), "watchdog-")), "alerts.json");
   });
 
-  const depsFor = (latestAt) => sweepDeps(latestAt, latestAt ? 1 : 0);
+  const depsFor = (latestAt) => sweepDeps(latestAt ? [{ id: "1", started_at: latestAt }] : []);
 
   it("alerts once per slot and does not re-alert on repeat runs", async () => {
     const deps = depsFor(null); // primary sweep missed

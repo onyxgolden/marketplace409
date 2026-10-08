@@ -16,7 +16,7 @@ import { ADAPTER_TYPES } from "./adapterTypes.mjs";
 import { getAdapterSpec, validateAdapterSpecs } from "./evidenceAdapters.mjs";
 import { getCapability } from "../runtimeCoverageRegistry.mjs";
 
-export async function collectEvidence(capabilityId, { now, deps } = {}) {
+export async function collectEvidence(capabilityId, { now, deps, slotWindow } = {}) {
   if (typeof capabilityId !== "string" || capabilityId.length === 0) {
     return { capability_id: capabilityId, ok: false, error: "capabilityId must be a non-empty string", results: [] };
   }
@@ -50,7 +50,7 @@ export async function collectEvidence(capabilityId, { now, deps } = {}) {
       continue;
     }
     try {
-      const r = await impl(a, deps || {}, at);
+      const r = await impl(a, deps || {}, at, { slotWindow });
       results.push({
         adapter: a.type,
         attribution: a.attribution || "unverified",
