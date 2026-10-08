@@ -11,8 +11,13 @@ import {
 import { getRegistry } from "../../../../../../scripts/engineering-brain/runtimeCoverageRegistry.mjs";
 import { aggregateHealth } from "../../../../../../scripts/engineering-brain/health/aggregateHealth.mjs";
 import { assembleFindings } from "../../../../../../scripts/engineering-brain/health/assembleFindings.mjs";
+import { prioritizeFindings } from "../../../../../../scripts/engineering-brain/health/prioritizeFindings.mjs";
+import { buildTriageQueue } from "../../../../../../scripts/engineering-brain/health/buildTriageQueue.mjs";
+import { buildEvidencePacket } from "../../../../../../scripts/engineering-brain/health/buildEvidencePacket.mjs";
 
 // Slice 5: unified engineering-health snapshot. Read-only.
+// Slice 6: adds deterministic triage queue + evidence packets, computed
+// server-side from the same snapshot. Still read-only; no new auth surface.
 // Same authorization posture as the query route: programmer-only, 404 (not
 // 403) on unauthorized, caller's own session so RLS does the enforcement.
 // Never reports the disabled watchdog as actively monitoring.
@@ -64,5 +69,25 @@ export async function GET() {
   const health = aggregateHealth({ capabilities, latestRun, bugFixCount, bugFixRowsOk });
   const findings = assembleFindings({ capabilities, bugFixes, bugFixesLoadFailed: !bugFixRowsOk && latestRun !== null });
 
-  return NextResponse.json({ success: true, health, findings });
+  // Slice 6: deterministic triage. Pure transforms over the same evidence;
+  // no additional data sources, no writes. Exposures are computed without
+  // changed paths here (no revision under review at snapshot time), so the
+  // money/severity layer applies and file-overlap boosts are empty.
+  const prioritized = prioritizeFindings({ findings, capabilities, exposures: [] });
+  const triage = buildTriageQueue({ prioritized });
+  // Evidence packets are built per item on demand by the UI from the same
+  // payload; include a packet per queue item here so the client needs no
+  // extra round-trip. Packets are read-only derivations.
+  const packets = {};
+  for (const item of triage) {
+    packets[item.id] = buildEvidencePacket({
+      item,
+      health,
+      capabilities,
+      exposures: [],
+      bugCatalog: bugFixes,
+    });
+  }
+
+  return NextResponse.json({ success: true, health, findings, triage, packets });
 }
