@@ -4,7 +4,7 @@
 // consent/session DOM driver. jsdom is used only here (the pure logic in
 // process-training-core.js is tested separately under plain node).
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -773,8 +773,12 @@ describe("renderProcessTrainingControls — PT-4 workflow symbol palette", () =>
     // only legitimate mention of "Visio" anywhere nearby is the
     // disclaimer explicitly saying this is NOT that, which is required,
     // not forbidden (see workflow-symbols.js's own header comment).
-    const heading = container.querySelector("#pt-markup-panel h4");
-    expect(heading.textContent).toBe("Workflow symbols");
+    // Queried by content, not DOM position -- Slice B's background/
+    // overlay sections (their own h4s) now sit earlier in the panel.
+    const heading = [...container.querySelectorAll("#pt-markup-panel h4")].find(
+      (h) => h.textContent === "Workflow symbols"
+    );
+    expect(heading).toBeDefined();
     expect(heading.textContent.toLowerCase()).not.toContain("visio");
     for (const btn of [...palette.querySelectorAll("button")]) {
       expect(btn.textContent.toLowerCase()).not.toContain("visio");
@@ -1364,5 +1368,579 @@ describe("renderProcessTrainingControls — plotter-size Slice A: per-step canva
     const applyBtn = container.querySelector("#pt-markup-canvas-apply");
     expect(applyBtn.tagName).toBe("BUTTON");
     expect(applyBtn.getAttribute("type")).toBe("button");
+  });
+});
+
+describe("renderProcessTrainingControls — Slice B: plot-plan background + raster overlays", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function openFirstStepMarkup(container) {
+    const btn = [...container.querySelectorAll("#pt-guide-steps button")][0];
+    btn.click();
+  }
+
+  /** A resolved-decode fake: ignores the real File entirely, returns a canned decoded record with its own close() spy, so a test can prove the review's round-1 bitmap-disposal fix. */
+  function fakeDecoder(width, height, label = "img") {
+    return async () => ({ url: `blob:${label}`, bitmap: { width, height, close: vi.fn() }, width, height });
+  }
+
+  /** A rejecting-decode fake, for error-path tests. */
+  function failingDecoder(error) {
+    return async () => {
+      throw error;
+    };
+  }
+
+  /** A controllable decode fake for fencing tests: resolves only when the test calls the returned `resolve`. The resolved record's own bitmap carries a close() spy too. */
+  function controllableDecoder() {
+    let resolveFn;
+    const decodeImageFile = () =>
+      new Promise((resolve) => {
+        resolveFn = resolve;
+      });
+    return {
+      decodeImageFile,
+      resolve: (record) => resolveFn(record),
+      resolveDefault: (width = 50, height = 50, label = "ctl") =>
+        resolveFn({ url: `blob:${label}`, bitmap: { width, height, close: vi.fn() }, width, height }),
+    };
+  }
+
+  /**
+   * A resolved-decode fake that returns a FRESH, independently-trackable
+   * record (own url + own close() spy) on every call, labeled
+   * sequentially a, b, c... -- for tests proving the review's round-1
+   * "superseded pending replacement" fix (A->B success/failure/overlay
+   * selection), where each selection in the sequence must be
+   * individually inspectable.
+   */
+  function sequencedDecoder(width = 50, height = 50) {
+    let n = 0;
+    const records = [];
+    const decodeImageFile = async () => {
+      const label = String.fromCharCode(97 + n++);
+      const record = { url: `blob:${label}`, bitmap: { width, height, close: vi.fn() }, width, height };
+      records.push(record);
+      return record;
+    };
+    return { decodeImageFile, records };
+  }
+
+  function selectFile(input, fakeFile = { name: "plan.png", size: 1000 }) {
+    Object.defineProperty(input, "files", { value: [fakeFile], configurable: true });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  async function flushMicrotasks() {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  it("selecting a background file decodes it and sets it on the step's background store", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(1280, 960, "plan") });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    const bg = handle.backgroundStore.backgroundFor(1);
+    expect(bg).not.toBeNull();
+    expect(bg.width).toBe(1280);
+    expect(bg.height).toBe(960);
+    expect(container.querySelector("#pt-markup-background-status").textContent).toContain("Background set");
+  });
+
+  it("a decode failure shows an error status and sets no background", async () => {
+    const { container, handle } = mountFresh({
+      decodeImageFile: failingDecoder(Object.assign(new Error("unsupported or unrecognized file type"), { name: "BackgroundImageError" })),
+    });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    expect(handle.backgroundStore.backgroundFor(1)).toBeNull();
+    const status = container.querySelector("#pt-markup-background-status");
+    expect(status.textContent.length).toBeGreaterThan(0);
+    expect(status.className).toContain("error");
+  });
+
+  it("replacing an existing background requires explicit confirmation -- not applied until Confirm replace is clicked", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(100, 100, "first") });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    expect(handle.backgroundStore.backgroundFor(1).width).toBe(100);
+
+    // Second selection, different decoder result -- must not apply yet.
+    const secondInput = container.querySelector("#pt-markup-background-input");
+    const original = handle.backgroundStore.backgroundFor(1);
+    selectFile(secondInput, { name: "second.png", size: 1000 });
+    await flushMicrotasks();
+    expect(handle.backgroundStore.backgroundFor(1)).toEqual(original); // unchanged so far
+    expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+
+    container.querySelector("#pt-markup-background-confirm-btn").click();
+    // The confirm click re-decodes nothing -- it applies the pending
+    // candidate, which (with this single-shot fakeDecoder) is still the
+    // "first" dimensions since the mock doesn't vary by call; the point
+    // under test is the gating, not the dimensions.
+    expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(true);
+  });
+
+  it("canceling a pending replacement leaves the original background untouched", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(100, 100, "first") });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    const original = handle.backgroundStore.backgroundFor(1);
+
+    selectFile(container.querySelector("#pt-markup-background-input"), { name: "second.png", size: 1000 });
+    await flushMicrotasks();
+    container.querySelector("#pt-markup-background-confirm-cancel").click();
+    expect(handle.backgroundStore.backgroundFor(1)).toEqual(original);
+    expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(true);
+  });
+
+  it("removing a background clears it from the store and updates the status", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(100, 100) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    container.querySelector("#pt-markup-background-remove").click();
+    expect(handle.backgroundStore.backgroundFor(1)).toBeNull();
+    expect(container.querySelector("#pt-markup-background-status").textContent).toContain("No background");
+  });
+
+  it("adding an overlay decodes it and lists it with Move forward/backward/Edit placement/Remove controls", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(50, 50, "ov") });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-overlay-input"));
+    await flushMicrotasks();
+    expect(handle.backgroundStore.overlaysFor(1)).toHaveLength(1);
+    const items = [...container.querySelectorAll("#pt-markup-overlay-list li")];
+    expect(items).toHaveLength(1);
+    const buttons = [...items[0].querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons).toEqual(["Move backward", "Move forward", "Edit placement", "Remove"]);
+  });
+
+  it("the 9th overlay is rejected with a status error and the store still holds exactly 8", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(10, 10) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const input = container.querySelector("#pt-markup-overlay-input");
+    for (let i = 0; i < 8; i++) {
+      selectFile(input, { name: `ov${i}.png`, size: 100 });
+      await flushMicrotasks();
+    }
+    expect(handle.backgroundStore.overlaysFor(1)).toHaveLength(8);
+    selectFile(input, { name: "ov9.png", size: 100 });
+    await flushMicrotasks();
+    expect(handle.backgroundStore.overlaysFor(1)).toHaveLength(8); // unchanged
+    const status = container.querySelector("#pt-markup-overlay-status");
+    expect(status.className).toContain("error");
+  });
+
+  it("removing an overlay via its Remove button drops it from the store and the list", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(10, 10) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-overlay-input"));
+    await flushMicrotasks();
+    const removeBtn = [...container.querySelectorAll("#pt-markup-overlay-list button")].find(
+      (b) => b.textContent === "Remove"
+    );
+    removeBtn.click();
+    expect(handle.backgroundStore.overlaysFor(1)).toHaveLength(0);
+    expect(container.querySelector("#pt-markup-overlay-list li.pt-markup-empty")).not.toBeNull();
+  });
+
+  it("Move forward/backward buttons change the overlay's z-order via the store", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(10, 10) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const input = container.querySelector("#pt-markup-overlay-input");
+    selectFile(input, { name: "a.png", size: 100 });
+    await flushMicrotasks();
+    selectFile(input, { name: "b.png", size: 100 });
+    await flushMicrotasks();
+    const [a, b] = handle.backgroundStore.overlaysFor(1);
+    expect([a.id, b.id]).toHaveLength(2);
+
+    // Second list item is "b" (back-to-front order); click its own
+    // "Move backward" button (the first button in that <li>).
+    const secondLi = [...container.querySelectorAll("#pt-markup-overlay-list li")][1];
+    secondLi.querySelector("button").click(); // "Move backward"
+    expect(handle.backgroundStore.overlaysFor(1).map((o) => o.id)).toEqual([b.id, a.id]);
+  });
+
+  it("a background or overlay blocks the canvas-size Apply button, with a clear error, same as an existing shape would", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(100, 100) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    container.querySelector("#pt-markup-canvas-size").value = "ansi_b";
+    container.querySelector("#pt-markup-canvas-size").dispatchEvent(new Event("change", { bubbles: true }));
+    container.querySelector("#pt-markup-canvas-orientation").value = "landscape";
+    container.querySelector("#pt-markup-canvas-apply").click();
+    const status = container.querySelector("#pt-markup-canvas-status");
+    expect(status.className).toContain("error");
+    expect(handle.markupOverlay.canvasSizeFor(1).id).toBe("legacy"); // unchanged
+  });
+
+  it("discard clears a step's background and overlays, not just its markup shapes", async () => {
+    const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(100, 100) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    selectFile(container.querySelector("#pt-markup-overlay-input"));
+    await flushMicrotasks();
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(handle.backgroundStore.backgroundFor(1)).toBeNull();
+    expect(handle.backgroundStore.overlaysFor(1)).toEqual([]);
+  });
+
+  it("a stale in-flight decode is discarded, not applied, if the step is switched before it resolves -- and its bitmap is closed, not just its URL revoked", async () => {
+    const { decodeImageFile, resolve } = controllableDecoder();
+    const { container, handle } = mountFresh({ decodeImageFile });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+
+    // Leave the step before the decode resolves.
+    container.querySelector("#pt-markup-close").click();
+
+    const staleBitmap = { width: 50, height: 50, close: vi.fn() };
+    resolve({ url: "blob:stale", bitmap: staleBitmap, width: 50, height: 50 });
+    await flushMicrotasks();
+    expect(handle.backgroundStore.backgroundFor(1)).toBeNull();
+    expect(staleBitmap.close).toHaveBeenCalledTimes(1); // review finding, round 1 -- not just the URL
+  });
+
+  it("a stale in-flight decode is discarded if a discard/reset happens before it resolves -- and its bitmap is closed too", async () => {
+    const { decodeImageFile, resolve } = controllableDecoder();
+    const { container, handle } = mountFresh({ decodeImageFile });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+
+    container.querySelector("#pt-review-discard-btn").click();
+
+    const staleBitmap2 = { width: 50, height: 50, close: vi.fn() };
+    resolve({ url: "blob:stale2", bitmap: staleBitmap2, width: 50, height: 50 });
+    await flushMicrotasks();
+    expect(staleBitmap2.close).toHaveBeenCalledTimes(1);
+    expect(handle.backgroundStore.backgroundFor(1)).toBeNull();
+  });
+
+  it("DEMO/DRAFT/NOT VERIFIED badge and disabled-capture banner remain visible with a background and overlay present", async () => {
+    const { container } = mountFresh({ decodeImageFile: fakeDecoder(100, 100) });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+    expect(container.querySelector(".pt-disabled-banner").textContent.toLowerCase()).toContain("disabled");
+  });
+
+  it("every background/overlay control is a real, keyboard-operable <input>/<button>", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-markup-background-input").tagName).toBe("INPUT");
+    expect(container.querySelector("#pt-markup-background-input").type).toBe("file");
+    expect(container.querySelector("#pt-markup-overlay-input").tagName).toBe("INPUT");
+    for (const id of ["pt-markup-background-remove", "pt-markup-background-confirm-btn", "pt-markup-background-confirm-cancel"]) {
+      const el = container.querySelector(`#${id}`);
+      expect(el.tagName).toBe("BUTTON");
+      expect(el.getAttribute("type")).toBe("button");
+    }
+  });
+
+  it("never claims PDF support, and the background/overlay sections say so plainly", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const panelText = container.querySelector("#pt-markup-panel").textContent.toLowerCase();
+    expect(panelText).toContain("pdf is not supported");
+    const backgroundInput = container.querySelector("#pt-markup-background-input");
+    expect(backgroundInput.getAttribute("accept")).not.toContain("pdf");
+  });
+
+  it("never reveals withheld evidence through the background/overlay sections' DOM", async () => {
+    const { container } = mountFresh({
+      decodeImageFile: fakeDecoder(100, 100),
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "Secret Background Field", automationId: "txt-secret-bg", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+      ],
+    });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    selectFile(container.querySelector("#pt-markup-background-input"));
+    await flushMicrotasks();
+    const panelHtml = container.querySelector("#pt-markup-panel").outerHTML;
+    expect(panelHtml).not.toContain("Secret Background Field");
+    expect(panelHtml).not.toContain("txt-secret-bg");
+  });
+
+  describe("round 2 review fixes -- bitmap disposal, superseded pending replacement, overlay placement controls", () => {
+    it("canceling a pending replacement closes its candidate's bitmap, not just revokes its URL", async () => {
+      const { decodeImageFile, records } = sequencedDecoder(100, 100);
+      const { container } = mountFresh({ decodeImageFile });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-background-input")); // original
+      await flushMicrotasks();
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "second.png", size: 1000 }); // pending
+      await flushMicrotasks();
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+      container.querySelector("#pt-markup-background-confirm-cancel").click();
+      expect(records[1].bitmap.close).toHaveBeenCalledTimes(1); // the pending (canceled) candidate
+    });
+
+    it("the 9th rejected overlay's bitmap is closed too, not just its URL revoked", async () => {
+      const { decodeImageFile, records } = sequencedDecoder(10, 10);
+      const { container } = mountFresh({ decodeImageFile });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      const input = container.querySelector("#pt-markup-overlay-input");
+      for (let i = 0; i < 9; i++) {
+        selectFile(input, { name: `ov${i}.png`, size: 100 });
+        await flushMicrotasks();
+      }
+      expect(records).toHaveLength(9);
+      expect(records[8].bitmap.close).toHaveBeenCalledTimes(1); // the rejected 9th
+      expect(records[0].bitmap.close).not.toHaveBeenCalled(); // the kept 1st
+    });
+
+    it("A -> B success: selecting a second background replacement while the first is still pending disposes A and offers B for confirmation", async () => {
+      const { decodeImageFile, records } = sequencedDecoder(100, 100);
+      const { container, handle } = mountFresh({ decodeImageFile });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-background-input")); // original background
+      await flushMicrotasks();
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "A.png", size: 100 }); // A pending
+      await flushMicrotasks();
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "B.png", size: 100 }); // B supersedes A
+      await flushMicrotasks();
+
+      expect(records[1].bitmap.close).toHaveBeenCalledTimes(1); // A disposed
+      expect(records[2].bitmap.close).not.toHaveBeenCalled(); // B not disposed -- it's the new pending candidate
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+
+      container.querySelector("#pt-markup-background-confirm-btn").click();
+      expect(handle.backgroundStore.backgroundFor(1).width).toBe(100); // applies B (same fake dims, but via a distinct record)
+      expect(records[1].bitmap.close).toHaveBeenCalledTimes(1); // still only once -- confirming B doesn't re-touch A
+    });
+
+    it("A -> B failure: a pending replacement A is disposed even when the superseding selection B fails to decode", async () => {
+      const aBitmap = { width: 100, height: 100, close: vi.fn() };
+      let call = 0;
+      const decodeImageFile = async () => {
+        call++;
+        if (call === 1) return { url: "blob:orig", bitmap: { width: 100, height: 100, close: vi.fn() }, width: 100, height: 100 };
+        if (call === 2) return { url: "blob:A", bitmap: aBitmap, width: 100, height: 100 };
+        throw Object.assign(new Error("B failed to decode"), { name: "BackgroundImageError" });
+      };
+      const { container } = mountFresh({ decodeImageFile });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-background-input")); // call 1: original background
+      await flushMicrotasks();
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "A.png", size: 100 }); // call 2: A pending
+      await flushMicrotasks();
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "B.png", size: 100 }); // call 3: B fails
+      await flushMicrotasks();
+
+      expect(aBitmap.close).toHaveBeenCalledTimes(1); // A disposed even though B's own decode failed
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(true); // no stale confirm row for A left showing
+      const status = container.querySelector("#pt-markup-background-status");
+      expect(status.className).toContain("error"); // B's own failure surfaced
+    });
+
+    it("A -> overlay selection: selecting an overlay while a background replacement is still pending disposes the pending background candidate", async () => {
+      const { decodeImageFile, records } = sequencedDecoder(50, 50);
+      const { container, handle } = mountFresh({ decodeImageFile });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-background-input")); // original background
+      await flushMicrotasks();
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "A.png", size: 100 }); // A pending
+      await flushMicrotasks();
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+
+      selectFile(container.querySelector("#pt-markup-overlay-input"), { name: "ov.png", size: 100 });
+      await flushMicrotasks();
+
+      expect(records[1].bitmap.close).toHaveBeenCalledTimes(1); // A disposed
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(true);
+      expect(handle.backgroundStore.overlaysFor(1)).toHaveLength(1); // the overlay still went through
+    });
+
+    it("a stale confirm click (after the step was switched away and back) is a no-op, not an error, and applies nothing", async () => {
+      const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(100, 100, "orig") });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-background-input"));
+      await flushMicrotasks();
+      selectFile(container.querySelector("#pt-markup-background-input"), { name: "A.png", size: 100 });
+      await flushMicrotasks();
+      expect(container.querySelector("#pt-markup-background-confirm-row").hidden).toBe(false);
+
+      // openMarkupFor/closeMarkupPanel already cancel any pending
+      // replacement and bump loadGeneration -- simulate the user
+      // switching away and back without ever clicking Confirm in between.
+      container.querySelector("#pt-markup-close").click();
+      openFirstStepMarkup(container);
+
+      const before = handle.backgroundStore.backgroundFor(1);
+      // The confirm button is now stale/orphaned from the DOM's point of
+      // view (the row was hidden by the cancel), but even a direct click
+      // must be a safe no-op.
+      container.querySelector("#pt-markup-background-confirm-btn").click();
+      expect(handle.backgroundStore.backgroundFor(1)).toEqual(before);
+    });
+
+    it("overlay placement: Edit placement opens a numeric x/y/w/h form; Apply updates the store and closes the form", async () => {
+      const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(50, 50) });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-overlay-input"));
+      await flushMicrotasks();
+
+      const editBtn = [...container.querySelectorAll("#pt-markup-overlay-list button")].find(
+        (b) => b.textContent === "Edit placement"
+      );
+      editBtn.click();
+      expect(container.querySelector("#pt-markup-overlay-placement-form").hidden).toBe(false);
+      container.querySelector("#pt-markup-overlay-placement-x").value = "20";
+      container.querySelector("#pt-markup-overlay-placement-y").value = "30";
+      container.querySelector("#pt-markup-overlay-placement-w").value = "40";
+      container.querySelector("#pt-markup-overlay-placement-h").value = "40";
+      container.querySelector("#pt-markup-overlay-placement-form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+      expect(container.querySelector("#pt-markup-overlay-placement-form").hidden).toBe(true);
+      const overlay = handle.backgroundStore.overlaysFor(1)[0];
+      expect(overlay).toMatchObject({ x: 20, y: 30, w: 40, h: 40 });
+    });
+
+    it("overlay placement: an off-canvas value is rejected, shows an error, and preserves the previous placement", async () => {
+      const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(50, 50) });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-overlay-input"));
+      await flushMicrotasks();
+      const before = handle.backgroundStore.overlaysFor(1)[0];
+
+      const editBtn = [...container.querySelectorAll("#pt-markup-overlay-list button")].find(
+        (b) => b.textContent === "Edit placement"
+      );
+      editBtn.click();
+      container.querySelector("#pt-markup-overlay-placement-x").value = "9999"; // off the 640-wide legacy canvas
+      container.querySelector("#pt-markup-overlay-placement-y").value = "0";
+      container.querySelector("#pt-markup-overlay-placement-w").value = "50";
+      container.querySelector("#pt-markup-overlay-placement-h").value = "50";
+      container.querySelector("#pt-markup-overlay-placement-form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true })
+      );
+      const status = container.querySelector("#pt-markup-overlay-placement-status");
+      expect(status.textContent.length).toBeGreaterThan(0);
+      expect(status.className).toContain("error");
+      expect(handle.backgroundStore.overlaysFor(1)[0]).toEqual(before); // unchanged
+      expect(container.querySelector("#pt-markup-overlay-placement-form").hidden).toBe(false); // stays open for correction
+    });
+
+    it("overlay placement: editing step 1's overlay never touches step 2's overlay", async () => {
+      const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(50, 50) });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-overlay-input"));
+      await flushMicrotasks();
+
+      const steps = [...container.querySelectorAll("#pt-guide-steps button")];
+      if (steps.length > 1) {
+        steps[1].click();
+        selectFile(container.querySelector("#pt-markup-overlay-input"), { name: "s2.png", size: 100 });
+        await flushMicrotasks();
+        const before2 = handle.backgroundStore.overlaysFor(2)[0];
+
+        steps[0].click();
+        const editBtn = [...container.querySelectorAll("#pt-markup-overlay-list button")].find(
+          (b) => b.textContent === "Edit placement"
+        );
+        editBtn.click();
+        container.querySelector("#pt-markup-overlay-placement-x").value = "5";
+        container.querySelector("#pt-markup-overlay-placement-y").value = "5";
+        container.querySelector("#pt-markup-overlay-placement-w").value = "20";
+        container.querySelector("#pt-markup-overlay-placement-h").value = "20";
+        container.querySelector("#pt-markup-overlay-placement-form").dispatchEvent(
+          new Event("submit", { bubbles: true, cancelable: true })
+        );
+        expect(handle.backgroundStore.overlaysFor(2)[0]).toEqual(before2); // step 2 untouched
+      }
+    });
+
+    it("Cancel on the overlay placement form closes it without changing the overlay", async () => {
+      const { container, handle } = mountFresh({ decodeImageFile: fakeDecoder(50, 50) });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-overlay-input"));
+      await flushMicrotasks();
+      const before = handle.backgroundStore.overlaysFor(1)[0];
+
+      const editBtn = [...container.querySelectorAll("#pt-markup-overlay-list button")].find(
+        (b) => b.textContent === "Edit placement"
+      );
+      editBtn.click();
+      container.querySelector("#pt-markup-overlay-placement-x").value = "5";
+      container.querySelector("#pt-markup-overlay-placement-cancel").click();
+      expect(container.querySelector("#pt-markup-overlay-placement-form").hidden).toBe(true);
+      expect(handle.backgroundStore.overlaysFor(1)[0]).toEqual(before);
+    });
+
+    it("every overlay-placement control is a real, keyboard-operable <input>/<button>", async () => {
+      const { container } = mountFresh({ decodeImageFile: fakeDecoder(50, 50) });
+      advanceToReview(container);
+      openFirstStepMarkup(container);
+      selectFile(container.querySelector("#pt-markup-overlay-input"));
+      await flushMicrotasks();
+      const editBtn = [...container.querySelectorAll("#pt-markup-overlay-list button")].find(
+        (b) => b.textContent === "Edit placement"
+      );
+      editBtn.click();
+      for (const id of ["pt-markup-overlay-placement-x", "pt-markup-overlay-placement-y", "pt-markup-overlay-placement-w", "pt-markup-overlay-placement-h"]) {
+        expect(container.querySelector(`#${id}`).tagName).toBe("INPUT");
+      }
+      const applyBtn = container.querySelector("#pt-markup-overlay-placement-apply");
+      expect(applyBtn.tagName).toBe("BUTTON");
+      const cancelBtn = container.querySelector("#pt-markup-overlay-placement-cancel");
+      expect(cancelBtn.tagName).toBe("BUTTON");
+      expect(cancelBtn.getAttribute("type")).toBe("button");
+    });
   });
 });

@@ -43,6 +43,18 @@ import { MAX_SYMBOL_LABEL_LENGTH } from "./workflow-symbols.js";
 // non-throwing `findSymbolDefinition` -- this file never needs to know
 // which of the two registries actually owns a given `symbolType`.
 import { WORKFLOW_SYMBOLS, PID_SYMBOLS, findSymbolDefinition } from "./symbol-registry.js";
+// Slice B: the background/overlay store and its byte/dimension
+// validation -- this module never decodes an image itself (see that
+// file's own header); the real decode happens only in
+// `defaultDecodeImageFile` below, injectable via `deps.decodeImageFile`
+// so tests can supply a fake decoder without a real browser Image API.
+import {
+  GuideBackgroundStore,
+  BackgroundImageError,
+  validateCandidateBytes,
+  validateDecodedDimensions,
+  disposeDecoded,
+} from "./process-guide-background.js";
 
 // Example targets only — PT-1C ships no live window enumeration (that
 // would be new native wiring, out of scope for this slice). A real
@@ -91,9 +103,53 @@ function escapeHtml(s) {
   })[c]);
 }
 
+/**
+ * The one place a real browser decode happens for Slice B. Reads just
+ * the file's own leading bytes for the pre-decode signature/size check
+ * (never the claimed MIME type or filename extension), decodes via
+ * `createImageBitmap`, then runs the post-decode dimension check --
+ * exactly the shared pipeline the brief requires for both the
+ * background and every overlay. Throws `BackgroundImageError` on
+ * anything invalid; never clamps or guesses. Injectable via
+ * `deps.decodeImageFile` so tests can supply a fake without a real
+ * browser Image API (jsdom has none).
+ */
+async function defaultDecodeImageFile(file) {
+  const headerBuf = await file.slice(0, 16).arrayBuffer();
+  validateCandidateBytes(file.size, new Uint8Array(headerBuf));
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new BackgroundImageError("decode-failed", "the file could not be decoded as an image");
+  }
+  try {
+    validateDecodedDimensions(bitmap.width, bitmap.height);
+  } catch (e) {
+    // Review finding (round 1): the bitmap was already successfully
+    // created by this point -- if the post-decode dimension check then
+    // rejects it, the bitmap must still be closed before rethrowing, or
+    // its backing storage leaks with no owner left to release it.
+    bitmap.close?.();
+    throw e;
+  }
+  const url = URL.createObjectURL(file);
+  return { url, bitmap, width: bitmap.width, height: bitmap.height };
+}
+
 export function renderProcessTrainingControls(container, deps = {}) {
   const session = deps.session || new ConsentSession();
   const buildEvidence = deps.buildFixtureEvidence || buildFixtureEvidence;
+  const decodeImageFile = deps.decodeImageFile || defaultDecodeImageFile;
+  const revokeObjectURL =
+    deps.revokeObjectURL ||
+    ((url) => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        /* no-op -- a fake/already-revoked url in a non-browser test env */
+      }
+    });
 
   container.innerHTML = `
     <div class="palette process-training">
@@ -196,6 +252,41 @@ export function renderProcessTrainingControls(container, deps = {}) {
             <button id="pt-markup-canvas-apply" type="button" class="ghost-btn small">Apply size</button>
           </div>
           <div id="pt-markup-canvas-status" class="status" role="status"></div>
+
+          <h4>Plot-plan background (author supplied)</h4>
+          <p class="dialog-sub">A local PNG or JPEG you select yourself — never evidence, never captured, never uploaded. You are responsible for your own rights to use it. PDF is not supported yet.</p>
+          <div class="row pt-markup-background-row">
+            <label class="field inline">
+              <span>Background image</span>
+              <input id="pt-markup-background-input" type="file" accept="image/png,image/jpeg" />
+            </label>
+            <button id="pt-markup-background-remove" type="button" class="ghost-btn small">Remove background</button>
+          </div>
+          <div id="pt-markup-background-status" class="status" role="status"></div>
+          <div id="pt-markup-background-confirm-row" class="row" hidden>
+            <span>This step already has a background or overlay(s). Replacing removes them.</span>
+            <button id="pt-markup-background-confirm-btn" type="button" class="ghost-btn small">Confirm replace</button>
+            <button id="pt-markup-background-confirm-cancel" type="button" class="ghost-btn small">Cancel</button>
+          </div>
+
+          <h4>Placed overlays (author supplied, max 8 per step)</h4>
+          <div class="row pt-markup-overlay-row">
+            <label class="field inline">
+              <span>Add overlay image</span>
+              <input id="pt-markup-overlay-input" type="file" accept="image/png,image/jpeg" />
+            </label>
+          </div>
+          <div id="pt-markup-overlay-status" class="status" role="status"></div>
+          <ul id="pt-markup-overlay-list" class="pt-markup-shape-list"></ul>
+
+          <form id="pt-markup-overlay-placement-form" hidden>
+            <div id="pt-markup-overlay-placement-fields" class="pt-markup-shape-fields"></div>
+            <div id="pt-markup-overlay-placement-status" class="status" role="status"></div>
+            <div class="dialog-actions">
+              <button id="pt-markup-overlay-placement-cancel" type="button" class="ghost-btn">Cancel</button>
+              <button id="pt-markup-overlay-placement-apply" type="submit" class="primary-btn">Apply placement</button>
+            </div>
+          </form>
 
           <div class="row pt-markup-toolbar">
             <button id="pt-markup-add-rect" type="button" class="ghost-btn small">Add rectangle</button>
@@ -357,6 +448,18 @@ export function renderProcessTrainingControls(container, deps = {}) {
   // just hidden) alongside the guide preview on every discard/reset/
   // target-change, same as clearGuidePreview() below. Never persisted.
   const markupOverlay = new GuideMarkupOverlay();
+  // Slice B: a wholly separate store for one background + its overlays
+  // per step -- never inside markupOverlay's own shape/undo data (see
+  // process-guide-background.js's own header). Cleared alongside
+  // markupOverlay on every discard/reset/target-change/compile-failure.
+  const backgroundStore = new GuideBackgroundStore({ revokeObjectURL });
+  // Bumped on every new background/overlay file-selection attempt and on
+  // every step-switch/close/discard/reset, so a stale async decode can
+  // never overwrite a newer selection or resurrect a discarded step --
+  // the brief's own explicit "latest-selection fencing" requirement.
+  let loadGeneration = 0;
+  let pendingBackgroundReplacement = null; // { decoded, generation, sequenceId } | null -- awaiting explicit confirm/cancel
+  let editingOverlayId = null; // which overlay's placement form is open, if any
   let lastCompiledGuide = null;
   let activeMarkupSequenceId = null;
   let activeShapeFormMode = null; // { kind, editingShapeId } | null
@@ -392,6 +495,7 @@ export function renderProcessTrainingControls(container, deps = {}) {
       // compiles.
       lastCompiledGuide = null;
       markupOverlay.clearAll();
+      backgroundStore.clearAll();
       closeMarkupPanel();
       return;
     }
@@ -467,6 +571,19 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const canvasOrientationSelect = $("pt-markup-canvas-orientation");
   const canvasApplyBtn = $("pt-markup-canvas-apply");
   const canvasSizeStatus = $("pt-markup-canvas-status");
+  const backgroundInput = $("pt-markup-background-input");
+  const backgroundRemoveBtn = $("pt-markup-background-remove");
+  const backgroundStatus = $("pt-markup-background-status");
+  const backgroundConfirmRow = $("pt-markup-background-confirm-row");
+  const backgroundConfirmBtn = $("pt-markup-background-confirm-btn");
+  const backgroundConfirmCancelBtn = $("pt-markup-background-confirm-cancel");
+  const overlayInput = $("pt-markup-overlay-input");
+  const overlayStatus = $("pt-markup-overlay-status");
+  const overlayList = $("pt-markup-overlay-list");
+  const overlayPlacementForm = $("pt-markup-overlay-placement-form");
+  const overlayPlacementFields = $("pt-markup-overlay-placement-fields");
+  const overlayPlacementStatus = $("pt-markup-overlay-placement-status");
+  const overlayPlacementCancelBtn = $("pt-markup-overlay-placement-cancel");
 
   // Built once from the static catalog -- legacy first (the default),
   // then every named paper size, mirroring the same "build once from a
@@ -535,6 +652,13 @@ export function renderProcessTrainingControls(container, deps = {}) {
   buildPaletteGroup(markupPidPalette, PID_SYMBOLS);
 
   function openMarkupFor(sequenceId) {
+    // Fences off any in-flight background/overlay decode begun against
+    // whichever step was open before this call (including "none") --
+    // its result, if it ever resolves, will see a stale generation and
+    // discard itself rather than landing on the newly-opened step.
+    loadGeneration++;
+    cancelPendingBackgroundReplacement();
+    closeOverlayPlacementForm();
     activeMarkupSequenceId = sequenceId;
     markupPanel.hidden = false;
     closeShapeForm();
@@ -550,6 +674,9 @@ export function renderProcessTrainingControls(container, deps = {}) {
   }
 
   function closeMarkupPanel() {
+    loadGeneration++; // same fencing as openMarkupFor -- closing is also "leaving" a step
+    cancelPendingBackgroundReplacement();
+    closeOverlayPlacementForm();
     activeMarkupSequenceId = null;
     markupPanel.hidden = true;
     closeShapeForm();
@@ -558,6 +685,7 @@ export function renderProcessTrainingControls(container, deps = {}) {
     // time a step's markup is opened, so this never loses anything; it
     // only prevents a prior step's shapes from sitting stale in the DOM.
     markupShapeList.innerHTML = "";
+    overlayList.innerHTML = "";
   }
 
   function shapeSummary(shape) {
@@ -594,17 +722,30 @@ export function renderProcessTrainingControls(container, deps = {}) {
     canvasSizeStatus.className = "status";
 
     // Neutral placeholder only -- never a real/fabricated screenshot,
-    // regardless of this step's hasScreenshot value. Markup shapes are
-    // then drawn on top via the reused drawOpsToCanvas (see this file's
-    // own import comment and process-guide-markup.js's header for the
-    // reuse audit).
+    // regardless of this step's hasScreenshot value. Rendering order
+    // (Slice B brief): background, then placed raster overlays, then
+    // author-added markup shapes/symbols on top -- drawOpsToCanvas is
+    // unchanged and reused exactly as before for that last layer.
+    const background = backgroundStore.backgroundFor(activeMarkupSequenceId);
+    const overlays = backgroundStore.overlaysFor(activeMarkupSequenceId);
     const ctx = markupCanvas.getContext("2d");
     if (ctx) {
       ctx.clearRect(0, 0, canvasSize.width, canvasSize.height);
       ctx.fillStyle = "#23262c";
       ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+      if (background && typeof ctx.drawImage === "function") {
+        ctx.drawImage(background.bitmap, background.x, background.y, background.w, background.h);
+      }
+      if (typeof ctx.drawImage === "function") {
+        for (const overlay of overlays) {
+          ctx.drawImage(overlay.bitmap, overlay.x, overlay.y, overlay.w, overlay.h);
+        }
+      }
       drawOpsToCanvas(ctx, resolveMarkupDrawOps(shapes, canvasSize));
     }
+
+    renderBackgroundControls(background, overlays);
+    renderOverlayList(overlays);
 
     markupUndoBtn.disabled = !markupOverlay.canUndo(activeMarkupSequenceId);
     markupRedoBtn.disabled = !markupOverlay.canRedo(activeMarkupSequenceId);
@@ -639,6 +780,289 @@ export function renderProcessTrainingControls(container, deps = {}) {
       markupShapeList.appendChild(li);
     }
   }
+
+  function renderBackgroundControls(background, overlays) {
+    backgroundRemoveBtn.disabled = !background;
+    backgroundStatus.textContent = background
+      ? `Background set (${background.width}×${background.height}, fit ${Math.round(background.w)}×${Math.round(background.h)})`
+      : "No background on this step yet.";
+    backgroundStatus.className = "status";
+    // The pending-replacement confirm row is driven entirely by
+    // pendingBackgroundReplacement, not recomputed from (background,
+    // overlays) here -- those two params exist so callers don't need a
+    // second lookup, not to control this row's visibility.
+  }
+
+  function overlaySummary(overlay) {
+    return `Overlay (${overlay.width}×${overlay.height}, placed ${Math.round(overlay.x)},${Math.round(overlay.y)} ${Math.round(overlay.w)}×${Math.round(overlay.h)})`;
+  }
+
+  function renderOverlayList(overlays) {
+    overlayList.innerHTML = "";
+    if (overlays.length === 0) {
+      const li = document.createElement("li");
+      li.className = "pt-markup-empty";
+      li.textContent = "No overlays on this step yet.";
+      overlayList.appendChild(li);
+      return;
+    }
+    overlays.forEach((overlay, index) => {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = overlaySummary(overlay); // textContent only -- never HTML
+      const backBtn = document.createElement("button");
+      backBtn.type = "button";
+      backBtn.className = "ghost-btn small";
+      backBtn.textContent = "Move backward";
+      backBtn.disabled = index === 0;
+      backBtn.addEventListener("click", () => {
+        backgroundStore.moveOverlayBackward(activeMarkupSequenceId, overlay.id);
+        renderMarkupPanel();
+      });
+      const fwdBtn = document.createElement("button");
+      fwdBtn.type = "button";
+      fwdBtn.className = "ghost-btn small";
+      fwdBtn.textContent = "Move forward";
+      fwdBtn.disabled = index === overlays.length - 1;
+      fwdBtn.addEventListener("click", () => {
+        backgroundStore.moveOverlayForward(activeMarkupSequenceId, overlay.id);
+        renderMarkupPanel();
+      });
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "ghost-btn small";
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", () => {
+        backgroundStore.removeOverlay(activeMarkupSequenceId, overlay.id);
+        if (editingOverlayId === overlay.id) closeOverlayPlacementForm();
+        renderMarkupPanel();
+      });
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost-btn small";
+      editBtn.textContent = "Edit placement";
+      editBtn.addEventListener("click", () => openOverlayPlacementForm(overlay));
+      li.appendChild(label);
+      li.appendChild(backBtn);
+      li.appendChild(fwdBtn);
+      li.appendChild(editBtn);
+      li.appendChild(removeBtn);
+      overlayList.appendChild(li);
+    });
+  }
+
+  /** A small, local field-builder targeting the overlay-placement form specifically -- deliberately not a generalization of `numberField` (below), which is already shipped/reviewed against the shape-placement form and is left alone here to carry zero regression risk into it. */
+  function overlayPlacementNumberField(id, labelText, value) {
+    const wrap = document.createElement("label");
+    wrap.className = "field inline";
+    const span = document.createElement("span");
+    span.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.id = id;
+    input.value = String(value);
+    wrap.appendChild(span);
+    wrap.appendChild(input);
+    overlayPlacementFields.appendChild(wrap);
+    return input;
+  }
+
+  /**
+   * Opens the shared numeric x/y/w/h placement-edit form for one
+   * overlay (Slice B supplement 2's required "form-based numeric
+   * placement editing", missing entirely before this round -- review
+   * finding). Pre-fills the form with the overlay's own CURRENT exact
+   * (unrounded) values, not the list's rounded display text.
+   */
+  function openOverlayPlacementForm(overlay) {
+    editingOverlayId = overlay.id;
+    overlayPlacementForm.hidden = false;
+    overlayPlacementFields.innerHTML = "";
+    overlayPlacementStatus.textContent = "";
+    overlayPlacementStatus.className = "status";
+    overlayPlacementNumberField("pt-markup-overlay-placement-x", "X", overlay.x);
+    overlayPlacementNumberField("pt-markup-overlay-placement-y", "Y", overlay.y);
+    overlayPlacementNumberField("pt-markup-overlay-placement-w", "Width", overlay.w);
+    overlayPlacementNumberField("pt-markup-overlay-placement-h", "Height", overlay.h);
+    const firstInput = overlayPlacementFields.querySelector("input");
+    if (firstInput) firstInput.focus();
+  }
+
+  function closeOverlayPlacementForm() {
+    editingOverlayId = null;
+    overlayPlacementForm.hidden = true;
+    overlayPlacementFields.innerHTML = "";
+    overlayPlacementStatus.textContent = "";
+  }
+
+  /** Discards any not-yet-committed background decode awaiting explicit replace confirmation, disposing its just-decoded (never-stored) resource (URL + bitmap). A no-op if there was none. Called BEFORE awaiting any new decode (background or overlay) -- review finding, round 1: a superseded pending replacement must be invalidated synchronously the moment a newer selection starts, never left confirmable alongside (or silently dropped without disposal by) a later one. */
+  function cancelPendingBackgroundReplacement() {
+    if (pendingBackgroundReplacement) {
+      disposeDecoded(pendingBackgroundReplacement.decoded, revokeObjectURL);
+      pendingBackgroundReplacement = null;
+    }
+    backgroundConfirmRow.hidden = true;
+  }
+
+  /**
+   * Runs the shared decode pipeline for both the background input and
+   * the overlay input, with latest-selection fencing: captures the
+   * current `loadGeneration` before the async decode starts, and
+   * discards the result (disposing its resource immediately, never
+   * calling back into the store) if the generation has since moved on
+   * -- a step switch, close, discard/reset, or a newer file selection
+   * all bump it. Returns the decoded record, or `null` if the result
+   * was discarded as stale (never throws for staleness -- that's an
+   * ordinary outcome, not an error).
+   */
+  async function decodeWithFencing(file, statusEl) {
+    const myGeneration = ++loadGeneration;
+    const mySequenceId = activeMarkupSequenceId;
+    let decoded;
+    try {
+      decoded = await decodeImageFile(file);
+    } catch (err) {
+      if (myGeneration !== loadGeneration) return null; // stale -- say nothing, nothing to dispose (decode never finished)
+      statusEl.textContent = err instanceof BackgroundImageError ? err.message : String(err.message || err);
+      statusEl.className = "status error";
+      return null;
+    }
+    if (myGeneration !== loadGeneration || mySequenceId !== activeMarkupSequenceId) {
+      disposeDecoded(decoded, revokeObjectURL); // stale -- dispose immediately, never resurrect a left/closed step
+      return null;
+    }
+    return decoded;
+  }
+
+  backgroundInput.addEventListener("change", async () => {
+    const file = backgroundInput.files?.[0];
+    backgroundInput.value = ""; // always reset -- re-selecting the same file must still fire `change`
+    if (!file || activeMarkupSequenceId === null) return;
+    // Any earlier pending replacement is now superseded -- invalidate and
+    // dispose it synchronously, before awaiting this new decode (review
+    // finding, round 1).
+    cancelPendingBackgroundReplacement();
+    backgroundStatus.textContent = "";
+    backgroundStatus.className = "status";
+    const decoded = await decodeWithFencing(file, backgroundStatus);
+    if (!decoded) return;
+    if (backgroundStore.hasContentFor(activeMarkupSequenceId)) {
+      // Explicit warning/confirmation before replacement, per the brief
+      // -- an in-panel confirm row, not a native dialog, consistent with
+      // this UI's established pattern and easily keyboard/test operable.
+      // Stamped with the generation/step active now that this decode has
+      // actually landed -- defense in depth: Confirm re-checks this stamp
+      // even though the cancel-on-new-selection logic above already makes
+      // a stale pending candidate unreachable by construction.
+      pendingBackgroundReplacement = { decoded, generation: loadGeneration, sequenceId: activeMarkupSequenceId };
+      backgroundConfirmRow.hidden = false;
+      backgroundStatus.textContent = "Review the replacement below before confirming.";
+      return;
+    }
+    try {
+      backgroundStore.setBackground(activeMarkupSequenceId, decoded, markupOverlay.canvasSizeFor(activeMarkupSequenceId));
+    } catch (err) {
+      disposeDecoded(decoded, revokeObjectURL); // store rejected it (shouldn't normally happen post-decode-validation, but never leak if it does)
+      backgroundStatus.textContent = err instanceof BackgroundImageError ? err.message : String(err.message || err);
+      backgroundStatus.className = "status error";
+      return;
+    }
+    renderMarkupPanel();
+  });
+
+  backgroundConfirmBtn.addEventListener("click", () => {
+    if (
+      !pendingBackgroundReplacement ||
+      activeMarkupSequenceId === null ||
+      pendingBackgroundReplacement.sequenceId !== activeMarkupSequenceId ||
+      pendingBackgroundReplacement.generation !== loadGeneration
+    ) {
+      return; // stale or already invalidated -- never apply a candidate that doesn't match current state
+    }
+    const { decoded } = pendingBackgroundReplacement;
+    try {
+      backgroundStore.setBackground(activeMarkupSequenceId, decoded, markupOverlay.canvasSizeFor(activeMarkupSequenceId));
+    } catch (err) {
+      disposeDecoded(decoded, revokeObjectURL);
+      pendingBackgroundReplacement = null;
+      backgroundConfirmRow.hidden = true;
+      backgroundStatus.textContent = err instanceof BackgroundImageError ? err.message : String(err.message || err);
+      backgroundStatus.className = "status error";
+      return;
+    }
+    pendingBackgroundReplacement = null;
+    backgroundConfirmRow.hidden = true;
+    closeOverlayPlacementForm(); // the replacement just cleared every overlay, including any being edited
+    renderMarkupPanel();
+  });
+
+  backgroundConfirmCancelBtn.addEventListener("click", () => {
+    cancelPendingBackgroundReplacement();
+    renderMarkupPanel();
+  });
+
+  backgroundRemoveBtn.addEventListener("click", () => {
+    if (activeMarkupSequenceId === null) return;
+    backgroundStore.clearBackground(activeMarkupSequenceId);
+    closeOverlayPlacementForm(); // clearing the background also clears every overlay with it
+    renderMarkupPanel();
+  });
+
+  overlayInput.addEventListener("change", async () => {
+    const file = overlayInput.files?.[0];
+    overlayInput.value = "";
+    if (!file || activeMarkupSequenceId === null) return;
+    // Selecting an overlay also supersedes any pending background
+    // replacement confirmation -- the brief's own "A -> overlay
+    // selection" case (review finding, round 1).
+    cancelPendingBackgroundReplacement();
+    overlayStatus.textContent = "";
+    overlayStatus.className = "status";
+    const decoded = await decodeWithFencing(file, overlayStatus);
+    if (!decoded) return;
+    try {
+      backgroundStore.addOverlay(activeMarkupSequenceId, decoded, markupOverlay.canvasSizeFor(activeMarkupSequenceId));
+    } catch (err) {
+      disposeDecoded(decoded, revokeObjectURL); // decoded successfully but rejected by the store (cap/budget) -- never leak it
+      overlayStatus.textContent = err instanceof BackgroundImageError ? err.message : String(err.message || err);
+      overlayStatus.className = "status error";
+      return;
+    }
+    renderMarkupPanel();
+  });
+
+  overlayPlacementForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (editingOverlayId === null || activeMarkupSequenceId === null) return;
+    const num = (id) => Number(container.querySelector(`#${id}`).value);
+    const patch = {
+      x: num("pt-markup-overlay-placement-x"),
+      y: num("pt-markup-overlay-placement-y"),
+      w: num("pt-markup-overlay-placement-w"),
+      h: num("pt-markup-overlay-placement-h"),
+    };
+    try {
+      backgroundStore.updateOverlayPlacement(
+        activeMarkupSequenceId,
+        editingOverlayId,
+        patch,
+        markupOverlay.canvasSizeFor(activeMarkupSequenceId)
+      );
+    } catch (err) {
+      // Fails closed in the store itself (never mutates on rejection) --
+      // the previous placement is therefore already preserved; this just
+      // surfaces why, same error-status pattern as every other form here.
+      overlayPlacementStatus.textContent = err instanceof BackgroundImageError ? err.message : String(err.message || err);
+      overlayPlacementStatus.className = "status error";
+      return;
+    }
+    closeOverlayPlacementForm();
+    renderMarkupPanel();
+  });
+
+  overlayPlacementCancelBtn.addEventListener("click", () => {
+    closeOverlayPlacementForm();
+  });
 
   /**
    * `bounds` (Slice A) sets the field's `min`/`max` attributes to the
@@ -829,6 +1253,17 @@ export function renderProcessTrainingControls(container, deps = {}) {
 
   canvasApplyBtn.addEventListener("click", () => {
     if (activeMarkupSequenceId === null) return;
+    // Slice B: a background or any overlay also blocks a silent size
+    // change, exactly like markupOverlay's own shapes/undo-history lock
+    // -- checked here, at the UI layer that already composes both
+    // stores, rather than teaching GuideMarkupOverlay about a store it
+    // has no other reason to know exists.
+    if (backgroundStore.hasContentFor(activeMarkupSequenceId)) {
+      canvasSizeStatus.textContent =
+        "Remove this step's background/overlays before changing its canvas size.";
+      canvasSizeStatus.className = "status error";
+      return;
+    }
     const sizeId = canvasSizeSelect.value;
     const orientation = sizeId === LEGACY_CANVAS_ID ? undefined : canvasOrientationSelect.value;
     try {
@@ -917,6 +1352,8 @@ export function renderProcessTrainingControls(container, deps = {}) {
     // PT-3: discard/reset/target-change clears every step's markup, not
     // just hides it -- same discipline as the guide preview itself.
     markupOverlay.clearAll();
+    backgroundStore.clearAll();
+    loadGeneration++; // fence off any in-flight decode from before this clear
     closeMarkupPanel();
   }
 
@@ -970,6 +1407,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
      */
     get markupOverlay() {
       return markupOverlay;
+    },
+    /** For tests only: direct access to Slice B's background/overlay store, same rationale as markupOverlay above. */
+    get backgroundStore() {
+      return backgroundStore;
     },
     renderGuidePreview,
   };
