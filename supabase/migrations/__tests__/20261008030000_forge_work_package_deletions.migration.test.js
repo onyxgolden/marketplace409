@@ -504,6 +504,40 @@ describe("migration: work-package deletions (D7, Stage A)", () => {
     `)).rejects.toThrow(/forge_work_gate_attestations_package_fk/);
   });
 
+  it("fences the delete on the checked version: a mutation landing between validation and delete fails closed", async () => {
+    await asActor("owner_1", "owner_1");
+    const pkg = await seedPackage("owner_1", { version: 2 });
+    // Test-only hook simulating a concurrent package mutation landing after
+    // the RPC validated the row: when the tombstone insert fires (mutation
+    // claim already in flight), the package version moves. The fenced
+    // DELETE must then match 0 rows -> version_conflict, tombstone rolled
+    // back, package untouched.
+    await db.exec(`
+      create function bump_version_at_tombstone()
+      returns trigger language plpgsql as $$
+      begin
+        update forge_work_packages set version = version + 100
+        where owner_id = NEW.owner_id and id = NEW.package_id;
+        return NEW;
+      end
+      $$;
+      create trigger bump_version_at_tombstone_trg
+        before insert on forge_work_package_deletions
+        for each row execute function bump_version_at_tombstone();
+    `);
+    try {
+      const result = await callDelete("owner_1", pkg.id, 2, pkg.code);
+      expect(result).toEqual({ ok: false, error: "version_conflict" });
+      expect(await packageCount(pkg.id)).toBe(1);
+      expect(await tombstoneCount(pkg.id)).toBe(0);
+    } finally {
+      await db.exec(`
+        drop trigger bump_version_at_tombstone_trg on forge_work_package_deletions;
+        drop function bump_version_at_tombstone();
+      `);
+    }
+  });
+
   it("keeps tombstones owner-scoped and append-only for authenticated users", async () => {
     await asActor("owner_1", "owner_1");
     const pkg = await seedPackage("owner_1");

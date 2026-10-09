@@ -319,6 +319,7 @@ declare
   v_pkg forge_work_packages%rowtype;
   v_blockers jsonb;
   v_deletion forge_work_package_deletions%rowtype;
+  v_deleted_count integer;
 begin
   if v_caller is null then
     return jsonb_build_object('ok', false, 'error', 'forbidden');
@@ -358,16 +359,35 @@ begin
       'ok', false, 'error', 'blocked', 'blockers', v_blockers);
   end if;
 
-  insert into forge_work_package_deletions
-    (owner_id, package_id, code, title, prior_status, package_version,
-     deleted_by)
-  values
-    (p_owner_id, p_package_id, v_pkg.code, v_pkg.title, v_pkg.status,
-     v_pkg.version, v_caller)
-  returning * into v_deletion;
+  -- Mutation claim: tombstone insert + version-fenced delete in one
+  -- subtransaction. The DELETE itself re-proves the checked version at the
+  -- mutation boundary; unless exactly one row is deleted the sentinel
+  -- exception rolls the whole claim back (tombstone included) and the
+  -- caller gets version_conflict — a concurrent package UPDATE is never
+  -- silently lost to a stale delete.
+  begin
+    insert into forge_work_package_deletions
+      (owner_id, package_id, code, title, prior_status, package_version,
+       deleted_by)
+    values
+      (p_owner_id, p_package_id, v_pkg.code, v_pkg.title, v_pkg.status,
+       v_pkg.version, v_caller)
+    returning * into v_deletion;
 
-  delete from forge_work_packages
-  where owner_id = p_owner_id and id = p_package_id;
+    delete from forge_work_packages
+    where owner_id = p_owner_id and id = p_package_id
+      and version = p_expected_version;
+    get diagnostics v_deleted_count = row_count;
+    if v_deleted_count <> 1 then
+      raise exception 'forge_work_package_delete_version_conflict';
+    end if;
+  exception
+    when raise_exception then
+      if sqlerrm = 'forge_work_package_delete_version_conflict' then
+        return jsonb_build_object('ok', false, 'error', 'version_conflict');
+      end if;
+      raise;
+  end;
 
   return jsonb_build_object(
     'ok', true,
