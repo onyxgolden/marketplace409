@@ -15,6 +15,7 @@ import {
   projectGuideWithMarkup,
 } from "../process-guide-markup.js";
 import { WORKFLOW_SYMBOLS } from "../workflow-symbols.js";
+import { PID_SYMBOLS } from "../pid-symbols.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -385,6 +386,149 @@ describe("PT-4: GuideMarkupOverlay — symbol kind", () => {
     const guide = { schemaVersion: 1, source: "fixture", status: "draft_unverified", steps: [{ sequenceId: 1 }] };
     const overlay = new GuideMarkupOverlay();
     overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
+    const projected = projectGuideWithMarkup(guide, overlay);
+    expect(projected.source).toBe("fixture");
+    expect(projected.status).toBe("draft_unverified");
+    expect(projected).not.toHaveProperty("markupModelVersion");
+  });
+});
+
+describe("PT-5: GuideMarkupOverlay — pid.* symbol kind, via the shared symbol-registry.js adapter", () => {
+  // Same `symbol` kind as PT-4 -- no new MARKUP_SHAPE_KINDS entry, no
+  // MARKUP_MODEL_VERSION bump (see this file's own header comment for
+  // why). Only the symbolType namespace differs (`pid.<family>.<name>`
+  // vs PT-4's plain snake_case), dispatched by symbol-registry.js, which
+  // this module calls exclusively -- it never imports pid-symbols.js
+  // directly.
+
+  it("adds every one of the 35 registry symbols at its own default size", () => {
+    const overlay = new GuideMarkupOverlay();
+    for (const def of PID_SYMBOLS) {
+      expect(() =>
+        overlay.addShape(1, "symbol", {
+          symbolType: def.id,
+          x: 10,
+          y: 10,
+          w: def.defaultWidth,
+          h: def.defaultHeight,
+        })
+      ).not.toThrow();
+    }
+    expect(overlay.shapesFor(1)).toHaveLength(PID_SYMBOLS.length);
+  });
+
+  it("a PT-4 workflow symbol and a PT-5 pid symbol coexist on the same step, each rendering through its own registry", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
+    overlay.addShape(1, "symbol", { symbolType: "pid.rotating.centrifugal_pump", x: 150, y: 0, w: 70, h: 70 });
+    const shapes = overlay.shapesFor(1);
+    expect(shapes.map((s) => s.symbolType)).toEqual(["process", "pid.rotating.centrifugal_pump"]);
+    const ops = resolveMarkupDrawOps(shapes);
+    expect(ops.length).toBeGreaterThan(0);
+    const allowed = new Set(["rect", "line", "text"]);
+    for (const op of ops) {
+      expect(allowed.has(op.op)).toBe(true);
+    }
+  });
+
+  it("legacy rect/arrow/text and PT-4 workflow symbols still work unchanged alongside pid symbols", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 });
+    overlay.addShape(1, "arrow", { x1: 0, y1: 0, x2: 50, y2: 50 });
+    overlay.addShape(1, "text", { x: 0, y: 0, text: "hi" });
+    overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
+    overlay.addShape(1, "symbol", { symbolType: "pid.flare.flare_stack", x: 200, y: 0, w: 40, h: 110 });
+    expect(overlay.shapesFor(1).map((s) => s.kind)).toEqual(["rect", "arrow", "text", "symbol", "symbol"]);
+  });
+
+  it("fails closed on an unknown pid.* symbolType", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() =>
+      overlay.addShape(1, "symbol", { symbolType: "pid.not.a_symbol", x: 0, y: 0, w: 100, h: 50 })
+    ).toThrow(MarkupError);
+  });
+
+  it("fails closed on a pid symbol below its own registry minimum size", () => {
+    const overlay = new GuideMarkupOverlay();
+    const def = PID_SYMBOLS.find((s) => s.id === "pid.rotating.generic_driver");
+    expect(() =>
+      overlay.addShape(1, "symbol", {
+        symbolType: def.id,
+        x: 0,
+        y: 0,
+        w: def.minWidth - 1,
+        h: def.defaultHeight,
+      })
+    ).toThrow(MarkupError);
+  });
+
+  it("fails closed on a pid symbol placed outside the shared markup canvas", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() =>
+      overlay.addShape(1, "symbol", {
+        symbolType: "pid.rotating.generic_driver",
+        x: MARKUP_CANVAS.width - 10,
+        y: 0,
+        w: 70,
+        h: 70,
+      })
+    ).toThrow(MarkupError);
+  });
+
+  it("fails closed on an oversized pid symbol label", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() =>
+      overlay.addShape(1, "symbol", {
+        symbolType: "pid.rotating.generic_driver",
+        x: 0,
+        y: 0,
+        w: 70,
+        h: 70,
+        label: "x".repeat(100),
+      })
+    ).toThrow(MarkupError);
+  });
+
+  it("undo/redo/delete work for pid symbol shapes exactly as for PT-4 workflow symbols", () => {
+    const overlay = new GuideMarkupOverlay();
+    const id = overlay.addShape(1, "symbol", { symbolType: "pid.vessel.vertical_vessel", x: 10, y: 10, w: 70, h: 110 });
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+    overlay.undo(1);
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+    overlay.redo(1);
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+    overlay.deleteShape(1, id);
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+  });
+
+  it("switching steps keeps each step's own pid symbol history separate, same as PT-4 workflow symbols", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "pid.rotating.generic_driver", x: 0, y: 0, w: 70, h: 70 });
+    overlay.addShape(2, "symbol", { symbolType: "pid.flare.flare_stack", x: 0, y: 0, w: 40, h: 110 });
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+    expect(overlay.shapesFor(2)).toHaveLength(1);
+    overlay.undo(1);
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+    expect(overlay.shapesFor(2)).toHaveLength(1); // untouched
+  });
+
+  it("resolveMarkupDrawOps renders a pid symbol shape via symbol-registry.js, emitting only supported ops", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "pid.exchanger.shell_and_tube", x: 10, y: 10, w: 110, h: 50, label: "E-101" });
+    const ops = resolveMarkupDrawOps(overlay.shapesFor(1));
+    expect(ops.length).toBeGreaterThan(0);
+    const allowed = new Set(["rect", "line", "text"]);
+    for (const op of ops) {
+      expect(allowed.has(op.op)).toBe(true);
+    }
+    expect(ops.some((o) => o.op === "text" && o.text === "E-101")).toBe(true);
+  });
+
+  it("MARKUP_MODEL_VERSION stays 2 with a pid symbol present -- never bumped merely for allowlisted symbol IDs", () => {
+    expect(MARKUP_MODEL_VERSION).toBe(2);
+    const guide = { schemaVersion: 1, source: "fixture", status: "draft_unverified", steps: [{ sequenceId: 1 }] };
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "pid.rotating.generic_driver", x: 0, y: 0, w: 70, h: 70 });
     const projected = projectGuideWithMarkup(guide, overlay);
     expect(projected.source).toBe("fixture");
     expect(projected.status).toBe("draft_unverified");

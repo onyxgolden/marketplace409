@@ -34,7 +34,12 @@ import {
 // for the full reuse audit): drawOpsToCanvas is already decoupled from
 // where its `ops` came from, so it draws PT-3's markup ops unmodified.
 import { drawOpsToCanvas } from "./annotations-render.js";
-import { WORKFLOW_SYMBOLS, MAX_SYMBOL_LABEL_LENGTH } from "./workflow-symbols.js";
+import { MAX_SYMBOL_LABEL_LENGTH } from "./workflow-symbols.js";
+// PT-5: the palette now draws from both registries (WORKFLOW_SYMBOLS,
+// PID_SYMBOLS) and looks symbols up through symbol-registry.js's shared,
+// non-throwing `findSymbolDefinition` -- this file never needs to know
+// which of the two registries actually owns a given `symbolType`.
+import { WORKFLOW_SYMBOLS, PID_SYMBOLS, findSymbolDefinition } from "./symbol-registry.js";
 
 // Example targets only — PT-1C ships no live window enumeration (that
 // would be new native wiring, out of scope for this slice). A real
@@ -187,6 +192,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
           <h4>Workflow symbols</h4>
           <p class="dialog-sub">Original, independently-drawn workflow-diagram symbols (the open ISO 5807 flowchart standard) for SOP/process guides — not Microsoft Visio artwork.</p>
           <div id="pt-markup-palette" class="pt-markup-palette" role="group" aria-label="Workflow symbols palette"></div>
+
+          <h4>P&amp;ID symbols (workflow markup)</h4>
+          <p class="dialog-sub">Original, schematic P&amp;ID-inspired glyphs an author places to illustrate a workflow step — not evidence, not derived from any real captured equipment, and not a standards-compliant engineering P&amp;ID.</p>
+          <div id="pt-markup-pid-palette" class="pt-markup-palette" role="group" aria-label="P&amp;ID symbols (workflow markup) palette"></div>
 
           <form id="pt-markup-shape-form" hidden>
             <div id="pt-markup-shape-fields" class="pt-markup-shape-fields"></div>
@@ -437,23 +446,27 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const shapeFields = $("pt-markup-shape-fields");
   const shapeStatus = $("pt-markup-shape-status");
   const markupPalette = $("pt-markup-palette");
+  const markupPidPalette = $("pt-markup-pid-palette");
 
-  // Built once from the static registry (never per-render) and grouped
-  // by category, so adding a symbol to the registry never requires a
-  // template-string edit here.
-  (function buildPalette() {
+  // Built once from a static registry (never per-render) and grouped by
+  // `category` (the subgroup header), so adding a symbol to either
+  // registry never requires a template-string edit here. Shared by both
+  // palette groups -- PT-4's Workflow symbols and PT-5's P&ID symbols
+  // (workflow markup) -- which differ only in which registry/container
+  // they're called with.
+  function buildPaletteGroup(container, defs) {
     const categories = new Map();
-    for (const def of WORKFLOW_SYMBOLS) {
+    for (const def of defs) {
       if (!categories.has(def.category)) categories.set(def.category, []);
       categories.get(def.category).push(def);
     }
-    for (const [category, defs] of categories) {
+    for (const [category, catDefs] of categories) {
       const group = document.createElement("fieldset");
       group.className = "pt-markup-palette-group";
       const legend = document.createElement("legend");
       legend.textContent = category;
       group.appendChild(legend);
-      for (const def of defs) {
+      for (const def of catDefs) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "ghost-btn small";
@@ -462,9 +475,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
         btn.addEventListener("click", () => openShapeForm("symbol", null, def.id));
         group.appendChild(btn);
       }
-      markupPalette.appendChild(group);
+      container.appendChild(group);
     }
-  })();
+  }
+  buildPaletteGroup(markupPalette, WORKFLOW_SYMBOLS);
+  buildPaletteGroup(markupPidPalette, PID_SYMBOLS);
 
   function openMarkupFor(sequenceId) {
     activeMarkupSequenceId = sequenceId;
@@ -496,7 +511,7 @@ export function renderProcessTrainingControls(container, deps = {}) {
     if (shape.kind === "rect") return `Rectangle (${shape.x}, ${shape.y}, ${shape.w}×${shape.h})`;
     if (shape.kind === "arrow") return `Arrow (${shape.x1},${shape.y1}) → (${shape.x2},${shape.y2})`;
     if (shape.kind === "symbol") {
-      const def = WORKFLOW_SYMBOLS.find((s) => s.id === shape.symbolType);
+      const def = findSymbolDefinition(shape.symbolType);
       const name = def?.name ?? shape.symbolType;
       return shape.label ? `${name}: "${shape.label}"` : name;
     }
@@ -619,7 +634,7 @@ export function renderProcessTrainingControls(container, deps = {}) {
       numberField("pt-markup-field-x2", "To X", existing?.x2 ?? 100);
       numberField("pt-markup-field-y2", "To Y", existing?.y2 ?? 100);
     } else if (kind === "symbol") {
-      const def = WORKFLOW_SYMBOLS.find((s) => s.id === resolvedSymbolType);
+      const def = findSymbolDefinition(resolvedSymbolType);
       const intro = document.createElement("p");
       intro.className = "dialog-sub";
       intro.textContent = def ? `${def.name} — ${def.description}` : resolvedSymbolType;
