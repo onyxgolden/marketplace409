@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WP_PACKAGE_TYPES, WP_PRIORITIES } from "@/domains/work-management/workPackage.js";
 import { canonicalPropertySlug } from "@/domains/property/propertyAliases.js";
@@ -179,7 +180,20 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
         </div>
       </section>
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {/* Cancel is a real link, not history back, so abandoning the form
+            works when the user landed on this page directly. While a save
+            is in flight it is inert so a stray click cannot race the create. */}
+        <Link
+          href="/forge/work"
+          aria-disabled={saving || undefined}
+          tabIndex={saving ? -1 : undefined}
+          className={`rounded-lg border border-slate-300 px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50${
+            saving ? " pointer-events-none opacity-50" : ""
+          }`}
+        >
+          Cancel
+        </Link>
         <button
           type="submit" disabled={saving}
           className="rounded-lg bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"

@@ -41,6 +41,7 @@ describe(
           "Financial",
           "Budget",
           "Property",
+          "Work Packages",
           "Connections",
           "Results",
           "Import",
@@ -105,6 +106,69 @@ describe(
             byHref("/forge/workspace"),
           ),
         ).toBe(true);
+      },
+    );
+
+    it(
+      "keeps the Work Packages entry (D2) in the frozen destination list",
+      () => {
+        const entry = FORGE_APPLICATIONS.find(
+          (application) => application.href === "/forge/work",
+        );
+
+        expect(entry).toBeDefined();
+        expect(entry.label).toBe("Work Packages");
+        expect(entry.shortLabel).toBe("WP");
+
+        // Navigation keys must stay unique or rail rendering/active state
+        // would collide between two entries.
+        const hrefs = FORGE_APPLICATIONS.map((application) => application.href);
+        expect(new Set(hrefs).size).toBe(hrefs.length);
+      },
+    );
+
+    it(
+      "activates Work Packages for its list, create, and detail routes only",
+      () => {
+        const byHref = (href) =>
+          FORGE_APPLICATIONS.find((application) => application.href === href);
+        const work = byHref("/forge/work");
+
+        expect(isForgeApplicationActive("/forge/work", work)).toBe(true);
+        expect(isForgeApplicationActive("/forge/work/new", work)).toBe(true);
+        expect(
+          isForgeApplicationActive("/forge/work/forge_wp_1", work),
+        ).toBe(true);
+        expect(isForgeApplicationActive("/forge", work)).toBe(false);
+        expect(isForgeApplicationActive("/forge/workspaces", work)).toBe(false);
+        expect(
+          isForgeApplicationActive("/forge", byHref("/forge")),
+        ).toBe(true);
+      },
+    );
+
+    it(
+      "renders the Work Packages link, not active, in the collapsed rail",
+      () => {
+        const markup =
+          renderToStaticMarkup(
+            <ThemeProvider>
+              <ForgeApplicationRail>
+                <main>
+                  Property workspace
+                </main>
+              </ForgeApplicationRail>
+            </ThemeProvider>,
+          );
+
+        // Collapsed rail: the link is announced by aria-label and mirrors the
+        // visible label in its tooltip; it must not be the active page (the
+        // mocked route is /forge/property).
+        expect(markup).toContain('href="/forge/work"');
+        expect(markup).toContain('aria-label="Work Packages"');
+        const workLink = markup.match(/<a[^>]*href="\/forge\/work"[^>]*>/);
+        expect(workLink).not.toBeNull();
+        expect(workLink[0]).not.toContain("aria-current");
       },
     );
 

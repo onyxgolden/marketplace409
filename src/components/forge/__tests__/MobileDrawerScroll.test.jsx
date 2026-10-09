@@ -154,6 +154,40 @@ describe("mobile drawer dismissal", () => {
   });
 });
 
+describe("work packages discoverability (D2)", () => {
+  it("shows Work Packages in the expanded desktop rail", () => {
+    renderRail();
+
+    const expand = container.querySelector(
+      'button[aria-label="Expand Forge navigation"]',
+    );
+    expect(expand).not.toBeNull();
+    click(expand);
+
+    const link = Array.from(container.querySelectorAll('a[href="/forge/work"]'))
+      .find((anchor) => anchor.textContent.includes("Work Packages"));
+    expect(link).not.toBeUndefined();
+  });
+
+  it("shows Work Packages in the mobile drawer app list", () => {
+    renderRail();
+
+    const open = container.querySelector(
+      'button[aria-label="Open Forge navigation"]',
+    );
+    expect(open).not.toBeNull();
+    click(open);
+
+    const scrollRegion = container.querySelector(
+      '[data-testid="mobile-nav-scroll"]',
+    );
+    expect(scrollRegion).not.toBeNull();
+    const link = Array.from(scrollRegion.querySelectorAll('a[href="/forge/work"]'))
+      .find((anchor) => anchor.textContent.includes("Work Packages"));
+    expect(link).not.toBeUndefined();
+  });
+});
+
 describe("mobile header account menu", () => {
   it("renders the shared account menu in the mobile header so phone users can sign out", () => {
     renderRail();
