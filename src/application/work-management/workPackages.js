@@ -455,7 +455,168 @@ export async function transitionWorkPackage(db, { ownerId, actor, packageId, to,
   return { ok: true, package: rpcData.package };
 }
 
-export async function getWorkPackageDetail(db, { ownerId, packageId }) {
+// -- Package deletion (D7) -------------------------------------------------
+// Delete is deliberately narrow: the workspace primary owner may delete an
+// EMPTY DRAFT package, and only through the guarded RPC
+// forge_work_delete_empty_draft_package, which revalidates owner authority,
+// draft status, optimistic-concurrency version, the typed confirmation code,
+// and every dependency class at mutation time, then writes an immutable
+// audit tombstone and deletes the row in one transaction. The eligibility
+// read below is display/preflight only — never authorization. Any dependency
+// blocks deletion; nothing cascades and no business history is removed.
+//
+// Blocker classes mirror the SQL in
+// supabase/migrations/20261008030000_forge_work_package_deletions.sql
+// (forge_work_package_deletion_blocker_counts). Labels/actions are the
+// user-facing next steps for each class; keep the two lists in sync.
+const DELETION_BLOCKER_INFO = Object.freeze({
+  budget_revisions: {
+    label: "Budget history",
+    action: "Budget revisions are a permanent audit record and can't be removed.",
+  },
+  transitions: {
+    label: "Lifecycle history",
+    action: "Status changes are a permanent audit record and can't be removed.",
+  },
+  attestations: {
+    label: "Readiness attestations",
+    action: "Attestations are audit evidence and can't be removed.",
+  },
+  gate_evaluations: {
+    label: "Gate evaluations",
+    action: "Gate evaluations are kept for audit and can't be removed.",
+  },
+  gate_overrides: {
+    label: "Gate overrides",
+    action: "Gate overrides are kept for audit and can't be removed.",
+  },
+  scope_baselines: {
+    label: "Frozen scope baselines",
+    action: "Frozen baselines are immutable scope history and can't be removed.",
+  },
+  scope_changes: {
+    label: "Scope changes",
+    action: "Scope change history is kept for audit and can't be removed.",
+  },
+  links: {
+    label: "Linked records",
+    action: "Unlink them in the Links section below, then try again.",
+  },
+  link_confirmations: {
+    label: "Link confirmation history",
+    action: "Link confirmations are permanent audit history and can't be removed.",
+  },
+  observations: {
+    label: "Inspection observations",
+    action: "Inspection observations are kept as field records and can't be removed.",
+  },
+  package_baselines: {
+    label: "Schedule baselines",
+    action: "Schedule baseline history is kept for audit and can't be removed.",
+  },
+  progress_snapshots: {
+    label: "Progress snapshots",
+    action: "Progress snapshots are kept for audit and can't be removed.",
+  },
+  weekly_commitments: {
+    label: "Weekly commitments",
+    action: "Weekly commitments are kept for audit and can't be removed.",
+  },
+  manpower_days: {
+    label: "Manpower records",
+    action: "Manpower records are kept for audit and can't be removed.",
+  },
+});
+
+// Annotate raw {type, count} blockers from the database with display copy.
+// Unknown future classes still render (fail-visible, never a crash).
+function annotateDeletionBlockers(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .map((blocker) => {
+      const type = blocker && blocker.type;
+      const info = DELETION_BLOCKER_INFO[type] || {
+        label: String(type || "records").replace(/_/g, " "),
+        action: "These records are kept for audit and can't be removed.",
+      };
+      return { type, count: Number(blocker && blocker.count) || 0, ...info };
+    })
+    .filter((blocker) => blocker.count > 0);
+}
+
+async function computeDeletionEligibility(db, { ownerId, actor, pkg }) {
+  const { data, error } = await db.rpc("forge_work_package_deletion_blockers", {
+    p_owner_id: ownerId,
+    p_package_id: pkg.id,
+  });
+  if (error) throw error;
+  const blockers = annotateDeletionBlockers(data);
+  const isOwner = actor === ownerId;
+  return {
+    isOwner,
+    canDelete: isOwner && pkg.status === WP_STATUS.DRAFT && blockers.length === 0,
+    status: pkg.status,
+    packageVersion: pkg.version,
+    blockers,
+  };
+}
+
+export async function getWorkPackageDeletionEligibility(db, { ownerId, actor, packageId }) {
+  const pkg = await getPackage(db, ownerId, packageId);
+  if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
+  const eligibility = await computeDeletionEligibility(db, { ownerId, actor, pkg });
+  return { ok: true, eligibility };
+}
+
+export async function deleteWorkPackage(db, { ownerId, actor, packageId, confirmCode, expectedVersion }) {
+  if (typeof confirmCode !== "string" || confirmCode.length === 0) {
+    return { ok: false, httpStatus: 400, error: "Type the package code to confirm deletion." };
+  }
+  if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    return { ok: false, httpStatus: 400, error: "expectedVersion must be a positive integer." };
+  }
+  // Primary-owner rule as a fast failure; the RPC revalidates it in SQL at
+  // mutation time — this check is never the authority.
+  if (actor !== ownerId) {
+    return { ok: false, httpStatus: 403, error: "Only the workspace owner can delete a work package." };
+  }
+  const { data, error } = await db.rpc("forge_work_delete_empty_draft_package", {
+    p_owner_id: ownerId,
+    p_package_id: packageId,
+    p_expected_version: expectedVersion,
+    p_confirm_code: confirmCode,
+  });
+  if (error) throw error;
+  if (!data || data.ok !== true) {
+    const err = (data && data.error) || "unknown";
+    if (err === "forbidden") {
+      return { ok: false, httpStatus: 403, error: "Only the workspace owner can delete this work package." };
+    }
+    if (err === "not_found") {
+      return { ok: false, httpStatus: 404, error: "Work package not found." };
+    }
+    if (err === "not_draft") {
+      const status = String(data.status || "not draft").replace(/_/g, " ");
+      return { ok: false, httpStatus: 409, error: `Only draft packages can be deleted. This package is ${status}.` };
+    }
+    if (err === "version_conflict") {
+      return { ok: false, httpStatus: 409, error: "This package changed while you were deciding. Refresh and try again." };
+    }
+    if (err === "code_mismatch") {
+      return { ok: false, httpStatus: 409, error: "The typed code does not match this package code." };
+    }
+    if (err === "blocked") {
+      return {
+        ok: false, httpStatus: 409,
+        error: "This package has records that must be kept, so it can't be deleted.",
+        blockers: annotateDeletionBlockers(data.blockers),
+      };
+    }
+    throw new Error(`forge_work_delete_empty_draft_package: ${err}`);
+  }
+  return { ok: true, deletion: data.deletion || null };
+}
+
+export async function getWorkPackageDetail(db, { ownerId, packageId, actor }) {
   const pkg = await getPackage(db, ownerId, packageId);
   if (!pkg) return { ok: false, httpStatus: 404, error: "Work package not found." };
   const [transitions, attestations, baselines, changes, observations] = await Promise.all([
@@ -468,7 +629,7 @@ export async function getWorkPackageDetail(db, { ownerId, packageId }) {
   for (const r of [transitions, attestations, baselines, changes, observations]) {
     if (r.error) throw r.error;
   }
-  return {
+  const result = {
     ok: true,
     package: pkg,
     transitions: transitions.data || [],
@@ -478,6 +639,17 @@ export async function getWorkPackageDetail(db, { ownerId, packageId }) {
     scopeChanges: changes.data || [],
     observations: observations.data || [],
   };
+  if (actor) {
+    // Advisory delete affordance for the detail UI — never authorization
+    // (the delete RPC revalidates everything in SQL). A failure here hides
+    // the affordance instead of breaking the detail view.
+    try {
+      result.deletionEligibility = await computeDeletionEligibility(db, { ownerId, actor, pkg });
+    } catch {
+      result.deletionEligibility = null;
+    }
+  }
+  return result;
 }
 
 export async function listWorkPackages(db, { ownerId, status, packageType, propertyId }) {

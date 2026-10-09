@@ -20,8 +20,10 @@ export function ok(body, status = 200) {
 }
 
 export function fail(result) {
-  return NextResponse.json({ error: result.error || "Request failed." },
-    { status: result.httpStatus || 400 });
+  return NextResponse.json({
+    error: result.error || "Request failed.",
+    ...(result.blockers ? { blockers: result.blockers } : {}),
+  }, { status: result.httpStatus || 400 });
 }
 
 export function serverError(where, error) {

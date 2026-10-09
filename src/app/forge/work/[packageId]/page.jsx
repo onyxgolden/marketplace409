@@ -13,6 +13,7 @@ export default async function WorkPackagePage({ params }) {
   const { packageId } = await params;
   const detail = await getWorkPackageDetail(forgeApplication.supabaseClient, {
     ownerId: forgeApplication.effectiveOwnerId,
+    actor: forgeApplication.user.id,
     packageId,
   });
   if (!detail.ok) redirect("/forge/work");

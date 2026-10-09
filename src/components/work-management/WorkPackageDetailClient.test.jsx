@@ -4,7 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
+const routerMocks = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => routerMocks }));
 
 import WorkPackageDetailClient from "./WorkPackageDetailClient";
 
@@ -39,8 +40,9 @@ const BASE_PKG = {
 
 const OPTIONS = [{ slug: "1900-w-decker", label: "1900 W. Decker" }];
 
-function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null } = {}) {
+function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null, deleteImpl = null, getEligibility = undefined } = {}) {
   const patches = [];
+  const deletes = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     if (url === "/api/work-packages/property-options") {
       if (failOptions) return { ok: false, json: async () => ({ error: "Unable to complete the request." }) };
@@ -52,8 +54,13 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
       if (failPatch) return { ok: false, json: async () => ({ error: "Package changed while editing; refresh and retry." }) };
       return { ok: true, json: async () => ({ package: { ...BASE_PKG, ...patches[patches.length - 1], property_id: patches[patches.length - 1].property_id ?? null } }) };
     }
+    if (url === `/api/work-packages/${BASE_PKG.id}` && options.method === "DELETE") {
+      deletes.push(JSON.parse(options.body));
+      if (deleteImpl) return deleteImpl();
+      return { ok: true, json: async () => ({ success: true, deletion: { package_id: BASE_PKG.id, code: BASE_PKG.code } }) };
+    }
     if (url === `/api/work-packages/${BASE_PKG.id}` && (!options.method || options.method === "GET")) {
-      return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: [], scopeChanges: [], observations: [] }) };
+      return { ok: true, json: async () => ({ package: BASE_PKG, transitions: [], attestations: [], baselines: [], scopeChanges: [], observations: [], ...(getEligibility !== undefined ? { deletionEligibility: getEligibility } : {}) }) };
     }
     if (typeof url === "string" && url.startsWith("/api/work-links")) {
       return { ok: true, json: async () => ({ links: [], documents: [] }) };
@@ -66,10 +73,10 @@ function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = fals
     }
     throw new Error(`unexpected fetch ${url}`);
   }));
-  return { patches };
+  return { patches, deletes };
 }
 
-function renderDetail(pkg = BASE_PKG) {
+function renderDetail(pkg = BASE_PKG, { deletionEligibility } = {}) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -84,6 +91,7 @@ function renderDetail(pkg = BASE_PKG) {
           currentBaseline: null,
           scopeChanges: [],
           observations: [],
+          ...(deletionEligibility !== undefined ? { deletionEligibility } : {}),
         }}
         initialLinks={[]}
       />,
@@ -306,5 +314,208 @@ describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
     await act(async () => { releasePatch(); });
     await settle();
     expect([...container.querySelectorAll("button")].find((b) => b.textContent === "Edit")).toBeTruthy();
+  });
+});
+
+describe("WorkPackageDetailClient delete danger zone (D7)", () => {
+  const ELIGIBLE = {
+    isOwner: true, canDelete: true, status: "draft", packageVersion: 1, blockers: [],
+  };
+  const BLOCKED = {
+    isOwner: true, canDelete: false, status: "draft", packageVersion: 1,
+    blockers: [
+      { type: "budget_revisions", count: 1, label: "Budget history", action: "Budget revisions are a permanent audit record and can't be removed." },
+      { type: "links", count: 2, label: "Linked records", action: "Unlink them in the Links section below, then try again." },
+    ],
+  };
+
+  function dangerZone(container) {
+    return container.querySelector('section[aria-label="Danger zone"]');
+  }
+  function deleteTrigger(container) {
+    return dangerZone(container)?.querySelector("button");
+  }
+  function dialogEl(container) {
+    return container.querySelector('[role="dialog"]');
+  }
+  function codeInput(container) {
+    return container.querySelector("#delete_confirm_code");
+  }
+  function typeCode(container, value) {
+    const input = codeInput(container);
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
+    act(() => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+  }
+  function dialogButton(container, text) {
+    return [...dialogEl(container).querySelectorAll("button")].find((b) => b.textContent === text);
+  }
+
+  it("renders no delete affordance without server eligibility", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    expect(dangerZone(container)).toBeNull();
+    expect(container.textContent).not.toContain("Danger zone");
+  });
+
+  it("renders no delete affordance for non-owners", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, {
+      deletionEligibility: { ...ELIGIBLE, isOwner: false },
+    });
+    expect(dangerZone(container)).toBeNull();
+  });
+
+  it("shows exact blocker categories, counts, and next steps when blocked", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: BLOCKED });
+    const zone = dangerZone(container);
+    expect(zone).not.toBeNull();
+    expect(zone.textContent).toContain("Budget history (1)");
+    expect(zone.textContent).toContain("can't be removed");
+    expect(zone.textContent).toContain("Linked records (2)");
+    expect(zone.textContent).toContain("Unlink them in the Links section");
+    // No delete button is offered, and no archive feature is invented.
+    expect(deleteTrigger(container)).toBeNull();
+    expect(zone.textContent.toLowerCase()).not.toContain("archive");
+  });
+
+  it("tells owners of non-draft packages to cancel instead of deleting", () => {
+    stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, status: "in_progress" }, {
+      deletionEligibility: {
+        isOwner: true, canDelete: false, status: "in_progress", packageVersion: 2, blockers: [],
+      },
+    });
+    const zone = dangerZone(container);
+    expect(zone.textContent).toContain("Only draft packages can be deleted");
+    expect(zone.textContent).toContain("in progress");
+    expect(zone.textContent).toContain("cancel it instead");
+    expect(deleteTrigger(container)).toBeNull();
+  });
+
+  it("requires typing the exact code before Delete enables; Cancel closes", async () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    act(() => { deleteTrigger(container).click(); });
+    const dialog = dialogEl(container);
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("WP-0001");
+    expect(dialog.textContent).toContain("Turnover");
+    expect(dialog.textContent).toContain("audit record");
+    expect(dialog.textContent).toContain("can't be undone");
+    // Cancel is the focused default.
+    expect(document.activeElement).toBe(dialogButton(container, "Cancel"));
+    // Wrong / partial codes never enable Delete.
+    expect(dialogButton(container, "Delete").disabled).toBe(true);
+    typeCode(container, "WP-000");
+    expect(dialogButton(container, "Delete").disabled).toBe(true);
+    typeCode(container, "wp-0001");
+    expect(dialogButton(container, "Delete").disabled).toBe(true);
+    typeCode(container, "WP-0001");
+    expect(dialogButton(container, "Delete").disabled).toBe(false);
+    act(() => { dialogButton(container, "Cancel").click(); });
+    expect(dialogEl(container)).toBeNull();
+  });
+
+  it("Escape closes the dialog and focus returns to the Delete button", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    act(() => { deleteTrigger(container).click(); });
+    expect(dialogEl(container)).not.toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(dialogEl(container)).toBeNull();
+    expect(document.activeElement).toBe(deleteTrigger(container));
+    // Reopening starts with an empty confirmation.
+    act(() => { deleteTrigger(container).click(); });
+    expect(codeInput(container).value).toBe("");
+    expect(dialogButton(container, "Delete").disabled).toBe(true);
+  });
+
+  it("deletes once (busy state blocks double-clicks) and redirects after server confirmation", async () => {
+    let releaseDelete;
+    const gate = new Promise((resolve) => { releaseDelete = resolve; });
+    const { deletes } = stubFetch({
+      deleteImpl: () => gate.then(() => ({
+        ok: true,
+        json: async () => ({ success: true, deletion: { package_id: BASE_PKG.id, code: BASE_PKG.code } }),
+      })),
+    });
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    act(() => { deleteTrigger(container).click(); });
+    typeCode(container, "WP-0001");
+    const deleteButton = dialogButton(container, "Delete");
+    act(() => { deleteButton.click(); });
+    expect(deleteButton.disabled).toBe(true);
+    expect(deleteButton.textContent).toBe("Deleting…");
+    expect(dialogButton(container, "Cancel").disabled).toBe(true);
+    // A second click and Escape are both inert while the delete is in flight.
+    act(() => { deleteButton.click(); });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(dialogEl(container)).not.toBeNull();
+    await act(async () => { releaseDelete(); });
+    await settle();
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]).toEqual({ confirmCode: "WP-0001", expectedVersion: 1 });
+    expect(routerMocks.push).toHaveBeenCalledWith("/forge/work");
+  });
+
+  it("keeps the dialog open on a 500 and never claims success", async () => {
+    stubFetch({
+      deleteImpl: async () => ({
+        ok: false, status: 500,
+        json: async () => ({ error: "Unable to complete the request." }),
+      }),
+    });
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    act(() => { deleteTrigger(container).click(); });
+    typeCode(container, "WP-0001");
+    await act(async () => { dialogButton(container, "Delete").click(); });
+    await settle();
+    expect(dialogEl(container)).not.toBeNull();
+    expect(dialogEl(container).textContent).toContain("Unable to complete the request.");
+    expect(routerMocks.push).not.toHaveBeenCalled();
+  });
+
+  it("keeps the dialog open when the network fails", async () => {
+    stubFetch({ deleteImpl: async () => { throw new Error("offline"); } });
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    act(() => { deleteTrigger(container).click(); });
+    typeCode(container, "WP-0001");
+    await act(async () => { dialogButton(container, "Delete").click(); });
+    await settle();
+    expect(dialogEl(container)).not.toBeNull();
+    expect(dialogEl(container).textContent).toContain("package was not deleted");
+    expect(routerMocks.push).not.toHaveBeenCalled();
+  });
+
+  it("on 409 closes the dialog, refreshes eligibility, and keeps the package visible", async () => {
+    stubFetch({
+      deleteImpl: async () => ({
+        ok: false, status: 409,
+        json: async () => ({
+          error: "This package has records that must be kept, so it can't be deleted.",
+          blockers: BLOCKED.blockers,
+        }),
+      }),
+      getEligibility: BLOCKED,
+    });
+    const { container } = renderDetail(BASE_PKG, { deletionEligibility: ELIGIBLE });
+    act(() => { deleteTrigger(container).click(); });
+    typeCode(container, "WP-0001");
+    await act(async () => { dialogButton(container, "Delete").click(); });
+    await settle();
+    expect(dialogEl(container)).toBeNull();
+    expect(routerMocks.push).not.toHaveBeenCalled();
+    // The refreshed danger zone explains the fresh blockers, error visible,
+    // and the package itself is still on screen.
+    const zone = dangerZone(container);
+    expect(zone.textContent).toContain("Budget history (1)");
+    expect(container.querySelector('[role="alert"]').textContent)
+      .toContain("This package has records that must be kept");
+    expect(container.textContent).toContain("Turnover");
   });
 });
