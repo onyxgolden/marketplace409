@@ -394,3 +394,297 @@ describe("renderProcessTrainingControls — PT-2 guide preview", () => {
     expect(container.querySelectorAll("#pt-guide-steps li").length).toBe(0);
   });
 });
+
+describe("renderProcessTrainingControls — PT-3 markup panel", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function openFirstStepMarkup(container) {
+    const btn = [...container.querySelectorAll("#pt-guide-steps button")][0];
+    btn.click();
+  }
+
+  function addRect(container, overrides = {}) {
+    container.querySelector("#pt-markup-add-rect").click();
+    const set = (id, v) => {
+      const el = container.querySelector(id);
+      el.value = String(v);
+    };
+    set("#pt-markup-field-x", overrides.x ?? 10);
+    set("#pt-markup-field-y", overrides.y ?? 10);
+    set("#pt-markup-field-w", overrides.w ?? 50);
+    set("#pt-markup-field-h", overrides.h ?? 50);
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+  }
+
+  it("review -> select step -> edit placeholder -> preview shows the added shape", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(false);
+
+    addRect(container, { x: 5, y: 5, w: 20, h: 20 });
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Rectangle"))).toBe(true);
+  });
+
+  it("never renders an actual image for the markup placeholder -- only a neutral canvas", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelectorAll("#pt-markup-panel img").length).toBe(0);
+    expect(container.querySelector("#pt-markup-panel").innerHTML).not.toMatch(/data:image|\.png|\.jpg/i);
+    expect(container.querySelector("#pt-markup-panel").textContent).toContain("No image in fixture guide");
+  });
+
+  it("switching steps shows only that step's own annotations", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    const stepButtons = [...container.querySelectorAll("#pt-guide-steps button")];
+    expect(stepButtons.length).toBeGreaterThan(1);
+
+    stepButtons[0].click();
+    addRect(container, { x: 1, y: 1, w: 10, h: 10 });
+    expect(container.querySelectorAll("#pt-markup-shape-list li").length).toBe(1);
+
+    stepButtons[1].click();
+    // A fresh step starts with the "no markup yet" placeholder row, not
+    // the previous step's shape.
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Rectangle"))).toBe(false);
+
+    stepButtons[0].click();
+    // Switching back retains that step's own annotation.
+    const backItems = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(backItems.some((li) => li.textContent.includes("Rectangle"))).toBe(true);
+  });
+
+  it("undo/redo work from the toolbar and reflect in the button disabled state", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const undoBtn = container.querySelector("#pt-markup-undo");
+    const redoBtn = container.querySelector("#pt-markup-redo");
+    expect(undoBtn.disabled).toBe(true);
+
+    addRect(container);
+    expect(undoBtn.disabled).toBe(false);
+    undoBtn.click();
+    expect(container.querySelectorAll("#pt-markup-shape-list li.pt-markup-empty, #pt-markup-shape-list li").length).toBeGreaterThan(0);
+    expect(redoBtn.disabled).toBe(false);
+    expect(undoBtn.disabled).toBe(true);
+  });
+
+  it("delete removes a shape", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    addRect(container);
+    container.querySelector("#pt-markup-shape-list button:nth-of-type(1)"); // sanity: list rendered
+    const deleteBtn = [...container.querySelectorAll("#pt-markup-shape-list li button")].find(
+      (b) => b.textContent === "Delete"
+    );
+    deleteBtn.click();
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Rectangle"))).toBe(false);
+  });
+
+  it("an invalid shape submission shows an error and does not crash the surrounding review", () => {
+    const { container, session } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-add-rect").click();
+    container.querySelector("#pt-markup-field-w").value = "0"; // invalid: w must be > 0
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const status = container.querySelector("#pt-markup-shape-status");
+    expect(status.textContent.length).toBeGreaterThan(0);
+    expect(status.className).toContain("error");
+    expect(session.state).toBe("review"); // surrounding review untouched
+    // The guide preview itself is still intact.
+    expect(container.querySelectorAll("#pt-guide-steps li").length).toBeGreaterThan(0);
+  });
+
+  it("DEMO/DRAFT/NOT VERIFIED badge and disabled-capture banner remain visible with the markup panel open", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+    expect(container.querySelector(".pt-disabled-banner").textContent.toLowerCase()).toContain("disabled");
+  });
+
+  it("Escape closes the markup panel without discarding the session", () => {
+    const { container, session } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(false);
+    container.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(true);
+    expect(session.state).toBe("review");
+  });
+
+  it("Close button returns to the guide without discarding the session", () => {
+    const { container, session } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-close").click();
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(true);
+    expect(session.state).toBe("review");
+  });
+
+  it("every control in the panel is keyboard-operable (real button/input elements, no pointer-only handlers)", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-add-text").click();
+    const inputs = [...container.querySelectorAll("#pt-markup-shape-fields input")];
+    expect(inputs.length).toBeGreaterThan(0);
+    for (const input of inputs) {
+      expect(["INPUT"]).toContain(input.tagName);
+      expect(input.type === "number" || input.type === "text").toBe(true);
+    }
+    const buttons = [...container.querySelectorAll("#pt-markup-panel button")];
+    for (const btn of buttons) {
+      expect(btn.tagName).toBe("BUTTON");
+    }
+  });
+
+  it("privacy: a withheld/redacted step's seeded sensitive text is absent from the markup DOM, including title/aria attributes", () => {
+    const { container } = mountFresh({
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "Secret Field", automationId: "txt-secret", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+      ],
+    });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    addRect(container);
+    const panelHtml = container.querySelector("#pt-markup-panel").outerHTML;
+    expect(panelHtml).not.toContain("Secret Field");
+    expect(panelHtml).not.toContain("txt-secret");
+  });
+
+  it("user-added text is rendered via textContent, never as HTML (no script/markup injection)", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-add-text").click();
+    container.querySelector("#pt-markup-field-x").value = "5";
+    container.querySelector("#pt-markup-field-y").value = "5";
+    container.querySelector("#pt-markup-field-text").value = "<img src=x onerror=alert(1)>";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(container.querySelectorAll("#pt-markup-shape-list img").length).toBe(0);
+    const li = [...container.querySelectorAll("#pt-markup-shape-list li")].find((l) =>
+      l.textContent.includes("<img")
+    );
+    expect(li).toBeDefined();
+  });
+
+  it("lifecycle: discard clears all markup from the DOM, not just hides it", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    addRect(container);
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(true);
+    expect(container.querySelectorAll("#pt-markup-shape-list li").length).toBe(0);
+  });
+
+  it("lifecycle: new-session clears markup; re-entering review starts with no stale annotations", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    addRect(container);
+    container.querySelector("#pt-review-discard-btn").click();
+    container.querySelector("#pt-new-session-btn").click();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Rectangle"))).toBe(false);
+  });
+
+  it("lifecycle: a compiler failure never shows an open markup panel", () => {
+    // In the current UI, compiling only ever happens once, synchronously,
+    // on entering review -- step buttons (the only way to open the
+    // markup panel) only exist after a successful compile, so a failed
+    // compile can never leave the markup panel open in practice. This
+    // pins that invariant directly, and that renderGuidePreview's
+    // defensive closeMarkupPanel() call (for a future recompile path)
+    // does not itself break anything on the failure path.
+    const { container } = mountFresh({
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "X", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1, // duplicate -- sequence-integrity failure
+            kind: "Click",
+            point: [2, 2],
+            target: { name: "Y", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+      ],
+    });
+    advanceToReview(container);
+    expect(container.querySelector("#pt-guide-error").hidden).toBe(false);
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(true);
+    expect(container.querySelectorAll("#pt-guide-steps button").length).toBe(0);
+  });
+
+  it("re-rendering the same review (same compile) retains legitimate in-memory markup", () => {
+    const { container, session } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    addRect(container);
+    // Re-trigger a guide compile within the SAME review session (e.g. a
+    // re-render) by clicking load-review again is not exposed as a
+    // separate action in this UI once in review, so instead assert the
+    // overlay itself (not re-created per render) still holds the shape
+    // after closing/reopening the panel, which already exercises a
+    // fresh renderMarkupPanel() call reading from the same overlay.
+    container.querySelector("#pt-markup-close").click();
+    openFirstStepMarkup(container);
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Rectangle"))).toBe(true);
+    expect(session.state).toBe("review");
+  });
+});
+
+describe("structural guarantee — process-guide-markup.js never referenced unsafely", () => {
+  it("process-training.js's markup integration never references invoke() or the real session commands", () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "process-training.js"), "utf8");
+    expect(source).not.toMatch(/invoke\s*\(/);
+    expect(source).not.toContain("process_capture_start_session");
+    expect(source).not.toContain("process_capture_stop_session");
+  });
+});
