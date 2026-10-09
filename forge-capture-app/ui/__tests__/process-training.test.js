@@ -12,6 +12,7 @@ import { renderProcessTrainingControls } from "../process-training.js";
 import { ConsentSession } from "../process-training-core.js";
 import { WORKFLOW_SYMBOLS } from "../workflow-symbols.js";
 import { PID_SYMBOLS } from "../pid-symbols.js";
+import { PAPER_SIZES, LEGACY_CANVAS_ID } from "../markup-canvas-sizes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1190,5 +1191,178 @@ describe("renderProcessTrainingControls — PT-5 P&ID symbol palette (workflow m
     const panelHtml = container.querySelector("#pt-markup-panel").outerHTML;
     expect(panelHtml).not.toContain("Secret Pump Tag");
     expect(panelHtml).not.toContain("txt-secret");
+  });
+});
+
+describe("renderProcessTrainingControls — plotter-size Slice A: per-step canvas size picker", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function openFirstStepMarkup(container) {
+    const btn = [...container.querySelectorAll("#pt-guide-steps button")][0];
+    btn.click();
+  }
+
+  function applySize(container, sizeId, orientation) {
+    container.querySelector("#pt-markup-canvas-size").value = sizeId;
+    container.querySelector("#pt-markup-canvas-size").dispatchEvent(new Event("change", { bubbles: true }));
+    if (orientation) {
+      container.querySelector("#pt-markup-canvas-orientation").value = orientation;
+    }
+    container.querySelector("#pt-markup-canvas-apply").click();
+  }
+
+  it("renders the legacy option plus all 7 paper sizes, and both orientations", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const sizeOptions = [...container.querySelectorAll("#pt-markup-canvas-size option")].map((o) => o.value);
+    expect(sizeOptions).toEqual([LEGACY_CANVAS_ID, ...PAPER_SIZES.map((s) => s.id)]);
+    const orientationOptions = [...container.querySelectorAll("#pt-markup-canvas-orientation option")].map(
+      (o) => o.value
+    );
+    expect(orientationOptions).toEqual(["landscape", "portrait"]);
+  });
+
+  it("defaults to the legacy size with orientation disabled (no orientation concept for legacy)", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-markup-canvas-size").value).toBe(LEGACY_CANVAS_ID);
+    expect(container.querySelector("#pt-markup-canvas-orientation").disabled).toBe(true);
+  });
+
+  it("picking a paper size re-enables the orientation control before Apply is even clicked", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-canvas-size").value = "ansi_b";
+    container.querySelector("#pt-markup-canvas-size").dispatchEvent(new Event("change", { bubbles: true }));
+    expect(container.querySelector("#pt-markup-canvas-orientation").disabled).toBe(false);
+  });
+
+  it("applying a new size on an empty step resizes the backing canvas element to the exact logical dimensions", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "ansi_b", "landscape");
+    const canvas = container.querySelector("#pt-markup-canvas");
+    expect(canvas.width).toBe(17 * 96);
+    expect(canvas.height).toBe(11 * 96);
+    expect(handle.markupOverlay.canvasSizeFor(1)).toMatchObject({ id: "ansi_b", orientation: "landscape" });
+  });
+
+  it("applying portrait swaps the backing canvas dimensions from landscape", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "arch_c", "portrait");
+    const canvas = container.querySelector("#pt-markup-canvas");
+    expect(canvas.width).toBe(18 * 96);
+    expect(canvas.height).toBe(24 * 96);
+  });
+
+  it("rejects applying a new size once the step has a shape, shows an error, and leaves the canvas/overlay unchanged", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-add-rect").click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    applySize(container, "ansi_b", "landscape");
+    const status = container.querySelector("#pt-markup-canvas-status");
+    expect(status.textContent.length).toBeGreaterThan(0);
+    expect(status.className).toContain("error");
+    expect(handle.markupOverlay.canvasSizeFor(1).id).toBe(LEGACY_CANVAS_ID); // unchanged
+    const canvas = container.querySelector("#pt-markup-canvas");
+    expect(canvas.width).toBe(640); // unchanged
+  });
+
+  it("succeeds after the rejected step is explicitly cleared first", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    container.querySelector("#pt-markup-add-rect").click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    applySize(container, "ansi_b", "landscape"); // rejected, shape still present
+    handle.markupOverlay.clearStep(1);
+    applySize(container, "ansi_b", "landscape"); // now succeeds
+    expect(handle.markupOverlay.canvasSizeFor(1).id).toBe("ansi_b");
+  });
+
+  it("the shape-placement form's numeric fields are bounded to the step's own current canvas, not a hardcoded 640/480", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "ansi_b", "landscape"); // 1632x1056
+    container.querySelector("#pt-markup-add-rect").click();
+    expect(container.querySelector("#pt-markup-field-x").max).toBe(String(17 * 96));
+    expect(container.querySelector("#pt-markup-field-y").max).toBe(String(11 * 96));
+  });
+
+  it("placing a shape well outside the legacy 640x480 but inside a larger applied canvas succeeds", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "ansi_e", "landscape"); // 4224x3264
+    container.querySelector("#pt-markup-add-rect").click();
+    container.querySelector("#pt-markup-field-x").value = "4000";
+    container.querySelector("#pt-markup-field-y").value = "3000";
+    container.querySelector("#pt-markup-field-w").value = "50";
+    container.querySelector("#pt-markup-field-h").value = "50";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(handle.markupOverlay.shapesFor(1)).toHaveLength(1);
+  });
+
+  it("switching steps shows each step's own independently-applied canvas size", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "ansi_b", "landscape");
+    const steps = [...container.querySelectorAll("#pt-guide-steps button")];
+    if (steps.length > 1) {
+      steps[1].click();
+      expect(container.querySelector("#pt-markup-canvas-size").value).toBe(LEGACY_CANVAS_ID);
+      steps[0].click();
+      expect(container.querySelector("#pt-markup-canvas-size").value).toBe("ansi_b");
+    }
+  });
+
+  it("discard clears a step's applied canvas size back to legacy, not just its shapes", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "ansi_b", "landscape");
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(handle.markupOverlay.canvasSizeFor(1).id).toBe(LEGACY_CANVAS_ID);
+  });
+
+  it("DEMO/DRAFT/NOT VERIFIED badge and disabled-capture banner remain visible while the size picker is in use", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    applySize(container, "ansi_b", "landscape");
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+    expect(container.querySelector(".pt-disabled-banner").textContent.toLowerCase()).toContain("disabled");
+  });
+
+  it("every size/orientation control is a real, keyboard-operable <select>/<button>", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-markup-canvas-size").tagName).toBe("SELECT");
+    expect(container.querySelector("#pt-markup-canvas-orientation").tagName).toBe("SELECT");
+    const applyBtn = container.querySelector("#pt-markup-canvas-apply");
+    expect(applyBtn.tagName).toBe("BUTTON");
+    expect(applyBtn.getAttribute("type")).toBe("button");
   });
 });

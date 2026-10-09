@@ -60,6 +60,27 @@
 // so it has no notion that there are two of them; see that module's own
 // header for the dispatch/error-normalization contract.
 //
+// Plotter-size Slice A adds a per-step canvas IDENTITY (one of
+// `markup-canvas-sizes.js`'s catalog ids + orientation, or the legacy
+// 640x480 default) alongside the existing per-step shapes/undo/redo state
+// -- every step still defaults to the legacy canvas exactly as before, so
+// nothing about PT-3/4/5's existing behavior changes unless a caller
+// explicitly picks a different size. Canvas-bounds validation (`inBounds`,
+// below) is now parameterized by the step's own resolved canvas size
+// instead of the fixed `MARKUP_CANVAS` constant; neither symbol registry
+// needed any change for this -- both already only validate a symbol's OWN
+// minimum size/label, never the shared canvas (see their own
+// `validateSymbolPlacement` doc comments), so the canvas-size parameter
+// never needs to reach them. Switching a step's canvas is only allowed
+// while that step has zero shapes and zero undo/redo history (see
+// `setCanvasSize` below) -- this is what makes "canvas identity stamped on
+// new shapes" a trivial invariant to hold: a step's shapes can never
+// actually span two different canvas identities, since resizing a
+// non-empty step is rejected outright, never silently migrated/rescaled.
+// `MARKUP_MODEL_VERSION` bumps from 2 to 3 for this additive field; still
+// an in-memory diagnostic/projection constant only, per this file's own
+// established convention above -- never a persisted schema version.
+//
 // Everything here is an author-added OVERLAY, never evidence: kept
 // entirely separate from PT-2's compiled guide (process-guide-compiler.js)
 // and associated by the evidence's own immutable `sequenceId`, never by
@@ -76,12 +97,14 @@
 // hide it.
 
 import { validateSymbolPlacement, symbolToDrawOps, SymbolRegistryError } from "./symbol-registry.js";
+import { resolveCanvasSize, DEFAULT_CANVAS_SIZE, canvasSizeKey, CanvasSizeError } from "./markup-canvas-sizes.js";
 
-export const MARKUP_CANVAS = Object.freeze({ width: 640, height: 480 });
+/** The legacy default canvas, re-exported under its original name for every pre-existing caller/test -- same 640x480 as before, now sourced from markup-canvas-sizes.js's own single definition rather than a second literal here. */
+export const MARKUP_CANVAS = Object.freeze({ width: DEFAULT_CANVAS_SIZE.width, height: DEFAULT_CANVAS_SIZE.height });
 export const MARKUP_SHAPE_KINDS = Object.freeze(["rect", "arrow", "text", "symbol"]);
 export const MAX_TEXT_LENGTH = 200;
-/** In-memory diagnostic/projection version only -- see this file's own header comment. */
-export const MARKUP_MODEL_VERSION = 2;
+/** In-memory diagnostic/projection version only -- see this file's own header comment. Bumped 2 -> 3 for the additive per-step canvas-size field. */
+export const MARKUP_MODEL_VERSION = 3;
 const MAX_UNDO_DEPTH = 50;
 
 export class MarkupError extends Error {
@@ -92,41 +115,44 @@ export class MarkupError extends Error {
   }
 }
 
-function inBounds(x, y) {
+/** Parameterized by the step's own resolved canvas size (Slice A) -- never the fixed `MARKUP_CANVAS` constant directly, so a step's bounds check always reflects whichever size it's actually using. */
+function inBounds(x, y, canvasSize) {
   return (
     Number.isFinite(x) &&
     Number.isFinite(y) &&
     x >= 0 &&
     y >= 0 &&
-    x <= MARKUP_CANVAS.width &&
-    y <= MARKUP_CANVAS.height
+    x <= canvasSize.width &&
+    y <= canvasSize.height
   );
 }
 
 /**
  * Validates and normalizes one shape's input data, per kind. Never
- * invents a screenshot pixel dimension — bounds are always this module's
- * own fixed, explicit `MARKUP_CANVAS`, not anything derived from a real
- * capture (there isn't one). Throws `MarkupError` on anything malformed
- * — fails closed rather than clamping/guessing at a usable shape.
+ * invents a screenshot pixel dimension — bounds are always the step's own
+ * resolved `canvasSize` (legacy 640x480 by default, or whichever plotter
+ * size that step was explicitly switched to), never anything derived from
+ * a real capture (there isn't one). Throws `MarkupError` on anything
+ * malformed — fails closed rather than clamping/guessing at a usable
+ * shape.
  */
-function validateShapeInput(kind, data) {
+function validateShapeInput(kind, data, canvasSize) {
   if (!MARKUP_SHAPE_KINDS.includes(kind)) {
     throw new MarkupError("invalid-kind", `unknown shape kind: ${kind}`);
   }
   if (kind === "rect") {
     const { x, y, w, h } = data;
-    if (!inBounds(x, y) || !Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    if (!inBounds(x, y, canvasSize) || !Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
       throw new MarkupError("invalid-shape", "rect requires finite x,y,w,h with w,h > 0");
     }
-    if (!inBounds(x + w, y + h)) {
+    if (!inBounds(x + w, y + h, canvasSize)) {
       throw new MarkupError("invalid-shape", "rect extends outside the markup canvas bounds");
     }
     return { kind, x, y, w, h };
   }
   if (kind === "arrow") {
     const { x1, y1, x2, y2 } = data;
-    if (!inBounds(x1, y1) || !inBounds(x2, y2)) {
+    if (!inBounds(x1, y1, canvasSize) || !inBounds(x2, y2, canvasSize)) {
       throw new MarkupError(
         "invalid-shape",
         "arrow endpoints must be within the markup canvas bounds"
@@ -139,7 +165,7 @@ function validateShapeInput(kind, data) {
   }
   if (kind === "symbol") {
     const { symbolType, x, y, w, h, label } = data;
-    if (!inBounds(x, y)) {
+    if (!inBounds(x, y, canvasSize)) {
       throw new MarkupError("invalid-shape", "symbol placement must be within the markup canvas bounds");
     }
     // Delegates the symbol's own minimum-size/label validation to
@@ -156,14 +182,14 @@ function validateShapeInput(kind, data) {
       }
       throw e;
     }
-    if (!inBounds(x + normalized.w, y + normalized.h)) {
+    if (!inBounds(x + normalized.w, y + normalized.h, canvasSize)) {
       throw new MarkupError("invalid-shape", "symbol extends outside the markup canvas bounds");
     }
     return { kind, symbolType: normalized.symbolType, x, y, w: normalized.w, h: normalized.h, label: normalized.label };
   }
   // text
   const { x, y, text } = data;
-  if (!inBounds(x, y)) {
+  if (!inBounds(x, y, canvasSize)) {
     throw new MarkupError("invalid-shape", "text anchor must be within the markup canvas bounds");
   }
   const trimmed = typeof text === "string" ? text.trim() : "";
@@ -201,10 +227,45 @@ export class GuideMarkupOverlay {
     }
     let s = this._byStep.get(sequenceId);
     if (!s) {
-      s = { shapes: [], undo: [], redo: [], nextShapeId: 1 };
+      s = { shapes: [], undo: [], redo: [], nextShapeId: 1, canvasSize: DEFAULT_CANVAS_SIZE };
       this._byStep.set(sequenceId, s);
     }
     return s;
+  }
+
+  /** The step's current resolved canvas identity -- the legacy 640x480 default until explicitly switched. */
+  canvasSizeFor(sequenceId) {
+    return this._state(sequenceId).canvasSize;
+  }
+
+  /**
+   * Switches one step's canvas to a different catalog size/orientation
+   * (or back to legacy). Only allowed while that step has zero shapes AND
+   * zero undo/redo history -- otherwise rejects WITHOUT any mutation,
+   * same fail-closed stance as every other validation in this module.
+   * Never migrates, rescales, or silently discards existing shapes; the
+   * caller's own UI is expected to offer `clearStep` first if the step
+   * isn't empty (see process-training.js).
+   */
+  setCanvasSize(sequenceId, sizeId, orientation) {
+    const state = this._state(sequenceId);
+    if (state.shapes.length > 0 || state.undo.length > 0 || state.redo.length > 0) {
+      throw new MarkupError(
+        "canvas-locked",
+        "clear this step's shapes and undo/redo history before changing its canvas size"
+      );
+    }
+    let resolved;
+    try {
+      resolved = resolveCanvasSize(sizeId, orientation);
+    } catch (e) {
+      if (e instanceof CanvasSizeError) {
+        throw new MarkupError(e.code, e.message);
+      }
+      throw e;
+    }
+    state.canvasSize = resolved;
+    return resolved;
   }
 
   _snapshot(state) {
@@ -226,17 +287,17 @@ export class GuideMarkupOverlay {
     return this._state(sequenceId).redo.length > 0;
   }
 
-  /** Adds a validated shape to one step and returns its new id. Fails closed (throws) on any malformed input — nothing partial is ever added. */
+  /** Adds a validated shape to one step and returns its new id. Fails closed (throws) on any malformed input — nothing partial is ever added. Stamped with the step's current `canvasId` (Slice A) -- a legacy-canvas step's shapes carry the legacy id, same as if this field had always existed. */
   addShape(sequenceId, kind, data) {
-    const shape = validateShapeInput(kind, data);
     const state = this._state(sequenceId);
+    const shape = validateShapeInput(kind, data, state.canvasSize);
     this._snapshot(state);
     const id = `m${sequenceId}-${state.nextShapeId++}`;
-    state.shapes.push({ id, ...shape });
+    state.shapes.push({ id, canvasId: canvasSizeKey(state.canvasSize), ...shape });
     return id;
   }
 
-  /** Updates (move/resize/retext) an existing shape by id. Unknown id fails closed — never a silent no-op. */
+  /** Updates (move/resize/retext) an existing shape by id. Unknown id fails closed — never a silent no-op. The shape's original `canvasId` is preserved, never recomputed -- a step's canvas can't have changed since this shape was added (switching is only allowed while a step is empty), so this is a defensive invariant, not a behavior change. */
   updateShape(sequenceId, shapeId, patch) {
     const state = this._state(sequenceId);
     const idx = state.shapes.findIndex((s) => s.id === shapeId);
@@ -247,9 +308,9 @@ export class GuideMarkupOverlay {
       );
     }
     const existing = state.shapes[idx];
-    const merged = validateShapeInput(existing.kind, { ...existing, ...patch });
+    const merged = validateShapeInput(existing.kind, { ...existing, ...patch }, state.canvasSize);
     this._snapshot(state);
-    state.shapes[idx] = { id: shapeId, ...merged };
+    state.shapes[idx] = { id: shapeId, canvasId: existing.canvasId, ...merged };
   }
 
   /** Deletes a shape by id. Unknown id fails closed. */
@@ -283,7 +344,7 @@ export class GuideMarkupOverlay {
     return true;
   }
 
-  /** Clears one step's markup and its undo/redo history entirely. */
+  /** Clears one step's markup and its undo/redo history entirely -- including its chosen canvas size, which reverts to the legacy default on next access. This is the explicit "clear-step/history first" unlock the brief names for switching a non-empty step's canvas; a caller that wants to keep the same non-legacy size after clearing calls `setCanvasSize` again right after. */
   clearStep(sequenceId) {
     this._byStep.delete(sequenceId);
   }
@@ -333,8 +394,13 @@ const MARKUP_COLOR = Object.freeze({ r: 217, g: 154, b: 61, a: 255 }); // matche
  * this module's own header comment for why that function, specifically
  * and only that function, is reused rather than re-implemented. Pure: no
  * canvas calls here, just plain op data.
+ *
+ * `canvasSize` (Slice A) bounds a text shape's `maxWidth` against the
+ * STEP'S OWN resolved canvas, not the fixed legacy default -- defaults to
+ * `DEFAULT_CANVAS_SIZE` so every pre-existing caller/test that doesn't
+ * pass it keeps its exact prior behavior (legacy 640-wide bounding).
  */
-export function resolveMarkupDrawOps(shapes) {
+export function resolveMarkupDrawOps(shapes, canvasSize = DEFAULT_CANVAS_SIZE) {
   const ops = [];
   for (const shape of shapes) {
     if (shape.kind === "rect") {
@@ -366,7 +432,7 @@ export function resolveMarkupDrawOps(shapes) {
         id: shape.id,
         x: shape.x,
         y: shape.y,
-        maxWidth: MARKUP_CANVAS.width - shape.x,
+        maxWidth: canvasSize.width - shape.x,
         color: MARKUP_COLOR,
         text: shape.text,
       });
