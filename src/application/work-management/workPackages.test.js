@@ -265,6 +265,145 @@ describe("updateWorkPackage", () => {
   });
 });
 
+// --- D6: empty-date edit failure -----------------------------------------
+// Live shape: the detail form initializes planned_finish to "" on a
+// dateless package and the raw value reached a Postgres `date` column
+// (SQLSTATE 22007), so reassignment/clearing/restoring all failed. The
+// "" must normalize to null before merge/validation; malformed dates are
+// a 400, never a database 500.
+const DATELESS_PKG = { ...PKG, planned_start: null, planned_finish: null,
+  property_id: "1214-wagner" };
+const PAULA_UNITS = [
+  { id: "unit_a", property_id: "1214-wagner", label: "1214 Wagner", status: "active" },
+  { id: "unit_b", property_id: "308-paula", label: "308 Paula", status: "active" },
+];
+
+describe("updateWorkPackage date normalization (D6)", () => {
+  it("persists the live-shaped PATCH: planned_finish:null and the new property", async () => {
+    const getChain = chain({ data: DATELESS_PKG, error: null });
+    const updateChain = chain({ data: { ...DATELESS_PKG, property_id: "308-paula", planned_finish: null }, error: null });
+    const db = mockDb([getChain, chain({ data: PAULA_UNITS, error: null }), updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Turnover", description: "",
+        planned_finish: "", property_id: "308-paula" } });
+    expect(result.ok).toBe(true);
+    const payload = updateChain.update.mock.calls[0][0];
+    expect(payload.planned_finish).toBeNull();
+    expect(payload.property_id).toBe("308-paula");
+    // No empty string reaches the DB adapter for a typed (date) column;
+    // description stays "" verbatim — it is a text column, not a date.
+    expect(payload.planned_start ?? null).not.toBe("");
+    expect(payload).not.toHaveProperty("planned_start");
+  });
+
+  it("clears the property with an explicit null on a dateless package", async () => {
+    const getChain = chain({ data: DATELESS_PKG, error: null });
+    const updateChain = chain({ data: { ...DATELESS_PKG, property_id: null, planned_finish: null }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_finish: "", property_id: null } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      planned_finish: null, property_id: null,
+    }));
+  });
+
+  it("restores the original property after a clear, dates still null", async () => {
+    const getChain = chain({ data: { ...DATELESS_PKG, property_id: null }, error: null });
+    const updateChain = chain({ data: { ...DATELESS_PKG, property_id: "1214-wagner", planned_finish: null }, error: null });
+    const db = mockDb([getChain, chain({ data: PAULA_UNITS, error: null }), updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_finish: "", property_id: "1214-wagner" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      planned_finish: null, property_id: "1214-wagner",
+    }));
+  });
+
+  it("leaves a stored date unchanged when the field is omitted", async () => {
+    const getChain = chain({ data: PKG, error: null });
+    const updateChain = chain({ data: { ...PKG, title: "Renamed" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Renamed" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update.mock.calls[0][0]).not.toHaveProperty("planned_finish");
+  });
+
+  it("explicit '' clears a stored date; planned_start '' normalizes too", async () => {
+    const getChain = chain({ data: PKG, error: null });
+    const updateChain = chain({ data: { ...PKG, planned_finish: null }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_start: "", planned_finish: "" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      planned_start: null, planned_finish: null,
+    }));
+  });
+
+  it("keeps a valid date verbatim", async () => {
+    const getChain = chain({ data: DATELESS_PKG, error: null });
+    const updateChain = chain({ data: { ...DATELESS_PKG, planned_start: "2026-12-01", planned_finish: "2026-12-24" }, error: null });
+    const db = mockDb([getChain, updateChain]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_start: "2026-12-01", planned_finish: "2026-12-24" } });
+    expect(result.ok).toBe(true);
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+      planned_start: "2026-12-01", planned_finish: "2026-12-24",
+    }));
+  });
+
+  it("rejects malformed nonempty dates with 400 and no write", async () => {
+    for (const patch of [
+      { planned_finish: "next Friday" },
+      { planned_start: "2026-13-40" },
+      { planned_finish: "2026-02-30" },
+    ]) {
+      const db = mockDb([chain({ data: DATELESS_PKG, error: null })]);
+      const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+        packageId: "forge_wp_1", patch });
+      expect(result.ok).toBe(false);
+      expect(result.httpStatus).toBe(400);
+      expect(result.error).toMatch(/YYYY-MM-DD/);
+      expect(db.from).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("still rejects planned_finish before planned_start (merged candidate)", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_finish: "2026-10-31" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/on or after/);
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects blank numeric fields instead of writing '' to typed columns", async () => {
+    const db = mockDb([chain({ data: DATELESS_PKG, error: null })]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { planned_qty: "" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toMatch(/planned_qty must be a number/);
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the optimistic-concurrency 409 on the live-shaped patch", async () => {
+    const db = mockDb([
+      chain({ data: { ...DATELESS_PKG, updated_at: "2026-10-08T20:00:00.000Z" }, error: null }),
+      chain({ data: PAULA_UNITS, error: null }),
+      chain({ data: null, error: null }),
+    ]);
+    const result = await updateWorkPackage(db, { ownerId: "owner_1", actor: "user_9",
+      packageId: "forge_wp_1", patch: { title: "Turnover", description: "",
+        planned_finish: "", property_id: "308-paula" } });
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(409);
+  });
+});
+
 describe("transitionWorkPackage", () => {
   it("applies effects and the audit row atomically via RPC", async () => {
     const getChain = chain({ data: { ...PKG, status: "ready" }, error: null });

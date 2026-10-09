@@ -200,6 +200,22 @@ describe("validatePackageInput", () => {
     const r = validatePackageInput({ title: "x", planned_qty: 10, earned_qty: 11 });
     expect(r.errors.join(" ")).toMatch(/earned_qty/);
   });
+  it("rejects malformed planned dates instead of deferring to the database (D6)", () => {
+    for (const input of [
+      { planned_finish: "next Friday" },
+      { planned_start: "2026-13-40" },
+      { planned_finish: "2026-02-30" },
+      { planned_finish: "11/10/2026" },
+    ]) {
+      const r = validatePackageInput({ title: "x", ...input });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(" ")).toMatch(/YYYY-MM-DD/);
+    }
+  });
+  it("accepts null (cleared) and valid planned dates", () => {
+    expect(validatePackageInput({ title: "x", planned_start: null, planned_finish: null }).ok).toBe(true);
+    expect(validatePackageInput({ title: "x", planned_start: "2026-11-01", planned_finish: "2026-11-10" }).ok).toBe(true);
+  });
 });
 
 describe("scope baseline helpers", () => {
