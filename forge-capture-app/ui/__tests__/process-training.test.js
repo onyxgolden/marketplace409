@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { renderProcessTrainingControls } from "../process-training.js";
 import { ConsentSession } from "../process-training-core.js";
 import { WORKFLOW_SYMBOLS } from "../workflow-symbols.js";
+import { PID_SYMBOLS } from "../pid-symbols.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -951,6 +952,243 @@ describe("renderProcessTrainingControls — PT-4 workflow symbol palette", () =>
     );
     const panelHtml = container.querySelector("#pt-markup-panel").outerHTML;
     expect(panelHtml).not.toContain("Secret Field");
+    expect(panelHtml).not.toContain("txt-secret");
+  });
+});
+
+describe("renderProcessTrainingControls — PT-5 P&ID symbol palette (workflow markup)", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function openFirstStepMarkup(container) {
+    const btn = [...container.querySelectorAll("#pt-guide-steps button")][0];
+    btn.click();
+  }
+
+  it("shows all 35 P&ID symbols in a separate, visibly distinct palette grouped into exactly 8 families, labelled 'P&ID symbols (workflow markup)'", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const pidPalette = container.querySelector("#pt-markup-pid-palette");
+    const groups = [...pidPalette.querySelectorAll(".pt-markup-palette-group")];
+    expect(groups).toHaveLength(8);
+    const buttons = [...pidPalette.querySelectorAll("button")];
+    expect(buttons).toHaveLength(PID_SYMBOLS.length);
+    const headings = [...container.querySelectorAll("#pt-markup-panel h4")].map((h) => h.textContent);
+    expect(headings).toContain("P&ID symbols (workflow markup)");
+    // Visually/semantically separate from "Workflow symbols" -- both
+    // headings present, neither palette's buttons mixed into the other.
+    expect(headings).toContain("Workflow symbols");
+    const workflowPalette = container.querySelector("#pt-markup-palette");
+    expect([...workflowPalette.querySelectorAll("button")]).toHaveLength(WORKFLOW_SYMBOLS.length);
+  });
+
+  it("never implies Visio, vendor stencils, or standards-certified engineering fidelity in the P&ID palette itself", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    // Scoped to the P&ID section's own heading/intro/buttons -- the
+    // Workflow symbols section legitimately mentions "Visio" in its own
+    // disclaimer ("not Microsoft Visio artwork"), which is required, not
+    // forbidden (see that section's own test above).
+    const pidHeading = [...container.querySelectorAll("#pt-markup-panel h4")].find(
+      (h) => h.textContent === "P&ID symbols (workflow markup)"
+    );
+    expect(pidHeading).toBeDefined();
+    const pidIntro = pidHeading.nextElementSibling;
+    expect(pidIntro.textContent.toLowerCase()).not.toContain("visio");
+    expect(pidIntro.textContent.toLowerCase()).toContain("not a standards-compliant");
+    const pidPalette = container.querySelector("#pt-markup-pid-palette");
+    expect(pidPalette.textContent.toLowerCase()).not.toContain("visio");
+  });
+
+  it("every P&ID palette button is a real, keyboard-operable <button> with a name and a tooltip", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const buttons = [...container.querySelectorAll("#pt-markup-pid-palette button")];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const btn of buttons) {
+      expect(btn.tagName).toBe("BUTTON");
+      expect(btn.getAttribute("type")).toBe("button");
+      expect(btn.textContent.length).toBeGreaterThan(0);
+      expect(btn.title.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("clicking a P&ID palette symbol opens the form (place without a pointer) and adding it succeeds", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const pumpBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Centrifugal pump"
+    );
+    pumpBtn.click();
+    expect(container.querySelector("#pt-markup-shape-form").hidden).toBe(false);
+    expect(container.querySelector("#pt-markup-field-w").value).not.toBe("");
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Centrifugal pump"))).toBe(true);
+  });
+
+  it("an optional label can be added to a placed P&ID symbol", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const vesselBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Vertical vessel"
+    );
+    vesselBtn.click();
+    container.querySelector("#pt-markup-field-label").value = "V-101";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes('Vertical vessel: "V-101"'))).toBe(true);
+  });
+
+  it("an invalid P&ID symbol placement (below minimum size) shows an error without crashing the review", () => {
+    const { container, session } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const driverBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Generic rotating driver"
+    );
+    driverBtn.click();
+    const def = PID_SYMBOLS.find((s) => s.id === "pid.rotating.generic_driver");
+    container.querySelector("#pt-markup-field-w").value = String(def.minWidth - 1);
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const status = container.querySelector("#pt-markup-shape-status");
+    expect(status.textContent.length).toBeGreaterThan(0);
+    expect(status.className).toContain("error");
+    expect(session.state).toBe("review");
+  });
+
+  it("editing an existing P&ID symbol preserves its symbolType and updates only placement/label", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const driverBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Generic rotating driver"
+    );
+    driverBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const editBtn = [...container.querySelectorAll("#pt-markup-shape-list li button")].find(
+      (b) => b.textContent === "Edit"
+    );
+    editBtn.click();
+    expect(container.querySelector("#pt-markup-field-w")).not.toBeNull();
+    container.querySelector("#pt-markup-field-label").value = "Driver A";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes('Generic rotating driver: "Driver A"'))).toBe(true);
+  });
+
+  it("undo/redo/delete work for a placed P&ID symbol exactly like PT-4 workflow symbols", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const flareBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Flare stack"
+    );
+    flareBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(container.querySelector("#pt-markup-undo").disabled).toBe(false);
+    container.querySelector("#pt-markup-undo").click();
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Flare stack"))).toBe(false);
+  });
+
+  it("a P&ID symbol and a PT-4 workflow symbol can both be placed on the same step", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const processBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Process"
+    );
+    processBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const pumpBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Centrifugal pump"
+    );
+    pumpBtn.click();
+    container.querySelector("#pt-markup-field-x").value = "200";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(handle.markupOverlay.shapesFor(1).map((s) => s.symbolType)).toEqual([
+      "process",
+      "pid.rotating.centrifugal_pump",
+    ]);
+  });
+
+  it("discard/reset/compile-failure clear placed P&ID symbols too, not just legacy shapes and workflow symbols", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const pumpBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Centrifugal pump"
+    );
+    pumpBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(handle.markupOverlay.shapesFor(1)).toHaveLength(1);
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(handle.markupOverlay.shapesFor(1)).toEqual([]);
+  });
+
+  it("DEMO/DRAFT/NOT VERIFIED badge and disabled-capture banner remain visible with the P&ID palette open", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+    expect(container.querySelector(".pt-disabled-banner").textContent.toLowerCase()).toContain("disabled");
+  });
+
+  it("never reveals withheld evidence through a P&ID symbol label, tooltip, or the panel's DOM", () => {
+    const { container } = mountFresh({
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "Secret Pump Tag", automationId: "txt-secret", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+      ],
+    });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const pumpBtn = [...container.querySelectorAll("#pt-markup-pid-palette button")].find(
+      (b) => b.textContent === "Centrifugal pump"
+    );
+    pumpBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const panelHtml = container.querySelector("#pt-markup-panel").outerHTML;
+    expect(panelHtml).not.toContain("Secret Pump Tag");
     expect(panelHtml).not.toContain("txt-secret");
   });
 });

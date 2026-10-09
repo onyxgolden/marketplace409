@@ -48,9 +48,17 @@
 // only — it is not a persisted schema version (there is no persistence),
 // and it never changes PT-2 guide's own `schemaVersion`/`source`/
 // `status`. This module still owns canvas-bounds validation (`x`, `y`,
-// and `x+w`/`y+h` against `MARKUP_CANVAS`); workflow-symbols.js owns only
-// a symbol's own minimum size and its label, since it has no notion of
-// where on the shared canvas a shape is placed.
+// and `x+w`/`y+h` against `MARKUP_CANVAS`); the symbol registries own only
+// a symbol's own minimum size and its label, since neither has a notion
+// of where on the shared canvas a shape is placed.
+//
+// PT-5 adds a second symbol registry (`pid-symbols.js`, 35 P&ID-inspired
+// glyphs, namespaced `pid.<family>.<name>` ids) alongside PT-4's
+// `workflow-symbols.js` (17 ISO 5807 ids) — still exactly one `symbol`
+// kind here, no schema/version change. This module imports both through
+// `symbol-registry.js`'s shared adapter, never either registry directly,
+// so it has no notion that there are two of them; see that module's own
+// header for the dispatch/error-normalization contract.
 //
 // Everything here is an author-added OVERLAY, never evidence: kept
 // entirely separate from PT-2's compiled guide (process-guide-compiler.js)
@@ -67,7 +75,7 @@
 // change/compile-failure handlers drop the instance entirely, not just
 // hide it.
 
-import { validateSymbolPlacement, symbolToDrawOps, WorkflowSymbolError } from "./workflow-symbols.js";
+import { validateSymbolPlacement, symbolToDrawOps, SymbolRegistryError } from "./symbol-registry.js";
 
 export const MARKUP_CANVAS = Object.freeze({ width: 640, height: 480 });
 export const MARKUP_SHAPE_KINDS = Object.freeze(["rect", "arrow", "text", "symbol"]);
@@ -135,14 +143,15 @@ function validateShapeInput(kind, data) {
       throw new MarkupError("invalid-shape", "symbol placement must be within the markup canvas bounds");
     }
     // Delegates the symbol's own minimum-size/label validation to
-    // workflow-symbols.js (never duplicated here); this function still
-    // owns the shared-canvas placement bounds, which that module has no
+    // whichever registry owns `symbolType`, via symbol-registry.js's
+    // shared adapter (never duplicated here); this function still owns
+    // the shared-canvas placement bounds, which neither registry has a
     // notion of.
     let normalized;
     try {
       normalized = validateSymbolPlacement(symbolType, { w, h, label });
     } catch (e) {
-      if (e instanceof WorkflowSymbolError) {
+      if (e instanceof SymbolRegistryError) {
         throw new MarkupError("invalid-shape", e.message);
       }
       throw e;
@@ -362,9 +371,10 @@ export function resolveMarkupDrawOps(shapes) {
         text: shape.text,
       });
     } else if (shape.kind === "symbol") {
-      // Delegated entirely to workflow-symbols.js -- this module never
-      // duplicates symbol geometry, only wires the already-validated
-      // shape into the same draw-op pipeline the other three kinds use.
+      // Delegated entirely to whichever registry owns `shape.symbolType`
+      // (via symbol-registry.js) -- this module never duplicates symbol
+      // geometry, only wires the already-validated shape into the same
+      // draw-op pipeline the other three kinds use.
       ops.push(...symbolToDrawOps(shape));
     }
   }
