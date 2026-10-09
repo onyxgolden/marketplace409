@@ -353,9 +353,15 @@ export function renderProcessTrainingControls(container, deps = {}) {
         e instanceof GuideCompileError
           ? `Guide could not be compiled: ${e.message}`
           : `Guide could not be compiled: ${e.message || e}`;
-      // A failed compile must never leave stale markup editing a guide
-      // that no longer exists.
+      // Review finding (round 1): a failed compile must clear the
+      // markup OVERLAY DATA too, not just hide the panel --
+      // closeMarkupPanel() alone deliberately preserves annotations
+      // (that's what makes ordinary close/reopen retain them), so it
+      // cannot by itself satisfy "compile failure clears annotations."
+      // Stale shapes must never survive editing a guide that no longer
+      // compiles.
       lastCompiledGuide = null;
+      markupOverlay.clearAll();
       closeMarkupPanel();
       return;
     }
@@ -751,6 +757,17 @@ export function renderProcessTrainingControls(container, deps = {}) {
     get session() {
       return session;
     },
+    /**
+     * For tests only: direct access to the markup overlay and the
+     * compile/render function itself, so the compile-failure lifecycle
+     * path (markupOverlay.clearAll() on a failed recompile) can be
+     * pinned directly -- the current UI has no second, user-reachable
+     * compile action to exercise it through a click sequence alone.
+     */
+    get markupOverlay() {
+      return markupOverlay;
+    },
+    renderGuidePreview,
   };
 }
 

@@ -661,6 +661,61 @@ describe("renderProcessTrainingControls — PT-3 markup panel", () => {
     expect(container.querySelectorAll("#pt-guide-steps button").length).toBe(0);
   });
 
+  // Regression (round 1 review): a failed recompile must clear the
+  // GuideMarkupOverlay's data, not only hide/clear the panel's DOM --
+  // closeMarkupPanel() alone deliberately preserves annotations (that is
+  // what lets an ordinary close/reopen retain them), so it cannot by
+  // itself satisfy "compile failure clears annotations." The current UI
+  // has no second, user-reachable compile action to exercise this
+  // through a click sequence alone, so this calls the exposed
+  // `renderGuidePreview()` directly (per the review's own suggestion to
+  // exercise a reachable internal path) against evidence mutated to fail
+  // -- the same function and the same catch branch a real future
+  // recompile path would use.
+  it("a failed recompile clears markupOverlay data, not just the panel DOM", () => {
+    const { container, session, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    addRect(container);
+    expect(handle.markupOverlay.shapesFor(1)).toHaveLength(1);
+
+    // Mutate the session's evidence directly to something that fails
+    // compilation (a duplicate sequenceId), then re-invoke the exact
+    // compile/render function under test -- bypassing the UI's lack of a
+    // second compile trigger, not the lifecycle logic itself.
+    session.evidence = [
+      {
+        type: "Event",
+        event: {
+          sequenceId: 1,
+          kind: "Click",
+          point: [1, 1],
+          target: { name: "X", processName: "fixture.exe" },
+          screenshot: null,
+          privacy: { trust: "Default", decision: "Withhold" },
+        },
+      },
+      {
+        type: "Event",
+        event: {
+          sequenceId: 1, // duplicate -- sequence-integrity failure
+          kind: "Click",
+          point: [2, 2],
+          target: { name: "Y", processName: "fixture.exe" },
+          screenshot: null,
+          privacy: { trust: "Default", decision: "Withhold" },
+        },
+      },
+    ];
+    handle.renderGuidePreview();
+
+    expect(container.querySelector("#pt-guide-error").hidden).toBe(false);
+    expect(container.querySelector("#pt-markup-panel").hidden).toBe(true);
+    // The actual regression this pins: stale shapes must not survive in
+    // the overlay's real data, not merely be hidden from view.
+    expect(handle.markupOverlay.shapesFor(1)).toEqual([]);
+  });
+
   it("re-rendering the same review (same compile) retains legitimate in-memory markup", () => {
     const { container, session } = mountFresh();
     advanceToReview(container);
