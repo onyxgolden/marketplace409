@@ -148,6 +148,32 @@ function canvasKeyOf(canvasSize) {
 }
 
 /**
+ * The one idempotent disposal path for a decoded record, used on EVERY
+ * ownership exit (replace, remove, clearStep/clearAll, a stale async
+ * result, a canceled/superseded pending confirmation, a store-rejected
+ * decode, or a decode that fails post-decode validation). `URL.revokeObjectURL`
+ * alone does NOT release an `ImageBitmap`'s own backing storage (review
+ * finding, round 1) -- `bitmap.close()` is a separate release a caller
+ * must make itself. Both calls are defensively wrapped: revoking an
+ * already-revoked URL or closing an already-closed bitmap is harmless
+ * by spec, but a fake/partial record in a test (or a real bitmap that
+ * failed to construct) must never throw out of this helper.
+ */
+export function disposeDecoded(decoded, revokeObjectURL) {
+  if (!decoded) return;
+  try {
+    revokeObjectURL?.(decoded.url);
+  } catch {
+    /* no-op -- never let disposal itself throw */
+  }
+  try {
+    decoded.bitmap?.close?.();
+  } catch {
+    /* no-op -- same reasoning */
+  }
+}
+
+/**
  * In-memory, per-step (`sequenceId`-keyed) store for one background
  * image plus its raster overlays. Mirrors `GuideMarkupOverlay`'s own
  * per-step `Map` convention and `clearStep`/`clearAll` lifecycle hooks,
@@ -161,11 +187,14 @@ function canvasKeyOf(canvasSize) {
  * below is an ALREADY-decoded, already-validated
  * `{url, bitmap, width, height}` record that the caller (process-
  * training.js) produced via the real browser decode + this module's own
- * `validateCandidateBytes`/`validateDecodedDimensions`. `deps.revokeObjectURL`
- * is called for every owned resource this store ever drops (replace,
- * remove, clearStep, clearAll), so a caller using the real browser API
- * there never leaks an object URL; a test can inject a recording mock
- * instead to prove the call actually happened.
+ * `validateCandidateBytes`/`validateDecodedDimensions`. Every owned
+ * resource this store ever drops (replace, remove, clearStep, clearAll)
+ * goes through `disposeDecoded` below -- `deps.revokeObjectURL` releases
+ * the object URL AND the decoded `ImageBitmap`'s own backing storage is
+ * closed too (review finding, round 1: `URL.revokeObjectURL` alone does
+ * not release a bitmap). A test can inject a recording `revokeObjectURL`
+ * mock and a fake bitmap with its own `close()` spy to prove both calls
+ * actually happened.
  */
 export class GuideBackgroundStore {
   constructor(deps) {
@@ -215,8 +244,8 @@ export class GuideBackgroundStore {
     validateDecodedDimensions(decoded.width, decoded.height);
     const state = this._state(sequenceId);
     const fit = computeContainFit(decoded.width, decoded.height, canvasSize.width, canvasSize.height);
-    if (state.background) this._revokeObjectURL(state.background.url);
-    for (const overlay of state.overlays) this._revokeObjectURL(overlay.url);
+    if (state.background) disposeDecoded(state.background, this._revokeObjectURL);
+    for (const overlay of state.overlays) disposeDecoded(overlay, this._revokeObjectURL);
     state.overlays = [];
     state.background = {
       url: decoded.url,
@@ -228,11 +257,11 @@ export class GuideBackgroundStore {
     };
   }
 
-  /** Removes a step's background (and, per the brief, every overlay with it), revoking both resources. A no-op (not an error) if there was none. */
+  /** Removes a step's background (and, per the brief, every overlay with it), disposing both resources (URL + bitmap). A no-op (not an error) if there was none. */
   clearBackground(sequenceId) {
     const state = this._state(sequenceId);
-    if (state.background) this._revokeObjectURL(state.background.url);
-    for (const overlay of state.overlays) this._revokeObjectURL(overlay.url);
+    if (state.background) disposeDecoded(state.background, this._revokeObjectURL);
+    for (const overlay of state.overlays) disposeDecoded(overlay, this._revokeObjectURL);
     state.background = null;
     state.overlays = [];
   }
@@ -327,14 +356,14 @@ export class GuideBackgroundStore {
     }
   }
 
-  /** Removes one overlay, revoking its own resource. Fails closed on an unknown id -- never a silent no-op, same stance as GuideMarkupOverlay.deleteShape. */
+  /** Removes one overlay, disposing its own resource (URL + bitmap). Fails closed on an unknown id -- never a silent no-op, same stance as GuideMarkupOverlay.deleteShape. */
   removeOverlay(sequenceId, overlayId) {
     const state = this._state(sequenceId);
     const idx = state.overlays.findIndex((o) => o.id === overlayId);
     if (idx === -1) {
       throw new BackgroundImageError("unknown-overlay", `no overlay with id ${String(overlayId)} on sequenceId ${sequenceId}`);
     }
-    this._revokeObjectURL(state.overlays[idx].url);
+    disposeDecoded(state.overlays[idx], this._revokeObjectURL);
     state.overlays.splice(idx, 1);
   }
 

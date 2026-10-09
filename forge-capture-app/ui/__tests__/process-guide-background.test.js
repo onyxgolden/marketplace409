@@ -5,7 +5,7 @@
 // process-training.js's own wiring would hand the store after a real
 // browser decode.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   MAX_FILE_BYTES,
   MAX_DECODED_PIXELS,
@@ -17,6 +17,7 @@ import {
   validateCandidateBytes,
   validateDecodedDimensions,
   computeContainFit,
+  disposeDecoded,
   GuideBackgroundStore,
 } from "../process-guide-background.js";
 
@@ -28,6 +29,12 @@ const GARBAGE_HEADER = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
 
 function fakeDecoded(width, height, label = "img") {
   return { url: `blob:${label}`, bitmap: { width, height, closed: false }, width, height };
+}
+
+/** Same shape as fakeDecoded, but with a real spy on bitmap.close() -- for tests proving the review's round-1 disposal fix (URL.revokeObjectURL alone never released an ImageBitmap's own backing storage). */
+function fakeDecodedWithCloseSpy(width, height, label = "img") {
+  const close = vi.fn();
+  return { url: `blob:${label}`, bitmap: { width, height, close }, width, height, close };
 }
 
 describe("sniffImageType -- magic-byte sniffing, never extension/MIME", () => {
@@ -416,6 +423,103 @@ describe("GuideBackgroundStore -- malformed sequenceId fails closed", () => {
     expect(() => store.backgroundFor(1.5)).toThrow(BackgroundImageError);
     expect(() => store.backgroundFor(-1)).toThrow(BackgroundImageError);
     expect(() => store.backgroundFor("1")).toThrow(BackgroundImageError);
+  });
+});
+
+describe("disposeDecoded -- the one idempotent disposal path (review finding, round 1)", () => {
+  it("revokes the object URL AND closes the bitmap", () => {
+    const revoked = [];
+    const decoded = fakeDecodedWithCloseSpy(10, 10, "a");
+    disposeDecoded(decoded, (url) => revoked.push(url));
+    expect(revoked).toEqual(["blob:a"]);
+    expect(decoded.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("is safe to call twice -- both calls happen again without throwing (spec-idempotent in a real browser; this helper never assumes otherwise)", () => {
+    const decoded = fakeDecodedWithCloseSpy(10, 10, "a");
+    expect(() => {
+      disposeDecoded(decoded, () => {});
+      disposeDecoded(decoded, () => {});
+    }).not.toThrow();
+    expect(decoded.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("is safe with a missing bitmap, a missing close method, a missing revokeObjectURL, or a null/undefined decoded record", () => {
+    expect(() => disposeDecoded({ url: "blob:x" }, () => {})).not.toThrow();
+    expect(() => disposeDecoded({ url: "blob:x", bitmap: {} }, () => {})).not.toThrow();
+    expect(() => disposeDecoded({ url: "blob:x", bitmap: { close: () => {} } })).not.toThrow();
+    expect(() => disposeDecoded(null, () => {})).not.toThrow();
+    expect(() => disposeDecoded(undefined, () => {})).not.toThrow();
+  });
+
+  it("never throws out of the helper even if revokeObjectURL or close itself throws", () => {
+    const decoded = { url: "blob:x", bitmap: { close: () => { throw new Error("boom"); } } };
+    expect(() =>
+      disposeDecoded(decoded, () => {
+        throw new Error("boom too");
+      })
+    ).not.toThrow();
+  });
+});
+
+describe("GuideBackgroundStore -- bitmap disposal on every ownership exit (review finding, round 1)", () => {
+  const canvas640 = { id: "legacy", orientation: null, width: 640, height: 480 };
+
+  it("replacing a background closes the old background's bitmap, not just revoking its URL", () => {
+    const store = new GuideBackgroundStore({ revokeObjectURL: () => {} });
+    const first = fakeDecodedWithCloseSpy(100, 100, "first");
+    store.setBackground(1, first, canvas640);
+    store.setBackground(1, fakeDecoded(100, 100, "second"), canvas640);
+    expect(first.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("replacing a background closes every existing overlay's bitmap too", () => {
+    const store = new GuideBackgroundStore({ revokeObjectURL: () => {} });
+    store.setBackground(1, fakeDecoded(100, 100, "bg1"), canvas640);
+    const overlay = fakeDecodedWithCloseSpy(50, 50, "ov1");
+    store.addOverlay(1, overlay, canvas640);
+    store.setBackground(1, fakeDecoded(100, 100, "bg2"), canvas640);
+    expect(overlay.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("clearBackground closes the background's and every overlay's bitmap", () => {
+    const store = new GuideBackgroundStore({ revokeObjectURL: () => {} });
+    const bg = fakeDecodedWithCloseSpy(100, 100, "bg");
+    const overlay = fakeDecodedWithCloseSpy(50, 50, "ov");
+    store.setBackground(1, bg, canvas640);
+    store.addOverlay(1, overlay, canvas640);
+    store.clearBackground(1);
+    expect(bg.close).toHaveBeenCalledTimes(1);
+    expect(overlay.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("removeOverlay closes only that overlay's bitmap", () => {
+    const store = new GuideBackgroundStore({ revokeObjectURL: () => {} });
+    const a = fakeDecodedWithCloseSpy(10, 10, "a");
+    const b = fakeDecodedWithCloseSpy(10, 10, "b");
+    store.addOverlay(1, a, canvas640);
+    store.addOverlay(1, b, canvas640);
+    store.removeOverlay(1, store.overlaysFor(1)[0].id);
+    expect(a.close).toHaveBeenCalledTimes(1);
+    expect(b.close).not.toHaveBeenCalled();
+  });
+
+  it("clearStep/clearAll close every bitmap they drop", () => {
+    const store = new GuideBackgroundStore({ revokeObjectURL: () => {} });
+    const bg1 = fakeDecodedWithCloseSpy(10, 10, "bg1");
+    const ov2 = fakeDecodedWithCloseSpy(10, 10, "ov2");
+    store.setBackground(1, bg1, canvas640);
+    store.addOverlay(2, ov2, canvas640);
+    store.clearAll();
+    expect(bg1.close).toHaveBeenCalledTimes(1);
+    expect(ov2.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("a decode-validation failure inside setBackground/addOverlay never stores or disposes the caller's record itself -- disposal on that path is the CALLER's job (process-training.js), proven in its own test file; this store only disposes what it already OWNS", () => {
+    const store = new GuideBackgroundStore({ revokeObjectURL: () => {} });
+    const bad = fakeDecodedWithCloseSpy(NaN, 100, "bad");
+    expect(() => store.setBackground(1, bad, canvas640)).toThrow(BackgroundImageError);
+    expect(bad.close).not.toHaveBeenCalled(); // never took ownership, so never disposes it either
   });
 });
 
