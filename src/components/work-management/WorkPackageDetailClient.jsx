@@ -32,6 +32,13 @@ function Field({ title, value }) {
   );
 }
 
+// Edit-form state derived from a persisted package row. The date input
+// keeps its controlled "" for an empty date; serialization to null happens
+// in onSaveEdit (and the service normalizes "" again as defense, D6).
+function editFormFromPackage(p) {
+  return { title: p.title, description: p.description || "", planned_finish: p.planned_finish || "", property_id: p.property_id || "" };
+}
+
 export default function WorkPackageDetailClient({ initial, initialLinks = [] }) {
   const router = useRouter();
   const [pkg, setPkg] = useState(initial.package);
@@ -42,7 +49,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ title: pkg.title, description: pkg.description || "", planned_finish: pkg.planned_finish || "", property_id: pkg.property_id || "" });
+  const [editForm, setEditForm] = useState(() => editFormFromPackage(initial.package));
   const [properties, setProperties] = useState(null);
   const [propertiesError, setPropertiesError] = useState("");
   const [transitionTarget, setTransitionTarget] = useState("");
@@ -98,7 +105,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     setAttestations(data.attestations);
     setBaselines(data.baselines);
     setChanges(data.scopeChanges);
-    setEditForm({ title: data.package.title, description: data.package.description || "", planned_finish: data.package.planned_finish || "", property_id: data.package.property_id || "" });
+    setEditForm(editFormFromPackage(data.package));
     setEditing(false);
     setTransitionTarget("");
     setTransitionCtx("");
@@ -109,11 +116,30 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     event.preventDefault();
     // property_id always present in the patch: a chosen slug assigns, an
     // empty picker clears to null (server canonicalizes and validates).
+    // planned_finish likewise: an empty date input serializes to null —
+    // the raw "" must never reach the Postgres date column (D6).
     const { response } = await call(`/api/work-packages/${pkg.id}`, "PATCH", {
       ...editForm,
+      planned_finish: editForm.planned_finish || null,
       property_id: editForm.property_id || null,
     });
     if (response.ok) refresh();
+  }
+
+  // Entering or abandoning the edit form starts from the persisted
+  // package: unsaved changes are discarded and a stale error from a
+  // previous failed save is cleared. A fresh failure sets a new error and
+  // keeps the form open until the user retries or cancels.
+  function onStartEdit() {
+    setEditForm(editFormFromPackage(pkg));
+    setError("");
+    setEditing(true);
+  }
+
+  function onCancelEdit() {
+    setEditForm(editFormFromPackage(pkg));
+    setError("");
+    setEditing(false);
   }
 
   async function onTransition() {
@@ -194,7 +220,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">Package</h2>
           {!isTerminal && !editing && (
-            <button className={btnGhost} onClick={() => setEditing(true)} disabled={busy}>Edit</button>
+            <button className={btnGhost} onClick={onStartEdit} disabled={busy}>Edit</button>
           )}
         </div>
         {editing ? (
@@ -235,7 +261,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
             </div>
             <div className="flex gap-2">
               <button type="submit" className={btnPrimary} disabled={busy}>Save</button>
-              <button type="button" className={btnGhost} onClick={() => setEditing(false)}>Cancel</button>
+              <button type="button" className={btnGhost} onClick={onCancelEdit} disabled={busy}>Cancel</button>
             </div>
           </form>
         ) : (

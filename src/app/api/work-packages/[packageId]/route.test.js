@@ -80,6 +80,30 @@ describe("PATCH /api/work-packages/[packageId]", () => {
   });
 });
 
+describe("PATCH /api/work-packages/[packageId] date normalization (D6)", () => {
+  it("passes the live-shaped dateless-edit payload through verbatim", async () => {
+    updateWorkPackage.mockResolvedValue({ ok: true, package: { id: "forge_wp_1", property_id: "308-paula", planned_finish: null } });
+    const patch = { title: "Turnover", description: "", planned_finish: null, property_id: "308-paula" };
+    const response = await PATCH(request(patch, "PATCH"), { params: params() });
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.package.property_id).toBe("308-paula");
+    expect(updateWorkPackage).toHaveBeenCalledWith({}, {
+      ownerId: "owner_1", actor: "user_9", packageId: "forge_wp_1", patch,
+    });
+  });
+  it("maps a malformed-date 400 from the service (never a 500)", async () => {
+    updateWorkPackage.mockResolvedValue({
+      ok: false, httpStatus: 400,
+      error: "planned_finish must be a valid date in YYYY-MM-DD format.",
+    });
+    const response = await PATCH(request({ planned_finish: "next Friday" }, "PATCH"), { params: params() });
+    const body = await response.json();
+    expect(response.status).toBe(400);
+    expect(body.error).toMatch(/YYYY-MM-DD/);
+  });
+});
+
 describe("PATCH /api/work-packages/[packageId] budget revisions (Slice 3)", () => {
   it("returns the atomic budget revision written by the service", async () => {
     updateWorkPackage.mockResolvedValue({

@@ -238,9 +238,29 @@ export async function updateWorkPackage(db, { ownerId, actor, packageId, patch }
     if (!resolved.ok) return resolved;
     resolvedPropertyId = resolved.propertyId;
   }
+  // Typed-column normalization (D6): an HTML date input submits "" when
+  // empty, but the Postgres `date` columns reject "" (SQLSTATE 22007), so
+  // EVERY edit on a dateless package failed. Normalize a present "" to null
+  // for the two optional date fields only — absent keys stay absent
+  // (missing means unchanged), malformed nonempty values are rejected by
+  // validatePackageInput below. Not a blanket string-to-null conversion:
+  // text fields keep "" verbatim, and blank numerics are rejected here
+  // rather than silently reinterpreted (Number("") === 0 would pass the
+  // merged-candidate range checks and then 500 at the database).
+  const normalizedPatch = { ...patch };
+  for (const field of ["planned_start", "planned_finish"]) {
+    if (normalizedPatch[field] === "") normalizedPatch[field] = null;
+  }
+  for (const field of ["planned_qty", "planned_manhours", "earned_qty",
+    "earned_manhours", "actual_manhours"]) {
+    const value = normalizedPatch[field];
+    if (typeof value === "string" && value.trim() === "") {
+      return { ok: false, httpStatus: 400, error: `${field} must be a number.` };
+    }
+  }
   const filtered = {};
   for (const key of EDITABLE_FIELDS) {
-    if (patch[key] !== undefined) filtered[key] = patch[key];
+    if (normalizedPatch[key] !== undefined) filtered[key] = normalizedPatch[key];
   }
   if (resolvedPropertyId !== undefined) filtered.property_id = resolvedPropertyId;
   // Validate the FULLY MERGED candidate against persisted denominators and

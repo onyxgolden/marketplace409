@@ -39,7 +39,7 @@ const BASE_PKG = {
 
 const OPTIONS = [{ slug: "1900-w-decker", label: "1900 W. Decker" }];
 
-function stubFetch({ properties = OPTIONS, failOptions = false } = {}) {
+function stubFetch({ properties = OPTIONS, failOptions = false, failPatch = false, patchImpl = null } = {}) {
   const patches = [];
   vi.stubGlobal("fetch", vi.fn(async (url, options = {}) => {
     if (url === "/api/work-packages/property-options") {
@@ -48,6 +48,8 @@ function stubFetch({ properties = OPTIONS, failOptions = false } = {}) {
     }
     if (url === `/api/work-packages/${BASE_PKG.id}` && options.method === "PATCH") {
       patches.push(JSON.parse(options.body));
+      if (patchImpl) return patchImpl();
+      if (failPatch) return { ok: false, json: async () => ({ error: "Package changed while editing; refresh and retry." }) };
       return { ok: true, json: async () => ({ package: { ...BASE_PKG, ...patches[patches.length - 1], property_id: patches[patches.length - 1].property_id ?? null } }) };
     }
     if (url === `/api/work-packages/${BASE_PKG.id}` && (!options.method || options.method === "GET")) {
@@ -141,5 +143,80 @@ describe("WorkPackageDetailClient property display (Slice 2)", () => {
     await settle();
     expect(patches).toHaveLength(1);
     expect(patches[0].property_id).toBeNull();
+  });
+});
+
+describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
+  function openEdit(container) {
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+  }
+
+  it("serializes the empty planned finish of a dateless package as null, never ''", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail(BASE_PKG); // planned_finish: null
+    await settle();
+    openEdit(container);
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+    expect(patches).toHaveLength(1);
+    expect(patches[0].planned_finish).toBeNull();
+  });
+
+  it("preserves an actual planned finish date verbatim on save", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, planned_start: "2026-11-01", planned_finish: "2026-11-10" });
+    await settle();
+    openEdit(container);
+    const dateInput = container.querySelector('input[type="date"]');
+    expect(dateInput.value).toBe("2026-11-10");
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+    expect(patches).toHaveLength(1);
+    expect(patches[0].planned_finish).toBe("2026-11-10");
+  });
+
+  it("a failed save keeps its error until Cancel, which also discards unsaved changes", async () => {
+    stubFetch({ failPatch: true });
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    const titleInput = container.querySelector("form input:not([type='date'])");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+      .set.call(titleInput, "Changed title");
+    act(() => { titleInput.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(titleInput.value).toBe("Changed title");
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+    // The fresh server error is visible and the form stays open.
+    expect(container.textContent).toContain("Package changed while editing; refresh and retry.");
+    expect(container.querySelector("form")).not.toBeNull();
+    const cancelButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    act(() => { cancelButton.click(); });
+    expect(container.textContent).not.toContain("Package changed while editing; refresh and retry.");
+    // Reopening starts from the persisted package — the failed edit is gone.
+    openEdit(container);
+    const reopenedTitle = container.querySelector("form input:not([type='date'])");
+    expect(reopenedTitle.value).toBe("Turnover");
+  });
+
+  it("disables Save and Cancel while a save is in flight", async () => {
+    let releasePatch;
+    const gate = new Promise((resolve) => { releasePatch = resolve; });
+    stubFetch({ patchImpl: () => gate.then(() => ({ ok: true, json: async () => ({ package: BASE_PKG }) })) });
+    const { container } = renderDetail(BASE_PKG);
+    await settle();
+    openEdit(container);
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    const cancelButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    act(() => { saveButton.click(); });
+    expect(saveButton.disabled).toBe(true);
+    expect(cancelButton.disabled).toBe(true);
+    await act(async () => { releasePatch(); });
+    await settle();
+    expect([...container.querySelectorAll("button")].find((b) => b.textContent === "Edit")).toBeTruthy();
   });
 });

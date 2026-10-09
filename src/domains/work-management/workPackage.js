@@ -266,6 +266,22 @@ function clampRound(n) {
 }
 
 // Deterministic input validation for create/edit. Returns { ok, errors[] }.
+// ISO calendar date (YYYY-MM-DD): the shape the Postgres `date` columns
+// accept. Anything else (including "") is rejected here as a 400 instead of
+// reaching the database as SQLSTATE 22007 / a generic 500.
+function isValidISODate(value) {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day;
+}
+
 export function validatePackageInput(input, { isEdit = false } = {}) {
   const errors = [];
   if (!isEdit || input.title !== undefined) {
@@ -279,7 +295,14 @@ export function validatePackageInput(input, { isEdit = false } = {}) {
   if (input.priority !== undefined && !WP_PRIORITIES.includes(input.priority)) {
     errors.push(`priority must be one of: ${WP_PRIORITIES.join(", ")}.`);
   }
-  if (input.planned_start && input.planned_finish && input.planned_finish < input.planned_start) {
+  for (const field of ["planned_start", "planned_finish"]) {
+    const value = input[field];
+    if (value !== undefined && value !== null && !isValidISODate(value)) {
+      errors.push(`${field} must be a valid date in YYYY-MM-DD format.`);
+    }
+  }
+  if (isValidISODate(input.planned_start) && isValidISODate(input.planned_finish)
+      && input.planned_finish < input.planned_start) {
     errors.push("planned_finish must be on or after planned_start.");
   }
   if (input.progress_basis !== undefined && input.progress_basis !== null &&
