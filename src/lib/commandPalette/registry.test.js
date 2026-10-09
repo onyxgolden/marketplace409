@@ -10,6 +10,7 @@ import {
   searchCommandPalette,
   unregisterCommandPaletteAction,
 } from "./registry";
+import { FORGE_COMMAND_SEEDS, seedForgeCommandPalette } from "./forgeCommands";
 
 beforeEach(() => {
   clearCommandPaletteActions();
@@ -132,5 +133,38 @@ describe("filterCommandPaletteActions", () => {
     registerCommandPaletteAction({ id: "title-match", title: "Run rent roll report", group: "Actions", href: "/y" });
     const ids = filterCommandPaletteActions(getCommandPaletteActions(), "rent roll").map((a) => a.id);
     expect(ids[0]).toBe("title-match");
+  });
+});
+
+describe("FORGE_COMMAND_SEEDS (core palette)", () => {
+  it("gives Work Packages a discoverable navigation command (D2)", () => {
+    const command = FORGE_COMMAND_SEEDS.find((seed) => seed.id === "go-work-packages");
+    expect(command).toBeDefined();
+    expect(command.title).toBe("Go to Work Packages");
+    expect(command.group).toBe("Go to");
+    expect(command.href).toBe("/forge/work");
+    for (const keyword of ["work packages", "work package", "work", "packages", "project work"]) {
+      expect(command.keywords).toContain(keyword);
+    }
+  });
+
+  it("keeps every core command id unique", () => {
+    const ids = FORGE_COMMAND_SEEDS.map((seed) => seed.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("points each Go to command at a distinct route", () => {
+    const navSeeds = FORGE_COMMAND_SEEDS.filter((seed) => seed.group === "Go to");
+    const hrefs = navSeeds.map((seed) => seed.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+  });
+
+  it("surfaces Work Packages for the live defect query", () => {
+    seedForgeCommandPalette();
+    const hits = searchCommandPalette("work packages");
+    expect(hits.map((action) => action.id)).toContain("go-work-packages");
+    expect(
+      hits.find((action) => action.id === "go-work-packages")?.href,
+    ).toBe("/forge/work");
   });
 });

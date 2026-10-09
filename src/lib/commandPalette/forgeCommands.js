@@ -70,6 +70,14 @@ export const FORGE_COMMAND_SEEDS = Object.freeze([
   }),
   // --- Navigation (places to go) ---
   Object.freeze({
+    id: "go-work-packages",
+    title: "Go to Work Packages",
+    keywords: ["work packages", "work package", "work", "packages", "project work"],
+    hint: "/forge/work",
+    group: NAV_GROUP,
+    href: "/forge/work",
+  }),
+  Object.freeze({
     id: "go-rentals",
     title: "Go to Rentals",
     keywords: ["rentals", "rental manager", "leases", "tenants"],

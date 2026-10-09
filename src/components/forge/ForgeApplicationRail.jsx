@@ -55,6 +55,11 @@ export const FORGE_APPLICATIONS =
       shortLabel: "P",
     }),
     Object.freeze({
+      href: "/forge/work",
+      label: "Work Packages",
+      shortLabel: "WP",
+    }),
+    Object.freeze({
       href: "/forge/connections",
       label: "Connections",
       shortLabel: "C",

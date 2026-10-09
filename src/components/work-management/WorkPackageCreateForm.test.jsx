@@ -139,3 +139,72 @@ describe("WorkPackageCreateForm property picker (Slice 2)", () => {
     expect(posts[0].property_id).toBeNull();
   });
 });
+
+describe("WorkPackageCreateForm Cancel (D4)", () => {
+  function cancelLink(container) {
+    return [...container.querySelectorAll("a")].find(
+      (anchor) => anchor.textContent.trim() === "Cancel",
+    );
+  }
+
+  function fillTitle(container, value) {
+    const title = container.querySelector("#title");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(title, value);
+    act(() => {
+      title.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("renders an accessible Cancel link beside Create package", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    const cancel = cancelLink(container);
+    expect(cancel).not.toBeUndefined();
+    // A real link to the list, not history back: it must work on a direct
+    // visit to the create page.
+    expect(cancel.getAttribute("href")).toBe("/forge/work");
+    expect(cancel.tabIndex).toBe(0);
+    expect(cancel.hasAttribute("aria-disabled")).toBe(false);
+    const submit = container.querySelector('button[type="submit"]');
+    expect(submit.textContent).toContain("Create package");
+  });
+
+  it("cancelling a filled form navigates without posting", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    fillTitle(container, "Unsaved turnover package");
+    const cancel = cancelLink(container);
+    act(() => {
+      cancel.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await settle();
+    expect(posts).toHaveLength(0);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("keeps the cancel target reachable from the keyboard", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    const cancel = cancelLink(container);
+    act(() => {
+      cancel.focus();
+    });
+    expect(document.activeElement).toBe(cancel);
+    expect(cancel.tabIndex).toBe(0);
+    expect(cancel.getAttribute("href")).toBe("/forge/work");
+  });
+
+  it("leaves the create flow unchanged alongside Cancel", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    fillTitle(container, "Real package");
+    await submitCreate(container);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].title).toBe("Real package");
+    expect(push).toHaveBeenCalledWith("/forge/work/forge_wp_new");
+  });
+});

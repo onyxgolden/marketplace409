@@ -244,5 +244,21 @@ describe("CommandPaletteHost", () => {
     expect(byTestId("open-tenant-ledger")).not.toBeNull();
     expect(byTestId("add-property")).not.toBeNull();
     expect(byTestId("open-cash-forecast")).not.toBeNull();
+    expect(byTestId("go-work-packages")).not.toBeNull();
+  });
+
+  it("Ctrl+K finds Work Packages (D2 live query) and Enter goes to /forge/work", () => {
+    mountHost();
+    openWithShortcut();
+    typeQuery("work packages");
+    const option = document.querySelector(
+      '[data-testid="command-palette-option-go-work-packages"]',
+    );
+    expect(option).not.toBeNull();
+    expect(option.textContent).toContain("Go to Work Packages");
+    pressKey(getInput(), "Enter");
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith("/forge/work");
+    expect(dialog()).toBeNull();
   });
 });
