@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createWorkPackage, updateWorkPackage, transitionWorkPackage,
   getWorkPackageDetail, listWorkPackages, listPackagePropertyOptions,
+  getWorkPackageDeletionEligibility, deleteWorkPackage,
   recordGateAttestation,
   freezeScopeBaseline, proposeScopeChange, decideScopeChange,
   createAsset, createAssetComponent, createLocation, recordInspectionObservation,
@@ -842,5 +843,208 @@ describe("planned package budget (Slice 3)", () => {
         planned_cost_cents: 100, budget_reason: "Updated estimate", expected_version: 3,
       } });
     expect(result).toMatchObject({ ok: false, httpStatus: 409 });
+  });
+});
+
+// --- D7: package deletion (empty drafts, owner-only, tombstone) ------------
+// The database RPC is the authority; these tests pin the service contract:
+// input validation (no RPC on bad input), the fast owner check, and the
+// RPC-outcome -> HTTP mapping incl. typed blockers. No direct .delete()
+// chain is ever used on forge_work_packages.
+
+function rpcReturning(data) {
+  return async () => ({ data, error: null });
+}
+
+describe("getWorkPackageDeletionEligibility (D7)", () => {
+  it("returns 404 when the package does not exist", async () => {
+    const db = mockDb([chain({ data: null, error: null })]);
+    const result = await getWorkPackageDeletionEligibility(db, {
+      ownerId: "owner_1", actor: "owner_1", packageId: "forge_wp_nope",
+    });
+    expect(result).toEqual({ ok: false, httpStatus: 404, error: "Work package not found." });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("marks an empty draft deletable for the primary owner", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning([]));
+    const result = await getWorkPackageDeletionEligibility(db, {
+      ownerId: "owner_1", actor: "owner_1", packageId: "forge_wp_1",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.eligibility).toEqual({
+      isOwner: true, canDelete: true, status: "draft", packageVersion: 3, blockers: [],
+    });
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_package_deletion_blockers", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1",
+    });
+  });
+
+  it("never marks a member (non-primary-owner) as able to delete", async () => {
+    const db = mockDb([chain({ data: PKG, error: null })], rpcReturning([]));
+    const result = await getWorkPackageDeletionEligibility(db, {
+      ownerId: "owner_1", actor: "member_7", packageId: "forge_wp_1",
+    });
+    expect(result.eligibility.isOwner).toBe(false);
+    expect(result.eligibility.canDelete).toBe(false);
+  });
+
+  it("annotates blockers and never allows a non-draft or dependent package", async () => {
+    const db = mockDb(
+      [chain({ data: { ...PKG, status: "planned" }, error: null })],
+      rpcReturning([
+        { type: "budget_revisions", count: 2 },
+        { type: "links", count: 1 },
+        { type: "transitions", count: 0 },
+        { type: "future_class", count: 4 },
+      ]),
+    );
+    const result = await getWorkPackageDeletionEligibility(db, {
+      ownerId: "owner_1", actor: "owner_1", packageId: "forge_wp_1",
+    });
+    expect(result.eligibility.canDelete).toBe(false);
+    expect(result.eligibility.status).toBe("planned");
+    // Zero counts are dropped; known classes get label + next step; unknown
+    // future classes still render a generic explanation.
+    expect(result.eligibility.blockers).toEqual([
+      { type: "budget_revisions", count: 2, label: "Budget history",
+        action: "Budget revisions are a permanent audit record and can't be removed." },
+      { type: "links", count: 1, label: "Linked records",
+        action: "Unlink them in the Links section below, then try again." },
+      { type: "future_class", count: 4, label: "future class",
+        action: "These records are kept for audit and can't be removed." },
+    ]);
+  });
+
+  it("attaches deletionEligibility to detail only when an actor is given", async () => {
+    const detailChains = () => [
+      chain({ data: PKG, error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+    ];
+    const withActor = mockDb(detailChains(), rpcReturning([]));
+    const detail = await getWorkPackageDetail(withActor, {
+      ownerId: "owner_1", packageId: "forge_wp_1", actor: "owner_1",
+    });
+    expect(detail.ok).toBe(true);
+    expect(detail.deletionEligibility.canDelete).toBe(true);
+
+    const withoutActor = mockDb(detailChains(), rpcReturning([]));
+    const plain = await getWorkPackageDetail(withoutActor, {
+      ownerId: "owner_1", packageId: "forge_wp_1",
+    });
+    expect(plain.ok).toBe(true);
+    expect(plain.deletionEligibility).toBeUndefined();
+    expect(withoutActor.rpc).not.toHaveBeenCalled();
+  });
+
+  it("hides the affordance (null) instead of failing detail when eligibility errors", async () => {
+    const db = mockDb([
+      chain({ data: PKG, error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+      chain({ data: [], error: null }),
+    ], async () => ({ data: null, error: new Error("function does not exist") }));
+    const detail = await getWorkPackageDetail(db, {
+      ownerId: "owner_1", packageId: "forge_wp_1", actor: "owner_1",
+    });
+    expect(detail.ok).toBe(true);
+    expect(detail.deletionEligibility).toBeNull();
+  });
+});
+
+describe("deleteWorkPackage (D7)", () => {
+  const args = {
+    ownerId: "owner_1", actor: "owner_1", packageId: "forge_wp_1",
+    confirmCode: "WP-0007", expectedVersion: 3,
+  };
+
+  it("rejects a missing/empty/non-string confirmation code without calling the RPC", async () => {
+    for (const confirmCode of ["", null, undefined, 42]) {
+      const db = mockDb([]);
+      const result = await deleteWorkPackage(db, { ...args, confirmCode });
+      expect(result.httpStatus).toBe(400);
+      expect(db.rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects a non-positive-integer expectedVersion without calling the RPC", async () => {
+    for (const expectedVersion of [0, -1, 1.5, "3", null]) {
+      const db = mockDb([]);
+      const result = await deleteWorkPackage(db, { ...args, expectedVersion });
+      expect(result.httpStatus).toBe(400);
+      expect(db.rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects non-owner actors with 403 before the RPC", async () => {
+    const db = mockDb([]);
+    const result = await deleteWorkPackage(db, { ...args, actor: "member_7" });
+    expect(result).toEqual({
+      ok: false, httpStatus: 403,
+      error: "Only the workspace owner can delete a work package.",
+    });
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("calls the guarded RPC and returns the server deletion record", async () => {
+    const deletion = {
+      package_id: "forge_wp_1", code: "WP-0007", title: "Turnover",
+      prior_status: "draft", deleted_at: "2026-10-08T00:00:00Z",
+    };
+    const db = mockDb([], rpcReturning({ ok: true, deletion }));
+    const result = await deleteWorkPackage(db, args);
+    expect(result).toEqual({ ok: true, deletion });
+    expect(db.rpc).toHaveBeenCalledWith("forge_work_delete_empty_draft_package", {
+      p_owner_id: "owner_1", p_package_id: "forge_wp_1",
+      p_expected_version: 3, p_confirm_code: "WP-0007",
+    });
+  });
+
+  it("maps RPC outcomes to 403/404/409 (a second delete is 404, never false success)", async () => {
+    const cases = [
+      [{ ok: false, error: "forbidden" }, 403],
+      [{ ok: false, error: "not_found" }, 404], // includes second DELETE
+      [{ ok: false, error: "version_conflict" }, 409],
+      [{ ok: false, error: "code_mismatch" }, 409],
+    ];
+    for (const [data, httpStatus] of cases) {
+      const db = mockDb([], rpcReturning(data));
+      const result = await deleteWorkPackage(db, args);
+      expect(result.ok).toBe(false);
+      expect(result.httpStatus).toBe(httpStatus);
+    }
+  });
+
+  it("maps not_draft to 409 naming the current status", async () => {
+    const db = mockDb([], rpcReturning({ ok: false, error: "not_draft", status: "in_progress" }));
+    const result = await deleteWorkPackage(db, args);
+    expect(result.httpStatus).toBe(409);
+    expect(result.error).toBe("Only draft packages can be deleted. This package is in progress.");
+  });
+
+  it("maps blocked to 409 with annotated typed blockers", async () => {
+    const db = mockDb([], rpcReturning({
+      ok: false, error: "blocked",
+      blockers: [{ type: "budget_revisions", count: 1 }],
+    }));
+    const result = await deleteWorkPackage(db, args);
+    expect(result.httpStatus).toBe(409);
+    expect(result.blockers).toEqual([
+      { type: "budget_revisions", count: 1, label: "Budget history",
+        action: "Budget revisions are a permanent audit record and can't be removed." },
+    ]);
+  });
+
+  it("fails closed (throws) on database errors and unknown RPC outcomes", async () => {
+    const dbError = mockDb([], async () => ({ data: null, error: new Error("rpc down") }));
+    await expect(deleteWorkPackage(dbError, args)).rejects.toThrow(/rpc down/);
+    const unknown = mockDb([], rpcReturning({ ok: false, error: "mystery" }));
+    await expect(deleteWorkPackage(unknown, args)).rejects.toThrow(/mystery/);
   });
 });

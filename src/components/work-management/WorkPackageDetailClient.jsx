@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WP_STATUS, WP_PACKAGE_TYPES, WP_PRIORITIES, allowedTransitionsFrom, findTransition, defaultGatesFor } from "@/domains/work-management/workPackage.js";
@@ -62,6 +62,15 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
   const [baselineItems, setBaselineItems] = useState("");
   const [changeForm, setChangeForm] = useState({ changeType: "addition", description: "" });
   const [costRefreshKey, setCostRefreshKey] = useState(0);
+  // D7 delete affordance: server-derived eligibility (display only — the
+  // delete RPC revalidates everything). Owner-only section; null hides it.
+  const [deletionEligibility, setDeletionEligibility] = useState(initial.deletionEligibility ?? null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmCode, setDeleteConfirmCode] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const deleteTriggerRef = useRef(null);
+  const deleteBusyRef = useRef(false);
 
   const allowed = allowedTransitionsFrom(pkg);
   const target = transitionTarget ? findTransition(pkg, transitionTarget) : null;
@@ -109,6 +118,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     setAttestations(data.attestations);
     setBaselines(data.baselines);
     setChanges(data.scopeChanges);
+    setDeletionEligibility(data.deletionEligibility ?? null);
     setEditForm(editFormFromPackage(data.package));
     setEditing(false);
     setTransitionTarget("");
@@ -147,6 +157,76 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     setEditForm(editFormFromPackage(pkg));
     setError("");
     setEditing(false);
+  }
+
+  // -- D7 delete ------------------------------------------------------------
+  function openDeleteDialog() {
+    setDeleteConfirmCode("");
+    setDeleteError("");
+    setDeleteOpen(true);
+  }
+
+  function closeDeleteDialog() {
+    if (deleteBusyRef.current) return;
+    setDeleteOpen(false);
+    setDeleteConfirmCode("");
+    setDeleteError("");
+  }
+
+  // Escape closes the dialog (never mid-delete); focus returns to the
+  // Delete button when the dialog closes.
+  useEffect(() => {
+    if (!deleteOpen) return undefined;
+    const trigger = deleteTriggerRef.current;
+    function onKeyDown(event) {
+      if (event.key === "Escape" && !deleteBusyRef.current) closeDeleteDialog();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
+    };
+  }, [deleteOpen]);
+
+  async function onConfirmDelete() {
+    if (deleteBusyRef.current || deleteConfirmCode !== pkg.code) return;
+    setDeleteBusy(true);
+    deleteBusyRef.current = true;
+    setDeleteError("");
+    try {
+      const response = await fetch(`/api/work-packages/${pkg.id}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          confirmCode: deleteConfirmCode,
+          expectedVersion: pkg.version,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        // Leave only after the server confirmed the delete.
+        router.push("/forge/work");
+        return;
+      }
+      if (response.status === 409) {
+        // State changed under us (edit, dependency, status): close the
+        // dialog, refresh detail + eligibility, and keep the package
+        // visible with the fresh explanation.
+        setDeleteOpen(false);
+        setDeleteConfirmCode("");
+        await refresh();
+        setDeleteError(
+          data.error || "This package changed and can't be deleted right now. The details above are up to date.",
+        );
+        return;
+      }
+      setDeleteError(data.error || "Delete failed. The package was not deleted.");
+    } catch {
+      setDeleteError("Delete didn't go through. Check your connection and try again — the package was not deleted.");
+    } finally {
+      setDeleteBusy(false);
+      deleteBusyRef.current = false;
+    }
   }
 
   async function onTransition() {
@@ -469,6 +549,120 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
           </div>
         )}
       </section>
+
+      {deletionEligibility?.isOwner && (
+        <section aria-label="Danger zone" className="rounded-lg border border-red-200 bg-white p-5">
+          <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
+          <h3 className="mt-3 text-sm font-medium text-slate-900">Delete work package</h3>
+          {deletionEligibility.canDelete ? (
+            <>
+              <p className="mt-1 text-sm text-slate-600">
+                This draft package has no budget, links, or history yet, so it can be
+                deleted permanently. A short audit record of the deletion is kept.
+              </p>
+              <button
+                ref={deleteTriggerRef}
+                type="button"
+                className={`${btn} mt-3 bg-red-600 text-white hover:bg-red-500`}
+                onClick={openDeleteDialog}
+              >
+                Delete work package
+              </button>
+            </>
+          ) : (
+            <div className="mt-1 text-sm text-slate-600">
+              <p>This package can&apos;t be deleted:</p>
+              {deletionEligibility.status !== WP_STATUS.DRAFT && (
+                <p className="mt-2">
+                  Only draft packages can be deleted — this package is{" "}
+                  <span className="font-medium">
+                    {deletionEligibility.status.replace(/_/g, " ")}
+                  </span>
+                  . If it is no longer needed, cancel it instead of deleting it.
+                </p>
+              )}
+              {deletionEligibility.blockers.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {deletionEligibility.blockers.map((blocker) => (
+                    <li key={blocker.type}>
+                      <span className="font-medium">{blocker.label}</span> ({blocker.count})
+                      {" — "}
+                      {blocker.action}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {!deleteOpen && deleteError && (
+            <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+              {deleteError}
+            </p>
+          )}
+        </section>
+      )}
+
+      {deleteOpen && deletionEligibility?.isOwner && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeDeleteDialog();
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-package-title"
+            className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+          >
+            <h2 id="delete-package-title" className="text-base font-semibold text-slate-900">
+              Delete work package
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Delete <span className="font-mono font-medium">{pkg.code}</span> — {pkg.title}?
+              This permanently deletes the draft package. A short audit record (code,
+              title, who deleted it, and when) is kept. This can&apos;t be undone.
+            </p>
+            <div className="mt-4">
+              <label className={label} htmlFor="delete_confirm_code">
+                Type the package code ({pkg.code}) to confirm
+              </label>
+              <input
+                id="delete_confirm_code"
+                className={input}
+                value={deleteConfirmCode}
+                onChange={(event) => setDeleteConfirmCode(event.target.value)}
+                disabled={deleteBusy}
+                autoComplete="off"
+              />
+            </div>
+            {deleteError && (
+              <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className={btnGhost}
+                onClick={closeDeleteDialog}
+                disabled={deleteBusy}
+                autoFocus
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={`${btn} bg-red-600 text-white hover:bg-red-500`}
+                onClick={onConfirmDelete}
+                disabled={deleteBusy || deleteConfirmCode !== pkg.code}
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
