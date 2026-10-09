@@ -150,6 +150,34 @@ Minimal integration in `ui/process-training.js`: compiles only in the
 badge; discard/reset clears the compiled guide from the DOM, not just
 hides it.
 
+## PT-3 — guide markup (fixture-only, in-memory)
+
+`ui/process-guide-markup.js` adds a per-step annotation overlay (rect,
+arrow, text label) for a PT-2 compiled guide, kept entirely separate from
+the guide/evidence itself and associated by the evidence's own immutable
+`sequenceId`, never list index. Required source audit (per the brief)
+found the existing annotation system (`core/src/annotations.rs`,
+`ui/annotations-render.js`, slices 1–4) has no reusable interactive
+editing logic at all — `docs/annotations.md`'s own "What is not yet
+wired" section is explicit that slices 1–4 built the data contract and a
+renderer, never a toolbar/pointer-event editor. The data schema and
+`resolveDrawOps` are additionally bound to a real source image
+(`sourceSha256`, real `canvas` dimensions), structurally incompatible
+with PT-3 having no real image at all. The one thing genuinely reused:
+`drawOpsToCanvas`, which was already decoupled from where its `ops` came
+from — PT-3's own `resolveMarkupDrawOps` emits ops in that same
+vocabulary so the existing renderer draws them unmodified.
+
+Editing is form-based (labeled numeric/text inputs), not drag-based —
+inherently keyboard-operable, satisfying the brief's "simple non-pointer
+editing path" requirement directly. A neutral placeholder canvas ("No
+image in fixture guide") is shown for every step regardless of
+`hasScreenshot`; markup never upgrades `source`/`status`, never carries a
+withheld/redacted step's real control name into itself, and user-typed
+text is rendered via `textContent` only, never `innerHTML`. Discard/
+reset/a failed recompile clears all markup and closes the panel, not
+just hides it.
+
 ## What is not yet wired
 
 - **No UI.** `process_capture_start_session`/`_stop_session` (Tauri

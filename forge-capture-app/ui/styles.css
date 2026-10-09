@@ -441,3 +441,60 @@ input[type="search"] {
 }
 .pt-guide-warning { color: var(--warning); }
 .pt-guide-warning-adjacent { padding-left: 22px; }
+
+/* ---- PT-3: step markup panel (fixture-only, in-memory annotations) ---- */
+
+.pt-markup-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.pt-markup-panel[hidden] { display: none; }
+
+#pt-markup-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0;
+  background: var(--bg);
+}
+
+.pt-markup-toolbar { flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+
+.pt-markup-shape-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0;
+}
+.pt-markup-shape-fields .field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.pt-markup-shape-fields input[type="number"] { width: 70px; }
+
+.pt-markup-shape-list {
+  list-style: none;
+  margin: 8px 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.pt-markup-shape-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.pt-markup-shape-list li span { flex: 1; }
+.pt-markup-empty { color: var(--muted); }

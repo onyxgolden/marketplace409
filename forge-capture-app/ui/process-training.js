@@ -23,6 +23,17 @@ import {
   summarizeEvidence,
 } from "./process-training-core.js";
 import { compileGuide, GuideCompileError } from "./process-guide-compiler.js";
+import {
+  GuideMarkupOverlay,
+  MarkupError,
+  MARKUP_CANVAS,
+  MAX_TEXT_LENGTH,
+  resolveMarkupDrawOps,
+} from "./process-guide-markup.js";
+// Reused exactly as-is (see process-guide-markup.js's own header comment
+// for the full reuse audit): drawOpsToCanvas is already decoupled from
+// where its `ops` came from, so it draws PT-3's markup ops unmodified.
+import { drawOpsToCanvas } from "./annotations-render.js";
 
 // Example targets only — PT-1C ships no live window enumeration (that
 // would be new native wiring, out of scope for this slice). A real
@@ -158,6 +169,37 @@ export function renderProcessTrainingControls(container, deps = {}) {
         <ol id="pt-guide-steps" class="pt-guide-steps"></ol>
         <ul id="pt-guide-warnings" class="pt-guide-warnings"></ul>
 
+        <section id="pt-markup-panel" class="pt-markup-panel" hidden aria-label="Markup this step">
+          <h3>Markup — <span id="pt-markup-step-label"></span></h3>
+          <p class="dialog-sub">Demo annotations only — an author-added overlay, never evidence. Never a real screenshot.</p>
+          <canvas id="pt-markup-canvas" width="640" height="480" aria-label="Markup preview (placeholder, no image)"></canvas>
+          <div class="status">No image in fixture guide — placeholder only.</div>
+
+          <div class="row pt-markup-toolbar">
+            <button id="pt-markup-add-rect" type="button" class="ghost-btn small">Add rectangle</button>
+            <button id="pt-markup-add-arrow" type="button" class="ghost-btn small">Add arrow</button>
+            <button id="pt-markup-add-text" type="button" class="ghost-btn small">Add text label</button>
+            <button id="pt-markup-undo" type="button" class="ghost-btn small" disabled>Undo</button>
+            <button id="pt-markup-redo" type="button" class="ghost-btn small" disabled>Redo</button>
+          </div>
+
+          <form id="pt-markup-shape-form" hidden>
+            <div id="pt-markup-shape-fields" class="pt-markup-shape-fields"></div>
+            <div id="pt-markup-shape-status" class="status" role="status"></div>
+            <div class="dialog-actions">
+              <button id="pt-markup-shape-cancel" type="button" class="ghost-btn">Cancel</button>
+              <button id="pt-markup-shape-save" type="submit" class="primary-btn">Save</button>
+            </div>
+          </form>
+
+          <h4>Shapes on this step</h4>
+          <ul id="pt-markup-shape-list" class="pt-markup-shape-list"></ul>
+
+          <div class="dialog-actions">
+            <button id="pt-markup-close" type="button" class="ghost-btn">Close — back to guide</button>
+          </div>
+        </section>
+
         <div class="dialog-actions">
           <button id="pt-review-discard-btn" type="button" class="ghost-btn">Discard this demo session</button>
         </div>
@@ -281,6 +323,14 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const guideSteps = $("pt-guide-steps");
   const guideWarnings = $("pt-guide-warnings");
 
+  // PT-3: one markup overlay per ConsentSession lifetime -- cleared (not
+  // just hidden) alongside the guide preview on every discard/reset/
+  // target-change, same as clearGuidePreview() below. Never persisted.
+  const markupOverlay = new GuideMarkupOverlay();
+  let lastCompiledGuide = null;
+  let activeMarkupSequenceId = null;
+  let activeShapeFormMode = null; // { kind, editingShapeId } | null
+
   function renderGuidePreview() {
     guideError.hidden = true;
     guideError.textContent = "";
@@ -303,8 +353,19 @@ export function renderProcessTrainingControls(container, deps = {}) {
         e instanceof GuideCompileError
           ? `Guide could not be compiled: ${e.message}`
           : `Guide could not be compiled: ${e.message || e}`;
+      // Review finding (round 1): a failed compile must clear the
+      // markup OVERLAY DATA too, not just hide the panel --
+      // closeMarkupPanel() alone deliberately preserves annotations
+      // (that's what makes ordinary close/reopen retain them), so it
+      // cannot by itself satisfy "compile failure clears annotations."
+      // Stale shapes must never survive editing a guide that no longer
+      // compiles.
+      lastCompiledGuide = null;
+      markupOverlay.clearAll();
+      closeMarkupPanel();
       return;
     }
+    lastCompiledGuide = guide;
 
     for (const step of guide.steps) {
       const li = document.createElement("li");
@@ -314,6 +375,12 @@ export function renderProcessTrainingControls(container, deps = {}) {
           <span>${escapeHtml(step.processName)} — ${escapeHtml(step.targetLabel)}</span>
         </div>
       `;
+      const markupBtn = document.createElement("button");
+      markupBtn.type = "button";
+      markupBtn.className = "ghost-btn small";
+      markupBtn.textContent = "Markup this step";
+      markupBtn.addEventListener("click", () => openMarkupFor(step.sequenceId));
+      li.appendChild(markupBtn);
       guideSteps.appendChild(li);
       // A warning whose position is actually known from the evidence
       // (never guessed) renders right after the step it follows.
@@ -346,6 +413,238 @@ export function renderProcessTrainingControls(container, deps = {}) {
     }
     return li;
   }
+
+  // ---------------------------------------------------------------------
+  // PT-3: markup panel (add/select/edit/delete/undo/redo annotations for
+  // one selected guide step). Form-based, not drag-based, by design --
+  // labeled numeric/text inputs are inherently keyboard-operable, which
+  // is the "simple non-pointer editing path" the brief requires, without
+  // needing a second separate interaction mode alongside it.
+  // ---------------------------------------------------------------------
+
+  const markupPanel = $("pt-markup-panel");
+  const markupStepLabel = $("pt-markup-step-label");
+  const markupCanvas = $("pt-markup-canvas");
+  const markupUndoBtn = $("pt-markup-undo");
+  const markupRedoBtn = $("pt-markup-redo");
+  const markupShapeList = $("pt-markup-shape-list");
+  const shapeForm = $("pt-markup-shape-form");
+  const shapeFields = $("pt-markup-shape-fields");
+  const shapeStatus = $("pt-markup-shape-status");
+
+  function openMarkupFor(sequenceId) {
+    activeMarkupSequenceId = sequenceId;
+    markupPanel.hidden = false;
+    closeShapeForm();
+    renderMarkupPanel();
+    // A pure UX nicety -- not implemented in every environment (e.g. the
+    // jsdom test environment used here), so it is never allowed to break
+    // the actual panel-opening behavior above it.
+    try {
+      markupPanel.scrollIntoView({ block: "nearest" });
+    } catch {
+      /* no-op */
+    }
+  }
+
+  function closeMarkupPanel() {
+    activeMarkupSequenceId = null;
+    markupPanel.hidden = true;
+    closeShapeForm();
+    // Clears the rendered list too, not just hides the panel -- it is
+    // always correctly rebuilt from the overlay (the real data) the next
+    // time a step's markup is opened, so this never loses anything; it
+    // only prevents a prior step's shapes from sitting stale in the DOM.
+    markupShapeList.innerHTML = "";
+  }
+
+  function shapeSummary(shape) {
+    if (shape.kind === "rect") return `Rectangle (${shape.x}, ${shape.y}, ${shape.w}×${shape.h})`;
+    if (shape.kind === "arrow") return `Arrow (${shape.x1},${shape.y1}) → (${shape.x2},${shape.y2})`;
+    return `Text: "${shape.text}"`;
+  }
+
+  function renderMarkupPanel() {
+    if (activeMarkupSequenceId === null) return;
+    const step = lastCompiledGuide?.steps.find((s) => s.sequenceId === activeMarkupSequenceId);
+    markupStepLabel.textContent = step
+      ? `#${step.sequenceId} ${step.action}`
+      : `#${activeMarkupSequenceId}`;
+
+    const shapes = markupOverlay.shapesFor(activeMarkupSequenceId);
+
+    // Neutral placeholder only -- never a real/fabricated screenshot,
+    // regardless of this step's hasScreenshot value. Markup shapes are
+    // then drawn on top via the reused drawOpsToCanvas (see this file's
+    // own import comment and process-guide-markup.js's header for the
+    // reuse audit).
+    const ctx = markupCanvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, MARKUP_CANVAS.width, MARKUP_CANVAS.height);
+      ctx.fillStyle = "#23262c";
+      ctx.fillRect(0, 0, MARKUP_CANVAS.width, MARKUP_CANVAS.height);
+      drawOpsToCanvas(ctx, resolveMarkupDrawOps(shapes));
+    }
+
+    markupUndoBtn.disabled = !markupOverlay.canUndo(activeMarkupSequenceId);
+    markupRedoBtn.disabled = !markupOverlay.canRedo(activeMarkupSequenceId);
+
+    markupShapeList.innerHTML = "";
+    if (shapes.length === 0) {
+      const li = document.createElement("li");
+      li.className = "pt-markup-empty";
+      li.textContent = "No markup on this step yet.";
+      markupShapeList.appendChild(li);
+    }
+    for (const shape of shapes) {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = shapeSummary(shape); // textContent only -- never HTML, per the brief
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost-btn small";
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", () => openShapeForm(shape.kind, shape));
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "ghost-btn small";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", () => {
+        markupOverlay.deleteShape(activeMarkupSequenceId, shape.id);
+        renderMarkupPanel();
+      });
+      li.appendChild(label);
+      li.appendChild(editBtn);
+      li.appendChild(delBtn);
+      markupShapeList.appendChild(li);
+    }
+  }
+
+  function numberField(id, labelText, value) {
+    const wrap = document.createElement("label");
+    wrap.className = "field inline";
+    const span = document.createElement("span");
+    span.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.id = id;
+    input.value = String(value ?? 0);
+    wrap.appendChild(span);
+    wrap.appendChild(input);
+    shapeFields.appendChild(wrap);
+    return input;
+  }
+
+  function openShapeForm(kind, existing) {
+    shapeForm.hidden = false;
+    activeShapeFormMode = { kind, editingShapeId: existing ? existing.id : null };
+    shapeFields.innerHTML = "";
+    shapeStatus.textContent = "";
+    shapeStatus.className = "status";
+
+    if (kind === "rect") {
+      numberField("pt-markup-field-x", "X", existing?.x ?? 10);
+      numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
+      numberField("pt-markup-field-w", "Width", existing?.w ?? 50);
+      numberField("pt-markup-field-h", "Height", existing?.h ?? 50);
+    } else if (kind === "arrow") {
+      numberField("pt-markup-field-x1", "From X", existing?.x1 ?? 10);
+      numberField("pt-markup-field-y1", "From Y", existing?.y1 ?? 10);
+      numberField("pt-markup-field-x2", "To X", existing?.x2 ?? 100);
+      numberField("pt-markup-field-y2", "To Y", existing?.y2 ?? 100);
+    } else {
+      numberField("pt-markup-field-x", "X", existing?.x ?? 10);
+      numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
+      const wrap = document.createElement("label");
+      wrap.className = "field block";
+      const span = document.createElement("span");
+      span.textContent = "Text";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.id = "pt-markup-field-text";
+      input.maxLength = MAX_TEXT_LENGTH;
+      input.value = existing?.text ?? "";
+      wrap.appendChild(span);
+      wrap.appendChild(input);
+      shapeFields.appendChild(wrap);
+    }
+    const firstInput = shapeFields.querySelector("input");
+    if (firstInput) firstInput.focus();
+  }
+
+  function closeShapeForm() {
+    shapeForm.hidden = true;
+    activeShapeFormMode = null;
+    shapeFields.innerHTML = "";
+    shapeStatus.textContent = "";
+  }
+
+  function readShapeFormData(kind) {
+    const num = (id) => Number(container.querySelector(`#${id}`).value);
+    if (kind === "rect") {
+      return {
+        x: num("pt-markup-field-x"),
+        y: num("pt-markup-field-y"),
+        w: num("pt-markup-field-w"),
+        h: num("pt-markup-field-h"),
+      };
+    }
+    if (kind === "arrow") {
+      return {
+        x1: num("pt-markup-field-x1"),
+        y1: num("pt-markup-field-y1"),
+        x2: num("pt-markup-field-x2"),
+        y2: num("pt-markup-field-y2"),
+      };
+    }
+    return {
+      x: num("pt-markup-field-x"),
+      y: num("pt-markup-field-y"),
+      text: container.querySelector("#pt-markup-field-text").value,
+    };
+  }
+
+  shapeForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!activeShapeFormMode || activeMarkupSequenceId === null) return;
+    const data = readShapeFormData(activeShapeFormMode.kind);
+    try {
+      if (activeShapeFormMode.editingShapeId) {
+        markupOverlay.updateShape(activeMarkupSequenceId, activeShapeFormMode.editingShapeId, data);
+      } else {
+        markupOverlay.addShape(activeMarkupSequenceId, activeShapeFormMode.kind, data);
+      }
+    } catch (err) {
+      shapeStatus.textContent = err instanceof MarkupError ? err.message : String(err.message || err);
+      shapeStatus.className = "status error";
+      return;
+    }
+    closeShapeForm();
+    renderMarkupPanel();
+  });
+
+  $("pt-markup-add-rect").addEventListener("click", () => openShapeForm("rect", null));
+  $("pt-markup-add-arrow").addEventListener("click", () => openShapeForm("arrow", null));
+  $("pt-markup-add-text").addEventListener("click", () => openShapeForm("text", null));
+  $("pt-markup-shape-cancel").addEventListener("click", () => closeShapeForm());
+  $("pt-markup-undo").addEventListener("click", () => {
+    if (activeMarkupSequenceId !== null) markupOverlay.undo(activeMarkupSequenceId);
+    renderMarkupPanel();
+  });
+  $("pt-markup-redo").addEventListener("click", () => {
+    if (activeMarkupSequenceId !== null) markupOverlay.redo(activeMarkupSequenceId);
+    renderMarkupPanel();
+  });
+  $("pt-markup-close").addEventListener("click", () => closeMarkupPanel());
+
+  // Escape closes markup mode without discarding the session -- never a
+  // keyboard shortcut that steals focus from an input while typing (only
+  // acts when the markup panel is actually open).
+  container.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !markupPanel.hidden) {
+      closeMarkupPanel();
+    }
+  });
 
   function renderReview() {
     const viewModels = session.evidence.map(toEvidenceViewModel);
@@ -410,6 +709,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
     guideError.textContent = "";
     guideSteps.innerHTML = "";
     guideWarnings.innerHTML = "";
+    lastCompiledGuide = null;
+    // PT-3: discard/reset/target-change clears every step's markup, not
+    // just hides it -- same discipline as the guide preview itself.
+    markupOverlay.clearAll();
+    closeMarkupPanel();
   }
 
   $("pt-preview-discard-btn").addEventListener("click", () => {
@@ -453,6 +757,17 @@ export function renderProcessTrainingControls(container, deps = {}) {
     get session() {
       return session;
     },
+    /**
+     * For tests only: direct access to the markup overlay and the
+     * compile/render function itself, so the compile-failure lifecycle
+     * path (markupOverlay.clearAll() on a failed recompile) can be
+     * pinned directly -- the current UI has no second, user-reachable
+     * compile action to exercise it through a click sequence alone.
+     */
+    get markupOverlay() {
+      return markupOverlay;
+    },
+    renderGuidePreview,
   };
 }
 
