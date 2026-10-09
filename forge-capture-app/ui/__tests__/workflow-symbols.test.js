@@ -14,6 +14,7 @@ import {
   validateSymbolPlacement,
   symbolToDrawOps,
 } from "../workflow-symbols.js";
+import { drawOpsToCanvas } from "../annotations-render.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SUPPORTED_OPS = new Set(["rect", "line", "text"]);
@@ -216,6 +217,60 @@ describe("symbolToDrawOps — labeled symbol flush to the canvas's bottom/right 
       expect(textOp.x).toBeLessThanOrEqual(CANVAS_W);
       expect(textOp.y).toBeLessThanOrEqual(CANVAS_H);
       expect(textOp.x + textOp.maxWidth).toBeLessThanOrEqual(CANVAS_W);
+    });
+  }
+});
+
+describe("symbolToDrawOps -> drawOpsToCanvas — real renderer integration (round 2 review)", () => {
+  // Round 1 fixed the *draw-op* coordinates; round 2 found the shared
+  // renderer's own fillText call was silently dropping `maxWidth` end to
+  // end (ctx.fillText.length reflects declared arity, not optional-
+  // parameter support -- a real browser's fillText reports .length===3
+  // despite accepting a 4-argument call). This test feeds a real labeled
+  // symbol's ops through the real `drawOpsToCanvas` (not just inspecting
+  // the op objects) with a mock ctx shaped like a real browser's
+  // fillText (exactly 3 declared parameters), and asserts the width
+  // actually passed to fillText does not exceed the symbol box's
+  // interior -- proving the contract end to end, not just at the op
+  // level.
+  function threeArityRecordingCtx() {
+    const calls = [];
+    return {
+      calls,
+      set fillStyle(v) {
+        calls.push(["fillStyle", v]);
+      },
+      set strokeStyle(v) {},
+      set lineWidth(v) {},
+      strokeRect: () => {},
+      fillRect: () => {},
+      beginPath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      closePath: () => {},
+      stroke: () => {},
+      fill: () => {},
+      fillText: function fillText(text, x, y) {
+        calls.push(["fillText", ...arguments]);
+      },
+    };
+  }
+
+  for (const def of WORKFLOW_SYMBOLS) {
+    it(`"${def.id}" labeled: the real renderer actually receives a maxWidth within the box's interior`, () => {
+      const shape = {
+        id: "m1-1",
+        x: 10,
+        y: 10,
+        ...validateSymbolPlacement(def.id, { w: def.defaultWidth, h: def.defaultHeight, label: "Step" }),
+      };
+      const ctx = threeArityRecordingCtx();
+      drawOpsToCanvas(ctx, symbolToDrawOps(shape));
+      const fillTextCall = ctx.calls.find((c) => c[0] === "fillText" && c[1] === "Step");
+      expect(fillTextCall).toBeDefined();
+      const [, , x, , passedMaxWidth] = fillTextCall;
+      expect(passedMaxWidth).toBeDefined(); // the 4th argument actually arrived
+      expect(x + passedMaxWidth).toBeLessThanOrEqual(shape.x + shape.w);
     });
   }
 });

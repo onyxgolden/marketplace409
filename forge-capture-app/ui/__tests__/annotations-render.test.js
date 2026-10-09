@@ -226,6 +226,38 @@ describe("drawOpsToCanvas", () => {
     ]);
   });
 
+  it("passes maxWidth to fillText even when the mock's declared arity is 3, not 4 (review regression)", () => {
+    // Review finding: `ctx.fillText.length` reflects a function's
+    // DECLARED parameter count, not whether it accepts an optional
+    // fourth argument -- a real `CanvasRenderingContext2D.fillText`
+    // reports `.length === 3` precisely because its `maxWidth` parameter
+    // is optional, so a check gated on `ctx.fillText.length >= 4` was
+    // false in real browsers too, not just in the test's own recording
+    // mock (which used a rest parameter and so also reported `.length
+    // === 0`). This mock deliberately declares exactly three named
+    // parameters -- the same shape a real browser's `fillText` has --
+    // and reads the real argument count via `arguments.length` to prove
+    // the fourth argument is actually received, not silently dropped.
+    const calls = [];
+    const ctx = {
+      set fillStyle(v) {
+        calls.push(["fillStyle", v]);
+      },
+      fillText: function fillText(text, x, y) {
+        calls.push(["fillText", ...arguments]);
+      },
+    };
+    expect(ctx.fillText.length).toBe(3); // the exact arity shape being guarded against
+    drawOpsToCanvas(ctx, [{ op: "text", x: 5, y: 5, maxWidth: 42, color: red, text: "hi" }]);
+    expect(calls).toContainEqual(["fillText", "hi", 5, 5, 42]);
+  });
+
+  it("omits maxWidth from the fillText call when the op has none", () => {
+    const ctx = recordingCtx();
+    drawOpsToCanvas(ctx, [{ op: "text", x: 5, y: 5, color: red, text: "hi" }]);
+    expect(ctx.calls).toContainEqual(["fillText", "hi", 5, 5]);
+  });
+
   it("draws a callout as a filled circle plus its number as white text", () => {
     const ctx = recordingCtx();
     drawOpsToCanvas(ctx, [{ op: "callout", x: 5, y: 5, color: red, number: 3 }]);
