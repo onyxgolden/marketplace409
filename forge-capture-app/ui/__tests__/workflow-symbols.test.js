@@ -91,14 +91,23 @@ describe("validateSymbolPlacement and symbolToDrawOps — every symbol", () => {
         }
       });
 
-      it("fits entirely inside its own x,y,w,h rectangle", () => {
+      it("fits entirely inside its own x,y,w,h rectangle, INCLUDING its label", () => {
+        // Regression (round 1 review): a labeled symbol's text op used
+        // to be anchored below the box, and this test used to skip text
+        // ops entirely rather than catch it -- every op, text included,
+        // is now actually checked against the box.
         const shape = {
           id: "m1-1",
           x: 50,
           y: 60,
-          ...validateSymbolPlacement(def.id, { w: def.defaultWidth, h: def.defaultHeight }),
+          ...validateSymbolPlacement(def.id, {
+            w: def.defaultWidth,
+            h: def.defaultHeight,
+            label: "Step",
+          }),
         };
         const ops = symbolToDrawOps(shape);
+        expect(ops.some((o) => o.op === "text")).toBe(true); // the label op actually ran
         const minX = shape.x - 0.001;
         const minY = shape.y - 0.001;
         const maxX = shape.x + shape.w + 0.001;
@@ -118,9 +127,16 @@ describe("validateSymbolPlacement and symbolToDrawOps — every symbol", () => {
             expect(op.x2).toBeLessThanOrEqual(maxX);
             expect(op.y2).toBeGreaterThanOrEqual(minY);
             expect(op.y2).toBeLessThanOrEqual(maxY);
+          } else if (op.op === "text") {
+            expect(op.x).toBeGreaterThanOrEqual(minX);
+            expect(op.x).toBeLessThanOrEqual(maxX);
+            expect(op.y).toBeGreaterThanOrEqual(minY);
+            expect(op.y).toBeLessThanOrEqual(maxY);
+            // The renderer compresses text to maxWidth (see
+            // annotations-render.js's `text` case), so the rendered
+            // extent's right edge is also bounded, not just the anchor.
+            expect(op.x + op.maxWidth).toBeLessThanOrEqual(maxX);
           }
-          // text (the label) is anchored just below the shape by design
-          // -- not asserted against the shape's own box here.
         }
       });
 
@@ -166,6 +182,40 @@ describe("validateSymbolPlacement and symbolToDrawOps — every symbol", () => {
         const ops = symbolToDrawOps(shape);
         expect(ops.some((o) => o.op === "text")).toBe(false);
       });
+    });
+  }
+});
+
+describe("symbolToDrawOps — labeled symbol flush to the canvas's bottom/right valid edge", () => {
+  // Regression (round 1 review): asks specifically for a labeled symbol
+  // placed at the bottom/right edge of valid placement, since that's
+  // exactly where the old below-the-box label anchor would have
+  // overflowed the 640x480 canvas itself, not just the symbol's own box.
+  const CANVAS_W = 640;
+  const CANVAS_H = 480;
+
+  for (const def of WORKFLOW_SYMBOLS) {
+    it(`"${def.id}" at the canvas's bottom-right valid edge keeps its label inside both the symbol box and the canvas`, () => {
+      const x = CANVAS_W - def.defaultWidth;
+      const y = CANVAS_H - def.defaultHeight;
+      const shape = {
+        id: "m1-1",
+        x,
+        y,
+        ...validateSymbolPlacement(def.id, { w: def.defaultWidth, h: def.defaultHeight, label: "Edge" }),
+      };
+      const ops = symbolToDrawOps(shape);
+      const textOp = ops.find((o) => o.op === "text");
+      expect(textOp).toBeDefined();
+      // Inside the symbol's own box...
+      expect(textOp.x).toBeGreaterThanOrEqual(shape.x);
+      expect(textOp.x).toBeLessThanOrEqual(shape.x + shape.w);
+      expect(textOp.y).toBeGreaterThanOrEqual(shape.y);
+      expect(textOp.y).toBeLessThanOrEqual(shape.y + shape.h);
+      // ...and therefore inside the 640x480 canvas too.
+      expect(textOp.x).toBeLessThanOrEqual(CANVAS_W);
+      expect(textOp.y).toBeLessThanOrEqual(CANVAS_H);
+      expect(textOp.x + textOp.maxWidth).toBeLessThanOrEqual(CANVAS_W);
     });
   }
 });

@@ -409,6 +409,8 @@ export function validateSymbolPlacement(symbolType, { w, h, label }) {
 
 const SYMBOL_COLOR = Object.freeze({ r: 217, g: 154, b: 61, a: 255 });
 const SYMBOL_STROKE_WIDTH = 2;
+/** How far a symbol's optional label is inset from its own box edges -- safely below every registry symbol's minWidth/minHeight (smallest is 20px). */
+const LABEL_INSET = 4;
 
 function partsToDrawOps(parts, id, color, strokeWidth) {
   const ops = [];
@@ -446,16 +448,28 @@ export function symbolToDrawOps(shape) {
   );
   const ops = partsToDrawOps(translated, shape.id, SYMBOL_COLOR, SYMBOL_STROKE_WIDTH);
   if (shape.label) {
-    // A fixed, safe anchor inside the shape's own bounds, with an
-    // explicit maxWidth so the renderer's own text op clips rather than
-    // overflows -- never unbounded canvas text (see annotations-render.js's
-    // own `text` case, which already supports `maxWidth`).
+    // Review finding (round 1): the label used to be anchored BELOW the
+    // symbol's own declared box (`y: shape.y + shape.h + 14`), which a
+    // test deliberately excluded from the bounds-fit check rather than
+    // being fixed -- a real contract violation (labels must stay inside
+    // x,y,w,h and the canvas, same as every other emitted op), not a
+    // false positive to silence.
+    //
+    // Fixed: the label's baseline anchor is now inset from the box's own
+    // bottom-left corner, strictly inside `[shape.x, shape.x+shape.w]`
+    // and `[shape.y, shape.y+shape.h]` for every registry symbol (the
+    // smallest `minWidth`/`minHeight` is 20px, well above
+    // `LABEL_INSET`). `maxWidth` is constrained to the box's own usable
+    // interior width, so the renderer's own text-compression behavior
+    // (see annotations-render.js's `text` case) keeps the rendered
+    // extent inside the box's right edge too, rather than overflowing
+    // it -- never unbounded canvas text.
     ops.push({
       op: "text",
       id: shape.id,
-      x: shape.x + 4,
-      y: shape.y + shape.h + 14,
-      maxWidth: Math.max(shape.w, 20),
+      x: shape.x + LABEL_INSET,
+      y: shape.y + shape.h - LABEL_INSET,
+      maxWidth: Math.max(shape.w - LABEL_INSET * 2, 1),
       color: SYMBOL_COLOR,
       text: shape.label,
     });
