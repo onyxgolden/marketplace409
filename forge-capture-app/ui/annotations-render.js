@@ -221,7 +221,18 @@ export function drawOpsToCanvas(ctx, ops) {
       case "text":
         ctx.fillStyle = cssColor(op.color);
         if (typeof ctx.fillText === "function") {
-          if (op.maxWidth && ctx.fillText.length >= 4) {
+          // Review finding: `ctx.fillText.length` reflects the
+          // function's DECLARED arity, not whether it supports Canvas
+          // 2D's optional fourth `maxWidth` parameter -- an optional
+          // parameter never counts toward `Function.prototype.length`,
+          // so a real `CanvasRenderingContext2D.fillText` reports
+          // `.length === 3` even though it fully supports a 4-argument
+          // call. The old `ctx.fillText.length >= 4` check was therefore
+          // false in real browsers too, silently dropping `maxWidth`
+          // end to end -- not just in tests. Pass the fourth argument
+          // whenever `op.maxWidth` is itself a real, finite, positive
+          // bound; never probe the callee's arity to decide.
+          if (Number.isFinite(op.maxWidth) && op.maxWidth > 0) {
             ctx.fillText(op.text, op.x, op.y, op.maxWidth);
           } else {
             ctx.fillText(op.text, op.x, op.y);

@@ -34,6 +34,7 @@ import {
 // for the full reuse audit): drawOpsToCanvas is already decoupled from
 // where its `ops` came from, so it draws PT-3's markup ops unmodified.
 import { drawOpsToCanvas } from "./annotations-render.js";
+import { WORKFLOW_SYMBOLS, MAX_SYMBOL_LABEL_LENGTH } from "./workflow-symbols.js";
 
 // Example targets only — PT-1C ships no live window enumeration (that
 // would be new native wiring, out of scope for this slice). A real
@@ -182,6 +183,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
             <button id="pt-markup-undo" type="button" class="ghost-btn small" disabled>Undo</button>
             <button id="pt-markup-redo" type="button" class="ghost-btn small" disabled>Redo</button>
           </div>
+
+          <h4>Workflow symbols</h4>
+          <p class="dialog-sub">Original, independently-drawn workflow-diagram symbols (the open ISO 5807 flowchart standard) for SOP/process guides — not Microsoft Visio artwork.</p>
+          <div id="pt-markup-palette" class="pt-markup-palette" role="group" aria-label="Workflow symbols palette"></div>
 
           <form id="pt-markup-shape-form" hidden>
             <div id="pt-markup-shape-fields" class="pt-markup-shape-fields"></div>
@@ -431,6 +436,35 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const shapeForm = $("pt-markup-shape-form");
   const shapeFields = $("pt-markup-shape-fields");
   const shapeStatus = $("pt-markup-shape-status");
+  const markupPalette = $("pt-markup-palette");
+
+  // Built once from the static registry (never per-render) and grouped
+  // by category, so adding a symbol to the registry never requires a
+  // template-string edit here.
+  (function buildPalette() {
+    const categories = new Map();
+    for (const def of WORKFLOW_SYMBOLS) {
+      if (!categories.has(def.category)) categories.set(def.category, []);
+      categories.get(def.category).push(def);
+    }
+    for (const [category, defs] of categories) {
+      const group = document.createElement("fieldset");
+      group.className = "pt-markup-palette-group";
+      const legend = document.createElement("legend");
+      legend.textContent = category;
+      group.appendChild(legend);
+      for (const def of defs) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost-btn small";
+        btn.textContent = def.name;
+        btn.title = def.description;
+        btn.addEventListener("click", () => openShapeForm("symbol", null, def.id));
+        group.appendChild(btn);
+      }
+      markupPalette.appendChild(group);
+    }
+  })();
 
   function openMarkupFor(sequenceId) {
     activeMarkupSequenceId = sequenceId;
@@ -461,6 +495,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
   function shapeSummary(shape) {
     if (shape.kind === "rect") return `Rectangle (${shape.x}, ${shape.y}, ${shape.w}×${shape.h})`;
     if (shape.kind === "arrow") return `Arrow (${shape.x1},${shape.y1}) → (${shape.x2},${shape.y2})`;
+    if (shape.kind === "symbol") {
+      const def = WORKFLOW_SYMBOLS.find((s) => s.id === shape.symbolType);
+      const name = def?.name ?? shape.symbolType;
+      return shape.label ? `${name}: "${shape.label}"` : name;
+    }
     return `Text: "${shape.text}"`;
   }
 
@@ -535,9 +574,36 @@ export function renderProcessTrainingControls(container, deps = {}) {
     return input;
   }
 
-  function openShapeForm(kind, existing) {
+  function textField(id, labelText, value, maxLength) {
+    const wrap = document.createElement("label");
+    wrap.className = "field block";
+    const span = document.createElement("span");
+    span.textContent = labelText;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.id = id;
+    input.maxLength = maxLength;
+    input.value = value ?? "";
+    wrap.appendChild(span);
+    wrap.appendChild(input);
+    shapeFields.appendChild(wrap);
+    return input;
+  }
+
+  /**
+   * `symbolType` is only used for a NEW symbol placement (from a palette
+   * button click); when editing an existing symbol, its own
+   * `existing.symbolType` is used instead -- a symbol's type is fixed
+   * once placed, never changed by editing.
+   */
+  function openShapeForm(kind, existing, symbolType) {
     shapeForm.hidden = false;
-    activeShapeFormMode = { kind, editingShapeId: existing ? existing.id : null };
+    const resolvedSymbolType = kind === "symbol" ? existing?.symbolType ?? symbolType : undefined;
+    activeShapeFormMode = {
+      kind,
+      editingShapeId: existing ? existing.id : null,
+      symbolType: resolvedSymbolType,
+    };
     shapeFields.innerHTML = "";
     shapeStatus.textContent = "";
     shapeStatus.className = "status";
@@ -552,21 +618,21 @@ export function renderProcessTrainingControls(container, deps = {}) {
       numberField("pt-markup-field-y1", "From Y", existing?.y1 ?? 10);
       numberField("pt-markup-field-x2", "To X", existing?.x2 ?? 100);
       numberField("pt-markup-field-y2", "To Y", existing?.y2 ?? 100);
+    } else if (kind === "symbol") {
+      const def = WORKFLOW_SYMBOLS.find((s) => s.id === resolvedSymbolType);
+      const intro = document.createElement("p");
+      intro.className = "dialog-sub";
+      intro.textContent = def ? `${def.name} — ${def.description}` : resolvedSymbolType;
+      shapeFields.appendChild(intro);
+      numberField("pt-markup-field-x", "X", existing?.x ?? 10);
+      numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
+      numberField("pt-markup-field-w", "Width", existing?.w ?? def?.defaultWidth ?? 100);
+      numberField("pt-markup-field-h", "Height", existing?.h ?? def?.defaultHeight ?? 50);
+      textField("pt-markup-field-label", "Label (optional)", existing?.label ?? "", MAX_SYMBOL_LABEL_LENGTH);
     } else {
       numberField("pt-markup-field-x", "X", existing?.x ?? 10);
       numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
-      const wrap = document.createElement("label");
-      wrap.className = "field block";
-      const span = document.createElement("span");
-      span.textContent = "Text";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.id = "pt-markup-field-text";
-      input.maxLength = MAX_TEXT_LENGTH;
-      input.value = existing?.text ?? "";
-      wrap.appendChild(span);
-      wrap.appendChild(input);
-      shapeFields.appendChild(wrap);
+      textField("pt-markup-field-text", "Text", existing?.text ?? "", MAX_TEXT_LENGTH);
     }
     const firstInput = shapeFields.querySelector("input");
     if (firstInput) firstInput.focus();
@@ -595,6 +661,16 @@ export function renderProcessTrainingControls(container, deps = {}) {
         y1: num("pt-markup-field-y1"),
         x2: num("pt-markup-field-x2"),
         y2: num("pt-markup-field-y2"),
+      };
+    }
+    if (kind === "symbol") {
+      return {
+        symbolType: activeShapeFormMode?.symbolType,
+        x: num("pt-markup-field-x"),
+        y: num("pt-markup-field-y"),
+        w: num("pt-markup-field-w"),
+        h: num("pt-markup-field-h"),
+        label: container.querySelector("#pt-markup-field-label").value,
       };
     }
     return {
