@@ -275,6 +275,92 @@ describe("symbolToDrawOps -> drawOpsToCanvas — real renderer integration (roun
   }
 });
 
+describe("symbolToDrawOps -> drawOpsToCanvas — overflow-sensitive regression (round 3 review)", () => {
+  // Round 2's fix made the renderer honor `maxWidth`; round 3 found that
+  // every test exercising that fix used a short label ("hi", "Step") that
+  // was already narrower than its box, so the bound itself was never
+  // actually load-bearing -- the tests proved argument-forwarding, not
+  // that overflow is actually prevented. This test uses a label at
+  // MAX_SYMBOL_LABEL_LENGTH's own cap, of a deliberately wide glyph, on
+  // the registry's smallest symbol, at the canvas's bottom-right valid
+  // edge -- the exact combination that would overflow both the box and
+  // the canvas if the fourth `fillText` argument were ever dropped again.
+  const CANVAS_W = 640;
+  const CANVAS_H = 480;
+  // A conservative LOWER-bound estimate of a single glyph's rendered
+  // width in px, at any plausible default canvas font size. jsdom has no
+  // real text-shaping engine to measure against, so this is a documented
+  // estimate, not a measured value -- but it's deliberately set far below
+  // what a real "W" glyph actually renders at, so if even this
+  // lowball estimate already exceeds the box's available width, the
+  // real uncompressed render would have overflowed by a wider margin
+  // still. This is what makes the assertion below a genuine negative
+  // control: it proves the specific label used here WOULD have
+  // overflowed without the bound, not merely that some text was sent.
+  const CHAR_WIDTH_ESTIMATE_PX = 6;
+
+  it("a max-length wide label on the registry's smallest symbol, placed flush to the canvas's bottom-right edge, still receives a maxWidth narrow enough to fit", () => {
+    // The smallest minWidth/minHeight across the whole registry (checked
+    // against every entry, not assumed) -- the tightest-fitting case.
+    const smallest = WORKFLOW_SYMBOLS.reduce((a, b) =>
+      a.minWidth * a.minHeight <= b.minWidth * b.minHeight ? a : b
+    );
+    const label = "W".repeat(MAX_SYMBOL_LABEL_LENGTH);
+    expect(label.length).toBe(MAX_SYMBOL_LABEL_LENGTH); // exactly at the cap, not past it
+    const x = CANVAS_W - smallest.minWidth;
+    const y = CANVAS_H - smallest.minHeight;
+    const shape = {
+      id: "m1-1",
+      x,
+      y,
+      ...validateSymbolPlacement(smallest.id, { w: smallest.minWidth, h: smallest.minHeight, label }),
+    };
+
+    const availableWidth = shape.w - 4 * 2; // mirrors workflow-symbols.js's own LABEL_INSET on both sides
+    const uncompressedEstimate = label.length * CHAR_WIDTH_ESTIMATE_PX;
+    // Negative control: even this deliberately low per-glyph estimate
+    // already dwarfs the box's available width -- proving this specific
+    // label/box combination is actually overflow-sensitive, not a case
+    // that would have passed either way.
+    expect(uncompressedEstimate).toBeGreaterThan(availableWidth);
+
+    const ctx = (() => {
+      const calls = [];
+      return {
+        calls,
+        set fillStyle(v) {},
+        set strokeStyle(v) {},
+        set lineWidth(v) {},
+        strokeRect: () => {},
+        fillRect: () => {},
+        beginPath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        closePath: () => {},
+        stroke: () => {},
+        fill: () => {},
+        fillText: function fillText(text, x, y) {
+          calls.push(["fillText", ...arguments]);
+        },
+      };
+    })();
+    drawOpsToCanvas(ctx, symbolToDrawOps(shape));
+
+    const fillTextCall = ctx.calls.find((c) => c[0] === "fillText" && c[1] === label);
+    expect(fillTextCall).toBeDefined();
+    const [, , calledX, , passedMaxWidth] = fillTextCall;
+    // The fourth argument actually arrived, and it's bounded to the box's
+    // own interior -- nowhere near the uncompressed estimate above.
+    expect(passedMaxWidth).toBeDefined();
+    expect(passedMaxWidth).toBeLessThan(uncompressedEstimate);
+    expect(passedMaxWidth).toBe(availableWidth);
+    // ...and therefore stays inside both the symbol's own box and the
+    // 640x480 canvas, even at this tightest-fitting edge placement.
+    expect(calledX + passedMaxWidth).toBeLessThanOrEqual(shape.x + shape.w);
+    expect(calledX + passedMaxWidth).toBeLessThanOrEqual(CANVAS_W);
+  });
+});
+
 describe("validateSymbolPlacement — shared validation rules", () => {
   it("fails closed on non-finite width/height", () => {
     expect(() => validateSymbolPlacement("process", { w: NaN, h: 50 })).toThrow(WorkflowSymbolError);
