@@ -462,6 +462,7 @@ input[type="search"] {
 }
 
 .pt-markup-toolbar { flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.pt-markup-canvas-size-row { flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0; }
 
 .pt-markup-shape-fields {
   display: flex;

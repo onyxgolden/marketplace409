@@ -16,6 +16,7 @@ import {
 } from "../process-guide-markup.js";
 import { WORKFLOW_SYMBOLS } from "../workflow-symbols.js";
 import { PID_SYMBOLS } from "../pid-symbols.js";
+import { PAPER_SIZES, LEGACY_CANVAS_ID, resolveCanvasSize, canvasSizeKey } from "../markup-canvas-sizes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -381,8 +382,11 @@ describe("PT-4: GuideMarkupOverlay — symbol kind", () => {
     expect(ops.some((o) => o.op === "text" && o.text === "Orders")).toBe(true);
   });
 
-  it("MARKUP_MODEL_VERSION is 2 and is a diagnostic constant only -- never written onto PT-2's guide", () => {
-    expect(MARKUP_MODEL_VERSION).toBe(2);
+  it("MARKUP_MODEL_VERSION is 3 and is a diagnostic constant only -- never written onto PT-2's guide", () => {
+    // 3, not the PT-4/PT-5 baseline of 2 -- bumped for the plotter-size
+    // slice's additive per-step canvas-size field (see this file's own
+    // header comment). Still never a persisted schema version.
+    expect(MARKUP_MODEL_VERSION).toBe(3);
     const guide = { schemaVersion: 1, source: "fixture", status: "draft_unverified", steps: [{ sequenceId: 1 }] };
     const overlay = new GuideMarkupOverlay();
     overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
@@ -524,8 +528,11 @@ describe("PT-5: GuideMarkupOverlay — pid.* symbol kind, via the shared symbol-
     expect(ops.some((o) => o.op === "text" && o.text === "E-101")).toBe(true);
   });
 
-  it("MARKUP_MODEL_VERSION stays 2 with a pid symbol present -- never bumped merely for allowlisted symbol IDs", () => {
-    expect(MARKUP_MODEL_VERSION).toBe(2);
+  it("MARKUP_MODEL_VERSION is 3 with a pid symbol present -- never bumped merely for allowlisted symbol IDs", () => {
+    // 3 per the plotter-size slice's own bump (see the other
+    // MARKUP_MODEL_VERSION test's comment) -- the point of this test is
+    // still that adding a PT-5 symbol alone never bumps it further.
+    expect(MARKUP_MODEL_VERSION).toBe(3);
     const guide = { schemaVersion: 1, source: "fixture", status: "draft_unverified", steps: [{ sequenceId: 1 }] };
     const overlay = new GuideMarkupOverlay();
     overlay.addShape(1, "symbol", { symbolType: "pid.rotating.generic_driver", x: 0, y: 0, w: 70, h: 70 });
@@ -533,5 +540,237 @@ describe("PT-5: GuideMarkupOverlay — pid.* symbol kind, via the shared symbol-
     expect(projected.source).toBe("fixture");
     expect(projected.status).toBe("draft_unverified");
     expect(projected).not.toHaveProperty("markupModelVersion");
+  });
+});
+
+describe("Plotter-size Slice A: GuideMarkupOverlay — per-step canvas size", () => {
+  it("defaults every new step to the legacy 640x480 canvas, unstamped behavior unchanged", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(overlay.canvasSizeFor(1)).toEqual({ id: "legacy", orientation: null, width: 640, height: 480 });
+  });
+
+  describe("canvasSizeFor returns a frozen identity (review finding, round 1)", () => {
+    // markup-canvas-sizes.js's own tests prove resolveCanvasSize itself
+    // returns frozen objects; these prove that guarantee actually reaches
+    // callers THROUGH this overlay, specifically closing the cross-step
+    // contamination the review named: every legacy-default step shares
+    // the one DEFAULT_CANVAS_SIZE instance by reference, so an unfrozen
+    // result would let mutating one step's returned object corrupt every
+    // other legacy step's bounds too.
+    it("the legacy-default canvas returned for a step is frozen; mutating it throws and leaves it (and the step) unchanged", () => {
+      const overlay = new GuideMarkupOverlay();
+      const size = overlay.canvasSizeFor(1);
+      expect(Object.isFrozen(size)).toBe(true);
+      expect(() => {
+        size.width = 999999;
+      }).toThrow(TypeError);
+      expect(overlay.canvasSizeFor(1).width).toBe(640);
+    });
+
+    it("a non-legacy canvas returned for a step is also frozen; mutating it throws and leaves it unchanged", () => {
+      const overlay = new GuideMarkupOverlay();
+      overlay.setCanvasSize(1, "ansi_b", "landscape");
+      const size = overlay.canvasSizeFor(1);
+      expect(Object.isFrozen(size)).toBe(true);
+      expect(() => {
+        size.width = 999999;
+      }).toThrow(TypeError);
+      expect(overlay.canvasSizeFor(1).width).toBe(17 * 96);
+    });
+
+    it("an attempted mutation of one legacy-default step's returned canvas cannot corrupt an UNRELATED legacy-default step's canvas (the exact cross-step scenario the review named)", () => {
+      const overlay = new GuideMarkupOverlay();
+      const size1 = overlay.canvasSizeFor(1); // never switched -- shares DEFAULT_CANVAS_SIZE by reference
+      try {
+        size1.width = 999999;
+      } catch {
+        /* expected -- frozen */
+      }
+      expect(overlay.canvasSizeFor(2)).toEqual({ id: "legacy", orientation: null, width: 640, height: 480 });
+    });
+
+    it("an attempted mutation of a returned canvas cannot widen what addShape will accept -- shape bounds stay governed by the real, unmutated canvas", () => {
+      const overlay = new GuideMarkupOverlay();
+      const size = overlay.canvasSizeFor(1); // legacy, 640x480
+      try {
+        size.width = 999999; // an attacker/bug trying to widen the legacy bound
+      } catch {
+        /* expected -- frozen */
+      }
+      // Still rejected: the real legacy width (640) governs validation,
+      // not whatever a caller tried to write onto the returned object.
+      expect(() => overlay.addShape(1, "rect", { x: 900, y: 10, w: 10, h: 10 })).toThrow(MarkupError);
+    });
+  });
+
+  for (const def of PAPER_SIZES) {
+    for (const orientation of ["landscape", "portrait"]) {
+      it(`switches an empty step to "${def.id}" ${orientation} and resolves exactly as markup-canvas-sizes.js would`, () => {
+        const overlay = new GuideMarkupOverlay();
+        const resolved = overlay.setCanvasSize(1, def.id, orientation);
+        expect(resolved).toEqual(resolveCanvasSize(def.id, orientation));
+        expect(overlay.canvasSizeFor(1)).toEqual(resolved);
+      });
+    }
+  }
+
+  it("fails closed on an unknown size id or invalid orientation, as MarkupError, without mutating the step's current size", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() => overlay.setCanvasSize(1, "not_a_size", "landscape")).toThrow(MarkupError);
+    expect(() => overlay.setCanvasSize(1, "ansi_b", "sideways")).toThrow(MarkupError);
+    expect(overlay.canvasSizeFor(1).id).toBe("legacy"); // unchanged
+  });
+
+  it("rejects switching a step that already has a shape, without mutating size or shapes", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 });
+    expect(() => overlay.setCanvasSize(1, "ansi_b", "landscape")).toThrow(MarkupError);
+    expect(overlay.canvasSizeFor(1).id).toBe("legacy");
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+  });
+
+  it("rejects switching a step that has undo history even after its shapes are individually deleted", () => {
+    const overlay = new GuideMarkupOverlay();
+    const id = overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 });
+    overlay.deleteShape(1, id); // shapes is now empty again, but undo/redo history is not
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+    expect(() => overlay.setCanvasSize(1, "ansi_b", "landscape")).toThrow(MarkupError);
+  });
+
+  it("allows switching again after clearStep (the brief's own 'offer explicit clear-step/history first')", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 });
+    expect(() => overlay.setCanvasSize(1, "ansi_b", "landscape")).toThrow(MarkupError);
+    overlay.clearStep(1);
+    expect(() => overlay.setCanvasSize(1, "ansi_b", "landscape")).not.toThrow();
+    expect(overlay.canvasSizeFor(1).id).toBe("ansi_b");
+  });
+
+  it("never migrates, rescales, or discards shapes merely because a later switch attempt is rejected", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "rect", { x: 10, y: 10, w: 20, h: 20 });
+    const before = overlay.shapesFor(1);
+    try {
+      overlay.setCanvasSize(1, "ansi_b", "landscape");
+    } catch {
+      /* expected */
+    }
+    expect(overlay.shapesFor(1)).toEqual(before);
+  });
+
+  it("validates a shape against the step's OWN current canvas, not the legacy default", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_b", "landscape"); // 1632x1056
+    // Well outside legacy's 640x480, but inside ansi_b landscape -- this
+    // must succeed, proving bounds really did move with the canvas.
+    expect(() => overlay.addShape(1, "rect", { x: 1000, y: 900, w: 50, h: 50 })).not.toThrow();
+  });
+
+  it("rejects a shape placed outside the step's actual (non-legacy) canvas edge", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_b", "portrait");
+    const size = resolveCanvasSize("ansi_b", "portrait");
+    expect(() => overlay.addShape(1, "rect", { x: size.width - 10, y: 0, w: 20, h: 10 })).toThrow(MarkupError);
+  });
+
+  it("mixed-size steps stay fully isolated -- each keeps its own canvas and bounds independently", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_e", "landscape"); // 4224x3264, the largest
+    overlay.setCanvasSize(2, "ansi_b", "landscape"); // 1632x1056, the smallest
+    expect(() => overlay.addShape(1, "rect", { x: 4000, y: 3000, w: 50, h: 50 })).not.toThrow();
+    expect(() => overlay.addShape(2, "rect", { x: 4000, y: 3000, w: 50, h: 50 })).toThrow(MarkupError);
+    expect(overlay.canvasSizeFor(1).id).toBe("ansi_e");
+    expect(overlay.canvasSizeFor(2).id).toBe("ansi_b");
+  });
+
+  it("sequenceId reorder/renumbering in a later compile does not move a step's own canvas size -- it's keyed by sequenceId, same as shapes", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(5, "arch_d", "portrait");
+    expect(overlay.canvasSizeFor(5).id).toBe("arch_d");
+    expect(overlay.canvasSizeFor(3).id).toBe("legacy"); // an unrelated sequenceId is unaffected
+  });
+
+  it("stamps every new shape with the step's current canvasId, preserved (not recomputed) across updateShape", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_b", "landscape");
+    const id = overlay.addShape(1, "rect", { x: 10, y: 10, w: 20, h: 20 });
+    const expectedKey = canvasSizeKey(resolveCanvasSize("ansi_b", "landscape"));
+    expect(overlay.shapesFor(1)[0].canvasId).toBe(expectedKey);
+    overlay.updateShape(1, id, { x: 50, y: 50 });
+    expect(overlay.shapesFor(1)[0].canvasId).toBe(expectedKey);
+  });
+
+  it("legacy-canvas shapes are stamped with the legacy canvasId -- 'legacy unstamped shapes mean legacy canvas only' holds as a real, checkable invariant", () => {
+    const overlay = new GuideMarkupOverlay();
+    const id = overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 }); // never called setCanvasSize
+    expect(overlay.shapesFor(1).find((s) => s.id === id).canvasId).toBe(canvasSizeKey({ id: "legacy", orientation: null }));
+  });
+
+  it("undo/redo stay within one canvas identity -- restoring a snapshot never changes the step's current canvas", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_b", "landscape");
+    overlay.addShape(1, "rect", { x: 10, y: 10, w: 20, h: 20 });
+    overlay.undo(1);
+    expect(overlay.canvasSizeFor(1).id).toBe("ansi_b"); // unchanged by undo
+    overlay.redo(1);
+    expect(overlay.canvasSizeFor(1).id).toBe("ansi_b"); // unchanged by redo
+  });
+
+  it("clearStep resets a step back to the legacy canvas (the explicit unlock point) and clearAll does the same for every step", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_b", "landscape");
+    overlay.setCanvasSize(2, "arch_c", "portrait");
+    overlay.clearStep(1);
+    expect(overlay.canvasSizeFor(1).id).toBe("legacy");
+    expect(overlay.canvasSizeFor(2).id).toBe("arch_c"); // untouched by clearStep(1)
+    overlay.clearAll();
+    expect(overlay.canvasSizeFor(2).id).toBe("legacy");
+  });
+
+  it("every workflow symbol fits a labeled placement at the largest sheet (ARCH E landscape)'s own edges", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "arch_e", "landscape"); // 4608x3456
+    const canvasSize = overlay.canvasSizeFor(1);
+    for (const def of WORKFLOW_SYMBOLS) {
+      const x = canvasSize.width - def.defaultWidth;
+      const y = canvasSize.height - def.defaultHeight;
+      expect(() =>
+        overlay.addShape(1, "symbol", { symbolType: def.id, x, y, w: def.defaultWidth, h: def.defaultHeight, label: "Edge" })
+      ).not.toThrow();
+      overlay.deleteShape(1, overlay.shapesFor(1).at(-1).id);
+    }
+  });
+
+  it("every P&ID symbol fits a labeled placement at the largest sheet (ARCH E landscape)'s own edges", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "arch_e", "landscape");
+    const canvasSize = overlay.canvasSizeFor(1);
+    for (const def of PID_SYMBOLS) {
+      const x = canvasSize.width - def.defaultWidth;
+      const y = canvasSize.height - def.defaultHeight;
+      expect(() =>
+        overlay.addShape(1, "symbol", { symbolType: def.id, x, y, w: def.defaultWidth, h: def.defaultHeight, label: "Edge" })
+      ).not.toThrow();
+      overlay.deleteShape(1, overlay.shapesFor(1).at(-1).id);
+    }
+  });
+
+  it("a text annotation's maxWidth stays bounded against the step's actual (larger) canvas, via resolveMarkupDrawOps's canvasSize parameter", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.setCanvasSize(1, "ansi_e", "landscape"); // 4224x3264
+    overlay.addShape(1, "text", { x: 4000, y: 100, text: "hi" });
+    const shapes = overlay.shapesFor(1);
+    const canvasSize = overlay.canvasSizeFor(1);
+    const ops = resolveMarkupDrawOps(shapes, canvasSize);
+    const textOp = ops.find((o) => o.op === "text");
+    expect(textOp.maxWidth).toBe(canvasSize.width - 4000);
+  });
+
+  it("resolveMarkupDrawOps without a canvasSize argument keeps its exact prior legacy-bounded behavior (default parameter, backward compatible)", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "text", { x: 600, y: 100, text: "hi" });
+    const ops = resolveMarkupDrawOps(overlay.shapesFor(1)); // no second argument
+    const textOp = ops.find((o) => o.op === "text");
+    expect(textOp.maxWidth).toBe(MARKUP_CANVAS.width - 600);
   });
 });

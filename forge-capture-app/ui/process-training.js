@@ -26,10 +26,13 @@ import { compileGuide, GuideCompileError } from "./process-guide-compiler.js";
 import {
   GuideMarkupOverlay,
   MarkupError,
-  MARKUP_CANVAS,
   MAX_TEXT_LENGTH,
   resolveMarkupDrawOps,
 } from "./process-guide-markup.js";
+// Plotter-size Slice A: the per-step paper-size catalog, imported
+// directly (never duplicated here) -- see that module's own header for
+// why forging an arbitrary width/height is structurally impossible.
+import { PAPER_SIZES, LEGACY_CANVAS_ID, ORIENTATIONS } from "./markup-canvas-sizes.js";
 // Reused exactly as-is (see process-guide-markup.js's own header comment
 // for the full reuse audit): drawOpsToCanvas is already decoupled from
 // where its `ops` came from, so it draws PT-3's markup ops unmodified.
@@ -180,6 +183,19 @@ export function renderProcessTrainingControls(container, deps = {}) {
           <p class="dialog-sub">Demo annotations only — an author-added overlay, never evidence. Never a real screenshot.</p>
           <canvas id="pt-markup-canvas" width="640" height="480" aria-label="Markup preview (placeholder, no image)"></canvas>
           <div class="status">No image in fixture guide — placeholder only.</div>
+
+          <div class="row pt-markup-canvas-size-row">
+            <label class="field inline">
+              <span>Paper size</span>
+              <select id="pt-markup-canvas-size"></select>
+            </label>
+            <label class="field inline">
+              <span>Orientation</span>
+              <select id="pt-markup-canvas-orientation"></select>
+            </label>
+            <button id="pt-markup-canvas-apply" type="button" class="ghost-btn small">Apply size</button>
+          </div>
+          <div id="pt-markup-canvas-status" class="status" role="status"></div>
 
           <div class="row pt-markup-toolbar">
             <button id="pt-markup-add-rect" type="button" class="ghost-btn small">Add rectangle</button>
@@ -447,6 +463,43 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const shapeStatus = $("pt-markup-shape-status");
   const markupPalette = $("pt-markup-palette");
   const markupPidPalette = $("pt-markup-pid-palette");
+  const canvasSizeSelect = $("pt-markup-canvas-size");
+  const canvasOrientationSelect = $("pt-markup-canvas-orientation");
+  const canvasApplyBtn = $("pt-markup-canvas-apply");
+  const canvasSizeStatus = $("pt-markup-canvas-status");
+
+  // Built once from the static catalog -- legacy first (the default),
+  // then every named paper size, mirroring the same "build once from a
+  // registry, never per-render" convention as the symbol palettes above.
+  (function buildCanvasSizeOptions() {
+    const legacyOpt = document.createElement("option");
+    legacyOpt.value = LEGACY_CANVAS_ID;
+    legacyOpt.textContent = "Legacy placeholder (640×480)";
+    canvasSizeSelect.appendChild(legacyOpt);
+    for (const size of PAPER_SIZES) {
+      const opt = document.createElement("option");
+      opt.value = size.id;
+      opt.textContent = size.name;
+      canvasSizeSelect.appendChild(opt);
+    }
+    for (const orientation of ORIENTATIONS) {
+      const opt = document.createElement("option");
+      opt.value = orientation;
+      opt.textContent = orientation === "landscape" ? "Landscape" : "Portrait";
+      canvasOrientationSelect.appendChild(opt);
+    }
+  })();
+
+  function syncCanvasSizePicker() {
+    if (activeMarkupSequenceId === null) return;
+    const canvasSize = markupOverlay.canvasSizeFor(activeMarkupSequenceId);
+    canvasSizeSelect.value = canvasSize.id;
+    // The legacy size has no orientation concept -- the control still
+    // shows a value (so it's never a bare empty select) but it's disabled
+    // while legacy is selected, since there is nothing for it to do.
+    canvasOrientationSelect.value = canvasSize.orientation ?? "landscape";
+    canvasOrientationSelect.disabled = canvasSize.id === LEGACY_CANVAS_ID;
+  }
 
   // Built once from a static registry (never per-render) and grouped by
   // `category` (the subgroup header), so adding a symbol to either
@@ -526,6 +579,19 @@ export function renderProcessTrainingControls(container, deps = {}) {
       : `#${activeMarkupSequenceId}`;
 
     const shapes = markupOverlay.shapesFor(activeMarkupSequenceId);
+    const canvasSize = markupOverlay.canvasSizeFor(activeMarkupSequenceId);
+
+    // Backing canvas dimensions follow the step's own resolved logical
+    // size (Slice A) -- drawOpsToCanvas/resolveMarkupDrawOps stay purely
+    // coordinate-based either way; only the attributes change here. CSS
+    // (see styles.css) fits the element visually within the panel without
+    // touching these attributes or introducing a second scale factor, so
+    // there is no DPI double-scaling anywhere in this path.
+    markupCanvas.width = canvasSize.width;
+    markupCanvas.height = canvasSize.height;
+    syncCanvasSizePicker();
+    canvasSizeStatus.textContent = "";
+    canvasSizeStatus.className = "status";
 
     // Neutral placeholder only -- never a real/fabricated screenshot,
     // regardless of this step's hasScreenshot value. Markup shapes are
@@ -534,10 +600,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
     // reuse audit).
     const ctx = markupCanvas.getContext("2d");
     if (ctx) {
-      ctx.clearRect(0, 0, MARKUP_CANVAS.width, MARKUP_CANVAS.height);
+      ctx.clearRect(0, 0, canvasSize.width, canvasSize.height);
       ctx.fillStyle = "#23262c";
-      ctx.fillRect(0, 0, MARKUP_CANVAS.width, MARKUP_CANVAS.height);
-      drawOpsToCanvas(ctx, resolveMarkupDrawOps(shapes));
+      ctx.fillRect(0, 0, canvasSize.width, canvasSize.height);
+      drawOpsToCanvas(ctx, resolveMarkupDrawOps(shapes, canvasSize));
     }
 
     markupUndoBtn.disabled = !markupOverlay.canUndo(activeMarkupSequenceId);
@@ -574,7 +640,16 @@ export function renderProcessTrainingControls(container, deps = {}) {
     }
   }
 
-  function numberField(id, labelText, value) {
+  /**
+   * `bounds` (Slice A) sets the field's `min`/`max` attributes to the
+   * step's own current canvas size, so the form's own numeric inputs
+   * reflect whichever size that step is actually using -- a purely
+   * additive, optional third parameter; every pre-existing call site that
+   * doesn't pass it keeps its exact prior (unbounded) behavior. This is
+   * an accessible native-input hint, not the enforcement point -- the
+   * real bound is still `GuideMarkupOverlay`'s own fail-closed validation.
+   */
+  function numberField(id, labelText, value, bounds) {
     const wrap = document.createElement("label");
     wrap.className = "field inline";
     const span = document.createElement("span");
@@ -583,6 +658,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
     input.type = "number";
     input.id = id;
     input.value = String(value ?? 0);
+    if (bounds) {
+      if (Number.isFinite(bounds.min)) input.min = String(bounds.min);
+      if (Number.isFinite(bounds.max)) input.max = String(bounds.max);
+    }
     wrap.appendChild(span);
     wrap.appendChild(input);
     shapeFields.appendChild(wrap);
@@ -623,30 +702,46 @@ export function renderProcessTrainingControls(container, deps = {}) {
     shapeStatus.textContent = "";
     shapeStatus.className = "status";
 
+    // Slice A: bounds every x/y/w/h field to the step's own current
+    // canvas size, not a hardcoded assumption -- the same resolved size
+    // renderMarkupPanel already uses for the canvas element itself.
+    const canvasSize =
+      activeMarkupSequenceId === null
+        ? { width: 640, height: 480 }
+        : markupOverlay.canvasSizeFor(activeMarkupSequenceId);
+    const xBounds = { min: 0, max: canvasSize.width };
+    const yBounds = { min: 0, max: canvasSize.height };
+
     if (kind === "rect") {
-      numberField("pt-markup-field-x", "X", existing?.x ?? 10);
-      numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
-      numberField("pt-markup-field-w", "Width", existing?.w ?? 50);
-      numberField("pt-markup-field-h", "Height", existing?.h ?? 50);
+      numberField("pt-markup-field-x", "X", existing?.x ?? 10, xBounds);
+      numberField("pt-markup-field-y", "Y", existing?.y ?? 10, yBounds);
+      numberField("pt-markup-field-w", "Width", existing?.w ?? 50, { min: 1, max: canvasSize.width });
+      numberField("pt-markup-field-h", "Height", existing?.h ?? 50, { min: 1, max: canvasSize.height });
     } else if (kind === "arrow") {
-      numberField("pt-markup-field-x1", "From X", existing?.x1 ?? 10);
-      numberField("pt-markup-field-y1", "From Y", existing?.y1 ?? 10);
-      numberField("pt-markup-field-x2", "To X", existing?.x2 ?? 100);
-      numberField("pt-markup-field-y2", "To Y", existing?.y2 ?? 100);
+      numberField("pt-markup-field-x1", "From X", existing?.x1 ?? 10, xBounds);
+      numberField("pt-markup-field-y1", "From Y", existing?.y1 ?? 10, yBounds);
+      numberField("pt-markup-field-x2", "To X", existing?.x2 ?? 100, xBounds);
+      numberField("pt-markup-field-y2", "To Y", existing?.y2 ?? 100, yBounds);
     } else if (kind === "symbol") {
       const def = findSymbolDefinition(resolvedSymbolType);
       const intro = document.createElement("p");
       intro.className = "dialog-sub";
       intro.textContent = def ? `${def.name} — ${def.description}` : resolvedSymbolType;
       shapeFields.appendChild(intro);
-      numberField("pt-markup-field-x", "X", existing?.x ?? 10);
-      numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
-      numberField("pt-markup-field-w", "Width", existing?.w ?? def?.defaultWidth ?? 100);
-      numberField("pt-markup-field-h", "Height", existing?.h ?? def?.defaultHeight ?? 50);
+      numberField("pt-markup-field-x", "X", existing?.x ?? 10, xBounds);
+      numberField("pt-markup-field-y", "Y", existing?.y ?? 10, yBounds);
+      numberField("pt-markup-field-w", "Width", existing?.w ?? def?.defaultWidth ?? 100, {
+        min: def?.minWidth ?? 1,
+        max: canvasSize.width,
+      });
+      numberField("pt-markup-field-h", "Height", existing?.h ?? def?.defaultHeight ?? 50, {
+        min: def?.minHeight ?? 1,
+        max: canvasSize.height,
+      });
       textField("pt-markup-field-label", "Label (optional)", existing?.label ?? "", MAX_SYMBOL_LABEL_LENGTH);
     } else {
-      numberField("pt-markup-field-x", "X", existing?.x ?? 10);
-      numberField("pt-markup-field-y", "Y", existing?.y ?? 10);
+      numberField("pt-markup-field-x", "X", existing?.x ?? 10, xBounds);
+      numberField("pt-markup-field-y", "Y", existing?.y ?? 10, yBounds);
       textField("pt-markup-field-text", "Text", existing?.text ?? "", MAX_TEXT_LENGTH);
     }
     const firstInput = shapeFields.querySelector("input");
@@ -727,6 +822,24 @@ export function renderProcessTrainingControls(container, deps = {}) {
     renderMarkupPanel();
   });
   $("pt-markup-close").addEventListener("click", () => closeMarkupPanel());
+
+  canvasSizeSelect.addEventListener("change", () => {
+    canvasOrientationSelect.disabled = canvasSizeSelect.value === LEGACY_CANVAS_ID;
+  });
+
+  canvasApplyBtn.addEventListener("click", () => {
+    if (activeMarkupSequenceId === null) return;
+    const sizeId = canvasSizeSelect.value;
+    const orientation = sizeId === LEGACY_CANVAS_ID ? undefined : canvasOrientationSelect.value;
+    try {
+      markupOverlay.setCanvasSize(activeMarkupSequenceId, sizeId, orientation);
+    } catch (err) {
+      canvasSizeStatus.textContent = err instanceof MarkupError ? err.message : String(err.message || err);
+      canvasSizeStatus.className = "status error";
+      return;
+    }
+    renderMarkupPanel();
+  });
 
   // Escape closes markup mode without discarding the session -- never a
   // keyboard shortcut that steals focus from an input while typing (only
