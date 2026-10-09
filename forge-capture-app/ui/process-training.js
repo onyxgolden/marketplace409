@@ -22,6 +22,7 @@ import {
   toEvidenceViewModel,
   summarizeEvidence,
 } from "./process-training-core.js";
+import { compileGuide, GuideCompileError } from "./process-guide-compiler.js";
 
 // Example targets only — PT-1C ships no live window enumeration (that
 // would be new native wiring, out of scope for this slice). A real
@@ -150,6 +151,13 @@ export function renderProcessTrainingControls(container, deps = {}) {
         <ul id="pt-loss-list" class="pt-loss-list"></ul>
         <h3>Events</h3>
         <ul id="pt-event-list" class="captures pt-event-list"></ul>
+
+        <h3>Compiled guide preview</h3>
+        <div id="pt-guide-badge" class="status warning pt-guide-badge" role="status">DEMO · DRAFT · NOT VERIFIED</div>
+        <div id="pt-guide-error" class="status error" role="status" hidden></div>
+        <ol id="pt-guide-steps" class="pt-guide-steps"></ol>
+        <ul id="pt-guide-warnings" class="pt-guide-warnings"></ul>
+
         <div class="dialog-actions">
           <button id="pt-review-discard-btn" type="button" class="ghost-btn">Discard this demo session</button>
         </div>
@@ -257,10 +265,9 @@ export function renderProcessTrainingControls(container, deps = {}) {
     renderReview();
     renderStep();
   });
-  $("pt-preview-discard-btn").addEventListener("click", () => {
-    session.discard();
-    renderStep();
-  });
+  // pt-preview-discard-btn's listener is registered further down,
+  // alongside pt-review-discard-btn/pt-new-session-btn, once
+  // clearGuidePreview (and the guide DOM refs it uses) exist.
 
   const reviewBanner = $("pt-review-banner");
   const sumEvents = $("pt-sum-events");
@@ -270,6 +277,75 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const sumGaps = $("pt-sum-gaps");
   const lossList = $("pt-loss-list");
   const eventList = $("pt-event-list");
+  const guideError = $("pt-guide-error");
+  const guideSteps = $("pt-guide-steps");
+  const guideWarnings = $("pt-guide-warnings");
+
+  function renderGuidePreview() {
+    guideError.hidden = true;
+    guideError.textContent = "";
+    guideSteps.innerHTML = "";
+    guideWarnings.innerHTML = "";
+
+    // Compiled fresh from session.evidence every time review is (re-)
+    // rendered -- never cached across a discard/reset/new-session, and
+    // never attempted outside the review state (renderStep hides this
+    // whole section otherwise).
+    let guide;
+    try {
+      guide = compileGuide(session.evidence, {
+        target: session.target,
+        trustScope: session.trustScope,
+      });
+    } catch (e) {
+      guideError.hidden = false;
+      guideError.textContent =
+        e instanceof GuideCompileError
+          ? `Guide could not be compiled: ${e.message}`
+          : `Guide could not be compiled: ${e.message || e}`;
+      return;
+    }
+
+    for (const step of guide.steps) {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <div class="meta">
+          <strong>${escapeHtml(step.action)}</strong>
+          <span>${escapeHtml(step.processName)} — ${escapeHtml(step.targetLabel)}</span>
+        </div>
+      `;
+      guideSteps.appendChild(li);
+      // A warning whose position is actually known from the evidence
+      // (never guessed) renders right after the step it follows.
+      for (const w of guide.warnings) {
+        if (w.type === "gap" && w.stepIndexHint === step.stepIndex) {
+          guideWarnings.appendChild(guideWarningItem(w, true));
+        }
+      }
+    }
+
+    for (const w of guide.warnings) {
+      if (w.type === "gap" && w.stepIndexHint !== null) continue; // already placed above
+      guideWarnings.appendChild(guideWarningItem(w, false));
+    }
+  }
+
+  function guideWarningItem(w, stepAdjacent) {
+    const li = document.createElement("li");
+    li.className = "pt-guide-warning" + (stepAdjacent ? " pt-guide-warning-adjacent" : "");
+    if (w.type === "gap") {
+      li.textContent = `Sequence gap (ids ${w.firstMissing}–${w.lastMissing}) — evidence missing, not invented.`;
+    } else if (w.type === "loss") {
+      li.textContent = `${LOSS_STAGE_LABELS[w.stage] || w.stage}: ${w.droppedCount} dropped.`;
+    } else if (w.type === "uncertain") {
+      li.textContent = `Shutdown reconciliation uncertain (last processed sequence: ${
+        w.lastProcessedSeq ?? "none"
+      }).`;
+    } else {
+      li.textContent = `Unrecognized warning: ${JSON.stringify(w)}`;
+    }
+    return li;
+  }
 
   function renderReview() {
     const viewModels = session.evidence.map(toEvidenceViewModel);
@@ -321,14 +397,34 @@ export function renderProcessTrainingControls(container, deps = {}) {
       `;
       eventList.appendChild(li);
     }
+
+    renderGuidePreview();
   }
 
+  // Per the PT-2 brief: discard/reset clears the compiled guide with the
+  // session -- not just visually, via the parent section's `hidden`
+  // (relying on that alone would leave a prior session's compiled guide
+  // sitting in the DOM, merely out of view, rather than actually gone).
+  function clearGuidePreview() {
+    guideError.hidden = true;
+    guideError.textContent = "";
+    guideSteps.innerHTML = "";
+    guideWarnings.innerHTML = "";
+  }
+
+  $("pt-preview-discard-btn").addEventListener("click", () => {
+    session.discard();
+    clearGuidePreview();
+    renderStep();
+  });
   $("pt-review-discard-btn").addEventListener("click", () => {
     session.discard();
+    clearGuidePreview();
     renderStep();
   });
   $("pt-new-session-btn").addEventListener("click", () => {
     session.reset();
+    clearGuidePreview();
     targetSelect.value = "";
     customRow.hidden = true;
     customInput.value = "";

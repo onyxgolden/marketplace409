@@ -123,6 +123,33 @@ reference to them. The disabled-capture banner is shown unconditionally,
 in every state. `SESSIONS_ENABLED` and the real pipeline are completely
 untouched by this slice.
 
+## PT-2 — guide compiler (fixture-only)
+
+`ui/process-guide-compiler.js` is a pure, deterministic compiler: turns a
+finalized fixture evidence array (the same shape PT-1C's review screen
+already shows, via `process-training-core.js`'s `toEvidenceViewModel`/
+`summarizeEvidence` — reused, not duplicated into a second schema) into
+an in-memory draft guide artifact (`schemaVersion`, `source: "fixture"`,
+`status: "draft_unverified"`, ordered steps, guide-level and
+step-adjacent warnings, a completeness summary). No persistence, no
+export, no AI calls, no network, no filesystem — nothing is written
+anywhere; the artifact exists only in memory for the life of the
+review screen's render.
+
+`sequenceId` is the one authoritative ordering signal (matching
+`RawHookEvent`'s own doc comment in `process_capture.rs`): the compiler
+sorts strictly by it and fails closed (`GuideCompileError`) rather than
+guessing at an order when it's missing, non-integer, or duplicated
+across events — a `Gap` is normal, already-honest evidence and becomes a
+warning instead, never a compile failure. A withheld or redacted step
+never carries its real control name/automation id into the guide
+(generic label only); `hasScreenshot` is the only screenshot-related
+field that ever appears, never an actual image or a reference to one.
+Minimal integration in `ui/process-training.js`: compiles only in the
+`review` state, from `session.evidence`, under a DEMO/DRAFT/NOT VERIFIED
+badge; discard/reset clears the compiled guide from the DOM, not just
+hides it.
+
 ## What is not yet wired
 
 - **No UI.** `process_capture_start_session`/`_stop_session` (Tauri

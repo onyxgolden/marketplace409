@@ -280,4 +280,117 @@ describe("structural guarantee — no live capture call anywhere in this module"
     expect(source).not.toContain("process_capture_start_session");
     expect(source).not.toContain("process_capture_stop_session");
   });
+
+  it("process-guide-compiler.js never references invoke() or the real session commands either", () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "process-guide-compiler.js"), "utf8");
+    expect(source).not.toMatch(/invoke\s*\(/);
+    expect(source).not.toContain("process_capture_start_session");
+    expect(source).not.toContain("process_capture_stop_session");
+  });
+});
+
+describe("renderProcessTrainingControls — PT-2 guide preview", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  it("compiles the guide only once review is actually reached -- no steps before then", () => {
+    const { container } = mountFresh();
+    expect(container.querySelector("#pt-guide-steps").children.length).toBe(0);
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    expect(container.querySelector("#pt-guide-steps").children.length).toBe(0);
+    container.querySelector("#pt-consent-confirm").click();
+    // consented_preview: consent granted, still not compiled -- compile
+    // only happens once the evidence actually exists, in review.
+    expect(container.querySelector("#pt-guide-steps").children.length).toBe(0);
+    container.querySelector("#pt-load-review-btn").click();
+    expect(container.querySelector("#pt-guide-steps").children.length).toBeGreaterThan(0);
+  });
+
+  it("shows the DEMO / DRAFT / NOT VERIFIED badge once in review", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    const badge = container.querySelector("#pt-guide-badge");
+    expect(badge.textContent).toContain("DEMO");
+    expect(badge.textContent).toContain("DRAFT");
+    expect(badge.textContent).toContain("NOT VERIFIED");
+  });
+
+  it("the disabled-capture banner stays visible even while the guide preview is showing", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    const banner = container.querySelector(".pt-disabled-banner");
+    expect(banner).not.toBeNull();
+    expect(banner.textContent.toLowerCase()).toContain("disabled");
+  });
+
+  it("renders every compiled step and keeps warnings visible", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    const steps = [...container.querySelectorAll("#pt-guide-steps li")];
+    expect(steps.length).toBeGreaterThan(0);
+    const warnings = [...container.querySelectorAll("#pt-guide-warnings li")];
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.some((li) => /gap|dropped|uncertain/i.test(li.textContent))).toBe(true);
+  });
+
+  it("never renders an actual screenshot image for a withheld/redacted step", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    expect(container.querySelectorAll("#pt-guide-steps img").length).toBe(0);
+    expect(container.querySelector("#pt-guide-steps").innerHTML).not.toMatch(/data:image|\.png|\.jpg/i);
+  });
+
+  it("shows a visible error (not a crash) when the compiler legitimately fails closed", () => {
+    const { container, session } = mountFresh({
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "X", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1, // duplicate -- sequence-integrity failure
+            kind: "Click",
+            point: [2, 2],
+            target: { name: "Y", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+      ],
+    });
+    advanceToReview(container);
+    const err = container.querySelector("#pt-guide-error");
+    expect(err.hidden).toBe(false);
+    expect(err.textContent.toLowerCase()).toContain("could not be compiled");
+    expect(session.state).toBe("review"); // did not crash the surrounding UI
+  });
+
+  it("clears the guide preview on discard/new session", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    expect(container.querySelectorAll("#pt-guide-steps li").length).toBeGreaterThan(0);
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(container.querySelector("#pt-review").hidden).toBe(true);
+    container.querySelector("#pt-new-session-btn").click();
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    // Guide steps list is cleared/rebuilt fresh, not carried over stale
+    // from the discarded session, until load-review runs again.
+    expect(container.querySelectorAll("#pt-guide-steps li").length).toBe(0);
+  });
 });

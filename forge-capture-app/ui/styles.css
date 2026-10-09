@@ -400,3 +400,44 @@ input[type="search"] {
   flex-direction: column;
   gap: 2px;
 }
+
+/* ---- PT-2: compiled guide preview (fixture-only, draft/unverified) ---- */
+
+.pt-guide-badge {
+  display: inline-block;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+}
+
+.pt-guide-steps {
+  list-style: decimal;
+  margin: 0 0 14px;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.pt-guide-steps .meta {
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pt-guide-warnings {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.pt-guide-warning { color: var(--warning); }
+.pt-guide-warning-adjacent { padding-left: 22px; }
