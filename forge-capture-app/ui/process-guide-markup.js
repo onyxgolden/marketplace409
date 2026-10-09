@@ -39,6 +39,19 @@
 //     private helper in that file, not exported; duplicated here rather
 //     than imported, which is not "a whole editor.")
 //
+// PT-4 adds one additive `symbol` kind (the ISO 5807 workflow-symbol
+// palette — see workflow-symbols.js's own header for the full reuse/
+// legal reasoning) on top of PT-3's three original kinds (`rect`,
+// `arrow`, `text`), which this module preserves unchanged: existing
+// shape data and undo snapshots round-trip exactly as before.
+// `MARKUP_MODEL_VERSION` is an in-memory diagnostic/projection constant
+// only — it is not a persisted schema version (there is no persistence),
+// and it never changes PT-2 guide's own `schemaVersion`/`source`/
+// `status`. This module still owns canvas-bounds validation (`x`, `y`,
+// and `x+w`/`y+h` against `MARKUP_CANVAS`); workflow-symbols.js owns only
+// a symbol's own minimum size and its label, since it has no notion of
+// where on the shared canvas a shape is placed.
+//
 // Everything here is an author-added OVERLAY, never evidence: kept
 // entirely separate from PT-2's compiled guide (process-guide-compiler.js)
 // and associated by the evidence's own immutable `sequenceId`, never by
@@ -54,9 +67,13 @@
 // change/compile-failure handlers drop the instance entirely, not just
 // hide it.
 
+import { validateSymbolPlacement, symbolToDrawOps, WorkflowSymbolError } from "./workflow-symbols.js";
+
 export const MARKUP_CANVAS = Object.freeze({ width: 640, height: 480 });
-export const MARKUP_SHAPE_KINDS = Object.freeze(["rect", "arrow", "text"]);
+export const MARKUP_SHAPE_KINDS = Object.freeze(["rect", "arrow", "text", "symbol"]);
 export const MAX_TEXT_LENGTH = 200;
+/** In-memory diagnostic/projection version only -- see this file's own header comment. */
+export const MARKUP_MODEL_VERSION = 2;
 const MAX_UNDO_DEPTH = 50;
 
 export class MarkupError extends Error {
@@ -111,6 +128,29 @@ function validateShapeInput(kind, data) {
       throw new MarkupError("invalid-shape", "arrow must have distinct endpoints");
     }
     return { kind, x1, y1, x2, y2 };
+  }
+  if (kind === "symbol") {
+    const { symbolType, x, y, w, h, label } = data;
+    if (!inBounds(x, y)) {
+      throw new MarkupError("invalid-shape", "symbol placement must be within the markup canvas bounds");
+    }
+    // Delegates the symbol's own minimum-size/label validation to
+    // workflow-symbols.js (never duplicated here); this function still
+    // owns the shared-canvas placement bounds, which that module has no
+    // notion of.
+    let normalized;
+    try {
+      normalized = validateSymbolPlacement(symbolType, { w, h, label });
+    } catch (e) {
+      if (e instanceof WorkflowSymbolError) {
+        throw new MarkupError("invalid-shape", e.message);
+      }
+      throw e;
+    }
+    if (!inBounds(x + normalized.w, y + normalized.h)) {
+      throw new MarkupError("invalid-shape", "symbol extends outside the markup canvas bounds");
+    }
+    return { kind, symbolType: normalized.symbolType, x, y, w: normalized.w, h: normalized.h, label: normalized.label };
   }
   // text
   const { x, y, text } = data;
@@ -321,6 +361,11 @@ export function resolveMarkupDrawOps(shapes) {
         color: MARKUP_COLOR,
         text: shape.text,
       });
+    } else if (shape.kind === "symbol") {
+      // Delegated entirely to workflow-symbols.js -- this module never
+      // duplicates symbol geometry, only wires the already-validated
+      // shape into the same draw-op pipeline the other three kinds use.
+      ops.push(...symbolToDrawOps(shape));
     }
   }
   return ops;

@@ -9,10 +9,12 @@ import {
   GuideMarkupOverlay,
   MarkupError,
   MARKUP_CANVAS,
+  MARKUP_MODEL_VERSION,
   MAX_TEXT_LENGTH,
   resolveMarkupDrawOps,
   projectGuideWithMarkup,
 } from "../process-guide-markup.js";
+import { WORKFLOW_SYMBOLS } from "../workflow-symbols.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -263,5 +265,129 @@ describe("structural guarantee — no capture, no IPC, no persistence, no DOM/HT
     // Matches actual innerHTML assignment/access, not this file's own
     // header comments discussing it in prose.
     expect(source).not.toMatch(/\.innerHTML\s*[=.]/);
+  });
+});
+
+describe("PT-4: GuideMarkupOverlay — symbol kind", () => {
+  it("adds every one of the 17 registry symbols at its own default size", () => {
+    const overlay = new GuideMarkupOverlay();
+    for (const def of WORKFLOW_SYMBOLS) {
+      expect(() =>
+        overlay.addShape(1, "symbol", {
+          symbolType: def.id,
+          x: 10,
+          y: 10,
+          w: def.defaultWidth,
+          h: def.defaultHeight,
+        })
+      ).not.toThrow();
+    }
+    expect(overlay.shapesFor(1)).toHaveLength(WORKFLOW_SYMBOLS.length);
+  });
+
+  it("legacy rect/arrow/text kinds still work unchanged alongside symbols", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 });
+    overlay.addShape(1, "arrow", { x1: 0, y1: 0, x2: 50, y2: 50 });
+    overlay.addShape(1, "text", { x: 0, y: 0, text: "hi" });
+    overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
+    expect(overlay.shapesFor(1).map((s) => s.kind)).toEqual(["rect", "arrow", "text", "symbol"]);
+  });
+
+  it("fails closed on an unknown symbolType", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() =>
+      overlay.addShape(1, "symbol", { symbolType: "not_a_symbol", x: 0, y: 0, w: 100, h: 50 })
+    ).toThrow(MarkupError);
+  });
+
+  it("fails closed on a symbol below its own registry minimum size", () => {
+    const overlay = new GuideMarkupOverlay();
+    const def = WORKFLOW_SYMBOLS.find((s) => s.id === "process");
+    expect(() =>
+      overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: def.minWidth - 1, h: def.defaultHeight })
+    ).toThrow(MarkupError);
+  });
+
+  it("fails closed on a symbol placed outside the shared markup canvas", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() =>
+      overlay.addShape(1, "symbol", {
+        symbolType: "process",
+        x: MARKUP_CANVAS.width - 10,
+        y: 0,
+        w: 100,
+        h: 50,
+      })
+    ).toThrow(MarkupError);
+  });
+
+  it("fails closed on an oversized symbol label", () => {
+    const overlay = new GuideMarkupOverlay();
+    expect(() =>
+      overlay.addShape(1, "symbol", {
+        symbolType: "process",
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 50,
+        label: "x".repeat(100),
+      })
+    ).toThrow(MarkupError);
+  });
+
+  it("undo/redo/delete work for symbol shapes exactly as for the legacy kinds", () => {
+    const overlay = new GuideMarkupOverlay();
+    const id = overlay.addShape(1, "symbol", { symbolType: "decision", x: 10, y: 10, w: 100, h: 70 });
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+    overlay.undo(1);
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+    overlay.redo(1);
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+    overlay.deleteShape(1, id);
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+  });
+
+  it("symbol placement and legacy shapes share one undo history per step, in order", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "rect", { x: 0, y: 0, w: 10, h: 10 });
+    overlay.addShape(1, "symbol", { symbolType: "process", x: 20, y: 20, w: 100, h: 50 });
+    expect(overlay.shapesFor(1)).toHaveLength(2);
+    overlay.undo(1); // undoes the symbol add
+    expect(overlay.shapesFor(1).map((s) => s.kind)).toEqual(["rect"]);
+  });
+
+  it("switching steps keeps each step's own symbol history separate", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
+    overlay.addShape(2, "symbol", { symbolType: "decision", x: 0, y: 0, w: 100, h: 70 });
+    expect(overlay.shapesFor(1)).toHaveLength(1);
+    expect(overlay.shapesFor(2)).toHaveLength(1);
+    overlay.undo(1);
+    expect(overlay.shapesFor(1)).toHaveLength(0);
+    expect(overlay.shapesFor(2)).toHaveLength(1); // untouched
+  });
+
+  it("resolveMarkupDrawOps renders a symbol shape via workflow-symbols.js, emitting only supported ops", () => {
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "database", x: 10, y: 10, w: 90, h: 60, label: "Orders" });
+    const ops = resolveMarkupDrawOps(overlay.shapesFor(1));
+    expect(ops.length).toBeGreaterThan(0);
+    const allowed = new Set(["rect", "line", "text"]);
+    for (const op of ops) {
+      expect(allowed.has(op.op)).toBe(true);
+    }
+    expect(ops.some((o) => o.op === "text" && o.text === "Orders")).toBe(true);
+  });
+
+  it("MARKUP_MODEL_VERSION is 2 and is a diagnostic constant only -- never written onto PT-2's guide", () => {
+    expect(MARKUP_MODEL_VERSION).toBe(2);
+    const guide = { schemaVersion: 1, source: "fixture", status: "draft_unverified", steps: [{ sequenceId: 1 }] };
+    const overlay = new GuideMarkupOverlay();
+    overlay.addShape(1, "symbol", { symbolType: "process", x: 0, y: 0, w: 100, h: 50 });
+    const projected = projectGuideWithMarkup(guide, overlay);
+    expect(projected.source).toBe("fixture");
+    expect(projected.status).toBe("draft_unverified");
+    expect(projected).not.toHaveProperty("markupModelVersion");
   });
 });

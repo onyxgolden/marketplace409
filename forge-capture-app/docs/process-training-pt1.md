@@ -176,7 +176,53 @@ image in fixture guide") is shown for every step regardless of
 withheld/redacted step's real control name into itself, and user-typed
 text is rendered via `textContent` only, never `innerHTML`. Discard/
 reset/a failed recompile clears all markup and closes the panel, not
-just hides it.
+just hides it (the compile-failure half of this was a real gap caught by
+round-1 review: `closeMarkupPanel()` alone deliberately preserves
+annotations for the ordinary close/reopen case, so the compiler's catch
+path has to call `markupOverlay.clearAll()` itself).
+
+## PT-4 — workflow symbol palette (fixture-only, original geometry)
+
+`ui/workflow-symbols.js` adds a 17-symbol v1 registry — the open **ISO
+5807** flowchart/workflow standard (Visio's own stencil borrows from the
+same standard; this registry is original, independently-authored
+geometry, never copied Visio artwork/stencil files/branding, and the
+palette is labelled "Workflow symbols" in the UI, never "Visio
+symbols"). Weighted toward SOP/procedure workflow documentation per
+Jason's stated audience (process/safety teams, IT/software training, any
+business); P&ID-style engineering stencils are explicitly out of scope
+for this slice.
+
+Renderer-compatibility audit (done first, per the brief): `drawOpsToCanvas`
+supports only `rect`, `fillRect`, `line`, `filledTriangle`, `text`,
+`blurRect`, `redactPlaceholder`, `callout` — no native polygon/path/curve
+op. Every symbol is therefore built from straight `line` segments (a
+stroked open or closed polyline) plus `rect` where a symbol genuinely is
+axis-aligned, plus one optional bounded `text` label. Curves (the
+cylinder's ellipse, the terminator's rounded ends, delay's D-curve,
+stored-data's bulging ends) are deterministic, bounded-segment-count
+polyline approximations of a true arc — never an unsupported curve op.
+Every symbol's geometry is expressed in local coordinates strictly within
+its own `[0,w] x [0,h]` placement rect, so it provably fits inside its
+own bounds by construction.
+
+`process-guide-markup.js` gained one additive `symbol` kind (`MARKUP_SHAPE_KINDS`
+now `rect`/`arrow`/`text`/`symbol`) delegating a symbol's own
+minimum-size/label validation to `workflow-symbols.js`, while still
+owning the shared canvas-bounds check itself. The three original PT-3
+kinds are unchanged — existing shape data and undo snapshots round-trip
+exactly as before. `MARKUP_MODEL_VERSION = 2` is an in-memory
+diagnostic/projection constant only; it is never written onto PT-2's own
+`schemaVersion`/`source`/`status`, since there is no persistence to
+version in the first place.
+
+The palette UI is categorized (Common / Flow control / Data & documents),
+built once from the static registry at setup time, with each symbol
+selected via a real keyboard-operable `<button>` that opens the existing
+labeled-input form pre-filled with that symbol's deterministic default
+size — palette-assisted form placement, not a drag-and-drop diagram
+editor. The three original toolbar buttons (rectangle/arrow/text) are
+unchanged and still present alongside it.
 
 ## What is not yet wired
 

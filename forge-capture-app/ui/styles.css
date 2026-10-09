@@ -498,3 +498,25 @@ input[type="search"] {
 }
 .pt-markup-shape-list li span { flex: 1; }
 .pt-markup-empty { color: var(--muted); }
+
+/* ---- PT-4: workflow symbol palette ---- */
+
+.pt-markup-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 16px;
+}
+.pt-markup-palette-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pt-markup-palette-group legend {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}

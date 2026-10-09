@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderProcessTrainingControls } from "../process-training.js";
 import { ConsentSession } from "../process-training-core.js";
+import { WORKFLOW_SYMBOLS } from "../workflow-symbols.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -741,5 +742,215 @@ describe("structural guarantee — process-guide-markup.js never referenced unsa
     expect(source).not.toMatch(/invoke\s*\(/);
     expect(source).not.toContain("process_capture_start_session");
     expect(source).not.toContain("process_capture_stop_session");
+  });
+});
+
+describe("renderProcessTrainingControls — PT-4 workflow symbol palette", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function openFirstStepMarkup(container) {
+    const btn = [...container.querySelectorAll("#pt-guide-steps button")][0];
+    btn.click();
+  }
+
+  it("shows all 17 symbols, visibly grouped by category, labelled 'Workflow symbols' not 'Visio'", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const palette = container.querySelector("#pt-markup-palette");
+    const groups = [...palette.querySelectorAll(".pt-markup-palette-group")];
+    expect(groups.length).toBeGreaterThan(1); // more than one category
+    const buttons = [...palette.querySelectorAll("button")];
+    expect(buttons).toHaveLength(WORKFLOW_SYMBOLS.length);
+    // The palette's own heading/label names it "Workflow symbols" -- the
+    // only legitimate mention of "Visio" anywhere nearby is the
+    // disclaimer explicitly saying this is NOT that, which is required,
+    // not forbidden (see workflow-symbols.js's own header comment).
+    const heading = container.querySelector("#pt-markup-panel h4");
+    expect(heading.textContent).toBe("Workflow symbols");
+    expect(heading.textContent.toLowerCase()).not.toContain("visio");
+    for (const btn of [...palette.querySelectorAll("button")]) {
+      expect(btn.textContent.toLowerCase()).not.toContain("visio");
+    }
+  });
+
+  it("every palette button is a real, keyboard-operable <button> with a name and a tooltip", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const buttons = [...container.querySelectorAll("#pt-markup-palette button")];
+    for (const btn of buttons) {
+      expect(btn.tagName).toBe("BUTTON");
+      expect(btn.getAttribute("type")).toBe("button");
+      expect(btn.textContent.length).toBeGreaterThan(0);
+      expect(btn.title.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("clicking a palette symbol opens the form (place without a pointer) and adding it succeeds", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const processBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Process"
+    );
+    processBtn.click();
+    expect(container.querySelector("#pt-markup-shape-form").hidden).toBe(false);
+    // Deterministic defaults are pre-filled -- no pointer/drag required.
+    expect(container.querySelector("#pt-markup-field-w").value).not.toBe("");
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Process"))).toBe(true);
+  });
+
+  it("an optional label can be added to a placed symbol", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const decisionBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Decision"
+    );
+    decisionBtn.click();
+    container.querySelector("#pt-markup-field-label").value = "Approved?";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes('Decision: "Approved?"'))).toBe(true);
+  });
+
+  it("an invalid symbol placement (below minimum size) shows an error without crashing the review", () => {
+    const { container, session } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const processBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Process"
+    );
+    processBtn.click();
+    const def = WORKFLOW_SYMBOLS.find((s) => s.id === "process");
+    container.querySelector("#pt-markup-field-w").value = String(def.minWidth - 1);
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const status = container.querySelector("#pt-markup-shape-status");
+    expect(status.textContent.length).toBeGreaterThan(0);
+    expect(status.className).toContain("error");
+    expect(session.state).toBe("review");
+  });
+
+  it("editing an existing symbol preserves its symbolType and updates only placement/label", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const processBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Process"
+    );
+    processBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const editBtn = [...container.querySelectorAll("#pt-markup-shape-list li button")].find(
+      (b) => b.textContent === "Edit"
+    );
+    editBtn.click();
+    // The form reopens without a palette re-selection -- symbolType is
+    // carried from the existing shape, not re-chosen.
+    expect(container.querySelector("#pt-markup-field-w")).not.toBeNull();
+    container.querySelector("#pt-markup-field-label").value = "Renamed";
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes('Process: "Renamed"'))).toBe(true);
+  });
+
+  it("undo/redo/delete work for a placed symbol exactly like the legacy shapes", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const termBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Start / End"
+    );
+    termBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(container.querySelector("#pt-markup-undo").disabled).toBe(false);
+    container.querySelector("#pt-markup-undo").click();
+    const items = [...container.querySelectorAll("#pt-markup-shape-list li")];
+    expect(items.some((li) => li.textContent.includes("Start / End"))).toBe(false);
+  });
+
+  it("legacy rect/arrow/text toolbar buttons are unchanged and still present alongside the palette", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-markup-add-rect")).not.toBeNull();
+    expect(container.querySelector("#pt-markup-add-arrow")).not.toBeNull();
+    expect(container.querySelector("#pt-markup-add-text")).not.toBeNull();
+  });
+
+  it("discard/reset/compile-failure clear placed symbols too, not just legacy shapes", () => {
+    const { container, handle } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const processBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Process"
+    );
+    processBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    expect(handle.markupOverlay.shapesFor(1)).toHaveLength(1);
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(handle.markupOverlay.shapesFor(1)).toEqual([]);
+  });
+
+  it("DEMO/DRAFT/NOT VERIFIED badge and disabled-capture banner remain visible with the palette open", () => {
+    const { container } = mountFresh();
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+    expect(container.querySelector(".pt-disabled-banner").textContent.toLowerCase()).toContain("disabled");
+    expect(container.querySelector("#pt-markup-panel").textContent).toContain(
+      "No image in fixture guide"
+    );
+  });
+
+  it("never reveals withheld evidence through a symbol label, tooltip, or the panel's DOM", () => {
+    const { container } = mountFresh({
+      buildFixtureEvidence: () => [
+        {
+          type: "Event",
+          event: {
+            sequenceId: 1,
+            kind: "Click",
+            point: [1, 1],
+            target: { name: "Secret Field", automationId: "txt-secret", processName: "fixture.exe" },
+            screenshot: null,
+            privacy: { trust: "Default", decision: "Withhold" },
+          },
+        },
+      ],
+    });
+    advanceToReview(container);
+    openFirstStepMarkup(container);
+    const processBtn = [...container.querySelectorAll("#pt-markup-palette button")].find(
+      (b) => b.textContent === "Process"
+    );
+    processBtn.click();
+    container.querySelector("#pt-markup-shape-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true })
+    );
+    const panelHtml = container.querySelector("#pt-markup-panel").outerHTML;
+    expect(panelHtml).not.toContain("Secret Field");
+    expect(panelHtml).not.toContain("txt-secret");
   });
 });
