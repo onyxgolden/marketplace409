@@ -549,6 +549,60 @@ describe("Plotter-size Slice A: GuideMarkupOverlay — per-step canvas size", ()
     expect(overlay.canvasSizeFor(1)).toEqual({ id: "legacy", orientation: null, width: 640, height: 480 });
   });
 
+  describe("canvasSizeFor returns a frozen identity (review finding, round 1)", () => {
+    // markup-canvas-sizes.js's own tests prove resolveCanvasSize itself
+    // returns frozen objects; these prove that guarantee actually reaches
+    // callers THROUGH this overlay, specifically closing the cross-step
+    // contamination the review named: every legacy-default step shares
+    // the one DEFAULT_CANVAS_SIZE instance by reference, so an unfrozen
+    // result would let mutating one step's returned object corrupt every
+    // other legacy step's bounds too.
+    it("the legacy-default canvas returned for a step is frozen; mutating it throws and leaves it (and the step) unchanged", () => {
+      const overlay = new GuideMarkupOverlay();
+      const size = overlay.canvasSizeFor(1);
+      expect(Object.isFrozen(size)).toBe(true);
+      expect(() => {
+        size.width = 999999;
+      }).toThrow(TypeError);
+      expect(overlay.canvasSizeFor(1).width).toBe(640);
+    });
+
+    it("a non-legacy canvas returned for a step is also frozen; mutating it throws and leaves it unchanged", () => {
+      const overlay = new GuideMarkupOverlay();
+      overlay.setCanvasSize(1, "ansi_b", "landscape");
+      const size = overlay.canvasSizeFor(1);
+      expect(Object.isFrozen(size)).toBe(true);
+      expect(() => {
+        size.width = 999999;
+      }).toThrow(TypeError);
+      expect(overlay.canvasSizeFor(1).width).toBe(17 * 96);
+    });
+
+    it("an attempted mutation of one legacy-default step's returned canvas cannot corrupt an UNRELATED legacy-default step's canvas (the exact cross-step scenario the review named)", () => {
+      const overlay = new GuideMarkupOverlay();
+      const size1 = overlay.canvasSizeFor(1); // never switched -- shares DEFAULT_CANVAS_SIZE by reference
+      try {
+        size1.width = 999999;
+      } catch {
+        /* expected -- frozen */
+      }
+      expect(overlay.canvasSizeFor(2)).toEqual({ id: "legacy", orientation: null, width: 640, height: 480 });
+    });
+
+    it("an attempted mutation of a returned canvas cannot widen what addShape will accept -- shape bounds stay governed by the real, unmutated canvas", () => {
+      const overlay = new GuideMarkupOverlay();
+      const size = overlay.canvasSizeFor(1); // legacy, 640x480
+      try {
+        size.width = 999999; // an attacker/bug trying to widen the legacy bound
+      } catch {
+        /* expected -- frozen */
+      }
+      // Still rejected: the real legacy width (640) governs validation,
+      // not whatever a caller tried to write onto the returned object.
+      expect(() => overlay.addShape(1, "rect", { x: 900, y: 10, w: 10, h: 10 })).toThrow(MarkupError);
+    });
+  });
+
   for (const def of PAPER_SIZES) {
     for (const orientation of ["landscape", "portrait"]) {
       it(`switches an empty step to "${def.id}" ${orientation} and resolves exactly as markup-canvas-sizes.js would`, () => {

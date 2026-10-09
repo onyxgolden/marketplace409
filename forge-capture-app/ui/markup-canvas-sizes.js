@@ -67,14 +67,26 @@ export class CanvasSizeError extends Error {
  *
  * @param {string} sizeId - `LEGACY_CANVAS_ID` or one of `PAPER_SIZES`' own ids
  * @param {"landscape"|"portrait"} [orientation] - required for a paper size; ignored (must be omitted or "landscape") for legacy, which has no orientation concept
- * @returns {{id: string, orientation: ("landscape"|"portrait"|null), width: number, height: number}}
+ * @returns {Readonly<{id: string, orientation: ("landscape"|"portrait"|null), width: number, height: number}>}
+ *
+ * Review finding (PR #600 round 1): without this, a resolved identity was
+ * an ordinary mutable object, and `DEFAULT_CANVAS_SIZE` below was a single
+ * SHARED instance assigned by reference to every step that had never
+ * called `setCanvasSize` -- so a caller holding one step's
+ * `canvasSizeFor()` result could write `size.width = ...` and silently
+ * corrupt every other legacy-default step's bounds too, bypassing the
+ * catalog-only derivation this module exists to guarantee. Every
+ * identity this function returns is now frozen -- in ES module strict
+ * mode, an assignment to a frozen object's property throws a TypeError
+ * rather than silently no-opping, so the bypass is closed, not just
+ * discouraged.
  */
 export function resolveCanvasSize(sizeId, orientation) {
   if (sizeId === LEGACY_CANVAS_ID) {
     if (orientation !== undefined && orientation !== null && orientation !== "landscape") {
       throw new CanvasSizeError("invalid-orientation", "the legacy canvas has no orientation concept");
     }
-    return { id: LEGACY_CANVAS_ID, orientation: null, width: LEGACY_WIDTH, height: LEGACY_HEIGHT };
+    return Object.freeze({ id: LEGACY_CANVAS_ID, orientation: null, width: LEGACY_WIDTH, height: LEGACY_HEIGHT });
   }
   const def = PAPER_SIZES_BY_ID.get(sizeId);
   if (!def) {
@@ -89,12 +101,12 @@ export function resolveCanvasSize(sizeId, orientation) {
   const landscape = orientation === "landscape";
   const widthIn = landscape ? def.widthIn : def.heightIn;
   const heightIn = landscape ? def.heightIn : def.widthIn;
-  return {
+  return Object.freeze({
     id: def.id,
     orientation,
     width: widthIn * LOGICAL_UNITS_PER_INCH,
     height: heightIn * LOGICAL_UNITS_PER_INCH,
-  };
+  });
 }
 
 /** The step default when no size has ever been explicitly chosen -- same 640x480 every pre-existing test/caller already assumes. */

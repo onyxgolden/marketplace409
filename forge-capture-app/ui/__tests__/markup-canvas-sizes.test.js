@@ -104,6 +104,43 @@ describe("DEFAULT_CANVAS_SIZE", () => {
   });
 });
 
+describe("resolveCanvasSize -- frozen identities (review finding, round 1)", () => {
+  // A caller holding a resolved identity must not be able to mutate it --
+  // resolveCanvasSize is supposed to be the ONLY source of a canvas's
+  // width/height, and DEFAULT_CANVAS_SIZE in particular is a single
+  // shared instance assigned by reference to every step that has never
+  // called setCanvasSize (see process-guide-markup.js's own _state()),
+  // so an unfrozen result would let one caller's mutation corrupt every
+  // other legacy-default step's bounds too.
+  it("every resolved identity is frozen, legacy and every paper size alike", () => {
+    expect(Object.isFrozen(resolveCanvasSize(LEGACY_CANVAS_ID))).toBe(true);
+    for (const def of PAPER_SIZES) {
+      expect(Object.isFrozen(resolveCanvasSize(def.id, "landscape"))).toBe(true);
+      expect(Object.isFrozen(resolveCanvasSize(def.id, "portrait"))).toBe(true);
+    }
+  });
+
+  it("DEFAULT_CANVAS_SIZE itself is frozen", () => {
+    expect(Object.isFrozen(DEFAULT_CANVAS_SIZE)).toBe(true);
+  });
+
+  it("an attempted mutation of a resolved identity throws (ES module strict mode) and leaves the value unchanged", () => {
+    const size = resolveCanvasSize("ansi_b", "landscape");
+    expect(() => {
+      size.width = 999999;
+    }).toThrow(TypeError);
+    expect(size.width).toBe(17 * LOGICAL_UNITS_PER_INCH); // unchanged
+  });
+
+  it("an attempted mutation of DEFAULT_CANVAS_SIZE throws and leaves it unchanged", () => {
+    expect(() => {
+      DEFAULT_CANVAS_SIZE.width = 999999;
+    }).toThrow(TypeError);
+    expect(DEFAULT_CANVAS_SIZE.width).toBe(640);
+    expect(DEFAULT_CANVAS_SIZE.height).toBe(480);
+  });
+});
+
 describe("canvasSizeKey", () => {
   it("is stable and distinct per id+orientation pair", () => {
     const a = canvasSizeKey(resolveCanvasSize("ansi_b", "landscape"));
