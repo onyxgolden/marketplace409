@@ -146,6 +146,94 @@ describe("WorkPackageDetailClient property display (Slice 2)", () => {
   });
 });
 
+describe("WorkPackageDetailClient Project field (D3)", () => {
+  function projectField(container) {
+    const terms = [...container.querySelectorAll("dt")];
+    const term = terms.find((dt) => dt.textContent === "Project");
+    return term?.nextElementSibling || null;
+  }
+
+  function openEdit(container) {
+    const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");
+    act(() => { editButton.click(); });
+  }
+
+  function setProjectInput(container, value) {
+    const input = container.querySelector("#edit_project_id");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
+    act(() => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+  }
+
+  async function saveEdit(container) {
+    const saveButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Save");
+    await act(async () => { saveButton.click(); });
+    await settle();
+  }
+
+  it("displays the saved Project in the read-only fields", () => {
+    stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, project_id: "Kent Ave turnover 2026" });
+    expect(projectField(container).textContent).toBe("Kent Ave turnover 2026");
+  });
+
+  it("shows an em dash when no Project is set", () => {
+    stubFetch();
+    const { container } = renderDetail(BASE_PKG);
+    expect(projectField(container).textContent).toBe("—");
+  });
+
+  it("initializes the edit input from the saved Project and PATCHes updates", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, project_id: "Old project" });
+    await settle();
+    openEdit(container);
+    const input = container.querySelector("#edit_project_id");
+    expect(input).not.toBeNull();
+    expect(input.value).toBe("Old project");
+    const labelEl = container.querySelector('label[for="edit_project_id"]');
+    expect(labelEl.textContent).toMatch(/Project \(optional\)/);
+    setProjectInput(container, "New project");
+    await saveEdit(container);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].project_id).toBe("New project");
+  });
+
+  it("clears Project to null when the edit input is blanked", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, project_id: "Old project" });
+    await settle();
+    openEdit(container);
+    setProjectInput(container, "   ");
+    await saveEdit(container);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].project_id).toBeNull();
+  });
+
+  it("cancel discards unsaved Project text; reopening shows the saved value", async () => {
+    stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, project_id: "Saved project" });
+    await settle();
+    openEdit(container);
+    setProjectInput(container, "Unsaved draft");
+    const cancelButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Cancel");
+    act(() => { cancelButton.click(); });
+    expect(projectField(container).textContent).toBe("Saved project");
+    openEdit(container);
+    expect(container.querySelector("#edit_project_id").value).toBe("Saved project");
+  });
+
+  it("keeps Project independent of the property picker on save", async () => {
+    const { patches } = stubFetch();
+    const { container } = renderDetail({ ...BASE_PKG, project_id: "Decker refresh", property_id: "1900-w-decker" });
+    await settle();
+    openEdit(container);
+    await saveEdit(container);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].project_id).toBe("Decker refresh");
+    expect(patches[0].property_id).toBe("1900-w-decker");
+  });
+});
+
 describe("WorkPackageDetailClient edit dates + stale errors (D6)", () => {
   function openEdit(container) {
     const editButton = [...container.querySelectorAll("button")].find((b) => b.textContent === "Edit");

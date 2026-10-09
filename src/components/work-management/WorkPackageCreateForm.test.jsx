@@ -140,6 +140,69 @@ describe("WorkPackageCreateForm property picker (Slice 2)", () => {
   });
 });
 
+describe("WorkPackageCreateForm Project field (D3)", () => {
+  function setProject(container, value) {
+    const input = container.querySelector("#project_id");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
+    act(() => {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  it("renders a labeled optional Project text input", async () => {
+    stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    const input = container.querySelector("#project_id");
+    expect(input).not.toBeNull();
+    expect(input.tagName).toBe("INPUT");
+    const labelEl = container.querySelector('label[for="project_id"]');
+    expect(labelEl).not.toBeNull();
+    expect(labelEl.textContent).toMatch(/Project \(optional\)/);
+  });
+
+  it("submits the typed project text in the create payload", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    setProject(container, "Kent Ave turnover 2026");
+    await submitCreate(container);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].project_id).toBe("Kent Ave turnover 2026");
+  });
+
+  it("submits null when Project is left blank", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    await submitCreate(container);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].project_id).toBeNull();
+  });
+
+  it("trims surrounding whitespace and treats whitespace-only as null", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    setProject(container, "   ");
+    await submitCreate(container);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].project_id).toBeNull();
+  });
+
+  it("keeps Project and Property independent in the payload", async () => {
+    const { posts } = stubFetch({ properties: CANONICAL_OPTIONS });
+    const { container } = renderForm();
+    await settle();
+    setProject(container, "Decker refresh");
+    selectProperty(container, "1900-w-decker");
+    await submitCreate(container);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].project_id).toBe("Decker refresh");
+    expect(posts[0].property_id).toBe("1900-w-decker");
+  });
+});
+
 describe("WorkPackageCreateForm Cancel (D4)", () => {
   function cancelLink(container) {
     return [...container.querySelectorAll("a")].find(

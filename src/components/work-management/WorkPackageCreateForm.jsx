@@ -23,6 +23,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
   const [propertyId, setPropertyId] = useState("");
   const [form, setForm] = useState({
     title: "", description: "", package_type: "other", priority: "normal",
+    project_id: "",
     planned_start: "", planned_finish: "",
     responsible_party: "", // display name; the full party record lives in Rung 2
     equipment_tag: "", unit: "", area: "", system: "",
@@ -67,6 +68,7 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
       body: JSON.stringify({
         title: form.title, description: form.description || null,
         package_type: form.package_type, priority: form.priority,
+        project_id: form.project_id.trim() || null,
         planned_start: form.planned_start || null, planned_finish: form.planned_finish || null,
         property_id: propertyId || null,
         responsible_party: form.responsible_party
@@ -100,6 +102,13 @@ export default function WorkPackageCreateForm({ initialPropertyId = "" }) {
           <div className="sm:col-span-2">
             <label className={label} htmlFor="description">Scope description</label>
             <textarea id="description" className={input} rows={3} value={form.description} onChange={set("description")} />
+          </div>
+          <div className="sm:col-span-2">
+            {/* Project is free text by design (D3): forge_work_packages.project_id
+                is a nullable text column with no picker/FK. Independent of the
+                property picker below — a package can carry either, both, or neither. */}
+            <label className={label} htmlFor="project_id">Project (optional)</label>
+            <input id="project_id" className={input} value={form.project_id} onChange={set("project_id")} />
           </div>
           <div>
             <label className={label} htmlFor="package_type">Type</label>

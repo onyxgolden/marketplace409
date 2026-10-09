@@ -36,7 +36,11 @@ function Field({ title, value }) {
 // keeps its controlled "" for an empty date; serialization to null happens
 // in onSaveEdit (and the service normalizes "" again as defense, D6).
 function editFormFromPackage(p) {
-  return { title: p.title, description: p.description || "", planned_finish: p.planned_finish || "", property_id: p.property_id || "" };
+  return {
+    title: p.title, description: p.description || "",
+    project_id: p.project_id || "",
+    planned_finish: p.planned_finish || "", property_id: p.property_id || "",
+  };
 }
 
 export default function WorkPackageDetailClient({ initial, initialLinks = [] }) {
@@ -120,6 +124,9 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
     // the raw "" must never reach the Postgres date column (D6).
     const { response } = await call(`/api/work-packages/${pkg.id}`, "PATCH", {
       ...editForm,
+      // Project is free text (D3): blank clears to null, typed text is kept
+      // verbatim after trimming. Independent of property_id.
+      project_id: (editForm.project_id || "").trim() || null,
       planned_finish: editForm.planned_finish || null,
       property_id: editForm.property_id || null,
     });
@@ -234,6 +241,10 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
               <textarea className={input} rows={3} value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
             </div>
             <div>
+              <label className={label} htmlFor="edit_project_id">Project (optional)</label>
+              <input id="edit_project_id" className={input} value={editForm.project_id} onChange={(e) => setEditForm({ ...editForm, project_id: e.target.value })} />
+            </div>
+            <div>
               <label className={label}>Planned finish</label>
               <input type="date" className={input} value={editForm.planned_finish} onChange={(e) => setEditForm({ ...editForm, planned_finish: e.target.value })} />
             </div>
@@ -269,6 +280,7 @@ export default function WorkPackageDetailClient({ initial, initialLinks = [] }) 
             <Field title="Title" value={pkg.title} />
             <Field title="Type" value={pkg.package_type?.replace(/_/g, " ")} />
             <Field title="Priority" value={pkg.priority} />
+            <Field title="Project" value={pkg.project_id} />
             <Field title="Responsible party" value={pkg.responsible_party?.display_name} />
             <div>
               <dt className="text-xs font-medium text-slate-500">Property</dt>
