@@ -19,7 +19,18 @@
  *     excludable by option and on by default;
  *   - segments below a length floor, which would otherwise turn hatching and
  *     text outlines into thousands of one-inch walls;
- *   - degenerate geometry the document model would reject anyway.
+ *   - degenerate geometry the document model would reject anyway;
+ *   - a path whose bounding box matches the sheet itself (the page
+ *     background or border frame is never architectural content, whatever
+ *     it's drawn as — this is a claim about the PAGE, not a guess about
+ *     which lines are walls);
+ *   - a FILLED, unstroked path made of many disconnected sub-loops. A real
+ *     architectural fill (a poché wall, a hatch boundary) is geometrically
+ *     ONE region; vector-outlined text decomposes into one closed loop per
+ *     glyph (each "o", "e", "a" — a letter with a hole — is itself two).
+ *     This is a geometric fact about compound shapes, not a claim about
+ *     what the text SAYS, so it stays honest: a single-loop fill (even a
+ *     wall-shaped one this importer can't tell from a leader line) is kept.
  *
  * Output: { kind, reason, detail } with kind ∈ wall | skipped.
  */
@@ -30,11 +41,44 @@ export const MIN_WALL_LENGTH_IN = 1;
 /** Default minimum segment length kept, in final plan inches. */
 export const DEFAULT_MIN_SEGMENT_IN = 6;
 
+/**
+ * A FILLED, unstroked path with more sub-polylines than this is treated as
+ * compound content (vector-outlined text, a complex multi-region clip),
+ * never a single architectural fill — see the module doc comment. Calibrated
+ * against the test house's title-block text (40+ sub-loops) while staying
+ * well clear of a real poché wall or a room-outline fill (one loop; two if
+ * it has a single hole, e.g. a column punched through it).
+ */
+export const MAX_FILLED_SUBPATHS = 3;
+
+/** How closely a path's bounding box must match the full sheet to count as the page border/background, as a fraction of each page dimension. */
+export const PAGE_FRAME_MATCH_FRACTION = 0.97;
+
 export const CLASSIFIER_DEFAULTS = Object.freeze({
   minSegmentIn: DEFAULT_MIN_SEGMENT_IN,
   includeDashed: false,
   includeFilledOutlines: true,
+  // { w, h } in the same (already-scaled) units as the path, or null to
+  // skip the page-frame/background check entirely (e.g. in unit tests that
+  // exercise a path in isolation with no page context).
+  pageBoundsIn: null,
 });
+
+function pathBounds(path) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const line of path.polylines) {
+    for (const p of line.points || []) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
 
 /**
  * Classify one path (already flattened, scaled, and in Designer inches).
@@ -58,6 +102,19 @@ export function classifyPath(path, options = {}) {
   }
   if (!path.stroked && path.filled && !opts.includeFilledOutlines) {
     return { kind: "skipped", reason: "filled region without an outline stroke", detail: null };
+  }
+  if (!path.stroked && path.filled && path.polylines.length > MAX_FILLED_SUBPATHS) {
+    return {
+      kind: "skipped",
+      reason: `compound filled region (${path.polylines.length} disconnected sub-loops — vector text or similar, not a single fill)`,
+      detail: null,
+    };
+  }
+  if (opts.pageBoundsIn && opts.pageBoundsIn.w > 0 && opts.pageBoundsIn.h > 0) {
+    const b = pathBounds(path);
+    if (b.w >= opts.pageBoundsIn.w * PAGE_FRAME_MATCH_FRACTION && b.h >= opts.pageBoundsIn.h * PAGE_FRAME_MATCH_FRACTION) {
+      return { kind: "skipped", reason: "matches the full sheet size (page border/background, not architecture)", detail: null };
+    }
   }
 
   const segments = [];
