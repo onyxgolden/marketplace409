@@ -38,9 +38,11 @@ patterns at zero marginal cost; do not copy the enterprise product.
 
 - **Pattern:** audits leases against billings to find gaps (unbilled charges,
   wrong amounts, stale schedules).
-- **FORGE mapping:** a Brain check that compares charges due vs. charges
-  posted vs. payments received per tenant — Eric's October state ($1,568 due,
-  partially paid) is literally a billing gap this would have flagged.
+- **FORGE mapping:** a Brain check that compares lease terms vs. charges
+  posted — flagging mismatches like a renewal increase never reflected in
+  the posted rent, or a recurring fee that stopped billing. (Not a
+  collections view: a partially paid charge is a payment state, not a
+  billing error — corrected per ChatGPT's PR #604 review, 2026-10-10.)
 - **Why steal it:** concrete, high-value, read-only detection; feeds the
   anomaly ranker without touching payments.
 - **Status:** backlog, unscoped.
