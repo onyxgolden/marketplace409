@@ -152,10 +152,38 @@ function longestEdge(points, closed) {
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     if (len > bestLen) {
       bestLen = len;
-      best = { a: { ...a }, b: { ...b }, length: len };
+      best = { a: { ...a }, b: { ...b }, length: len, index: i };
     }
   }
   return best;
+}
+
+/**
+ * True centerline of a long thin rectangle (4 corners, possibly closed with
+ * a duplicated first point), NOT either long edge itself: `longestEdge`
+ * only reports one of the two parallel long sides, and floating-point noise
+ * from each shape's own independent page transform can make either side
+ * come out "longest" for shapes that are really the same width. Two Wall
+ * shapes belonging to the same conceptual wall run (split into separate
+ * pieces by a door/window cut) could therefore resolve to centerlines a
+ * full wall-thickness apart instead of lining up — the actual cause of
+ * KNOWN GAP G3 (0 of 11 door/window shapes could rejoin their wall pieces,
+ * because the pieces weren't collinear any more once misclassified).
+ * Averaging each long edge's endpoint with its neighbor across the
+ * SHORT edge gives the same line regardless of which long edge, or which
+ * corner, the walk started from.
+ */
+function rectCenterline(points, longEdge) {
+  const n = points.length >= 2 && pointsEqual(points[0], points[points.length - 1]) ? points.length - 1 : points.length;
+  const at = (i) => points[((i % n) + n) % n];
+  const mid = (p, q) => ({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
+  return {
+    a: mid(at(longEdge.index), at(longEdge.index - 1)),
+    b: mid(at(longEdge.index + 1), at(longEdge.index + 2)),
+  };
+}
+function pointsEqual(p, q) {
+  return Math.abs(p.x - q.x) < 1e-6 && Math.abs(p.y - q.y) < 1e-6;
 }
 
 /**
@@ -216,10 +244,11 @@ export function classifyShape(shape, features) {
       const shortSide = Math.min(width, height);
       if (shortSide > 0 && longSide / shortSide >= 6) {
         const edge = longestEdge(pts, true);
+        const centerline = rectCenterline(pts, edge);
         return {
           kind: "wall",
           reason: "Wall master drawn as a long thin rectangle — mapped to its centerline segment.",
-          detail: { a: edge.a, b: edge.b, approximated: "thin-rectangle-centerline" },
+          detail: { a: centerline.a, b: centerline.b, approximated: "thin-rectangle-centerline" },
           ...base,
         };
       }
