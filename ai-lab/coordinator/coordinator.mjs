@@ -182,6 +182,42 @@ export function createCoordinator({ registry = null, channelStore = null, aliasM
     return valid;
   }
 
+  // Agreement evidence quality gates. A passed agreement check must (a) be
+  // bound to an explicit code head equal to the task's current head --
+  // exact-head verification happens on EVERY evaluation, and (b) carry an
+  // explicit checks payload with every required technical predicate true.
+  // Standing-rule precondition checks alone never close the registry/token
+  // agreement paths: the payload is validated on both.
+  const AGREEMENT_REQUIRED_CHECKS = ["exact_head_match", "zero_conflict_markers", "files_in_scope"];
+
+  function agreementHeadVerified(a, currentHead, reasons) {
+    if (currentHead == null) {
+      reasons.add(`agreement check at ${a.path} cannot be exact-head verified: the task's current head is unknown`);
+      return false;
+    }
+    if (a.code_head_sha == null) {
+      reasons.add(`agreement check at ${a.path} has no code head binding; an exact-head agreement requires an explicit head`);
+      return false;
+    }
+    if (a.code_head_sha !== currentHead) {
+      reasons.add(`agreement check at ${a.path} is bound to head ${a.code_head_sha}, not current head ${currentHead}`);
+      return false;
+    }
+    return true;
+  }
+
+  function agreementChecksVerified(a, reasons) {
+    const checks = a.checks ?? {};
+    const unmet = AGREEMENT_REQUIRED_CHECKS.filter((name) => checks[name] !== true);
+    if (unmet.length > 0) {
+      for (const name of unmet) {
+        reasons.add(`agreement check at ${a.path}: required check "${name}" is ${checks[name] === false ? "false" : "missing"}, not true`);
+      }
+      return false;
+    }
+    return true;
+  }
+
   // Muse agreement: counts only when independently attested (registry
   // entry binding the run to koe-sr, or a channel token covering the
   // agreement-check scope). Text attribution alone never suffices.
@@ -190,9 +226,11 @@ export function createCoordinator({ registry = null, channelStore = null, aliasM
     let sawHeadMismatch = false;
     for (const entry of record.agreementChecks) {
       const a = entry.artifact;
-      if (a.code_head_sha != null && currentHead != null && a.code_head_sha !== currentHead) {
+      const headOk = agreementHeadVerified(a, currentHead, reasons);
+      if (!headOk && a.code_head_sha != null && currentHead != null && a.code_head_sha !== currentHead) {
         sawHeadMismatch = true;
-        reasons.add(`agreement check at ${a.path} is bound to head ${a.code_head_sha}, not current head ${currentHead}`);
+      }
+      if (!headOk || !agreementChecksVerified(a, reasons)) {
         continue;
       }
       const claimed = principalKey(entry.attribution);

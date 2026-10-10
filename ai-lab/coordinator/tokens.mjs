@@ -37,8 +37,16 @@ export function validateRatificationToken(token, claim, now) {
   if (token.task_id != null && token.task_id !== claim.task_id) {
     reasons.push(`token is bound to task ${token.task_id}, not ${claim.task_id}`);
   }
-  if (token.code_head_sha != null && claim.code_head_sha != null && token.code_head_sha !== claim.code_head_sha) {
-    reasons.push(`token is bound to code head ${token.code_head_sha}, not ${claim.code_head_sha}`);
+  // A head-bound token is only as good as the claim's head binding. When
+  // the token binds to a code head, the claim MUST be bound to the same
+  // head -- a claim with a missing head binding does NOT satisfy a bound
+  // token (fail closed).
+  if (token.code_head_sha != null) {
+    if (claim.code_head_sha == null) {
+      reasons.push(`token is bound to code head ${token.code_head_sha}, but the claim has no code head binding`);
+    } else if (token.code_head_sha !== claim.code_head_sha) {
+      reasons.push(`token is bound to code head ${token.code_head_sha}, not ${claim.code_head_sha}`);
+    }
   }
   const nowMs = Date.parse(now);
   const issuedMs = Date.parse(token.issued_at);

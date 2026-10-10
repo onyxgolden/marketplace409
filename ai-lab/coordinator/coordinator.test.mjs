@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCoordinator } from "./coordinator.mjs";
 import { createTrustedProvenanceRegistry, createTrustedChannelStore } from "./trusted.mjs";
+import { validateRatificationToken } from "./tokens.mjs";
 import { UNRESOLVED_MUSE } from "./principals.mjs";
 
 // Phase 1 fixtures 1-18 (discovery notes v2-v6) ported to executable tests,
@@ -327,7 +328,8 @@ describe("Phase 1 fixtures 11-14 (v3 evidence validation, v4 standing rule)", ()
     });
     const out = coordinator.evaluate("task-1", { now: NOW });
     expect(out.flags.jason_authorized).toBe(false);
-    expect(out.reasons.join("\n")).toMatch(/standing-rule precondition not evidenced: zero_conflict_markers/);
+    expect(out.reasons.join("\n")).toMatch(/standing rule rule-code-tests requires an attested agreement check evidencing its preconditions/);
+    expect(out.reasons.join("\n")).toMatch(/required check "zero_conflict_markers" is missing, not true/);
   });
 });
 
@@ -559,6 +561,163 @@ describe("Phase 2 brief explicit cases", () => {
     expect(out.provenance).toBe("unknown");
     expect(out.reasons.join("\n")).toMatch(/not retroactively invalidated/);
   });
+
+describe("PR #603 NEEDS CHANGES fixes", () => {
+  it("token bound to head A with claim head null is invalid (unit)", () => {
+    const token = mkToken({ code_head_sha: HEAD_A });
+    const claim = { scope: "merge", task_id: "task-1", code_head_sha: null };
+    const result = validateRatificationToken(token, claim, NOW);
+    expect(result.valid).toBe(false);
+    expect(result.reasons.join("\n")).toMatch(/no code head binding/);
+  });
+
+  it("token bound to head A with claim head A is still valid (unit)", () => {
+    const token = mkToken({ code_head_sha: HEAD_A });
+    const claim = { scope: "merge", task_id: "task-1", code_head_sha: HEAD_A };
+    const result = validateRatificationToken(token, claim, NOW);
+    expect(result.valid).toBe(true);
+  });
+
+  it("token bound to head A does not authorize a task whose claim head is missing", () => {
+    const { coordinator } = setup({
+      registryEntries: attestedAgreementRegistry(),
+      tokens: [mkToken({ code_head_sha: HEAD_A })],
+    });
+    coordinator.ingest(mkTask({ code_head_sha: null }));
+    coordinator.ingest(mkSubmission({ code_head_sha: null }));
+    coordinator.ingest(mkReview({ verdict: "go", code_head_sha: null }));
+    coordinator.ingest(mkAgreement({ code_head_sha: null }));
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.jason_authorized).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/no code head binding/);
+  });
+
+  function registryPathSetup(checksOver = {}, agreementOver = {}) {
+    const { coordinator } = setup({
+      registryEntries: attestedAgreementRegistry(),
+      tokens: [mkToken()],
+    });
+    coordinator.ingest(mkTask());
+    coordinator.ingest(mkSubmission());
+    coordinator.ingest(mkReview({ verdict: "go" }));
+    coordinator.ingest(mkAgreement({ checks: checksOver, ...agreementOver }));
+    return coordinator;
+  }
+
+  it("registry path: agreement with a false check does not pass", () => {
+    const coordinator = registryPathSetup({
+      exact_head_match: true,
+      tests_rerun_pass: true,
+      zero_conflict_markers: false,
+      files_in_scope: true,
+    });
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(false);
+    expect(out.flags.merge_eligible).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/required check "zero_conflict_markers" is false/);
+  });
+
+  it("registry path: agreement with a missing check does not pass", () => {
+    const coordinator = registryPathSetup({
+      exact_head_match: true,
+      tests_rerun_pass: true,
+      // files_in_scope deliberately absent
+      zero_conflict_markers: true,
+    });
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(false);
+    expect(out.flags.merge_eligible).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/required check "files_in_scope" is missing/);
+  });
+
+  function tokenPathSetup(checksOver = {}, agreementOver = {}) {
+    const { coordinator } = setup({
+      tokens: [
+        mkToken({ token_id: "tok-merge" }),
+        mkToken({ token_id: "tok-agree", scope: "agreement-check", code_head_sha: HEAD_A }),
+      ],
+    });
+    coordinator.ingest(mkTask());
+    coordinator.ingest(mkSubmission());
+    coordinator.ingest(mkReview({ verdict: "go" }));
+    coordinator.ingest(mkAgreement({ evidence_run_id: "run-not-in-registry", checks: checksOver, ...agreementOver }));
+    return coordinator;
+  }
+
+  it("token path: agreement with a false check does not pass", () => {
+    const coordinator = tokenPathSetup({
+      exact_head_match: false,
+      tests_rerun_pass: true,
+      zero_conflict_markers: true,
+      files_in_scope: true,
+    });
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(false);
+    expect(out.flags.merge_eligible).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/required check "exact_head_match" is false/);
+  });
+
+  it("token path: agreement with no checks payload does not pass", () => {
+    const { coordinator } = setup({
+      tokens: [
+        mkToken({ token_id: "tok-merge" }),
+        mkToken({ token_id: "tok-agree", scope: "agreement-check", code_head_sha: HEAD_A }),
+      ],
+    });
+    coordinator.ingest(mkTask());
+    coordinator.ingest(mkSubmission());
+    coordinator.ingest(mkReview({ verdict: "go" }));
+    coordinator.ingest(mkAgreement({ evidence_run_id: "run-not-in-registry", checks: undefined }));
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(false);
+    expect(out.flags.merge_eligible).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/required check "exact_head_match" is missing/);
+  });
+
+  it("agreement evidence without a code head binding cannot qualify when the task head is known", () => {
+    const { coordinator } = setup({
+      registryEntries: attestedAgreementRegistry(),
+      tokens: [mkToken()],
+    });
+    coordinator.ingest(mkTask());
+    coordinator.ingest(mkSubmission());
+    coordinator.ingest(mkReview({ verdict: "go" }));
+    coordinator.ingest(mkAgreement({ code_head_sha: null }));
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(false);
+    expect(out.flags.merge_eligible).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/no code head binding; an exact-head agreement requires an explicit head/);
+  });
+
+  it("agreement evidence bound to a different head than the current head does not pass", () => {
+    const { coordinator } = setup({
+      registryEntries: attestedAgreementRegistry(),
+      tokens: [mkToken()],
+    });
+    coordinator.ingest(mkTask());
+    coordinator.ingest(mkSubmission());
+    coordinator.ingest(mkReview({ verdict: "go" }));
+    coordinator.ingest(mkAgreement({ code_head_sha: "head-other" }));
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(false);
+    expect(out.flags.merge_eligible).toBe(false);
+    expect(out.reasons.join("\n")).toMatch(/bound to head head-other, not current head/);
+  });
+
+  it("agreement evidence bound to the current head still passes when all required checks are true", () => {
+    const { coordinator } = setup({
+      registryEntries: attestedAgreementRegistry(),
+      tokens: [mkToken()],
+    });
+    coordinator.ingest(mkTask());
+    coordinator.ingest(mkSubmission());
+    coordinator.ingest(mkReview({ verdict: "go" }));
+    coordinator.ingest(mkAgreement());
+    const out = coordinator.evaluate("task-1", { now: NOW });
+    expect(out.flags.agreement_check_passed).toBe(true);
+    expect(out.flags.merge_eligible).toBe(true);
+  });
+});
 
   it("agreement attested via channel token (jason_ratified_process) also passes", () => {
     const { coordinator } = setup({
