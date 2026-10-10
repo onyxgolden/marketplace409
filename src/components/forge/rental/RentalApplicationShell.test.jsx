@@ -47,6 +47,7 @@ const EXPECTED_FUNCTION_IDS = [
   "charges", "deposits", "checks-deposits", "reconciliation", "bank-ledger", "vendors", "receipts", "chart-of-accounts", "batch-entry",
   "owners",
   "reports", "owner-statements", "tax-1099",
+  "tax-strategies", "finding-the-money",
   "financial-setup", "autopay", "support", "rentec-migration", "rentec-files", "rentec-payment-import", "rentec-financial-history-import", "terminology", "team", "setup-guide",
 ];
 
@@ -125,11 +126,22 @@ describe("RentalApplicationShell navigation reachability (quieted nav rail)", ()
   });
 });
 
-describe("RentalApplicationShell nine-section Rentec-style registry", () => {
-  it("exposes exactly the nine Rentec-style sections, in order", () => {
+describe("RentalApplicationShell ten-section Rentec-style registry", () => {
+  it("exposes exactly the ten sections, in order (Learn added 2026-10-10 for the education package)", () => {
     expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual([
-      "Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Settings",
+      "Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Learn", "Settings",
     ]);
+  });
+
+  it("homes the two education pages under Learn with stable function ids", () => {
+    const learn = RENTAL_NAVIGATION.find((group) => group.label === "Learn");
+    expect(learn.items).toEqual([
+      { id: "tax-strategies", label: "Tax Strategies" },
+      { id: "finding-the-money", label: "Finding the Money" },
+    ]);
+    expect(buildRentalSurface("tax-strategies")).toBeTruthy();
+    expect(buildRentalSurface("finding-the-money")).toBeTruthy();
+    expect(resolveRentalSectionParam("learn")).toBe("tax-strategies");
   });
 
   it("keeps every surviving function id byte-identical, in the new section order", () => {
@@ -174,7 +186,7 @@ describe("RentalApplicationShell nine-section Rentec-style registry", () => {
   it("keeps Summary first so retired ids fall back to overview, and never offers Summary as hideable", () => {
     expect(RENTAL_FUNCTIONS[0].id).toBe("overview");
     expect(HIDEABLE_SIDEBAR_SECTIONS.map(({ sectionLabel }) => sectionLabel)).toEqual([
-      "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Settings",
+      "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Learn", "Settings",
     ]);
   });
 
@@ -328,7 +340,7 @@ describe("RentalApplicationShell", () => {
     expect(markup).toContain("Rental operations");
     expect(markup).toContain("Loading rental summary");
     expect(markup).toContain('aria-label="Rental Manager functions"');
-    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Settings"]);
+    expect(RENTAL_NAVIGATION.map(({ label }) => label)).toEqual(["Summary", "Properties", "Tenants", "Leasing", "Banking", "Owners", "Reports", "Tax", "Learn", "Settings"]);
   });
   it("renders the first-tenant readiness surface as its own reachable function", () => {
     const markup = renderToStaticMarkup(buildRentalSurface("readiness"));
