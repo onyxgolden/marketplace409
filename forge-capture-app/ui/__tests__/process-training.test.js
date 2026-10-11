@@ -2394,4 +2394,156 @@ describe("renderProcessTrainingControls — PT-6 Slice E fixture guide export", 
     expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB/);
     expect(source).not.toMatch(/\.submit\(|\.print\(|mailto:|https?:\/\//);
   });
+
+  describe("default download adapter cleanup (E-003)", () => {
+    // These tests exercise the REAL default adapter (no injected dep)
+    // with stubbed URL/document globals, through the actual button.
+    function stubUrl() {
+      const created = [];
+      const revoked = [];
+      const realCreate = URL.createObjectURL;
+      const realRevoke = URL.revokeObjectURL;
+      URL.createObjectURL = () => {
+        const u = `blob:e003-${created.length}`;
+        created.push(u);
+        return u;
+      };
+      URL.revokeObjectURL = (u) => {
+        revoked.push(u);
+      };
+      return {
+        created,
+        revoked,
+        restore() {
+          URL.createObjectURL = realCreate;
+          URL.revokeObjectURL = realRevoke;
+        },
+      };
+    }
+
+    function clickExport(container) {
+      container.querySelector("#pt-export-guide-btn").click();
+    }
+
+    function expectUnavailable(container) {
+      const err = container.querySelector("#pt-export-error");
+      expect(err.hidden).toBe(false);
+      expect(err.textContent).toContain("unavailable");
+      expect(container.querySelector("#pt-export-status").hidden).toBe(true);
+    }
+
+    it("revokes exactly once when anchor creation throws", () => {
+      const { container } = mountFresh();
+      advanceToReview(container);
+      const url = stubUrl();
+      const createSpy = vi
+        .spyOn(document, "createElement")
+        .mockImplementationOnce(() => {
+          throw new Error("createElement boom");
+        });
+      try {
+        clickExport(container);
+      } finally {
+        createSpy.mockRestore();
+        url.restore();
+      }
+      expect(url.created.length).toBe(1);
+      expect(url.revoked).toEqual(url.created); // exactly-once revocation
+      expectUnavailable(container);
+    });
+
+    it("revokes exactly once when appendChild throws", () => {
+      const { container } = mountFresh();
+      advanceToReview(container);
+      const url = stubUrl();
+      const appendSpy = vi
+        .spyOn(document.body, "appendChild")
+        .mockImplementationOnce(() => {
+          throw new Error("append boom");
+        });
+      try {
+        clickExport(container);
+      } finally {
+        appendSpy.mockRestore();
+        url.restore();
+      }
+      expect(url.created.length).toBe(1);
+      expect(url.revoked).toEqual(url.created);
+      expectUnavailable(container);
+    });
+
+    it("revokes exactly once when anchor click throws", () => {
+      const { container } = mountFresh();
+      advanceToReview(container);
+      const url = stubUrl();
+      const realAnchor = document.createElement("a");
+      const createSpy = vi
+        .spyOn(document, "createElement")
+        .mockReturnValueOnce(realAnchor);
+      const clickSpy = vi
+        .spyOn(realAnchor, "click")
+        .mockImplementationOnce(() => {
+          throw new Error("click boom");
+        });
+      try {
+        clickExport(container);
+      } finally {
+        clickSpy.mockRestore();
+        createSpy.mockRestore();
+        url.restore();
+      }
+      expect(url.created.length).toBe(1);
+      expect(url.revoked).toEqual(url.created);
+      expectUnavailable(container);
+    });
+
+    it("revocation survives anchor-removal failure", () => {
+      const { container } = mountFresh();
+      advanceToReview(container);
+      const url = stubUrl();
+      const removeSpy = vi
+        .spyOn(document.body, "removeChild")
+        .mockImplementationOnce(() => {
+          throw new Error("remove boom");
+        });
+      try {
+        clickExport(container);
+      } finally {
+        removeSpy.mockRestore();
+        url.restore();
+      }
+      expect(url.created.length).toBe(1);
+      expect(url.revoked).toEqual(url.created); // removal error never blocks revoke
+      expectUnavailable(container);
+    });
+
+    it("happy path still revokes exactly once after a successful click", () => {
+      const { container } = mountFresh();
+      advanceToReview(container);
+      const url = stubUrl();
+      const clicked = [];
+      const realAnchor = document.createElement("a");
+      const createSpy = vi
+        .spyOn(document, "createElement")
+        .mockReturnValueOnce(realAnchor);
+      const clickSpy = vi
+        .spyOn(realAnchor, "click")
+        .mockImplementationOnce(() => {
+          clicked.push(realAnchor.href);
+        });
+      try {
+        clickExport(container);
+      } finally {
+        clickSpy.mockRestore();
+        createSpy.mockRestore();
+        url.restore();
+      }
+      expect(url.created.length).toBe(1);
+      expect(clicked).toEqual(url.created);
+      expect(url.revoked).toEqual(url.created);
+      expect(realAnchor.parentNode).toBeNull(); // anchor removed
+      const status = container.querySelector("#pt-export-status");
+      expect(status.hidden).toBe(false);
+    });
+  });
 });

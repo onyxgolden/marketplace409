@@ -21,6 +21,7 @@ import {
   GUIDE_EXPORT_FORMATS,
   GUIDE_EXPORT_LAYOUT,
   GUIDE_EXPORT_WATERMARK,
+  FIXED_COVER_PROSE,
 } from "../process-guide-export.js";
 import { GUIDE_SCHEMA_VERSION } from "../process-guide-compiler.js";
 
@@ -405,13 +406,85 @@ describe("targeted negatives — envelope options", () => {
       expect(artifact.manifest.guideId).toBe(guideId);
     }
   });
+
+  it("keeps claim-like guide ids verbatim instead of tripping the prose audit (E-002)", () => {
+    const guide = makeGuide({ steps: 1 });
+    for (const guideId of ["approved", "successful", "completed", "my-approved-flow_v2.0"]) {
+      const artifact = exportGuideDocument(exportArgs(guide, { guideId }));
+      const html = decodeHtml(artifact);
+      // Verbatim (escaped) in cover, manifest, and filename.
+      expect(html).toContain(`<dd>${guideId}</dd>`);
+      expect(html).toContain(`<title>Fixture guide document — ${guideId}</title>`);
+      expect(artifact.manifest.guideId).toBe(guideId);
+      expect(artifact.filename).toBe(`${guideId}.html`);
+    }
+  });
+
+  it("rejects hostile ids as invalid-guide-id, never as prose and never accepted", () => {
+    const guide = makeGuide({ steps: 1 });
+    for (const guideId of ["<img src=x>", "<script>alert(1)</script>", "a&b", 'q"uote']) {
+      expectExportError(() => exportGuideDocument(exportArgs(guide, { guideId })), "invalid-guide-id");
+    }
+  });
+
+  it("pins the fixed cover prose the claim audit scans (E-002)", () => {
+    // The audit must see exactly these module-authored literals — no
+    // interpolated source metadata — so the list itself is pinned.
+    expect(FIXED_COVER_PROSE).toEqual([
+      "Fixture Guide Document",
+      "Guide ID",
+      "Source",
+      "fixture",
+      "Status",
+      "draft_unverified (draft — not verified)",
+      "Steps",
+      "Warnings",
+      "Completeness",
+      "no gaps, losses, or reconciliation uncertainty reported",
+      "gaps, losses, or reconciliation uncertainty reported",
+      "events",
+      "withheld",
+      "redacted",
+      "proceeded",
+      "gaps",
+      "This is a demo fixture guide. It is a draft and has not been verified.",
+      "It describes recorded fixture evidence only and asserts no outcome.",
+    ]);
+    // And the audit passes on exactly those literals (a successful
+    // export below re-runs the same audit at render time).
+    const guide = makeGuide({ steps: 1 });
+    expect(() => exportGuideDocument(exportArgs(guide))).not.toThrow();
+  });
 });
 
 describe("targeted negatives — bounds and escaping", () => {
   it("rejects overlong values instead of truncating source truth", () => {
     const guide = makeGuide({ steps: 1 });
-    guide.steps[0].action = "x".repeat(501);
+    guide.steps[0].action = "x".repeat(121);
     expectExportError(() => exportGuideDocument(exportArgs(guide)), "overlong-field");
+  });
+
+  it("accepts fields at the 120-char print-geometry bound", () => {
+    const guide = makeGuide({ steps: 1 });
+    const atBound = "x".repeat(120);
+    guide.steps[0].action = atBound;
+    guide.steps[0].targetLabel = atBound;
+    guide.steps[0].processName = atBound;
+    guide.steps[0].decision = atBound;
+    const artifact = exportGuideDocument(exportArgs(guide));
+    expect(artifact.pageCount).toBe(2);
+    expect(decodeHtml(artifact)).toContain(atBound);
+  });
+
+  it("pins the print geometry: border-box page box exactly the printable area", () => {
+    const guide = makeGuide({ steps: 1 });
+    const html = decodeHtml(exportGuideDocument(exportArgs(guide)));
+    // Letter portrait, 0.75in @page margins -> 9.5in printable height.
+    // The page box must equal it INCLUDING padding (E-001).
+    expect(html).toContain("box-sizing: border-box");
+    expect(html).toMatch(/\.pt-export-page\s*\{[^}]*height:\s*9\.5in/);
+    expect(html).not.toMatch(/\.pt-export-page\s*\{[^}]*min-height/);
+    expect(html).not.toContain("overflow: hidden");
   });
 
   it("rejects oversized guides instead of truncating pages", () => {

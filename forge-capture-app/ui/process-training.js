@@ -135,15 +135,27 @@ function escapeHtml(s) {
 function defaultDownloadGuideArtifact(artifact) {
   const blob = new Blob([artifact.bytes], { type: artifact.mime });
   const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
+  // The cleanup-protected region starts IMMEDIATELY after URL
+  // acquisition: anchor creation itself can throw (E-003), and the URL
+  // must still be revoked exactly once on every path. Revocation is
+  // nested inside its own finally so even an anchor-removal error cannot
+  // skip it; a removal error then propagates so the UI reports
+  // unavailable instead of a false success.
+  let anchor = null;
   try {
+    anchor = document.createElement("a");
     anchor.href = objectUrl;
     anchor.download = artifact.filename;
     document.body.appendChild(anchor);
     anchor.click();
   } finally {
-    if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
-    URL.revokeObjectURL(objectUrl);
+    try {
+      if (anchor !== null && anchor.parentNode) {
+        anchor.parentNode.removeChild(anchor);
+      }
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   }
 }
 

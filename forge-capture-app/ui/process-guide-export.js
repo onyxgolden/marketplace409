@@ -60,11 +60,24 @@ export const GUIDE_EXPORT_WATERMARK = Object.freeze({
 
 export const GUIDE_ID_PATTERN = /^[A-Za-z0-9._-]{1,80}$/;
 
+// Fixed module-authored cover prose, exported so tests can pin the exact
+// literals the verification-claim audit scans (E-002).
+
 // Fixed bounded maximums. Overlong values are rejected with
 // GuideExportError — source truth is never silently truncated.
+//
+// MAX_FIELD_LENGTH is a print-geometry bound, not an arbitrary cap:
+// every variable rendered field (step action/targetLabel/processName/
+// decision, loss-warning stage) shares it, and the worst accepted case —
+// a step page with all four fields at this length in full-width CJK —
+// was rendered to PDF in headless Chromium (Letter, @page 0.75in
+// margins, border-box 9.5in page box) with the content bottom at 604pt
+// against the 738pt printable bottom: 134pt (~9 lines) of margin, so no
+// accepted content can spill onto an unwatermarked continuation page.
+// See the E-001 rendered-PDF evidence in the Slice E report.
 const MAX_STEPS = 500;
 const MAX_WARNINGS = 100;
-const MAX_FIELD_LENGTH = 500;
+const MAX_FIELD_LENGTH = 120;
 const MAX_ATTEMPT_DETAIL_LENGTH = 300;
 
 // Words that would make generated wording assert an outcome the pass
@@ -312,8 +325,39 @@ function renderPage({ pageNum, pageCount, title, bodyHtml }) {
 
 const IMAGE_PLACEHOLDER_TEXT = "No image exported — fixture guide placeholder.";
 
+// Fixed module-authored cover prose. The verification-claim audit
+// (checkGeneratedProse) runs ONLY over these literals — never over
+// interpolated caller-owned source metadata such as the guide id, so a
+// valid id like "approved" is kept verbatim instead of tripping the
+// claim detector. Pinned by test: any literal gaining a claim phrase
+// fails the audit at render time and in the suite.
+export const FIXED_COVER_PROSE = Object.freeze([
+  "Fixture Guide Document",
+  "Guide ID",
+  "Source",
+  "fixture",
+  "Status",
+  "draft_unverified (draft — not verified)",
+  "Steps",
+  "Warnings",
+  "Completeness",
+  "no gaps, losses, or reconciliation uncertainty reported",
+  "gaps, losses, or reconciliation uncertainty reported",
+  "events",
+  "withheld",
+  "redacted",
+  "proceeded",
+  "gaps",
+  "This is a demo fixture guide. It is a draft and has not been verified.",
+  "It describes recorded fixture evidence only and asserts no outcome.",
+]);
+
 function renderCoverPage({ guideId, guide, pageNum, pageCount }) {
   const c = guide.completeness;
+  // Audit fixed prose only. The guideId below is caller-owned source
+  // metadata: it is HTML-escaped and rendered verbatim, never
+  // claim-scanned.
+  checkGeneratedProse(FIXED_COVER_PROSE.join(" "));
   const body =
     `<h1>Fixture Guide Document</h1>\n` +
     `<dl class="pt-export-meta">\n` +
@@ -328,7 +372,6 @@ function renderCoverPage({ guideId, guide, pageNum, pageCount }) {
     `</dl>\n` +
     `<p class="pt-export-note">This is a demo fixture guide. It is a draft and has not been verified. ` +
     `It describes recorded fixture evidence only and asserts no outcome.</p>`;
-  checkGeneratedProse(body.replace(/<[^>]*>/g, " "));
   return renderPage({ pageNum, pageCount, title: "Cover", bodyHtml: body });
 }
 
@@ -369,10 +412,18 @@ function renderWarningPage({ warning, warningNum, warningTotal, pageNum, pageCou
   return renderPage({ pageNum, pageCount, title: `Warning ${warningNum}`, bodyHtml: body });
 }
 
+// Print geometry (E-001): Letter portrait with 0.75in @page margins
+// gives a 7in x 9.5in printable area. Each section is border-box with
+// height exactly 9.5in, so its outer box EQUALS the printable area —
+// the previous content-box min-height:9.5in + 0.25in padding produced a
+// 10in minimum outer box that spilled every section onto an
+// unwatermarked continuation page. Content volume is bounded by
+// MAX_FIELD_LENGTH (measured fit), never by clipping: overflow is not
+// hidden and no break-inside avoidance is relied upon.
 const DOCUMENT_CSS = [
   "@page { size: letter portrait; margin: 0.75in; }",
   "html, body { margin: 0; padding: 0; font-family: Georgia, 'Times New Roman', serif; color: #111; }",
-  ".pt-export-page { width: 7in; min-height: 9.5in; margin: 0 auto; padding: 0.25in 0; page-break-after: always; position: relative; }",
+  ".pt-export-page { width: 7in; height: 9.5in; box-sizing: border-box; margin: 0 auto; padding: 0.25in 0; page-break-after: always; position: relative; }",
   ".pt-export-page:last-child { page-break-after: auto; }",
   ".pt-export-watermark { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; font-weight: bold; letter-spacing: 0.12em; color: #8a1f1f; border: 2px solid #8a1f1f; padding: 6pt 10pt; margin-bottom: 18pt; text-align: center; }",
   ".pt-export-pagenum { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: #444; margin-top: 18pt; text-align: center; }",
