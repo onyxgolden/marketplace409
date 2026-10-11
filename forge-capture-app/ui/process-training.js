@@ -23,6 +23,16 @@ import {
   summarizeEvidence,
 } from "./process-training-core.js";
 import { compileGuide, GuideCompileError } from "./process-guide-compiler.js";
+// PT-6 Slice W: the deterministic, fixture-only wording prototype. The
+// pure engine (no DOM, no clock, no network) is called only with a
+// compiled fixture guide, the frozen v1 ruleset, and an injected
+// provenance time — see this file's previewGuideWording below.
+import {
+  applyGuideWording,
+  WordingError,
+  FIXTURE_WORDING_RULESET_V1,
+  renderSourceWording,
+} from "./process-guide-wording.js";
 import {
   GuideMarkupOverlay,
   MarkupError,
@@ -141,6 +151,12 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const session = deps.session || new ConsentSession();
   const buildEvidence = deps.buildFixtureEvidence || buildFixtureEvidence;
   const decodeImageFile = deps.decodeImageFile || defaultDecodeImageFile;
+  // PT-6 Slice W: the wording engine reads no clock; the provenance
+  // time it stamps into output is obtained here, at the user's explicit
+  // preview invocation, and injected. Injectable via
+  // `deps.getWordingProvenanceTime` so tests freeze it.
+  const getWordingProvenanceTime =
+    deps.getWordingProvenanceTime || (() => new Date().toISOString());
   const revokeObjectURL =
     deps.revokeObjectURL ||
     ((url) => {
@@ -233,6 +249,25 @@ export function renderProcessTrainingControls(container, deps = {}) {
         <div id="pt-guide-error" class="status error" role="status" hidden></div>
         <ol id="pt-guide-steps" class="pt-guide-steps"></ol>
         <ul id="pt-guide-warnings" class="pt-guide-warnings"></ul>
+
+        <h3>Normalized wording preview</h3>
+        <button id="pt-wording-preview-btn" type="button" class="ghost-btn" hidden>Preview normalized wording</button>
+        <section id="pt-wording-panel" class="pt-wording-panel" hidden aria-label="Normalized wording preview">
+          <div class="status warning">Fixture wording preview only — generated from the compiled fixture guide, never from live input. Not verified.</div>
+          <div id="pt-wording-error" class="status error" role="status" hidden></div>
+          <dl class="pt-wording-meta">
+            <div><dt>Provenance time</dt><dd id="pt-wording-time"></dd></div>
+          </dl>
+          <h4>Before / after</h4>
+          <ol id="pt-wording-before-after" class="pt-wording-before-after"></ol>
+          <h4>Mapping and diff evidence</h4>
+          <ul id="pt-wording-diff" class="pt-wording-diff"></ul>
+          <h4>Attempt records (this preview only — in memory, never stored)</h4>
+          <ul id="pt-wording-attempts" class="pt-wording-attempts"></ul>
+          <div class="dialog-actions">
+            <button id="pt-wording-clear-btn" type="button" class="ghost-btn">Clear wording preview</button>
+          </div>
+        </section>
 
         <section id="pt-markup-panel" class="pt-markup-panel" hidden aria-label="Markup this step">
           <h3>Markup — <span id="pt-markup-step-label"></span></h3>
@@ -443,6 +478,14 @@ export function renderProcessTrainingControls(container, deps = {}) {
   const guideError = $("pt-guide-error");
   const guideSteps = $("pt-guide-steps");
   const guideWarnings = $("pt-guide-warnings");
+  // PT-6 Slice W: bounded in-memory wording preview.
+  const wordingPreviewBtn = $("pt-wording-preview-btn");
+  const wordingPanel = $("pt-wording-panel");
+  const wordingError = $("pt-wording-error");
+  const wordingTime = $("pt-wording-time");
+  const wordingBeforeAfter = $("pt-wording-before-after");
+  const wordingDiff = $("pt-wording-diff");
+  const wordingAttemptsEl = $("pt-wording-attempts");
 
   // PT-3: one markup overlay per ConsentSession lifetime -- cleared (not
   // just hidden) alongside the guide preview on every discard/reset/
@@ -465,6 +508,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
   let activeShapeFormMode = null; // { kind, editingShapeId } | null
 
   function renderGuidePreview() {
+    // Wording state is per-compile: a fresh (re)compile starts with no
+    // wording output, diff, attempt records, or injected-time state —
+    // the success path below then re-enables the preview action only for
+    // a fixture guide, and the failure path keeps everything cleared.
+    invalidateWordingPreview();
     guideError.hidden = true;
     guideError.textContent = "";
     guideSteps.innerHTML = "";
@@ -500,6 +548,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
       return;
     }
     lastCompiledGuide = guide;
+    // The wording preview action exists only after a successful fixture
+    // compile — never before, and never for a guide that did not come
+    // from the fixture compiler.
+    wordingPreviewBtn.hidden = !(guide && guide.source === "fixture");
 
     for (const step of guide.steps) {
       const li = document.createElement("li");
@@ -547,6 +599,159 @@ export function renderProcessTrainingControls(container, deps = {}) {
     }
     return li;
   }
+
+  // ---------------------------------------------------------------------
+  // PT-6 Slice W: bounded in-memory wording preview. Everything here is
+  // local to this render: the pure engine is called with the frozen v1
+  // ruleset, absent mapping by default, and the injected provenance
+  // time; there is no save, download, export, publish, model, or network
+  // action, and wording is never available from non-fixture input.
+  // ---------------------------------------------------------------------
+
+  let lastWordingResult = null; // { guide, diffReport } | null — in memory only
+  let wordingAttempts = []; // WordingError attempt records — in memory only, never stored
+  let wordingProvenanceTime = null; // the injected time actually used
+
+  function renderWordingAttempts() {
+    wordingAttemptsEl.innerHTML = "";
+    for (const record of wordingAttempts) {
+      const li = document.createElement("li");
+      // textContent only — an attempt record is safe metadata (code,
+      // source, ruleset identity), never guide contents, but it is still
+      // rendered as text, never HTML.
+      li.textContent = `Attempt refused (${record.code}): source=${record.source ?? "n/a"}, ruleset=${record.rulesetId} v${record.rulesetVersion}`;
+      wordingAttemptsEl.appendChild(li);
+    }
+  }
+
+  function renderWordingResult(result) {
+    wordingBeforeAfter.innerHTML = "";
+    for (const step of result.guide.steps) {
+      const li = document.createElement("li");
+      const before = document.createElement("div");
+      before.className = "pt-wording-before";
+      // W-001: the UI Before label is the invariant source-wording
+      // representation shared verbatim with the engine's diff `before`
+      // — rendered from the step's own source fields, never from a
+      // prior `wording` field.
+      before.textContent = `Before: ${renderSourceWording(step)}`;
+      const after = document.createElement("div");
+      after.className = "pt-wording-after";
+      after.textContent = `After: ${step.wording}`;
+      li.append(before, after);
+      wordingBeforeAfter.appendChild(li);
+    }
+
+    wordingDiff.innerHTML = "";
+    for (const entry of result.diffReport.steps) {
+      const li = document.createElement("li");
+      const head = document.createElement("div");
+      head.textContent = `Step ${entry.stepIndex}: ${entry.changed ? "changed" : "unchanged"}`;
+      li.appendChild(head);
+      const detail = document.createElement("div");
+      detail.textContent = `${entry.before} → ${entry.after}`;
+      li.appendChild(detail);
+      for (const m of entry.mappings) {
+        const mdiv = document.createElement("div");
+        mdiv.textContent = `Mapping — step ${m.stepIndex}, field ${m.field}: "${m.from}" → "${m.to}" (${m.occurrences} occurrence${m.occurrences === 1 ? "" : "s"})`;
+        li.appendChild(mdiv);
+      }
+      wordingDiff.appendChild(li);
+    }
+  }
+
+  /**
+   * W-004 review fix: clearing the generated preview CONTENT (the panel
+   * Clear button) is distinct from INVALIDATING a compiled guide
+   * (discard/reset/target-change/failed recompile). The panel Clear
+   * empties result, diff, attempt records, and injected-time state but
+   * leaves the preview action available for the still-valid compiled
+   * fixture guide, so the user can preview again without recompiling.
+   */
+  function clearWordingPreviewContent() {
+    lastWordingResult = null;
+    wordingAttempts = [];
+    wordingProvenanceTime = null;
+    wordingPanel.hidden = true;
+    wordingError.hidden = true;
+    wordingError.textContent = "";
+    wordingTime.textContent = "";
+    wordingBeforeAfter.innerHTML = "";
+    wordingDiff.innerHTML = "";
+    wordingAttemptsEl.innerHTML = "";
+    // The action stays available while the compiled fixture guide is
+    // still the valid basis for a preview — only a full invalidation
+    // (below) hides it.
+    wordingPreviewBtn.hidden = !(lastCompiledGuide && lastCompiledGuide.source === "fixture");
+  }
+
+  /**
+   * Full wording lifecycle invalidation: content clear plus the preview
+   * action hidden. Used on per-(re)compile reset (the success path
+   * re-enables the action only for a fixture guide), discard/reset, and
+   * failed recompile — anywhere the compiled guide is no longer a valid
+   * preview basis.
+   */
+  function invalidateWordingPreview() {
+    clearWordingPreviewContent();
+    wordingPreviewBtn.hidden = true;
+  }
+
+  /**
+   * Runs the Slice W wording pass against a compiled guide and renders
+   * the in-memory preview. The button calls this with no argument (the
+   * last compiled fixture guide); tests may pass an override guide to
+   * exercise refusal paths. On WordingError the failure is shown without
+   * partial output and the attempt record is kept in memory only.
+   */
+  function previewGuideWording(guideOverride) {
+    const guide = guideOverride === undefined ? lastCompiledGuide : guideOverride;
+    wordingError.hidden = true;
+    wordingError.textContent = "";
+    if (!guide) return;
+
+    let provenanceTime;
+    try {
+      provenanceTime = getWordingProvenanceTime();
+    } catch (e) {
+      wordingPanel.hidden = false;
+      wordingError.hidden = false;
+      wordingError.textContent = `Wording preview unavailable: the injected time source failed (${e.message || e}).`;
+      return;
+    }
+
+    try {
+      const result = applyGuideWording({
+        guide,
+        ruleset: FIXTURE_WORDING_RULESET_V1,
+        mapping: [],
+        provenanceTime,
+      });
+      lastWordingResult = result;
+      wordingProvenanceTime = provenanceTime;
+      wordingPanel.hidden = false;
+      wordingTime.textContent = provenanceTime;
+      renderWordingResult(result);
+      renderWordingAttempts();
+    } catch (e) {
+      if (!(e instanceof WordingError)) throw e;
+      // Fail closed: no wording, no diff, no injected-time state — and
+      // the attempt record stays in memory only (never persisted).
+      wordingAttempts = [...wordingAttempts, e.attemptRecord];
+      lastWordingResult = null;
+      wordingProvenanceTime = null;
+      wordingTime.textContent = "";
+      wordingBeforeAfter.innerHTML = "";
+      wordingDiff.innerHTML = "";
+      wordingPanel.hidden = false;
+      wordingError.hidden = false;
+      wordingError.textContent = `Wording preview refused: ${e.message}`;
+      renderWordingAttempts();
+    }
+  }
+
+  wordingPreviewBtn.addEventListener("click", () => previewGuideWording());
+  $("pt-wording-clear-btn").addEventListener("click", () => clearWordingPreviewContent());
 
   // ---------------------------------------------------------------------
   // PT-3: markup panel (add/select/edit/delete/undo/redo annotations for
@@ -1349,6 +1554,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
     guideSteps.innerHTML = "";
     guideWarnings.innerHTML = "";
     lastCompiledGuide = null;
+    // PT-6 Slice W: discard/reset clears the wording preview state too —
+    // output, diff, attempt records, and injected-time state — not just
+    // the panel's visibility. Full invalidation (the preview action is
+    // hidden: there is no longer a compiled guide to preview against).
+    invalidateWordingPreview();
     // PT-3: discard/reset/target-change clears every step's markup, not
     // just hides it -- same discipline as the guide preview itself.
     markupOverlay.clearAll();
@@ -1411,6 +1621,25 @@ export function renderProcessTrainingControls(container, deps = {}) {
     /** For tests only: direct access to Slice B's background/overlay store, same rationale as markupOverlay above. */
     get backgroundStore() {
       return backgroundStore;
+    },
+    /**
+     * For tests only: run the Slice W wording preview against the last
+     * compiled fixture guide (or an override guide) and render it
+     * in-memory — the same function the "Preview normalized wording"
+     * button calls.
+     */
+    previewGuideWording,
+    /**
+     * For tests only: snapshot of the in-memory wording preview state
+     * (result, attempt records, injected provenance time) so clearing
+     * lifecycle paths can be pinned.
+     */
+    get wordingState() {
+      return {
+        result: lastWordingResult,
+        attempts: [...wordingAttempts],
+        provenanceTime: wordingProvenanceTime,
+      };
     },
     renderGuidePreview,
   };

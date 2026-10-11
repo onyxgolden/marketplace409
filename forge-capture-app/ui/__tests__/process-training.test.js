@@ -1944,3 +1944,274 @@ describe("renderProcessTrainingControls — Slice B: plot-plan background + rast
     });
   });
 });
+
+describe("renderProcessTrainingControls — PT-6 Slice W wording preview", () => {
+  const FROZEN_WORDING_TIME = "2026-10-11T15:30:00.000Z";
+
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function mountWithFrozenTime(extraDeps = {}) {
+    return mountFresh({ getWordingProvenanceTime: () => FROZEN_WORDING_TIME, ...extraDeps });
+  }
+
+  function liveSourceGuide() {
+    // A guide shaped like a compiled one but from a live source — the
+    // pass must refuse it, and the refusal must live in memory only.
+    return {
+      schemaVersion: 1,
+      source: "live",
+      status: "draft_unverified",
+      target: null,
+      trustScope: null,
+      steps: [
+        {
+          stepIndex: 0,
+          sequenceId: 7,
+          action: "TOPSECRET-ACTION-XYZ",
+          targetLabel: "btn-hidden",
+          point: [1, 1],
+          processName: "live.exe",
+          trust: "Default",
+          decision: "ProceedNormally",
+          withheld: false,
+          redacted: false,
+          hasScreenshot: false,
+          evidenceRef: { sequenceId: 7 },
+        },
+      ],
+      warnings: [],
+      completeness: { isComplete: true },
+    };
+  }
+
+  it("hides the preview action until a fixture guide has compiled successfully", () => {
+    const { container } = mountWithFrozenTime();
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(true);
+
+    // Consented but no review yet: still hidden.
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(true);
+
+    advanceToReview(container);
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(false);
+  });
+
+  it("renders before/after wording with the frozen injected time", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+
+    container.querySelector("#pt-wording-preview-btn").click();
+
+    const panel = container.querySelector("#pt-wording-panel");
+    expect(panel.hidden).toBe(false);
+    expect(container.querySelector("#pt-wording-time").textContent).toBe(FROZEN_WORDING_TIME);
+    expect(handle.wordingState.provenanceTime).toBe(FROZEN_WORDING_TIME);
+
+    const rows = [...container.querySelectorAll("#pt-wording-before-after li")];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].querySelector(".pt-wording-before").textContent.startsWith("Before: ")).toBe(true);
+    const after = rows[0].querySelector(".pt-wording-after").textContent;
+    expect(after.startsWith("After: ")).toBe(true);
+    expect(after).toContain("Observed action:");
+
+    // Diff evidence renders one entry per step, before → after.
+    const diffRows = [...container.querySelectorAll("#pt-wording-diff li")];
+    expect(diffRows.length).toBe(rows.length);
+    expect(diffRows[0].textContent).toContain("→");
+
+    // W-001: the UI Before label is the invariant source-wording
+    // representation, shared verbatim with the engine's diff `before`
+    // — never the new template re-rendered — and the template-only
+    // phrasing change is recorded (changed=true), not concealed.
+    const result = handle.wordingState.result;
+    const firstStep = result.guide.steps[0];
+    const invariantBefore = `${firstStep.action} — ${firstStep.targetLabel}`;
+    expect(rows[0].querySelector(".pt-wording-before").textContent).toBe(`Before: ${invariantBefore}`);
+    expect(result.diffReport.steps[0].before).toBe(invariantBefore);
+    expect(result.diffReport.steps[0].changed).toBe(true);
+  });
+
+  it("shows a WordingError without crashing or substituting partial output", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+
+    // A malformed override guide (missing steps) fails the pass.
+    handle.previewGuideWording({ schemaVersion: 1, source: "fixture", status: "draft_unverified" });
+
+    const err = container.querySelector("#pt-wording-error");
+    expect(err.hidden).toBe(false);
+    expect(err.textContent).toContain("refused");
+    expect(container.querySelectorAll("#pt-wording-before-after li").length).toBe(0);
+    expect(container.querySelectorAll("#pt-wording-diff li").length).toBe(0);
+    expect(handle.wordingState.result).toBeNull();
+    expect(handle.wordingState.attempts).toHaveLength(1);
+  });
+
+  it("records a non-fixture refusal in memory only — no guide contents reach the DOM", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+
+    handle.previewGuideWording(liveSourceGuide());
+
+    const state = handle.wordingState;
+    expect(state.result).toBeNull();
+    expect(state.provenanceTime).toBeNull();
+    expect(state.attempts).toHaveLength(1);
+    expect(state.attempts[0].code).toBe("non-fixture-source");
+    expect(state.attempts[0].source).toBe("live");
+
+    // The attempt is represented in the panel's attempt list…
+    const attemptItems = [...container.querySelectorAll("#pt-wording-attempts li")];
+    expect(attemptItems).toHaveLength(1);
+    expect(attemptItems[0].textContent).toContain("non-fixture-source");
+    // …but the live guide's own contents appear nowhere in the document.
+    expect(document.body.textContent).not.toContain("TOPSECRET-ACTION-XYZ");
+    expect(container.querySelectorAll("#pt-wording-before-after li").length).toBe(0);
+  });
+
+  it("preserves the DEMO / DRAFT / NOT VERIFIED and disabled-capture banners", () => {
+    const { container } = mountWithFrozenTime();
+    advanceToReview(container);
+    container.querySelector("#pt-wording-preview-btn").click();
+
+    const badge = container.querySelector("#pt-guide-badge");
+    expect(badge.textContent).toBe("DEMO · DRAFT · NOT VERIFIED");
+    const banner = container.querySelector(".pt-disabled-banner");
+    expect(banner).not.toBeNull();
+    expect(banner.textContent.toLowerCase()).toContain("disabled");
+  });
+
+  it("exposes the preview as a keyboard-operable button and no save/export/copy action", () => {
+    const { container } = mountWithFrozenTime();
+    advanceToReview(container);
+    const btn = container.querySelector("#pt-wording-preview-btn");
+    expect(btn.tagName).toBe("BUTTON");
+    expect(btn.getAttribute("type")).toBe("button");
+
+    container.querySelector("#pt-wording-preview-btn").click();
+    const panelText = container.querySelector("#pt-wording-panel").textContent.toLowerCase();
+    for (const forbidden of ["save", "download", "export", "publish", "copy to"]) {
+      expect(panelText).not.toContain(forbidden);
+    }
+  });
+
+  it("clears wording output, diff, attempts, and injected-time state on discard", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(handle.wordingState.result).not.toBeNull();
+
+    container.querySelector("#pt-review-discard-btn").click();
+
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(true);
+    expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
+  });
+
+  it("clears wording state on starting another preview (reset)", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+    handle.previewGuideWording(liveSourceGuide()); // leaves an attempt record
+    expect(handle.wordingState.attempts).toHaveLength(1);
+
+    container.querySelector("#pt-review-discard-btn").click();
+    container.querySelector("#pt-new-session-btn").click();
+
+    expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
+  });
+
+  it("clears wording state on a failed recompile", () => {
+    const { container, session, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(handle.wordingState.result).not.toBeNull();
+
+    // Mutate the session's evidence so the next compile fails, then
+    // re-invoke the exact compile/render path a future recompile would use.
+    session.evidence = [
+      {
+        type: "Event",
+        event: {
+          sequenceId: 1,
+          kind: "Click",
+          point: [1, 1],
+          target: { name: "X", processName: "fixture.exe" },
+          screenshot: null,
+          privacy: { trust: "Default", decision: "Withhold" },
+        },
+      },
+      {
+        type: "Event",
+        event: {
+          sequenceId: 1, // duplicate -- sequence-integrity failure
+          kind: "Click",
+          point: [2, 2],
+          target: { name: "Y", processName: "fixture.exe" },
+          screenshot: null,
+          privacy: { trust: "Default", decision: "Withhold" },
+        },
+      },
+    ];
+    handle.renderGuidePreview();
+
+    expect(container.querySelector("#pt-guide-error").hidden).toBe(false);
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(true);
+    expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
+  });
+
+  it("the Clear wording preview button empties the panel and its state", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(handle.wordingState.result).not.toBeNull();
+
+    container.querySelector("#pt-wording-clear-btn").click();
+
+    expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
+    expect(container.querySelectorAll("#pt-wording-before-after li").length).toBe(0);
+    // W-004: clearing the panel empties the content, but the action
+    // stays available for the still-valid compiled fixture guide.
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(false);
+  });
+
+  it("compile → preview → clear → preview again needs no recompile (W-004)", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(handle.wordingState.result).not.toBeNull();
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(false);
+
+    // Panel Clear: content gone, action still available.
+    container.querySelector("#pt-wording-clear-btn").click();
+    expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
+    expect(container.querySelectorAll("#pt-wording-diff li").length).toBe(0);
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(false);
+
+    // Preview again — no recompile: the same frozen injected time, a
+    // fresh in-memory result, and the invariant before/after rows.
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(false);
+    expect(handle.wordingState.result).not.toBeNull();
+    expect(handle.wordingState.provenanceTime).toBe(FROZEN_WORDING_TIME);
+    const rows = [...container.querySelectorAll("#pt-wording-before-after li")];
+    expect(rows.length).toBeGreaterThan(0);
+    const result = handle.wordingState.result;
+    const firstStep = result.guide.steps[0];
+    expect(rows[0].querySelector(".pt-wording-before").textContent).toBe(
+      `Before: ${firstStep.action} — ${firstStep.targetLabel}`
+    );
+    expect(rows[0].querySelector(".pt-wording-after").textContent.startsWith("After: ")).toBe(true);
+  });
+});
