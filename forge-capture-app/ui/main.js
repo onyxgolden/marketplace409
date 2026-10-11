@@ -331,7 +331,8 @@ async function showPreview(ref) {
   if (!ref) return;
   previewRef = ref;
   $("preview-meta").textContent = `${ref.kind} — ${ref.width}x${ref.height}`;
-  $("preview-image").removeAttribute("src");
+  const img = $("preview-image");
+  img.removeAttribute("src");
   setPreviewStatus("Loading preview…");
   const dialog = $("preview-dialog");
   if (!dialog.open) dialog.showModal();
@@ -342,12 +343,34 @@ async function showPreview(ref) {
     // capture (an uncommon but real case on a big multi-monitor desktop)
     // reports that honestly below instead of showing a broken image.
     const payload = await invoke("get_capture_upload_payload", { id: ref.id });
+    if (previewRef !== ref) return;
     const url = previewDataUrl(payload);
-    if (!url) throw new Error("preview payload was malformed");
+    if (!url) throw new Error("preview payload was empty or malformed");
+    // PNG magic check (89 50 4E 47 → base64 "iVBOR"): if the capture
+    // pipeline ever hands us non-image bytes, say so with the byte count
+    // instead of rendering a silent white box.
+    if (payload.mime === "image/png" && !payload.bytes_b64.startsWith("iVBOR")) {
+      throw new Error(
+        `capture bytes are not a PNG (${payload.bytes_b64.length} base64 chars)`
+      );
+    }
+    // Wait for the image to actually decode: a data: URL that fails to
+    // decode renders as a silent blank box, so report it instead of
+    // clearing "Loading preview…" prematurely.
+    await new Promise((resolve, reject) => {
+      img.onload = () => {
+        img.onload = img.onerror = null;
+        resolve();
+      };
+      img.onerror = () => {
+        img.onload = img.onerror = null;
+        reject(new Error("preview image could not be decoded"));
+      };
+      img.src = url;
+    });
     // A capture superseded by a second one while this was still loading
     // must not clobber the newer preview that may already be showing.
     if (previewRef !== ref) return;
-    $("preview-image").src = url;
     setPreviewStatus("");
   } catch (e) {
     if (previewRef !== ref) return;
