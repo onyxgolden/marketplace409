@@ -114,6 +114,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const [hoverPoint, setHoverPoint] = useState(null); // rubber-band cursor point for the pipe tool
   const [ghost, setGhost] = useState(null); // placement ghost preview (component-local only; never dispatched)
   const [drag, setDrag] = useState(null); // active drag descriptor
+  // Two-finger touch gestures (pinch zoom + two-finger pan). The canvas sets
+  // touch-action: none, so the browser never pinch-zooms for us — this tracks
+  // the active touch pointers and applies the gesture manually. Kept in refs
+  // (never state): gestures are high-frequency and never affect rendering
+  // except through the view transform.
+  const touchPointers = useRef(new Map()); // pointerId -> {x, y} screen px
+  const pinch = useRef(null); // {dist, mid:{x,y}} of the previous move, or null
   const [spaceDown, setSpaceDown] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   // Raw cursor position in screen px for the CAD crosshair overlay. Null
@@ -525,6 +532,9 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   }, [pipePreview, dispatch]);
 
   const onPointerDown = (e) => {
+    // Second touch finger takes over as a pinch gesture (cancels any
+    // in-progress single-finger drag); third+ fingers are swallowed.
+    if (trackTouchDown(e)) return;
     if (e.button === 1 || tool === "pan" || spaceDown) {
       setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
       return;
@@ -877,6 +887,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const onPointerMove = (e) => {
     const screen = eventPoint(e);
     setCursorScreen(screen); // CAD crosshair follows every move
+    // Two-finger pinch zoom / pan consumes the event while active.
+    if (trackTouchMove(e)) return;
     // Pipe tool rubber band: track the cursor even without a drag so the
     // in-progress run previews the next segment and its length.
     if (tool === "pipe" && !drag) {
@@ -1110,6 +1122,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onPointerUp = (e) => {
+    // Release touch tracking (ends a pinch when fewer than 2 remain). The
+    // drag/commit logic below is a no-op during a pinch: the second finger
+    // landing already cleared drag and the draw preview.
+    trackTouchEnd(e);
     if (drag?.kind === "draw-wall" && drawPreview) {
       const len = Math.hypot(drawPreview.b.x - drawPreview.a.x, drawPreview.b.y - drawPreview.a.y);
       if (len >= 1) {
@@ -1144,6 +1160,76 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     }
     setDrag(null);
     setDrawPreview(null);
+  };
+
+  // ---- two-finger pinch zoom / pan (touch) ----
+  // Zoom around the fingers' midpoint and pan with their midpoint drift, in
+  // one step so the plan content sticks to the fingers. Same MIN/MAX_SCALE
+  // clamp as wheel zoom.
+  const applyPinchStep = (prevDist, prevMid, dist, mid) => {
+    if (!(prevDist > 0) || !(dist > 0)) return;
+    const factor = dist / prevDist;
+    const dx = mid.x - prevMid.x;
+    const dy = mid.y - prevMid.y;
+    setView((v) => {
+      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+      const applied = scale / v.scale;
+      return {
+        scale,
+        ox: mid.x - (mid.x - (v.ox + dx)) * applied,
+        oy: mid.y - (mid.y - (v.oy + dy)) * applied,
+      };
+    });
+  };
+
+  const pinchPoints = () => {
+    const pts = [...touchPointers.current.values()];
+    if (pts.length < 2) return null;
+    const [a, b] = pts;
+    return {
+      dist: Math.hypot(b.x - a.x, b.y - a.y),
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    };
+  };
+
+  // A second touch pointer landing starts (or continues) a pinch gesture and
+  // takes over from any single-pointer drag in progress. Returns true when
+  // the event was consumed by gesture tracking.
+  const trackTouchDown = (e) => {
+    if (e.pointerType !== "touch") return false;
+    touchPointers.current.set(e.pointerId, eventPoint(e));
+    const n = touchPointers.current.size;
+    if (n === 2) {
+      // Pinch takes over: cancel any in-progress single-finger drag so a
+      // half-drawn wall/room never commits when the second finger lands.
+      setDrag(null);
+      setDrawPreview(null);
+      pinch.current = pinchPoints();
+      return true;
+    }
+    return n > 2; // third+ finger: swallow, keep the first two driving
+  };
+
+  // Advances an in-progress pinch. Returns true when consumed.
+  const trackTouchMove = (e) => {
+    if (e.pointerType !== "touch" || !pinch.current) return false;
+    if (!touchPointers.current.has(e.pointerId)) return false;
+    touchPointers.current.set(e.pointerId, eventPoint(e));
+    const cur = pinchPoints();
+    if (cur) {
+      applyPinchStep(pinch.current.dist, pinch.current.mid, cur.dist, cur.mid);
+      pinch.current = cur;
+    }
+    return true;
+  };
+
+  // Ends touch tracking for a lifted/cancelled pointer. Returns true when
+  // the pointer was being tracked.
+  const trackTouchEnd = (e) => {
+    if (e.pointerType !== "touch") return false;
+    const had = touchPointers.current.delete(e.pointerId);
+    if (touchPointers.current.size < 2) pinch.current = null;
+    return had;
   };
 
   const onWheel = (e) => {
@@ -2020,7 +2106,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); }}
+        onPointerCancel={onPointerUp}
+        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
       >
@@ -2155,7 +2242,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             <p className="mt-2 text-sm text-gray-400">
               Pick the <span className="text-emerald-300">Wall</span> tool and drag to draw walls,
               or drop a pre-shaped <span className="text-emerald-300">Room</span> to begin.
-              Scroll to zoom, drag with the Pan tool (or hold Space) to move around.
+              Scroll or pinch to zoom, drag with the Pan tool (or hold Space) to move around.
             </p>
           </div>
         </div>
@@ -2183,7 +2270,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             {gridSpacingLabel(opt)}
           </button>
         ))}
-        <span className="text-gray-500">scroll to zoom &middot; double-click furniture to rotate</span>
+        <span className="text-gray-500">scroll or pinch to zoom &middot; double-click furniture to rotate</span>
       </div>
     </div>
   );
