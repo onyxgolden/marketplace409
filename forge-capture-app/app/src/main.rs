@@ -3429,12 +3429,23 @@ fn printscreen_takeover_active(state: State<AppState>) -> bool {
 #[cfg(windows)]
 fn ensure_dpi_awareness() {
     use windows::Win32::UI::HiDpi::{
+        GetAwarenessFromDpiAwarenessContext, GetThreadDpiAwarenessContext,
         SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
     };
-    // Best effort: the Tauri runtime usually sets this via the manifest
-    // already; ignore failure.
+    // The capture engine's entire coordinate pipeline assumes per-monitor
+    // V2 awareness (virtual-desktop coords == physical pixels). A silent
+    // failure here used to poison every downstream rect, so verify the
+    // actual level and log it instead of ignoring the result.
     unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let set_ok =
+            SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_ok();
+        let awareness = GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext());
+        // NOTE: V2 reports as PER_MONITOR_AWARE (there is no separate V2
+        // level in DPI_AWARENESS); UNAWARE or SYSTEM_AWARE here means the
+        // coordinate assumption is broken and captures may be blank.
+        eprintln!(
+            "[capture] DPI awareness: set_ok={set_ok} level={awareness:?}"
+        );
     }
 }
 

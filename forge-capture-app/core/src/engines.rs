@@ -262,8 +262,30 @@ impl NativeRasterEngine {
         let canvas_w = (max_x - min_x).max(1) as u32;
         let canvas_h = (max_y - min_y).max(1) as u32;
 
+        // Window id for the PrintWindow fallback below (single-piece window
+        // captures only). Unwrap the Delayed layer the same way
+        // resolve_pieces does.
+        let window_id_for_fallback: Option<&str> = match &request.mode {
+            CaptureMode::Window { window_id } => Some(window_id),
+            CaptureMode::Delayed { mode, .. } => match mode.as_ref() {
+                CaptureMode::Window { window_id } => Some(window_id),
+                _ => None,
+            },
+            _ => None,
+        };
+        let single_window_piece =
+            window_id_for_fallback.filter(|_| pieces.len() == 1 && kind == CaptureKind::Window);
+
         for (idx, rect) in &pieces {
-            let frame = native::capture_rect(*rect, &monitors[*idx], request.include_cursor)?;
+            // Single-piece window capture goes through the PrintWindow
+            // fallback path: screen-DC blit first, per-window render when
+            // the blit fails or yields a blank frame (2026-10-11: Jason's
+            // PC produced silent all-white PNGs from the blit path alone).
+            // Multi-piece (multi-monitor) windows keep the per-piece blit.
+            let frame = match single_window_piece {
+                Some(wid) => native::capture_window(wid, *rect, request.include_cursor)?,
+                None => native::capture_rect(*rect, &monitors[*idx], request.include_cursor)?,
+            };
             if frame.cursor.captured {
                 cursor = frame.cursor.clone();
             }

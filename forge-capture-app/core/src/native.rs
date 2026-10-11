@@ -124,6 +124,30 @@ pub fn find_window(
     linux::find_window(window_id)
 }
 
+/// Capture a window by id: fast screen-DC blit first, `PrintWindow`
+/// fallback when the blit fails or yields a blank frame.
+///
+/// Windows-only: other hosts return an explicit error, never a fake image.
+#[cfg(not(windows))]
+pub fn capture_window(
+    window_id: &str,
+    _rect: RectI,
+    _include_cursor: bool,
+) -> Result<NativeFrame, CaptureError> {
+    Err(CaptureError::NativeApi(format!(
+        "window capture requires Windows 11 (asked for window {window_id})"
+    )))
+}
+
+#[cfg(windows)]
+pub fn capture_window(
+    window_id: &str,
+    rect: RectI,
+    include_cursor: bool,
+) -> Result<NativeFrame, CaptureError> {
+    win::capture_window_native(window_id, rect, include_cursor)
+}
+
 /// Enumerate visible top-level windows for the capture picker.
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn list_windows() -> Result<Vec<NativeWindowInfo>, CaptureError> {
@@ -279,6 +303,24 @@ pub(crate) fn bgra_to_rgba_force_opaque(pixels: &mut [u8]) {
     }
 }
 
+/// True when every pixel in an RGBA buffer is identical (all-black,
+/// all-white, or any other uniform color).
+///
+/// A real screen capture is never a single uniform color: a uniform frame
+/// means the OS handed us a blank surface (uninitialized bitmap, fully
+/// clipped blit, or a render that produced nothing) and persisting it would
+/// write a misleading "successful" image. Callers treat this as a loud
+/// failure, never as pixels. Pure and platform-independent so it is
+/// unit-tested on any host.
+#[cfg(any(windows, test))]
+pub(crate) fn is_uniform_rgba(rgba: &[u8]) -> bool {
+    let (chunks, _remainder) = rgba.as_chunks::<4>();
+    match chunks.split_first() {
+        None => true, // no pixels: vacuous blank, never a real capture
+        Some((first, rest)) => rest.iter().all(|px| px == first),
+    }
+}
+
 /// Icon top-left draw position for a cursor: the OS reports the cursor's
 /// screen position as the *hotspot* point, so the draw origin is
 /// `screen - hotspot`, made capture-relative by subtracting the capture
@@ -309,11 +351,12 @@ mod win {
     use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-        EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, ReleaseDC, SelectObject,
-        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, HGDIOBJ, MONITORINFOEXW,
-        SRCCOPY,
+        EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, PatBlt, ReleaseDC, SelectObject,
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLACKNESS, CAPTUREBLT, DIB_RGB_COLORS, HDC, HGDIOBJ,
+        MONITORINFOEXW, SRCCOPY,
     };
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
     use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
@@ -322,8 +365,8 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::{
         DrawIconEx, EnumWindows, GetClassNameW, GetCursorInfo, GetIconInfo, GetScrollInfo,
         GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
-        SendMessageW, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, ICONINFO, SB_HORZ, SB_VERT,
-        SCROLLBAR_CONSTANTS, SCROLLINFO, SIF_PAGE, SIF_POS, SIF_RANGE,
+        SendMessageW, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, ICONINFO, PW_RENDERFULLCONTENT,
+        SB_HORZ, SB_VERT, SCROLLBAR_CONSTANTS, SCROLLINFO, SIF_PAGE, SIF_POS, SIF_RANGE,
     };
 
     fn last_error(context: &str) -> CaptureError {
@@ -467,6 +510,24 @@ mod win {
                 return Err(last_error("CreateCompatibleBitmap"));
             }
             let old = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+            if old.is_invalid() {
+                // Selecting the bitmap failed: the blit below would draw
+                // into the memory DC's default 1x1 monochrome bitmap and
+                // GetDIBits would read back uninitialized memory as if it
+                // were pixels. Fail loudly instead.
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(None, screen_dc);
+                return Err(last_error("SelectObject(bitmap)"));
+            }
+            // Zero the bitmap first: CreateCompatibleBitmap does not
+            // initialize memory, so a blit that copies nothing (e.g. a
+            // source rect fully clipped off-screen after a DPI
+            // coordinate-space mismatch) would otherwise persist whatever
+            // happened to be in the allocation — observed in the wild as a
+            // silent all-white PNG. A clipped blit now yields black, and
+            // the uniform-frame check below turns that into a loud error.
+            let _ = PatBlt(mem_dc, 0, 0, w, h, BLACKNESS);
             let blt_ok = BitBlt(
                 mem_dc,
                 0,
@@ -476,7 +537,7 @@ mod win {
                 Some(screen_dc),
                 rect.x as i32,
                 rect.y as i32,
-                SRCCOPY,
+                SRCCOPY | CAPTUREBLT,
             )
             .is_ok();
 
@@ -558,7 +619,150 @@ mod win {
             if lines == 0 {
                 return Err(last_error("GetDIBits"));
             }
+            // A real screen capture is never one uniform color. A uniform
+            // frame means the OS handed us a blank surface (fully clipped
+            // blit, uninitialized bitmap, or a render that produced
+            // nothing) — persisting it would write a misleading
+            // "successful" image, so it is a loud failure instead.
+            if super::is_uniform_rgba(&rgba) {
+                return Err(CaptureError::NativeApi(format!(
+                    "blank frame: screen blit for rect ({},{}) {}x{} produced a uniform color; \
+                     not persisted (possible DPI coordinate-space mismatch or compositor issue)",
+                    rect.x, rect.y, rect.w, rect.h
+                )));
+            }
             Ok(NativeFrame { rect, rgba, cursor })
+        }
+    }
+
+    /// Render `hwnd`'s own content with `PrintWindow` (`PW_RENDERFULLCONTENT`)
+    /// into an RGBA buffer for `rect`'s size.
+    ///
+    /// This is the fallback when the screen-DC `BitBlt` path produces a
+    /// blank frame: `PrintWindow` asks the window itself to paint instead of
+    /// reading the composed screen, so it bypasses screen-DC coordinate
+    /// spaces, DPI virtualization of the blit source, and compositor quirks
+    /// entirely. It also captures occluded windows' own content rather than
+    /// their occluders' pixels. A blank render is a loud `None`, never
+    /// pixels — the caller decides whether to surface that as the error.
+    ///
+    /// Note: `PrintWindow` can block on an unresponsive window. Callers only
+    /// invoke this for windows just verified visible via `find_window`, and
+    /// the process-training pipeline's heavier timeout-thread machinery
+    /// (`process_capture`) remains the answer for arbitrary untrusted
+    /// targets; this direct call keeps the Image-tab path simple.
+    fn print_window_rgba(hwnd: HWND, w: i32, h: i32) -> Option<Vec<u8>> {
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        unsafe {
+            // Reference DC only, so the bitmap's pixel format matches the
+            // display. Nothing is ever blitted from it.
+            let reference_dc = GetDC(None);
+            if reference_dc.is_invalid() {
+                return None;
+            }
+            let mem_dc = CreateCompatibleDC(Some(reference_dc));
+            if mem_dc.is_invalid() {
+                ReleaseDC(None, reference_dc);
+                return None;
+            }
+            let bitmap = CreateCompatibleBitmap(reference_dc, w, h);
+            if bitmap.is_invalid() {
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(None, reference_dc);
+                return None;
+            }
+            let old = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+            if old.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(None, reference_dc);
+                return None;
+            }
+            // Deterministic baseline, same rationale as the blit path.
+            let _ = PatBlt(mem_dc, 0, 0, w, h, BLACKNESS);
+            let printed =
+                PrintWindow(hwnd, mem_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)).as_bool();
+            SelectObject(mem_dc, old);
+
+            let mut rgba = vec![0u8; w as usize * h as usize * 4];
+            let lines = if printed {
+                let mut bmi = BITMAPINFO::default();
+                bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+                bmi.bmiHeader.biWidth = w;
+                bmi.bmiHeader.biHeight = -h; // top-down
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32;
+                bmi.bmiHeader.biCompression = BI_RGB.0;
+                GetDIBits(
+                    mem_dc,
+                    bitmap,
+                    0,
+                    h as u32,
+                    Some(rgba.as_mut_ptr() as *mut _),
+                    &mut bmi as *mut _,
+                    DIB_RGB_COLORS,
+                )
+            } else {
+                0
+            };
+
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, reference_dc);
+
+            if !printed || lines == 0 {
+                return None;
+            }
+            super::bgra_to_rgba_force_opaque(&mut rgba);
+            if super::is_uniform_rgba(&rgba) {
+                return None;
+            }
+            Some(rgba)
+        }
+    }
+
+    /// Window capture with a `PrintWindow` fallback: try the fast screen-DC
+    /// blit first; if it fails or yields a blank frame, render the window's
+    /// own content via `PrintWindow`. Returns the first non-blank result, or
+    /// a loud error naming both attempts.
+    pub(super) fn capture_window_native(
+        window_id: &str,
+        rect: RectI,
+        include_cursor: bool,
+    ) -> Result<NativeFrame, CaptureError> {
+        // Screen-DC blit first: it captures the composed screen (correct
+        // for the common case) and is fast.
+        match capture_screen_rect(rect, include_cursor) {
+            ok @ Ok(_) => return ok,
+            Err(blit_err) => {
+                let hwnd_value: isize = window_id.parse().map_err(|_| {
+                    CaptureError::NativeApi(format!(
+                        "invalid window id for PrintWindow fallback: {window_id}"
+                    ))
+                })?;
+                let hwnd = HWND(hwnd_value as *mut c_void);
+                if unsafe { !IsWindow(Some(hwnd)).as_bool() } {
+                    return Err(blit_err);
+                }
+                let w = rect.w.min(i32::MAX as u64) as i32;
+                let h = rect.h.min(i32::MAX as u64) as i32;
+                match print_window_rgba(hwnd, w, h) {
+                    Some(rgba) => Ok(NativeFrame {
+                        rect,
+                        rgba,
+                        cursor: CursorState {
+                            captured: false,
+                            position_physical: None,
+                        },
+                    }),
+                    None => Err(CaptureError::NativeApi(format!(
+                        "window capture failed: screen blit ({blit_err}) and \
+                         PrintWindow fallback both produced no usable frame; not persisted"
+                    ))),
+                }
+            }
         }
     }
 
@@ -1512,6 +1716,25 @@ mod tests {
         assert!(cursor_pos().is_err());
         #[cfg(any(windows, target_os = "linux"))]
         assert!(cursor_pos().is_ok() || cursor_pos().is_err()); // environment-dependent
+    }
+
+    #[test]
+    fn uniform_frame_detector_catches_blank_frames() {
+        // All-white (the 2026-10-11 Jason report: silent white PNG) and
+        // all-black are both blank.
+        assert!(is_uniform_rgba(&vec![255u8; 16]));
+        assert!(is_uniform_rgba(&vec![0u8; 16]));
+        // Any other uniform color is blank too.
+        assert!(is_uniform_rgba(&vec![7u8, 7, 7, 255].repeat(4)));
+        // One differing pixel anywhere -> not uniform.
+        let mut mixed = vec![255u8; 16];
+        mixed[5] = 0;
+        assert!(!is_uniform_rgba(&mixed));
+        // Trailing bytes that do not form a full pixel are ignored, same
+        // as the swizzle's chunking rule.
+        assert!(is_uniform_rgba(&[10u8, 10, 10, 255, 99]));
+        // Empty buffer: vacuous blank, never a real capture.
+        assert!(is_uniform_rgba(&[]));
     }
 
     #[test]
