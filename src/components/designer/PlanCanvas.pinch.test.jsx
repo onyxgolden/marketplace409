@@ -273,4 +273,43 @@ describe("PlanCanvas two-finger touch gestures", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch.mock.calls[0][0].type).toBe("ADD_ROOM");
   });
+
+  // --- ChatGPT round-2 NEEDS CHANGES regression: driving-pair tracking ---
+
+  it("lifting a driving finger while a third is down rebases without a zoom jump", () => {
+    renderCanvas("select");
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointerdown", 2, 300, 100); // pinch drives on [1,2]
+    touch(svg, "pointerdown", 3, 200, 300); // swallowed
+    touch(svg, "pointerup", 1, 100, 100); // rebase onto [2,3], no zoom step
+    expect(scaleFromGrid(svg)).toBeCloseTo(1.6, 5);
+    touch(svg, "pointermove", 2, 300, 200);
+    touch(svg, "pointerup", 2, 300, 200);
+    touch(svg, "pointerup", 3, 200, 300);
+    // rebased baseline dist sqrt(100^2+200^2)=223.61; new dist sqrt(100^2+100^2)=141.42
+    // scale = 1.6 * (141.42/223.61) = 1.0119 — a stale baseline would jump
+    expect(scaleFromGrid(svg)).toBeCloseTo(1.0119, 3);
+  });
+
+  it("lifting the non-driving third finger leaves the pinch undisturbed", () => {
+    renderCanvas("select");
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointerdown", 2, 300, 100);
+    touch(svg, "pointerdown", 3, 200, 300);
+    touch(svg, "pointerup", 3, 200, 300); // [1,2] still driving
+    touch(svg, "pointermove", 1, 50, 100); // dist 200 → 250 = 1.25x
+    touch(svg, "pointerup", 1, 50, 100);
+    touch(svg, "pointerup", 2, 300, 100);
+    expect(scaleFromGrid(svg)).toBeCloseTo(2.0, 4);
+  });
+
+  it("pinch ends cleanly when a driving finger lifts with none to rebase onto", () => {
+    renderCanvas("select");
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointerdown", 2, 300, 100);
+    touch(svg, "pointerup", 1, 100, 100); // one finger left → pinch over
+    touch(svg, "pointermove", 2, 350, 100); // must not zoom or jump
+    touch(svg, "pointerup", 2, 350, 100);
+    expect(scaleFromGrid(svg)).toBeCloseTo(1.6, 5);
+  });
 });

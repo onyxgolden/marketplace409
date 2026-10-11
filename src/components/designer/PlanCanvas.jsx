@@ -1216,7 +1216,18 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // ---- two-finger pinch zoom / pan (touch) ----
   // Zoom around the fingers' midpoint and pan with their midpoint drift, in
   // one step so the plan content sticks to the fingers. Same MIN/MAX_SCALE
-  // clamp as wheel zoom.
+  // clamp as wheel zoom. The driving pair is tracked explicitly: if a
+  // driving finger lifts while a third is down, the baseline rebases onto
+  // the new pair with no zoom step, so the view never jumps.
+  const pairGeom = (idA, idB) => {
+    const a = touchPointers.current.get(idA);
+    const b = touchPointers.current.get(idB);
+    if (!a || !b) return null;
+    return {
+      dist: Math.hypot(b.x - a.x, b.y - a.y),
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+    };
+  };
   const applyPinchStep = (prevDist, prevMid, dist, mid) => {
     if (!(prevDist > 0) || !(dist > 0)) return;
     const factor = dist / prevDist;
@@ -1234,13 +1245,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const pinchPoints = () => {
-    const pts = [...touchPointers.current.values()];
-    if (pts.length < 2) return null;
-    const [a, b] = pts;
-    return {
-      dist: Math.hypot(b.x - a.x, b.y - a.y),
-      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-    };
+    const ids = [...touchPointers.current.keys()];
+    if (ids.length < 2) return null;
+    const g = pairGeom(ids[0], ids[1]);
+    return g ? { ids: [ids[0], ids[1]], ...g } : null;
   };
 
   // A second touch pointer landing starts (or continues) a pinch gesture and
@@ -1272,10 +1280,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // would make the view jump on the first pinch move).
     touchPointers.current.set(e.pointerId, eventPoint(e));
     if (!pinch.current) return false;
-    const cur = pinchPoints();
+    // The driving pair is fixed for the life of the pinch: a finger that was
+    // never driving can't hijack the baseline mid-gesture.
+    const [idA, idB] = pinch.current.ids;
+    const cur = pairGeom(idA, idB);
     if (cur) {
       applyPinchStep(pinch.current.dist, pinch.current.mid, cur.dist, cur.mid);
-      pinch.current = cur;
+      pinch.current = { ids: [idA, idB], ...cur };
     }
     return true;
   };
@@ -1285,7 +1296,19 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   const trackTouchEnd = (e) => {
     if (e.pointerType !== "touch") return false;
     const had = touchPointers.current.delete(e.pointerId);
-    if (touchPointers.current.size < 2) pinch.current = null;
+    if (pinch.current && pinch.current.ids.includes(e.pointerId)) {
+      // A driving finger lifted: rebase the baseline onto the remaining
+      // pair with no zoom step, so the gesture continues without a jump —
+      // or end the pinch if fewer than two fingers remain. Lifting a
+      // non-driving (third+) finger leaves the pinch untouched.
+      const rest = [...touchPointers.current.keys()];
+      if (rest.length >= 2) {
+        const g = pairGeom(rest[0], rest[1]);
+        pinch.current = g ? { ids: [rest[0], rest[1]], ...g } : null;
+      } else {
+        pinch.current = null;
+      }
+    }
     return had;
   };
 
