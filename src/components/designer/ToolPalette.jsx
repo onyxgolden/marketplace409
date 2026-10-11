@@ -33,7 +33,13 @@ function readFavoriteToolIds() {
 function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavorite, showLabel = false }) {
   const Icon = tool.icon;
   return (
-    <div className="group relative">
+    // Phone rail is a fixed w-12: stack vertically (tool full-width, star
+    // below) so the primary tap target never collapses; at md+ the rail is
+    // wide enough for the star to sit in-flow to the right of the tool.
+    // Either way the star never overlaps the tool's tap target, so tapping
+    // a tool can't mis-fire a favorite toggle (on touch the old overlay's
+    // invisible star still intercepted taps).
+    <div className="group relative flex flex-col items-center gap-0.5 md:flex-row">
       <button
         type="button"
         onClick={() => onSelect(tool.id)}
@@ -41,9 +47,9 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         disabled={disabled}
         aria-pressed={active}
         aria-describedby={disabled ? `${tool.id}-disabled-reason` : undefined}
-        className={`flex w-full flex-col items-center gap-1 rounded px-1 py-1.5 text-[8px] ${
+        className={`flex w-full min-w-0 flex-col items-center gap-1 rounded px-1 py-1.5 text-[8px] ${
           active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
-        } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
+        } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""} md:flex-1`}
       >
         <Icon size={13} aria-hidden="true" />
         {/* Phone layout: the icon rail hides labels below md, but the All
@@ -56,6 +62,8 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
           Import a background image first to enable this tool.
         </span>
       )}
+      {/* Favorite star sits in-flow after the tool — below it on the phone
+          rail, to its right at md+ — never overlapping its tap target. */}
       <button
         type="button"
         onClick={(e) => {
@@ -65,8 +73,8 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         aria-pressed={favorite}
         aria-label={`${favorite ? "Remove" : "Add"} ${tool.label} ${favorite ? "from" : "to"} favorites`}
         title={favorite ? "Remove from favorites" : "Add to favorites"}
-        className={`absolute right-1 top-1 rounded p-0.5 ${
-          favorite ? "text-amber-400" : "text-gray-600 opacity-0 hover:text-amber-400 focus:opacity-100 group-hover:opacity-100"
+        className={`shrink-0 rounded p-1 ${
+          favorite ? "text-amber-400" : "text-gray-600 hover:text-amber-400"
         }`}
       >
         <Star size={12} aria-hidden="true" fill={favorite ? "currentColor" : "none"} />
