@@ -116,20 +116,23 @@ function hitMovesWithSelection(design, selection, hit) {
 const ANCHOR_SNAP_PX = 12;
 
 /**
- * View shift ({dx, dy} added to ox/oy) that brings an off-viewport pointer
- * back to the nearest canvas edge — auto-pan while drawing so the drawn
- * endpoint stays visible under the finger. Returns zeros when the pointer
- * is inside the canvas or the canvas has no measured size yet.
+ * Re-anchor the view for auto-pan while drawing: when the pointer leaves the
+ * viewport, the document point under the finger is re-rendered at a small
+ * margin inside the nearest edge, so the drawn endpoint stays visible while
+ * the canvas scrolls beneath it. Returns the new {ox, oy}, or null when the
+ * pointer is inside the viewport (or the canvas has no measured size).
  */
-export function autoPanDelta(screen, size) {
-  if (!(size.w > 0) || !(size.h > 0)) return { dx: 0, dy: 0 };
-  let dx = 0;
-  let dy = 0;
-  if (screen.x < 0) dx = -screen.x;
-  else if (screen.x > size.w) dx = size.w - screen.x;
-  if (screen.y < 0) dy = -screen.y;
-  else if (screen.y > size.h) dy = size.h - screen.y;
-  return { dx, dy };
+export function autoPanView(screen, size, view, margin = 16) {
+  if (!(size.w > 0) || !(size.h > 0)) return null;
+  const tx = screen.x < 0 ? margin : screen.x > size.w ? size.w - margin : null;
+  const ty = screen.y < 0 ? margin : screen.y > size.h ? size.h - margin : null;
+  if (tx === null && ty === null) return null;
+  const px = (screen.x - view.ox) / view.scale;
+  const py = (screen.y - view.oy) / view.scale;
+  return {
+    ox: tx !== null ? tx - px * view.scale : view.ox,
+    oy: ty !== null ? ty - py * view.scale : view.oy,
+  };
 }
 
 // Draw drags that auto-pan the canvas when the pointer leaves the viewport.
@@ -578,6 +581,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerup: if a second finger lands first, trackTouchDown starts a pinch
   // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
+    // Capture the pointer to the canvas so move/up keep flowing when the
+    // pointer leaves the element mid-gesture (edge-following while drawing,
+    // releasing outside after a drag). Touch already has implicit capture;
+    // this covers the mouse.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Not implemented (jsdom) or a stale pointer id — gestures still work,
+      // just without off-element tracking.
+    }
     if (trackTouchDown(e)) return;
     if (e.pointerType === "touch" && TAP_COMMIT_TOOLS.has(tool)) {
       // Snapshot the tap; the action body only needs these fields.
@@ -945,7 +958,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onPointerMove = (e) => {
-    let screen = eventPoint(e);
+    const screen = eventPoint(e);
     setCursorScreen(screen); // CAD crosshair follows every move
     // Two-finger pinch zoom / pan consumes the event while active.
     if (trackTouchMove(e)) return;
@@ -985,17 +998,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       return;
     }
     // Auto-pan while drawing: when the pointer runs off the viewport edge,
-    // scroll the canvas so the drawn endpoint stays visible under the
-    // finger. The pointer is reinterpreted against the pre-pan view so the
-    // preview tracks the finger exactly.
-    if (DRAW_AUTO_PAN_KINDS.has(drag.kind)) {
-      const { dx, dy } = autoPanDelta(screen, canvasSize);
-      if (dx !== 0 || dy !== 0) {
-        setView((v) => ({ ...v, ox: v.ox + dx, oy: v.oy + dy }));
-        screen = { x: screen.x - dx, y: screen.y - dy };
-      }
-    }
+    // re-anchor the view so the document point under the finger renders at
+    // a margin inside the edge — the endpoint stays visible while the
+    // canvas scrolls beneath it.
     const plan = toPlan(screen);
+    if (DRAW_AUTO_PAN_KINDS.has(drag.kind)) {
+      const anchored = autoPanView(screen, canvasSize, view);
+      if (anchored) setView((v) => ({ ...v, ox: anchored.ox, oy: anchored.oy }));
+    }
     if (drag.kind === "draw-wall") {
       const { point } = snapPoint(plan, {
         ...snapOptions,
@@ -2224,7 +2234,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
-        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null; }}
+        onPointerLeave={(e) => {
+          // With pointer capture set on pointerdown, the browser suppresses
+          // leave mid-gesture; this guards browsers that fire it anyway so
+          // a drag is never torn down while its pointer is still captured.
+          if (e.currentTarget.hasPointerCapture?.(e.pointerId)) return;
+          setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null;
+        }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
       >

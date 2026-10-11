@@ -7,12 +7,17 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import PlanCanvas, { autoPanDelta } from "./PlanCanvas";
+import PlanCanvas, { autoPanView } from "./PlanCanvas";
 import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
 
 // PlanCanvas uses a ResizeObserver for its wrapper size; jsdom has none.
+// Capture the observe callback so tests can drive a measured canvas size.
+let roCallback = null;
 if (typeof window.ResizeObserver === "undefined") {
   window.ResizeObserver = class {
+    constructor(cb) {
+      roCallback = cb;
+    }
     observe() {}
     unobserve() {}
     disconnect() {}
@@ -354,46 +359,116 @@ describe("PlanCanvas two-finger touch gestures", () => {
     expect(end.x).toBeCloseTo(12, 4);
     expect(end.y).toBeCloseTo(12, 4);
   });
+
+  // mouse events (pointerType defaults to "" — not touch)
+  function mouse(target, type, x, y, pointerId = 1) {
+    act(() => {
+      target.dispatchEvent(
+        new window.PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          pointerId,
+          clientX: x,
+          clientY: y,
+        })
+      );
+    });
+  }
+
+  // Give the canvas a measured size (jsdom reports clientWidth 0).
+  function measureCanvas(w = 800, h = 600) {
+    const wrap = container.firstChild;
+    Object.defineProperty(wrap, "clientWidth", { value: w, configurable: true });
+    Object.defineProperty(wrap, "clientHeight", { value: h, configurable: true });
+    act(() => {
+      roCallback();
+    });
+  }
+
+  it("wall drawing auto-pans when the pointer leaves the viewport", () => {
+    renderCanvas("wall");
+    measureCanvas(800, 600);
+    mouse(svg, "pointerdown", 400, 300);
+    const before = gridTranslate(svg);
+    mouse(svg, "pointermove", 900, 300); // 100px past the right edge
+    const after = gridTranslate(svg);
+    // ox re-anchors so the endpoint renders at the 16px margin: planX =
+    // (900-60)/1.6 = 525 → ox' = 784 - 525*1.6 = -56 → translate -56 % 48.
+    expect(after.x).toBeCloseTo(-8, 3);
+    expect(after.y).toBeCloseTo(before.y, 5);
+    // The drag survives and commits the extended wall.
+    mouse(svg, "pointerup", 900, 300);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ADD_WALL" })
+    );
+  });
+
+  it("mouse drawing survives pointerleave mid-drag when capture is held", () => {
+    renderCanvas("wall");
+    measureCanvas(800, 600);
+    // Simulate a capturing browser: the leave guard must not tear down.
+    const captured = new Set();
+    svg.setPointerCapture = (id) => captured.add(id);
+    svg.hasPointerCapture = (id) => captured.has(id);
+    mouse(svg, "pointerdown", 400, 300);
+    // React synthesizes onPointerLeave from native pointerout.
+    act(() => {
+      svg.dispatchEvent(new window.PointerEvent("pointerout", { bubbles: true, pointerId: 1 }));
+    });
+    mouse(svg, "pointermove", 500, 300);
+    mouse(svg, "pointerup", 500, 300);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "ADD_WALL" })
+    );
+  });
 });
 
-describe("autoPanDelta — auto-pan while drawing", () => {
+describe("autoPanView — auto-pan while drawing", () => {
   const size = { w: 800, h: 600 };
+  const view = { ox: 60, oy: 60, scale: 1.6 };
 
-  it("returns zero inside the viewport", () => {
-    expect(autoPanDelta({ x: 400, y: 300 }, size)).toEqual({ dx: 0, dy: 0 });
-    expect(autoPanDelta({ x: 0, y: 0 }, size)).toEqual({ dx: 0, dy: 0 });
-    expect(autoPanDelta({ x: 800, y: 600 }, size)).toEqual({ dx: 0, dy: 0 });
+  // Where the document point under the finger renders after re-anchoring.
+  const rendered = (s, v, a) => ({
+    x: a.ox + ((s.x - v.ox) / v.scale) * v.scale,
+    y: a.oy + ((s.y - v.oy) / v.scale) * v.scale,
   });
 
-  it("shifts the view to bring an off-edge pointer back to the edge", () => {
-    // Left of canvas: content must move right (+ox) by the overshoot.
-    expect(autoPanDelta({ x: -30, y: 300 }, size)).toEqual({ dx: 30, dy: 0 });
-    // Right of canvas: content moves left.
-    expect(autoPanDelta({ x: 830, y: 300 }, size)).toEqual({ dx: -30, dy: 0 });
-    // Above: content moves down.
-    expect(autoPanDelta({ x: 400, y: -25 }, size)).toEqual({ dx: 0, dy: 25 });
-    // Below: content moves up.
-    expect(autoPanDelta({ x: 400, y: 650 }, size)).toEqual({ dx: 0, dy: -50 });
+  it("returns null inside the viewport or when the canvas is unmeasured", () => {
+    expect(autoPanView({ x: 400, y: 300 }, size, view)).toBeNull();
+    expect(autoPanView({ x: 0, y: 0 }, size, view)).toBeNull();
+    expect(autoPanView({ x: -30, y: 300 }, { w: 0, h: 0 }, view)).toBeNull();
   });
 
-  it("handles a corner overshoot on both axes", () => {
-    expect(autoPanDelta({ x: -10, y: 620 }, size)).toEqual({ dx: 10, dy: -20 });
+  it("re-anchors so the endpoint lands visible at the margin, not off-screen", () => {
+    const s = { x: -30, y: 300 }; // finger past the left edge
+    const a = autoPanView(s, size, view);
+    expect(a).not.toBeNull();
+    const r = rendered(s, view, a);
+    expect(r.x).toBeCloseTo(16, 9); // margin — fully inside the viewport
+    expect(r.x).toBeGreaterThanOrEqual(0);
+    expect(r.y).toBeCloseTo(300, 9); // untouched axis still tracks the finger
+    expect(a.oy).toBe(view.oy);
   });
 
-  it("returns zero when the canvas has no measured size", () => {
-    expect(autoPanDelta({ x: -30, y: 300 }, { w: 0, h: 0 })).toEqual({ dx: 0, dy: 0 });
+  it("handles the right, top, and bottom edges", () => {
+    const cases = [
+      [{ x: 830, y: 300 }, 800 - 16, 300],
+      [{ x: 400, y: -25 }, 400, 16],
+      [{ x: 400, y: 650 }, 400, 600 - 16],
+    ];
+    for (const [s, ex, ey] of cases) {
+      const a = autoPanView(s, size, view);
+      const r = rendered(s, view, a);
+      expect(r.x).toBeCloseTo(ex, 9);
+      expect(r.y).toBeCloseTo(ey, 9);
+    }
   });
 
-  it("the shifted view maps the plan point back under the finger", () => {
-    // Property the component wiring relies on: after applying (dx, dy) to
-    // the view, the plan point computed from (screen - delta) against the
-    // OLD view renders at the original finger position in the NEW view.
-    const view = { ox: 60, oy: 60, scale: 1.6 };
-    const screen = { x: -30, y: 700 };
-    const { dx, dy } = autoPanDelta(screen, size);
-    const plan = { x: (screen.x - dx - view.ox) / view.scale, y: (screen.y - dy - view.oy) / view.scale };
-    const rendered = { x: view.ox + dx + plan.x * view.scale, y: view.oy + dy + plan.y * view.scale };
-    expect(rendered.x).toBeCloseTo(screen.x, 9);
-    expect(rendered.y).toBeCloseTo(screen.y, 9);
+  it("re-anchors both axes on a corner overshoot", () => {
+    const s = { x: -10, y: 620 };
+    const a = autoPanView(s, size, view);
+    const r = rendered(s, view, a);
+    expect(r.x).toBeCloseTo(16, 9);
+    expect(r.y).toBeCloseTo(600 - 16, 9);
   });
 });
