@@ -165,4 +165,112 @@ describe("PlanCanvas two-finger touch gestures", () => {
     expect(scaleFromGrid(svg)).toBeCloseTo(3.2, 4);
     expect(dispatch.mock.calls.length).toBe(callsAfterFirstTap);
   });
+
+  // --- ChatGPT NEEDS CHANGES regressions (PR #607 round 2) ---
+
+  it("pointercancel aborts a wall draw instead of committing it", () => {
+    renderCanvas("wall");
+    touch(svg, "pointerdown", 1, 60, 60);
+    touch(svg, "pointermove", 1, 300, 60);
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointercancel", {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          pointerType: "touch",
+          clientX: 300,
+          clientY: 60,
+        })
+      );
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("pointercancel aborts for mouse pointers too", () => {
+    renderCanvas("wall");
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 60, clientY: 60 })
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointermove", { bubbles: true, button: 0, clientX: 300, clientY: 60 })
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointercancel", { bubbles: true, button: 0, clientX: 300, clientY: 60 })
+      );
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("pinch baseline uses the first finger's current position, not its touchdown", () => {
+    renderCanvas("select");
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointermove", 1, 140, 100); // single finger drifts; no pinch yet
+    expect(scaleFromGrid(svg)).toBeCloseTo(1.6, 5);
+    touch(svg, "pointerdown", 2, 200, 100); // baseline dist 60 from (140,100)
+    touch(svg, "pointermove", 2, 240, 100); // dist 100 → factor 100/60
+    touch(svg, "pointerup", 1, 140, 100);
+    touch(svg, "pointerup", 2, 240, 100);
+    // 1.6 * (100/60) = 2.6667; a stale touchdown baseline would give 2.24
+    expect(scaleFromGrid(svg)).toBeCloseTo(2.6667, 3);
+  });
+
+  it("touch room tap commits on lift, not on touchdown", () => {
+    renderCanvas("room");
+    touch(svg, "pointerdown", 1, 200, 200);
+    expect(dispatch).not.toHaveBeenCalled();
+    touch(svg, "pointerup", 1, 200, 200);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].type).toBe("ADD_ROOM");
+  });
+
+  it("pinch discards a pending room tap", () => {
+    renderCanvas("room");
+    touch(svg, "pointerdown", 1, 200, 200);
+    touch(svg, "pointerdown", 2, 300, 200); // pinch takes over
+    touch(svg, "pointermove", 1, 180, 200);
+    touch(svg, "pointerup", 1, 180, 200);
+    touch(svg, "pointerup", 2, 300, 200);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("touch calibration tap commits on lift; pinch discards it", () => {
+    container.remove();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    dispatch = vi.fn();
+    const design = { ...createEmptyDesign(), underlay: { x: 0, y: 0 } };
+    act(() => {
+      root.render(
+        <PlanCanvas design={design} tool="calibrate" selection={null} dispatch={dispatch} />
+      );
+    });
+    svg = container.querySelector("svg");
+    // tap commits on lift
+    touch(svg, "pointerdown", 1, 200, 200);
+    expect(dispatch).not.toHaveBeenCalled();
+    touch(svg, "pointerup", 1, 200, 200);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].type).toBe("ADD_CALIBRATION_POINT");
+    // pinch discards the pending tap
+    dispatch.mockClear();
+    touch(svg, "pointerdown", 1, 200, 200);
+    touch(svg, "pointerdown", 2, 300, 200);
+    touch(svg, "pointerup", 1, 200, 200);
+    touch(svg, "pointerup", 2, 300, 200);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("mouse room placement still commits on pointerdown", () => {
+    renderCanvas("room");
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 200, clientY: 200 })
+      );
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].type).toBe("ADD_ROOM");
+  });
 });

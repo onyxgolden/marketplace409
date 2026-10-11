@@ -63,6 +63,25 @@ import {
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
 const HIT_TOLERANCE_PX = 10;
+// Tools that commit on tap (pointerdown) instead of starting a drag. For
+// touch, the tap commits on pointerup instead, so a second finger landing
+// first can still turn the gesture into a pinch — which discards the tap
+// rather than mutating the document underneath it.
+const TAP_COMMIT_TOOLS = new Set([
+  "calibrate",
+  "measure",
+  "measure-area",
+  "room",
+  "door",
+  "window",
+  "furniture",
+  "pipe",
+  "piping",
+  "symbol",
+  "orgchart",
+  "custom-shape",
+  "erase",
+]);
 /**
  * Minimum opening width enforced by the on-canvas resize handles (the
  * inspector slider starts at 18"; the domain backstops the structural
@@ -121,6 +140,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // except through the view transform.
   const touchPointers = useRef(new Map()); // pointerId -> {x, y} screen px
   const pinch = useRef(null); // {dist, mid:{x,y}} of the previous move, or null
+  // A touch tap whose commit is deferred to pointerup, so a second finger can
+  // still turn the gesture into a pinch (which discards the tap instead of
+  // committing it). {pointerId, run} or null.
+  const pendingTap = useRef(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   // Raw cursor position in screen px for the CAD crosshair overlay. Null
@@ -531,10 +554,21 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     setHoverPoint(null);
   }, [pipePreview, dispatch]);
 
+  // Deferred-tap dispatcher. Touch taps on tap-commit tools wait for
+  // pointerup: if a second finger lands first, trackTouchDown starts a pinch
+  // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
-    // Second touch finger takes over as a pinch gesture (cancels any
-    // in-progress single-finger drag); third+ fingers are swallowed.
     if (trackTouchDown(e)) return;
+    if (e.pointerType === "touch" && TAP_COMMIT_TOOLS.has(tool)) {
+      // Snapshot the tap; the action body only needs these fields.
+      const snap = { clientX: e.clientX, clientY: e.clientY, button: e.button, shiftKey: e.shiftKey };
+      pendingTap.current = { pointerId: e.pointerId, run: () => handlePointerDownAction(snap) };
+      return;
+    }
+    handlePointerDownAction(e);
+  };
+
+  const handlePointerDownAction = (e) => {
     if (e.button === 1 || tool === "pan" || spaceDown) {
       setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
       return;
@@ -1126,6 +1160,14 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     // drag/commit logic below is a no-op during a pinch: the second finger
     // landing already cleared drag and the draw preview.
     trackTouchEnd(e);
+    // A deferred touch tap commits on lift — but only for its own pointer,
+    // and never when a pinch is in progress (the pinch discarded the tap).
+    const tap = pendingTap.current;
+    if (tap && e.pointerId === tap.pointerId && !pinch.current) {
+      pendingTap.current = null;
+      tap.run();
+      return;
+    }
     if (drag?.kind === "draw-wall" && drawPreview) {
       const len = Math.hypot(drawPreview.b.x - drawPreview.a.x, drawPreview.b.y - drawPreview.a.y);
       if (len >= 1) {
@@ -1158,6 +1200,15 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         dispatch({ type: "ADD_DECK", a: drawPreview.a, b: drawPreview.b });
       }
     }
+    setDrag(null);
+    setDrawPreview(null);
+  };
+
+  // A cancelled pointer aborts the gesture: never commit a pending shape or
+  // tap. (Separate from onPointerUp, which commits completed drags.)
+  const onPointerCancel = (e) => {
+    trackTouchEnd(e);
+    pendingTap.current = null;
     setDrag(null);
     setDrawPreview(null);
   };
@@ -1201,9 +1252,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     const n = touchPointers.current.size;
     if (n === 2) {
       // Pinch takes over: cancel any in-progress single-finger drag so a
-      // half-drawn wall/room never commits when the second finger lands.
+      // half-drawn wall/room never commits when the second finger lands,
+      // and discard any deferred tap — the gesture is a pinch, not a tap.
       setDrag(null);
       setDrawPreview(null);
+      pendingTap.current = null;
       pinch.current = pinchPoints();
       return true;
     }
@@ -1212,9 +1265,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
 
   // Advances an in-progress pinch. Returns true when consumed.
   const trackTouchMove = (e) => {
-    if (e.pointerType !== "touch" || !pinch.current) return false;
+    if (e.pointerType !== "touch") return false;
     if (!touchPointers.current.has(e.pointerId)) return false;
+    // Keep the stored position fresh even before the second finger lands, so
+    // the pinch baseline never uses a stale first-finger coordinate (which
+    // would make the view jump on the first pinch move).
     touchPointers.current.set(e.pointerId, eventPoint(e));
+    if (!pinch.current) return false;
     const cur = pinchPoints();
     if (cur) {
       applyPinchStep(pinch.current.dist, pinch.current.mid, cur.dist, cur.mid);
@@ -2106,8 +2163,8 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; }}
+        onPointerCancel={onPointerCancel}
+        onPointerLeave={() => { setDrag(null); setDrawPreview(null); setGhost(null); setCursorScreen(null); touchPointers.current.clear(); pinch.current = null; pendingTap.current = null; }}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
       >
