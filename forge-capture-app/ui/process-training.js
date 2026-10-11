@@ -31,6 +31,7 @@ import {
   applyGuideWording,
   WordingError,
   FIXTURE_WORDING_RULESET_V1,
+  renderSourceWording,
 } from "./process-guide-wording.js";
 import {
   GuideMarkupOverlay,
@@ -511,7 +512,7 @@ export function renderProcessTrainingControls(container, deps = {}) {
     // wording output, diff, attempt records, or injected-time state —
     // the success path below then re-enables the preview action only for
     // a fixture guide, and the failure path keeps everything cleared.
-    clearWordingPreview();
+    invalidateWordingPreview();
     guideError.hidden = true;
     guideError.textContent = "";
     guideSteps.innerHTML = "";
@@ -629,7 +630,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
       const li = document.createElement("li");
       const before = document.createElement("div");
       before.className = "pt-wording-before";
-      before.textContent = `Before: ${step.action} — ${step.targetLabel}`;
+      // W-001: the UI Before label is the invariant source-wording
+      // representation shared verbatim with the engine's diff `before`
+      // — rendered from the step's own source fields, never from a
+      // prior `wording` field.
+      before.textContent = `Before: ${renderSourceWording(step)}`;
       const after = document.createElement("div");
       after.className = "pt-wording-after";
       after.textContent = `After: ${step.wording}`;
@@ -655,18 +660,41 @@ export function renderProcessTrainingControls(container, deps = {}) {
     }
   }
 
-  function clearWordingPreview() {
+  /**
+   * W-004 review fix: clearing the generated preview CONTENT (the panel
+   * Clear button) is distinct from INVALIDATING a compiled guide
+   * (discard/reset/target-change/failed recompile). The panel Clear
+   * empties result, diff, attempt records, and injected-time state but
+   * leaves the preview action available for the still-valid compiled
+   * fixture guide, so the user can preview again without recompiling.
+   */
+  function clearWordingPreviewContent() {
     lastWordingResult = null;
     wordingAttempts = [];
     wordingProvenanceTime = null;
     wordingPanel.hidden = true;
-    wordingPreviewBtn.hidden = true;
     wordingError.hidden = true;
     wordingError.textContent = "";
     wordingTime.textContent = "";
     wordingBeforeAfter.innerHTML = "";
     wordingDiff.innerHTML = "";
     wordingAttemptsEl.innerHTML = "";
+    // The action stays available while the compiled fixture guide is
+    // still the valid basis for a preview — only a full invalidation
+    // (below) hides it.
+    wordingPreviewBtn.hidden = !(lastCompiledGuide && lastCompiledGuide.source === "fixture");
+  }
+
+  /**
+   * Full wording lifecycle invalidation: content clear plus the preview
+   * action hidden. Used on per-(re)compile reset (the success path
+   * re-enables the action only for a fixture guide), discard/reset, and
+   * failed recompile — anywhere the compiled guide is no longer a valid
+   * preview basis.
+   */
+  function invalidateWordingPreview() {
+    clearWordingPreviewContent();
+    wordingPreviewBtn.hidden = true;
   }
 
   /**
@@ -723,7 +751,7 @@ export function renderProcessTrainingControls(container, deps = {}) {
   }
 
   wordingPreviewBtn.addEventListener("click", () => previewGuideWording());
-  $("pt-wording-clear-btn").addEventListener("click", () => clearWordingPreview());
+  $("pt-wording-clear-btn").addEventListener("click", () => clearWordingPreviewContent());
 
   // ---------------------------------------------------------------------
   // PT-3: markup panel (add/select/edit/delete/undo/redo annotations for
@@ -1528,8 +1556,9 @@ export function renderProcessTrainingControls(container, deps = {}) {
     lastCompiledGuide = null;
     // PT-6 Slice W: discard/reset clears the wording preview state too —
     // output, diff, attempt records, and injected-time state — not just
-    // the panel's visibility.
-    clearWordingPreview();
+    // the panel's visibility. Full invalidation (the preview action is
+    // hidden: there is no longer a compiled guide to preview against).
+    invalidateWordingPreview();
     // PT-3: discard/reset/target-change clears every step's markup, not
     // just hides it -- same discipline as the guide preview itself.
     markupOverlay.clearAll();

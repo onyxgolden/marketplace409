@@ -15,6 +15,7 @@ import {
   WordingError,
   WORDING_RESULT_SCHEMA_VERSION,
   FIXTURE_WORDING_RULESET_V1,
+  renderSourceWording,
 } from "../process-guide-wording.js";
 import { GUIDE_SCHEMA_VERSION } from "../process-guide-compiler.js";
 
@@ -132,13 +133,232 @@ describe("W1 happy path — five-step fixture guide", () => {
     expect(diffReport.steps).toHaveLength(5);
     diffReport.steps.forEach((entry, i) => {
       expect(entry.stepIndex).toBe(i);
-      expect(entry.before).toBe(entry.after);
-      expect(entry.changed).toBe(false);
+      // W-001: the diff before is the invariant source-wording
+      // representation — never the new template re-rendered onto the
+      // source spans — so the real template-only phrasing change is
+      // recorded (changed=true), not concealed.
+      expect(entry.before).toBe(renderSourceWording(before.steps[i]));
+      expect(entry.before).toBe(`${before.steps[i].action} — ${before.steps[i].targetLabel}`);
+      expect(entry.after).toBe(expectedWording(before.steps[i].action, before.steps[i].targetLabel));
+      expect(entry.changed).toBe(true);
       expect(entry.mappings).toEqual([]);
     });
 
     // Input never mutated.
     expect(guide).toEqual(before);
+  });
+});
+
+describe("W-001 invariant source-wording baseline (review round 1)", () => {
+  it("records the real template-only phrasing change with no mappings (changed=true)", () => {
+    const { diffReport } = applyGuideWording({
+      guide: happyGuide(),
+      ruleset: FIXTURE_WORDING_RULESET_V1,
+      provenanceTime: FROZEN_TIME,
+    });
+    // The review's reproduction: before was the new template
+    // re-rendered (before == after, changed=false, step labeled
+    // unchanged while the wording visibly differed). The invariant
+    // baseline exposes the change instead.
+    const entry = diffReport.steps[0];
+    expect(entry.before).toBe("Click observed — btn-save");
+    expect(entry.after).toBe("Observed action: Click observed. Target control: btn-save.");
+    expect(entry.before).not.toBe(entry.after);
+    expect(entry.changed).toBe(true);
+  });
+
+  it("renderSourceWording is the same string the engine uses for diff before", () => {
+    const step = makeStep(0, "Click observed", "btn-save");
+    expect(renderSourceWording(step)).toBe("Click observed — btn-save");
+    const { diffReport } = applyGuideWording({
+      guide: makeGuide([{ action: "Click observed", targetLabel: "btn-save" }]),
+      ruleset: FIXTURE_WORDING_RULESET_V1,
+      provenanceTime: FROZEN_TIME,
+    });
+    expect(diffReport.steps[0].before).toBe(renderSourceWording(step));
+  });
+
+  it("the invariant baseline survives reapplication — a prior wording field is never the baseline", () => {
+    const first = applyGuideWording({
+      guide: happyGuide(),
+      ruleset: FIXTURE_WORDING_RULESET_V1,
+      provenanceTime: FROZEN_TIME,
+    });
+    const second = applyGuideWording({
+      guide: first.guide,
+      ruleset: FIXTURE_WORDING_RULESET_V1,
+      provenanceTime: FROZEN_TIME,
+    });
+    second.diffReport.steps.forEach((entry, i) => {
+      expect(entry.before).toBe(renderSourceWording(first.guide.steps[i]));
+      // Not the previously generated wording recycled as the baseline.
+      expect(entry.before).not.toContain("Observed action:");
+    });
+    // Full-output idempotence: the whole result (including the new
+    // before) is byte-identical on reapplication.
+    expect(canonicalJson(second)).toBe(canonicalJson(first));
+  });
+
+  it("mapped diffs compare against the same invariant baseline", () => {
+    const { diffReport } = applyGuideWording({
+      guide: makeGuide([{ action: "Double-click observed", targetLabel: "E-101" }]),
+      ruleset: FIXTURE_WORDING_RULESET_V1,
+      mapping: [{ from: "E-101", to: "Pump P-101" }],
+      provenanceTime: FROZEN_TIME,
+    });
+    expect(diffReport.steps[0].before).toBe("Double-click observed — E-101");
+    expect(diffReport.steps[0].after).toBe(
+      "Observed action: Double-click observed. Target control: Pump P-101."
+    );
+    expect(diffReport.steps[0].changed).toBe(true);
+  });
+});
+
+describe("W-002 supported source-field contract (review round 1)", () => {
+  it("rejects a caller-declared processName field (brief permits only action and targetLabel)", () => {
+    const guide = happyGuide();
+    const before = JSON.parse(JSON.stringify(guide));
+    // Independently reproduced in the review: placeholderFields
+    // ["processName"] with template "Observed action: {processName}."
+    // succeeded and emitted `Observed action: fixture.exe.`. The
+    // widening is now refused before any output.
+    const err = expectWordingError(
+      () =>
+        applyGuideWording({
+          guide,
+          ruleset: customRuleset({
+            placeholderFields: ["processName"],
+            template: "Observed action: {processName}.",
+          }),
+          provenanceTime: FROZEN_TIME,
+        }),
+      "unsupported-placeholder-field"
+    );
+    expect(err.message).toContain("processName");
+    expect(guide).toEqual(before);
+  });
+
+  it("rejects a caller-added fabricated field alongside the supported ones", () => {
+    const guide = happyGuide();
+    const before = JSON.parse(JSON.stringify(guide));
+    expectWordingError(
+      () =>
+        applyGuideWording({
+          guide,
+          ruleset: customRuleset({
+            placeholderFields: ["action", "targetLabel", "secretSauce"],
+            template: "Observed action: {action}. Target control: {targetLabel}.",
+          }),
+          provenanceTime: FROZEN_TIME,
+        }),
+      "unsupported-placeholder-field"
+    );
+    expect(guide).toEqual(before);
+  });
+
+  it("rejects duplicate field names", () => {
+    const guide = happyGuide();
+    expectWordingError(
+      () =>
+        applyGuideWording({
+          guide,
+          ruleset: customRuleset({
+            placeholderFields: ["action", "action"],
+            template: "Observed action: {action}.",
+          }),
+          provenanceTime: FROZEN_TIME,
+        }),
+      "duplicate-placeholder-field"
+    );
+  });
+
+  it("still accepts valid supported-field template variants (single-field and reordered)", () => {
+    const { guide: out } = applyGuideWording({
+      guide: happyGuide(),
+      ruleset: customRuleset({
+        placeholderFields: ["action"],
+        template: "Observed action: {action}.",
+        terminologyAllowlist: ["observed", "action"],
+      }),
+      provenanceTime: FROZEN_TIME,
+    });
+    expect(out.steps[0].wording).toBe("Observed action: Click observed.");
+
+    const { guide: out2 } = applyGuideWording({
+      guide: happyGuide(),
+      ruleset: customRuleset({
+        placeholderFields: ["targetLabel", "action"],
+        template: "Target control: {targetLabel}. Observed action: {action}.",
+        terminologyAllowlist: ["target", "control", "observed", "action"],
+      }),
+      provenanceTime: FROZEN_TIME,
+    });
+    expect(out2.steps[0].wording).toBe("Target control: btn-save. Observed action: Click observed.");
+  });
+});
+
+describe("W-003 partial-overlap mapping rejection (review round 1)", () => {
+  it("rejects suffix/prefix-overlapping distinct keys with unchanged input and no output", () => {
+    const guide = makeGuide([{ action: "Type observed", targetLabel: "abcde" }]);
+    const before = JSON.parse(JSON.stringify(guide));
+    // The review's reproduction: this call passed with target wording
+    // `Xde` and silently skipped the authorized cde mapping. It now
+    // refuses before constructing any output.
+    const err = expectWordingError(
+      () =>
+        applyGuideWording({
+          guide,
+          ruleset: FIXTURE_WORDING_RULESET_V1,
+          mapping: [
+            { from: "abc", to: "X" },
+            { from: "cde", to: "Y" },
+          ],
+          provenanceTime: FROZEN_TIME,
+        }),
+      "invalid-mapping"
+    );
+    expect(err.message).toContain("overlapping mapping keys");
+    expect(guide).toEqual(before); // input byte-unchanged; nothing returned
+  });
+
+  it("still rejects key containment as overlap", () => {
+    const guide = makeGuide([{ action: "Click observed", targetLabel: "abcdef" }]);
+    expectWordingError(
+      () =>
+        applyGuideWording({
+          guide,
+          ruleset: FIXTURE_WORDING_RULESET_V1,
+          mapping: [
+            { from: "abcdef", to: "X" },
+            { from: "cde", to: "Y" },
+          ],
+          provenanceTime: FROZEN_TIME,
+        }),
+      "invalid-mapping"
+    );
+  });
+
+  it("accepts disjoint mappings and applies them caller-order-independently", () => {
+    const guide = makeGuide([{ action: "Click observed", targetLabel: "abcdef" }]);
+    const run = (mapping) =>
+      applyGuideWording({ guide, ruleset: FIXTURE_WORDING_RULESET_V1, mapping, provenanceTime: FROZEN_TIME });
+    const a = run([
+      { from: "abc", to: "X" },
+      { from: "def", to: "Y" },
+    ]);
+    const b = run([
+      { from: "def", to: "Y" },
+      { from: "abc", to: "X" },
+    ]);
+    expect(a.guide.steps[0].wording).toBe("Observed action: Click observed. Target control: XY.");
+    expect(canonicalJson(a)).toBe(canonicalJson(b));
+    const entry = a.diffReport.steps[0];
+    expect(entry.changed).toBe(true);
+    expect(entry.before).toBe("Click observed — abcdef");
+    expect(entry.mappings).toEqual([
+      { stepIndex: 0, field: "targetLabel", from: "abc", to: "X", occurrences: 1 },
+      { stepIndex: 0, field: "targetLabel", from: "def", to: "Y", occurrences: 1 },
+    ]);
   });
 });
 
@@ -235,7 +455,10 @@ describe("W3c mapped replacement recorded", () => {
 
     const entry = diffReport.steps[1];
     expect(entry.changed).toBe(true);
-    expect(entry.before).toContain("E-101");
+    // W-001: the mapped diff compares against the same invariant
+    // baseline — the template's own phrasing change plus the mapping.
+    expect(entry.before).toBe("Double-click observed — E-101");
+    expect(entry.after).toBe("Observed action: Double-click observed. Target control: Pump P-101.");
     expect(entry.after).toContain("Pump P-101");
     expect(entry.mappings).toEqual([
       { stepIndex: 1, field: "targetLabel", from: "E-101", to: "Pump P-101", occurrences: 1 },

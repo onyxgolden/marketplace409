@@ -31,7 +31,10 @@
 // invariant source fields on every run — never from a prior `wording`
 // field — so reapplying the pass to its own output with identical
 // inputs returns byte-identical semantic output (idempotent, no
-// second-pass drift).
+// second-pass drift). The diff `before` is the invariant source-wording
+// representation (`renderSourceWording`, shared verbatim with the UI's
+// Before label) — never the new template re-rendered — so the
+// normalization the template performs is exposed, not concealed.
 
 import { GUIDE_SCHEMA_VERSION } from "./process-guide-compiler.js";
 
@@ -82,6 +85,33 @@ const RFC3339_PATTERN =
 const PLACEHOLDER_PATTERN = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const WORD_TOKEN_PATTERN = /[a-z0-9]+/g;
+
+// W-002 review fix: the supported source-field contract is fixed by the
+// slice, independent of caller declarations. The brief permits only
+// `action` and `targetLabel` — a caller may not widen it (e.g. to
+// `processName` or a fabricated field), and duplicates are rejected,
+// before any output is produced.
+const SUPPORTED_PLACEHOLDER_FIELDS = new Set(["action", "targetLabel"]);
+
+// Canonical order for the invariant source-wording representation
+// (W-001): always action, then targetLabel, joined with an em dash.
+const SOURCE_WORDING_FIELD_ORDER = ["action", "targetLabel"];
+
+/**
+ * W-001 review fix: the one invariant source-wording representation.
+ * This is the baseline both the engine's diff `before` and the UI's
+ * Before label use — rendered from the step's own source fields only,
+ * never from a prior `wording` field and never from the (new) template,
+ * so the template's own phrasing change is exposed by the diff instead
+ * of concealed by it. Exported so the UI and the engine use the same
+ * string by construction, not by parallel re-implementation.
+ */
+export function renderSourceWording(spans) {
+  return SOURCE_WORDING_FIELD_ORDER
+    .filter((field) => typeof spans[field] === "string")
+    .map((field) => spans[field])
+    .join(" — ");
+}
 
 export class WordingError extends Error {
   constructor(code, message, attemptRecord) {
@@ -218,6 +248,21 @@ function validateRuleset(ruleset) {
     !placeholderFields.every((f) => typeof f === "string" && FIELD_NAME_PATTERN.test(f) && f.length <= 100)
   ) {
     fail("invalid-ruleset", "ruleset.placeholderFields must be a non-empty array of field names", ruleset);
+  }
+  // W-002: enforce the supported field set independently of caller
+  // declarations — unsupported and duplicate names fail closed here,
+  // before validateTemplate and before any output.
+  for (const field of placeholderFields) {
+    if (!SUPPORTED_PLACEHOLDER_FIELDS.has(field)) {
+      fail(
+        "unsupported-placeholder-field",
+        `placeholder field "${field.slice(0, 60)}" is not a supported source field (supported: action, targetLabel)`,
+        ruleset
+      );
+    }
+  }
+  if (new Set(placeholderFields).size !== placeholderFields.length) {
+    fail("duplicate-placeholder-field", "ruleset.placeholderFields must not repeat a field name", ruleset);
   }
 
   const allowlist = ruleset.terminologyAllowlist;
@@ -357,6 +402,21 @@ function validateGuide(guide, ruleset) {
   });
 }
 
+// All non-overlapping match intervals of `from` inside `span`
+// (indexOf scan, advancing past each match — the same left-to-right
+// scan the greedy applicator below performs).
+function findMatchIntervals(span, from) {
+  const intervals = [];
+  let start = 0;
+  while (true) {
+    const idx = span.indexOf(from, start);
+    if (idx === -1) break;
+    intervals.push([idx, idx + from.length]);
+    start = idx + from.length;
+  }
+  return intervals;
+}
+
 function validateMapping(mapping, guide, ruleset) {
   if (!Array.isArray(mapping)) {
     fail("invalid-mapping", "mapping must be an array of { from, to } entries", ruleset);
@@ -384,16 +444,38 @@ function validateMapping(mapping, guide, ruleset) {
     }
     seenFrom.set(entry.from, entry);
   }
-  for (let a = 0; a < mapping.length; a++) {
-    for (let b = a + 1; b < mapping.length; b++) {
-      const fa = mapping[a].from;
-      const fb = mapping[b].from;
-      if (fa.includes(fb) || fb.includes(fa)) {
-        fail(
-          "invalid-mapping",
-          `overlapping mapping keys: "${fa.slice(0, 40)}" and "${fb.slice(0, 40)}"`,
-          ruleset
-        );
+
+  const placeholderFields = ruleset.placeholderFields;
+
+  // W-003 review fix: rejecting only key containment ("abc" inside
+  // "abcdef") missed distinct keys that overlap in a source span without
+  // containing each other ("abc"/"cde" inside "abcde"). The greedy single
+  // application pass would then silently skip one authorized entry, so
+  // ANY overlap between DISTINCT entries' match intervals in the
+  // ORIGINAL source spans rejects the whole call before any output is
+  // constructed. Same-entry repeated occurrences are deterministic under
+  // the greedy left-to-right scan and are not ambiguity.
+  for (const step of guide.steps) {
+    for (const field of placeholderFields) {
+      const span = step[field];
+      const hits = [];
+      for (const entry of mapping) {
+        for (const [start, end] of findMatchIntervals(span, entry.from)) {
+          hits.push({ from: entry.from, start, end });
+        }
+      }
+      for (let a = 0; a < hits.length; a++) {
+        for (let b = a + 1; b < hits.length; b++) {
+          const ha = hits[a];
+          const hb = hits[b];
+          if (ha.from !== hb.from && ha.start < hb.end && hb.start < ha.end) {
+            fail(
+              "invalid-mapping",
+              `overlapping mapping keys: "${ha.from.slice(0, 40)}" and "${hb.from.slice(0, 40)}"`,
+              ruleset
+            );
+          }
+        }
       }
     }
   }
@@ -401,7 +483,6 @@ function validateMapping(mapping, guide, ruleset) {
   // Every mapping's `from` must actually occur in the source spans it
   // claims to replace — a mapping to nothing is a caller error, never
   // silently kept.
-  const placeholderFields = ruleset.placeholderFields;
   for (const entry of mapping) {
     const found = guide.steps.some((step) => placeholderFields.some((field) => step[field].includes(entry.from)));
     if (!found) {
@@ -499,7 +580,16 @@ export function applyGuideWording({ guide, ruleset, mapping = [], provenanceTime
       return a.from < b.from ? -1 : a.from > b.from ? 1 : 0;
     });
 
-    const before = renderTemplate(template, sourceSpans);
+    // W-001 review fix: the diff before is the invariant source-wording
+    // representation (the same string the UI shows as Before) — never
+    // the new template re-rendered onto the source spans. Re-rendering
+    // the template here concealed the normalization (before == after
+    // with changed=false for every unmapped step); comparing against
+    // the invariant baseline records the real template-only phrasing
+    // change. Rendered from the step's own source fields only — never
+    // from a prior `wording` field — so the baseline survives
+    // reapplication (PT6-D2).
+    const before = renderSourceWording(sourceSpans);
     const wording = renderTemplate(template, mappedSpans);
 
     const outStep = structuredClone(sourceStep);

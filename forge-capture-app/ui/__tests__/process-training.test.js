@@ -2025,6 +2025,17 @@ describe("renderProcessTrainingControls — PT-6 Slice W wording preview", () =>
     const diffRows = [...container.querySelectorAll("#pt-wording-diff li")];
     expect(diffRows.length).toBe(rows.length);
     expect(diffRows[0].textContent).toContain("→");
+
+    // W-001: the UI Before label is the invariant source-wording
+    // representation, shared verbatim with the engine's diff `before`
+    // — never the new template re-rendered — and the template-only
+    // phrasing change is recorded (changed=true), not concealed.
+    const result = handle.wordingState.result;
+    const firstStep = result.guide.steps[0];
+    const invariantBefore = `${firstStep.action} — ${firstStep.targetLabel}`;
+    expect(rows[0].querySelector(".pt-wording-before").textContent).toBe(`Before: ${invariantBefore}`);
+    expect(result.diffReport.steps[0].before).toBe(invariantBefore);
+    expect(result.diffReport.steps[0].changed).toBe(true);
   });
 
   it("shows a WordingError without crashing or substituting partial output", () => {
@@ -2168,5 +2179,39 @@ describe("renderProcessTrainingControls — PT-6 Slice W wording preview", () =>
     expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
     expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
     expect(container.querySelectorAll("#pt-wording-before-after li").length).toBe(0);
+    // W-004: clearing the panel empties the content, but the action
+    // stays available for the still-valid compiled fixture guide.
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(false);
+  });
+
+  it("compile → preview → clear → preview again needs no recompile (W-004)", () => {
+    const { container, handle } = mountWithFrozenTime();
+    advanceToReview(container);
+
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(handle.wordingState.result).not.toBeNull();
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(false);
+
+    // Panel Clear: content gone, action still available.
+    container.querySelector("#pt-wording-clear-btn").click();
+    expect(handle.wordingState).toEqual({ result: null, attempts: [], provenanceTime: null });
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(true);
+    expect(container.querySelectorAll("#pt-wording-diff li").length).toBe(0);
+    expect(container.querySelector("#pt-wording-preview-btn").hidden).toBe(false);
+
+    // Preview again — no recompile: the same frozen injected time, a
+    // fresh in-memory result, and the invariant before/after rows.
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(container.querySelector("#pt-wording-panel").hidden).toBe(false);
+    expect(handle.wordingState.result).not.toBeNull();
+    expect(handle.wordingState.provenanceTime).toBe(FROZEN_WORDING_TIME);
+    const rows = [...container.querySelectorAll("#pt-wording-before-after li")];
+    expect(rows.length).toBeGreaterThan(0);
+    const result = handle.wordingState.result;
+    const firstStep = result.guide.steps[0];
+    expect(rows[0].querySelector(".pt-wording-before").textContent).toBe(
+      `Before: ${firstStep.action} — ${firstStep.targetLabel}`
+    );
+    expect(rows[0].querySelector(".pt-wording-after").textContent.startsWith("After: ")).toBe(true);
   });
 });
