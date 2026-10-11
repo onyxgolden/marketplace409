@@ -33,7 +33,7 @@ function readFavoriteToolIds() {
 function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavorite, showLabel = false }) {
   const Icon = tool.icon;
   return (
-    <div className="group relative">
+    <div className="group relative flex items-center gap-0.5">
       <button
         type="button"
         onClick={() => onSelect(tool.id)}
@@ -41,7 +41,7 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         disabled={disabled}
         aria-pressed={active}
         aria-describedby={disabled ? `${tool.id}-disabled-reason` : undefined}
-        className={`flex w-full flex-col items-center gap-1 rounded px-1 py-1.5 text-[8px] ${
+        className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded px-1 py-1.5 text-[8px] ${
           active ? "bg-emerald-600 text-white" : "text-gray-300 hover:bg-gray-800"
         } ${disabled ? "cursor-not-allowed opacity-40 hover:bg-transparent" : ""}`}
       >
@@ -56,6 +56,10 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
           Import a background image first to enable this tool.
         </span>
       )}
+      {/* Favorite star sits in-flow to the right of the tool — never
+          overlapping its tap target, so tapping a tool can't mis-fire a
+          favorite toggle (on touch the old overlay's invisible star still
+          intercepted taps). */}
       <button
         type="button"
         onClick={(e) => {
@@ -65,8 +69,8 @@ function ToolButton({ tool, active, disabled, favorite, onSelect, onToggleFavori
         aria-pressed={favorite}
         aria-label={`${favorite ? "Remove" : "Add"} ${tool.label} ${favorite ? "from" : "to"} favorites`}
         title={favorite ? "Remove from favorites" : "Add to favorites"}
-        className={`absolute right-1 top-1 rounded p-0.5 ${
-          favorite ? "text-amber-400" : "text-gray-600 opacity-0 hover:text-amber-400 focus:opacity-100 group-hover:opacity-100"
+        className={`shrink-0 rounded p-1 ${
+          favorite ? "text-amber-400" : "text-gray-600 hover:text-amber-400"
         }`}
       >
         <Star size={12} aria-hidden="true" fill={favorite ? "currentColor" : "none"} />

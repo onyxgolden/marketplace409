@@ -121,6 +121,29 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     expect(labels).not.toContain("furniture");
   });
 
+  it("renders the favorite toggle in-flow after the tool button, never overlapping it", async () => {
+    const onSelect = [];
+    await renderPalette({ onSelect: (id) => onSelect.push(id) });
+    const toolBtn = queryToolButton(container, "wall");
+    const star = queryFavoriteToggle(container, "wall");
+    expect(toolBtn).toBeDefined();
+    expect(star).toBeDefined();
+    // The star must not overlay the tool's tap target: the old absolute
+    // overlay let taps on the tool mis-fire favorite toggles on touch
+    // (the invisible star still intercepted pointer events).
+    expect(star.className).not.toMatch(/\babsolute\b/);
+    // In-flow, to the right of the tool button in the same row.
+    expect(star.parentElement).toBe(toolBtn.parentElement);
+    expect(Boolean(toolBtn.compareDocumentPosition(star) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    // Behavior unchanged: tool tap selects, star tap toggles favorite.
+    await act(async () => toolBtn.click());
+    expect(onSelect).toEqual(["wall"]);
+    expect(star.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => star.click());
+    expect(star.getAttribute("aria-pressed")).toBe("true");
+    expect(onSelect).toEqual(["wall"]); // star tap did not re-select the tool
+  });
+
   it("hides the Favorites category until a tool is starred", async () => {
     await renderPalette();
     expect(queryCategoryHeader(container, "Favorites")).toBeNull();
