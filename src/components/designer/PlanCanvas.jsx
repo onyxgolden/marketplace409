@@ -915,6 +915,12 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       });
       return;
     }
+    // Touch: a drag starting on empty background pans the canvas — the phone
+    // equivalent of space+drag / the Pan tool on desktop. (Tap behavior is
+    // unchanged: the SELECT below still fires on pointerdown.)
+    if (e.pointerType === "touch" && !hit) {
+      setDrag({ kind: "pan", start: eventPoint(e), ox: view.ox, oy: view.oy });
+    }
     dispatch({ type: "SELECT", selection: hit });
   };
 
@@ -2322,7 +2328,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             <p className="mt-2 text-sm text-gray-400">
               Pick the <span className="text-emerald-300">Wall</span> tool and drag to draw walls,
               or drop a pre-shaped <span className="text-emerald-300">Room</span> to begin.
-              Scroll or pinch to zoom, drag with the Pan tool (or hold Space) to move around.
+              Drag to move around, scroll or pinch to zoom.
             </p>
           </div>
         </div>
@@ -2350,7 +2356,10 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
             {gridSpacingLabel(opt)}
           </button>
         ))}
-        <span className="text-gray-500">scroll or pinch to zoom &middot; double-click furniture to rotate</span>
+        <span className="text-gray-500">
+          {"ontouchstart" in window ? "drag to pan · pinch to zoom · " : "scroll to zoom · "}
+          double-click furniture to rotate
+        </span>
       </div>
     </div>
   );
