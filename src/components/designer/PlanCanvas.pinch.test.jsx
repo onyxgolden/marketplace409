@@ -7,7 +7,7 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import PlanCanvas, { autoPanView } from "./PlanCanvas";
+import PlanCanvas, { autoPanViewForPoint } from "./PlanCanvas";
 import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
 
 // PlanCanvas uses a ResizeObserver for its wrapper size; jsdom has none.
@@ -392,10 +392,15 @@ describe("PlanCanvas two-finger touch gestures", () => {
     const before = gridTranslate(svg);
     mouse(svg, "pointermove", 900, 300); // 100px past the right edge
     const after = gridTranslate(svg);
-    // ox re-anchors so the endpoint renders at the 16px margin: planX =
-    // (900-60)/1.6 = 525 → ox' = 784 - 525*1.6 = -56 → translate -56 % 48.
-    expect(after.x).toBeCloseTo(-8, 3);
+    // ox re-anchors so the FINAL snapped endpoint renders at the 16px
+    // margin: snapPoint grid-snaps (900-60)/1.6 = 525 → 528, so
+    // ox' = 784 - 528*1.6 = -60.8 → translate -60.8 % 48 = -12.8.
+    expect(after.x).toBeCloseTo(-12.8, 3);
     expect(after.y).toBeCloseTo(before.y, 5);
+    // The final endpoint renders inside the viewport (rendered bounds).
+    const x2 = parseFloat(svg.querySelector('line[stroke="#34d399"]').getAttribute("x2"));
+    expect(x2).toBeGreaterThanOrEqual(16);
+    expect(x2).toBeLessThanOrEqual(800 - 16);
     // The drag survives and commits the extended wall.
     mouse(svg, "pointerup", 900, 300);
     expect(dispatch).toHaveBeenCalledWith(
@@ -423,52 +428,55 @@ describe("PlanCanvas two-finger touch gestures", () => {
   });
 });
 
-describe("autoPanView — auto-pan while drawing", () => {
+describe("autoPanViewForPoint — auto-pan anchors the final snapped endpoint", () => {
   const size = { w: 800, h: 600 };
   const view = { ox: 60, oy: 60, scale: 1.6 };
 
-  // Where the document point under the finger renders after re-anchoring.
-  const rendered = (s, v, a) => ({
-    x: a.ox + ((s.x - v.ox) / v.scale) * v.scale,
-    y: a.oy + ((s.y - v.oy) / v.scale) * v.scale,
+  // Screen position of the endpoint after applying the re-anchored view.
+  const rendered = (p, v, a) => ({
+    x: a.ox + p.x * v.scale,
+    y: a.oy + p.y * v.scale,
   });
 
-  it("returns null inside the viewport or when the canvas is unmeasured", () => {
-    expect(autoPanView({ x: 400, y: 300 }, size, view)).toBeNull();
-    expect(autoPanView({ x: 0, y: 0 }, size, view)).toBeNull();
-    expect(autoPanView({ x: -30, y: 300 }, { w: 0, h: 0 }, view)).toBeNull();
+  it("returns null when the endpoint already renders within bounds or the canvas is unmeasured", () => {
+    expect(autoPanViewForPoint({ x: 100, y: 100 }, size, view)).toBeNull();
+    expect(autoPanViewForPoint({ x: 1000, y: 100 }, { w: 0, h: 0 }, view)).toBeNull();
   });
 
-  it("re-anchors so the endpoint lands visible at the margin, not off-screen", () => {
-    const s = { x: -30, y: 300 }; // finger past the left edge
-    const a = autoPanView(s, size, view);
+  it("re-anchors an off-screen endpoint to the margin on every edge", () => {
+    // plan point rendering at x=-30 (finger past the left edge)
+    const left = { x: (-30 - 60) / 1.6, y: 150 };
+    const a = autoPanViewForPoint(left, size, view);
     expect(a).not.toBeNull();
-    const r = rendered(s, view, a);
-    expect(r.x).toBeCloseTo(16, 9); // margin — fully inside the viewport
+    const r = rendered(left, view, a);
+    expect(r.x).toBeCloseTo(16, 9);
     expect(r.x).toBeGreaterThanOrEqual(0);
-    expect(r.y).toBeCloseTo(300, 9); // untouched axis still tracks the finger
+    expect(r.y).toBeCloseTo(300, 9); // untouched axis keeps tracking
     expect(a.oy).toBe(view.oy);
-  });
 
-  it("handles the right, top, and bottom edges", () => {
     const cases = [
-      [{ x: 830, y: 300 }, 800 - 16, 300],
-      [{ x: 400, y: -25 }, 400, 16],
-      [{ x: 400, y: 650 }, 400, 600 - 16],
+      [{ x: (830 - 60) / 1.6, y: 150 }, 800 - 16, 300], // right
+      [{ x: 212.5, y: (-25 - 60) / 1.6 }, 400, 16], // top
+      [{ x: 212.5, y: (650 - 60) / 1.6 }, 400, 600 - 16], // bottom
+      [{ x: (-10 - 60) / 1.6, y: (620 - 60) / 1.6 }, 16, 600 - 16], // corner
     ];
-    for (const [s, ex, ey] of cases) {
-      const a = autoPanView(s, size, view);
-      const r = rendered(s, view, a);
-      expect(r.x).toBeCloseTo(ex, 9);
-      expect(r.y).toBeCloseTo(ey, 9);
+    for (const [p, ex, ey] of cases) {
+      const anchored = autoPanViewForPoint(p, size, view);
+      const rr = rendered(p, view, anchored);
+      expect(rr.x).toBeCloseTo(ex, 9);
+      expect(rr.y).toBeCloseTo(ey, 9);
     }
   });
 
-  it("re-anchors both axes on a corner overshoot", () => {
-    const s = { x: -10, y: 620 };
-    const a = autoPanView(s, size, view);
-    const r = rendered(s, view, a);
-    expect(r.x).toBeCloseTo(16, 9);
-    expect(r.y).toBeCloseTo(600 - 16, 9);
+  it("reproduces the 12x-zoom report: endpoint at x=806 is pulled inside", () => {
+    // ChatGPT's round-2 repro: at 12x zoom the snapped endpoint rendered at
+    // x=806 on an 800px canvas — 6px off-screen after a pre-snap anchor.
+    const zoomed = { ox: 60, oy: 60, scale: 12 };
+    const p = { x: (806 - 60) / 12, y: 100 }; // renders at x=806 pre-anchor
+    const a = autoPanViewForPoint(p, size, zoomed);
+    expect(a).not.toBeNull();
+    const r = rendered(p, zoomed, a);
+    expect(r.x).toBeCloseTo(800 - 16, 9); // margin — fully visible
+    expect(r.x).toBeLessThanOrEqual(800);
   });
 });
