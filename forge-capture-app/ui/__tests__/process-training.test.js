@@ -2215,3 +2215,183 @@ describe("renderProcessTrainingControls — PT-6 Slice W wording preview", () =>
     expect(rows[0].querySelector(".pt-wording-after").textContent.startsWith("After: ")).toBe(true);
   });
 });
+
+describe("renderProcessTrainingControls — PT-6 Slice E fixture guide export", () => {
+  function advanceToReview(container) {
+    chooseExampleTarget(container, 0);
+    container.querySelector("#pt-begin-btn").click();
+    container.querySelector("#pt-consent-confirm").click();
+    container.querySelector("#pt-load-review-btn").click();
+  }
+
+  function mountWithSpy(extraDeps = {}) {
+    const calls = [];
+    const { container, session, handle } = mountFresh({
+      downloadGuideArtifact: (artifact) => {
+        calls.push(artifact);
+      },
+      ...extraDeps,
+    });
+    return { container, session, handle, calls };
+  }
+
+  it("hides the export action before any compile and shows it after a successful fixture compile", () => {
+    const { container } = mountWithSpy();
+    expect(container.querySelector("#pt-export-guide-btn").hidden).toBe(true);
+    advanceToReview(container);
+    expect(container.querySelector("#pt-export-guide-btn").hidden).toBe(false);
+  });
+
+  it("never exports automatically on compile, wording preview, render, or reset", () => {
+    const { container, calls } = mountWithSpy();
+    advanceToReview(container);
+    expect(calls.length).toBe(0);
+    // Wording preview (Slice W) must not trigger an export either.
+    container.querySelector("#pt-wording-preview-btn").click();
+    expect(calls.length).toBe(0);
+  });
+
+  it("one click downloads exactly one artifact and shows a success status", () => {
+    const { container, calls, handle } = mountWithSpy();
+    advanceToReview(container);
+    const btn = container.querySelector("#pt-export-guide-btn");
+    // Keyboard-operable native button: focusable and activatable.
+    btn.focus();
+    expect(document.activeElement).toBe(btn);
+    btn.click();
+    expect(calls.length).toBe(1);
+    const artifact = calls[0];
+    expect(artifact.mime).toBe("text/html;charset=utf-8");
+    expect(artifact.extension).toBe("html");
+    expect(artifact.filename).toMatch(/^fixture-guide-\d+-\d+\.html$/);
+    expect(ArrayBuffer.isView(artifact.bytes)).toBe(true);
+    expect(artifact.bytes.length).toBeGreaterThan(0);
+    expect(artifact.manifest.source).toBe("fixture");
+    expect(artifact.manifest.guideId).toMatch(/^fixture-guide-\d+-\d+$/);
+    // Guide id derives only from non-sensitive numeric fixture structure.
+    expect(artifact.filename).not.toMatch(/notepad/i);
+    const status = container.querySelector("#pt-export-status");
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toContain(artifact.filename);
+    expect(container.querySelector("#pt-export-error").hidden).toBe(true);
+    // Artifact retained in memory only.
+    expect(handle.exportState.artifact).not.toBeNull();
+  });
+
+  it("second click downloads again (one click → one adapter call)", () => {
+    const { container, calls } = mountWithSpy();
+    advanceToReview(container);
+    const btn = container.querySelector("#pt-export-guide-btn");
+    btn.click();
+    btn.click();
+    expect(calls.length).toBe(2);
+  });
+
+  it("refuses a non-fixture override guide: no download, bounded refusal shown, safe attempt record in memory only", () => {
+    const { container, calls, handle } = mountWithSpy();
+    advanceToReview(container);
+    const liveGuide = {
+      schemaVersion: 1,
+      source: "live",
+      status: "draft_unverified",
+      steps: [],
+      warnings: [],
+      completeness: {
+        totalEvents: 0,
+        withheldCount: 0,
+        redactedCount: 0,
+        proceedCount: 0,
+        gapCount: 0,
+        lossByStage: {},
+        reconciliationUncertain: false,
+        lastProcessedSeq: null,
+        isComplete: true,
+      },
+    };
+    handle.exportFixtureGuide(liveGuide);
+    expect(calls.length).toBe(0);
+    const err = container.querySelector("#pt-export-error");
+    expect(err.hidden).toBe(false);
+    expect(err.textContent).toContain("refused");
+    expect(container.querySelector("#pt-export-status").hidden).toBe(true);
+    const attempts = handle.exportState.attempts;
+    expect(attempts.length).toBe(1);
+    expect(attempts[0]).toEqual({
+      code: "non-fixture-source",
+      source: "live",
+      format: "html",
+      guideId: "fixture-guide-empty-0",
+    });
+    expect(JSON.stringify(attempts[0])).not.toContain("btn-");
+  });
+
+  it("reports export unavailable and downloads nothing when the adapter throws", () => {
+    const { container, calls, handle } = mountFresh({
+      downloadGuideArtifact: () => {
+        throw new Error("no Blob in this host");
+      },
+    });
+    advanceToReview(container);
+    container.querySelector("#pt-export-guide-btn").click();
+    expect(calls).toBeUndefined();
+    const err = container.querySelector("#pt-export-error");
+    expect(err.hidden).toBe(false);
+    expect(err.textContent).toContain("unavailable");
+    expect(container.querySelector("#pt-export-status").hidden).toBe(true);
+    expect(handle.exportState.artifact).toBeNull();
+  });
+
+  it("discard clears export artifact, attempts, and status and hides the action", () => {
+    const { container, handle } = mountWithSpy();
+    advanceToReview(container);
+    container.querySelector("#pt-export-guide-btn").click();
+    expect(handle.exportState.artifact).not.toBeNull();
+    // Force a refusal first so an attempt record exists, then discard.
+    handle.exportFixtureGuide({ source: "live" });
+    expect(handle.exportState.attempts.length).toBe(1);
+    container.querySelector("#pt-review-discard-btn").click();
+    expect(container.querySelector("#pt-export-guide-btn").hidden).toBe(true);
+    expect(handle.exportState.artifact).toBeNull();
+    expect(handle.exportState.attempts).toEqual([]);
+    expect(container.querySelector("#pt-export-status").hidden).toBe(true);
+    expect(container.querySelector("#pt-export-error").hidden).toBe(true);
+  });
+
+  it("new session and failed recompile hide the action and clear state", () => {
+    const { container, handle } = mountWithSpy();
+    advanceToReview(container);
+    container.querySelector("#pt-export-guide-btn").click();
+    expect(handle.exportState.artifact).not.toBeNull();
+    container.querySelector("#pt-new-session-btn").click();
+    expect(container.querySelector("#pt-export-guide-btn").hidden).toBe(true);
+    expect(handle.exportState.artifact).toBeNull();
+  });
+
+  it("keeps the DEMO / disabled-capture notices visible around the export action", () => {
+    const { container } = mountWithSpy();
+    advanceToReview(container);
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+    expect(container.querySelector(".pt-disabled-banner")).not.toBeNull();
+    container.querySelector("#pt-export-guide-btn").click();
+    expect(container.querySelector("#pt-guide-badge").textContent).toContain("NOT VERIFIED");
+  });
+
+  it("exposes no save-to-app, autosave, database, cloud, email, share, upload, or print action", () => {
+    const { container } = mountWithSpy();
+    advanceToReview(container);
+    // The Slice E surface is one download button plus status/error
+    // regions — nothing else. (Pre-existing PT-3 markup buttons like
+    // pt-markup-shape-save are out of scope: they edit in-memory
+    // annotations, not app persistence.)
+    const exportIds = [...container.querySelectorAll("button")]
+      .map((b) => b.id)
+      .filter((id) => id.startsWith("pt-export"));
+    expect(exportIds).toEqual(["pt-export-guide-btn"]);
+    const source = fs.readFileSync(path.join(__dirname, "..", "process-training.js"), "utf8");
+    // The download adapter is invoked only from the explicit button
+    // handler — never on compile, preview, render, reset, or background.
+    expect(source.match(/downloadGuideArtifact\(/g).length).toBe(1); // the single button-path call
+    expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB/);
+    expect(source).not.toMatch(/\.submit\(|\.print\(|mailto:|https?:\/\//);
+  });
+});

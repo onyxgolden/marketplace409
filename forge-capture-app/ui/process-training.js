@@ -33,6 +33,14 @@ import {
   FIXTURE_WORDING_RULESET_V1,
   renderSourceWording,
 } from "./process-guide-wording.js";
+// PT-6 Slice E: the deterministic, fixture-only guide-document export
+// prototype. The pure serializer (no DOM, no clock, no network) is
+// called only from the explicit download button's click handler below —
+// never on compile, preview, render, reset, or any background path.
+import {
+  exportGuideDocument,
+  GuideExportError,
+} from "./process-guide-export.js";
 import {
   GuideMarkupOverlay,
   MarkupError,
@@ -111,6 +119,32 @@ function escapeHtml(s) {
     '"': "&quot;",
     "'": "&#39;",
   })[c]);
+}
+
+/**
+ * PT-6 Slice E: the default browser download adapter for an exported
+ * fixture guide document. Called only from the explicit "Download
+ * fixture guide (HTML)" button's click handler — never on compile,
+ * preview, render, reset, navigation, timer, mount, or any background
+ * path. Creates a Blob from the already-validated bytes, creates one
+ * object link, clicks a one-shot anchor with the exact safe filename,
+ * then removes the anchor and revokes the link in a guaranteed cleanup
+ * path. Injectable via `deps.downloadGuideArtifact` so tests inject a
+ * spy instead of touching a real browser download.
+ */
+function defaultDownloadGuideArtifact(artifact) {
+  const blob = new Blob([artifact.bytes], { type: artifact.mime });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  try {
+    anchor.href = objectUrl;
+    anchor.download = artifact.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 /**
@@ -268,6 +302,11 @@ export function renderProcessTrainingControls(container, deps = {}) {
             <button id="pt-wording-clear-btn" type="button" class="ghost-btn">Clear wording preview</button>
           </div>
         </section>
+
+        <h3>Fixture guide document export</h3>
+        <button id="pt-export-guide-btn" type="button" class="ghost-btn" hidden>Download fixture guide (HTML)</button>
+        <div id="pt-export-status" class="status" role="status" hidden></div>
+        <div id="pt-export-error" class="status error" role="status" hidden></div>
 
         <section id="pt-markup-panel" class="pt-markup-panel" hidden aria-label="Markup this step">
           <h3>Markup — <span id="pt-markup-step-label"></span></h3>
@@ -512,7 +551,9 @@ export function renderProcessTrainingControls(container, deps = {}) {
     // wording output, diff, attempt records, or injected-time state —
     // the success path below then re-enables the preview action only for
     // a fixture guide, and the failure path keeps everything cleared.
+    // PT-6 Slice E: same per-compile discipline for export state.
     invalidateWordingPreview();
+    invalidateExportState();
     guideError.hidden = true;
     guideError.textContent = "";
     guideSteps.innerHTML = "";
@@ -550,8 +591,10 @@ export function renderProcessTrainingControls(container, deps = {}) {
     lastCompiledGuide = guide;
     // The wording preview action exists only after a successful fixture
     // compile — never before, and never for a guide that did not come
-    // from the fixture compiler.
+    // from the fixture compiler. PT-6 Slice E: the export action follows
+    // the same rule — it is the sole production code path to export.
     wordingPreviewBtn.hidden = !(guide && guide.source === "fixture");
+    exportGuideBtn.hidden = !(guide && guide.source === "fixture");
 
     for (const step of guide.steps) {
       const li = document.createElement("li");
@@ -752,6 +795,114 @@ export function renderProcessTrainingControls(container, deps = {}) {
 
   wordingPreviewBtn.addEventListener("click", () => previewGuideWording());
   $("pt-wording-clear-btn").addEventListener("click", () => clearWordingPreviewContent());
+
+  // ---------------------------------------------------------------------
+  // PT-6 Slice E: fixture guide document export. The export action exists
+  // only after a successful fixture compile and only ever fires from the
+  // explicit download button's click handler. Exported bytes are handed
+  // to the injected download adapter (default: one-shot anchor download
+  // with guaranteed cleanup) — there is no save-to-app, autosave,
+  // database, cloud, email, share, upload, print, or background action.
+  // ---------------------------------------------------------------------
+
+  const exportGuideBtn = $("pt-export-guide-btn");
+  const exportStatus = $("pt-export-status");
+  const exportError = $("pt-export-error");
+  const downloadGuideArtifact =
+    deps.downloadGuideArtifact || defaultDownloadGuideArtifact;
+  let lastExportArtifact = null; // in memory only, never stored
+  let exportAttempts = []; // GuideExportError attempt records — in memory only
+
+  /**
+   * Derives the export guide id only from non-sensitive numeric fixture
+   * structure (first step's sequence id + step count) — never from
+   * target, company, process, tenant, financial, or organization names.
+   */
+  function deriveFixtureGuideId(guide) {
+    try {
+      const steps = Array.isArray(guide?.steps) ? guide.steps : [];
+      const firstSeq =
+        steps.length > 0 && Number.isInteger(steps[0]?.sequenceId)
+          ? steps[0].sequenceId
+          : null;
+      return firstSeq === null
+        ? "fixture-guide-empty-0"
+        : `fixture-guide-${firstSeq}-${steps.length}`;
+    } catch {
+      return "fixture-guide-invalid-0";
+    }
+  }
+
+  /** Clears export artifact, attempts, and status — the action stays available. */
+  function clearExportState() {
+    lastExportArtifact = null;
+    exportAttempts = [];
+    exportStatus.hidden = true;
+    exportStatus.textContent = "";
+    exportError.hidden = true;
+    exportError.textContent = "";
+  }
+
+  /**
+   * Full export lifecycle invalidation: state cleared plus the action
+   * hidden. Used on discard/reset/target-change/failed recompile —
+   * anywhere the compiled guide is no longer a valid export basis.
+   */
+  function invalidateExportState() {
+    clearExportState();
+    exportGuideBtn.hidden = true;
+  }
+
+  /**
+   * Runs the Slice E export against a compiled guide and hands the
+   * artifact to the download adapter. The button calls this with no
+   * argument (the last compiled fixture guide); tests may pass an
+   * override guide to exercise refusal paths. On GuideExportError the
+   * failure is shown without partial output and the safe attempt record
+   * is kept in memory only. On adapter failure the user is told export
+   * is unavailable and nothing further is downloaded.
+   */
+  function exportFixtureGuide(guideOverride) {
+    const guide = guideOverride === undefined ? lastCompiledGuide : guideOverride;
+    exportError.hidden = true;
+    exportError.textContent = "";
+    exportStatus.hidden = true;
+    exportStatus.textContent = "";
+    if (!guide) return;
+
+    let artifact;
+    try {
+      artifact = exportGuideDocument({
+        guide,
+        guideId: deriveFixtureGuideId(guide),
+        format: "html",
+        layout: { paper: "letter", orientation: "portrait" },
+        watermark: true,
+      });
+    } catch (e) {
+      if (!(e instanceof GuideExportError)) throw e;
+      // Fail closed: no bytes, no download, no filename — the bounded
+      // refusal is shown and the attempt record stays in memory only.
+      exportAttempts = [...exportAttempts, e.attemptRecord];
+      lastExportArtifact = null;
+      exportError.hidden = false;
+      exportError.textContent = `Guide export refused: ${e.message}`;
+      return;
+    }
+    try {
+      downloadGuideArtifact(artifact);
+    } catch (e) {
+      lastExportArtifact = null;
+      exportError.hidden = false;
+      exportError.textContent = `Guide export unavailable: ${e.message || e}`;
+      return;
+    }
+    lastExportArtifact = artifact;
+    exportStatus.hidden = false;
+    exportStatus.textContent = `Fixture guide document downloaded: ${artifact.filename} (${artifact.pageCount} pages).`;
+  }
+
+  exportGuideBtn.addEventListener("click", () => exportFixtureGuide());
 
   // ---------------------------------------------------------------------
   // PT-3: markup panel (add/select/edit/delete/undo/redo annotations for
@@ -1559,6 +1710,9 @@ export function renderProcessTrainingControls(container, deps = {}) {
     // the panel's visibility. Full invalidation (the preview action is
     // hidden: there is no longer a compiled guide to preview against).
     invalidateWordingPreview();
+    // PT-6 Slice E: discard/reset clears the export state too — artifact,
+    // attempts, and status — and hides the action.
+    invalidateExportState();
     // PT-3: discard/reset/target-change clears every step's markup, not
     // just hides it -- same discipline as the guide preview itself.
     markupOverlay.clearAll();
@@ -1639,6 +1793,23 @@ export function renderProcessTrainingControls(container, deps = {}) {
         result: lastWordingResult,
         attempts: [...wordingAttempts],
         provenanceTime: wordingProvenanceTime,
+      };
+    },
+    /**
+     * For tests only: run the Slice E fixture-guide export against the
+     * last compiled fixture guide (or an override guide) and hand the
+     * artifact to the injected download adapter — the same function the
+     * "Download fixture guide (HTML)" button calls.
+     */
+    exportFixtureGuide,
+    /**
+     * For tests only: snapshot of the in-memory export state (artifact,
+     * attempt records) so clearing lifecycle paths can be pinned.
+     */
+    get exportState() {
+      return {
+        artifact: lastExportArtifact,
+        attempts: [...exportAttempts],
       };
     },
     renderGuidePreview,
