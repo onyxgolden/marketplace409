@@ -132,8 +132,14 @@ describe("ToolPalette (collapsible Visio-style categories)", () => {
     // overlay let taps on the tool mis-fire favorite toggles on touch
     // (the invisible star still intercepted pointer events).
     expect(star.className).not.toMatch(/\babsolute\b/);
-    // In-flow, to the right of the tool button in the same row.
-    expect(star.parentElement).toBe(toolBtn.parentElement);
+    // In-flow after the tool button in the same cell: stacked below it on
+    // the phone rail (the w-12 rail can't fit a side-by-side row without
+    // collapsing the tool target to ~18px), to its right at md+.
+    const cell = toolBtn.parentElement;
+    expect(star.parentElement).toBe(cell);
+    expect(cell.className).toMatch(/\bflex-col\b/);
+    expect(cell.className).toMatch(/\bmd:flex-row\b/);
+    expect(toolBtn.className).toMatch(/\bw-full\b/); // full-width phone target
     expect(Boolean(toolBtn.compareDocumentPosition(star) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     // Behavior unchanged: tool tap selects, star tap toggles favorite.
     await act(async () => toolBtn.click());
