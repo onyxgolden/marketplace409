@@ -115,6 +115,26 @@ function hitMovesWithSelection(design, selection, hit) {
 // Screen-pixel radius within which the pipe tool snaps to a nozzle anchor.
 const ANCHOR_SNAP_PX = 12;
 
+/**
+ * View shift ({dx, dy} added to ox/oy) that brings an off-viewport pointer
+ * back to the nearest canvas edge — auto-pan while drawing so the drawn
+ * endpoint stays visible under the finger. Returns zeros when the pointer
+ * is inside the canvas or the canvas has no measured size yet.
+ */
+export function autoPanDelta(screen, size) {
+  if (!(size.w > 0) || !(size.h > 0)) return { dx: 0, dy: 0 };
+  let dx = 0;
+  let dy = 0;
+  if (screen.x < 0) dx = -screen.x;
+  else if (screen.x > size.w) dx = size.w - screen.x;
+  if (screen.y < 0) dy = -screen.y;
+  else if (screen.y > size.h) dy = size.h - screen.y;
+  return { dx, dy };
+}
+
+// Draw drags that auto-pan the canvas when the pointer leaves the viewport.
+const DRAW_AUTO_PAN_KINDS = new Set(["draw-wall", "draw-wall-rect", "draw-deck"]);
+
 export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, onViewCenterChange = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
@@ -925,7 +945,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onPointerMove = (e) => {
-    const screen = eventPoint(e);
+    let screen = eventPoint(e);
     setCursorScreen(screen); // CAD crosshair follows every move
     // Two-finger pinch zoom / pan consumes the event while active.
     if (trackTouchMove(e)) return;
@@ -963,6 +983,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
     if (drag.kind === "pan") {
       setView((v) => ({ ...v, ox: drag.ox + (screen.x - drag.start.x), oy: drag.oy + (screen.y - drag.start.y) }));
       return;
+    }
+    // Auto-pan while drawing: when the pointer runs off the viewport edge,
+    // scroll the canvas so the drawn endpoint stays visible under the
+    // finger. The pointer is reinterpreted against the pre-pan view so the
+    // preview tracks the finger exactly.
+    if (DRAW_AUTO_PAN_KINDS.has(drag.kind)) {
+      const { dx, dy } = autoPanDelta(screen, canvasSize);
+      if (dx !== 0 || dy !== 0) {
+        setView((v) => ({ ...v, ox: v.ox + dx, oy: v.oy + dy }));
+        screen = { x: screen.x - dx, y: screen.y - dy };
+      }
     }
     const plan = toPlan(screen);
     if (drag.kind === "draw-wall") {

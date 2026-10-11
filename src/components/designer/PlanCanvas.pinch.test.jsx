@@ -7,7 +7,7 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import PlanCanvas from "./PlanCanvas";
+import PlanCanvas, { autoPanDelta } from "./PlanCanvas";
 import { createEmptyDesign } from "@/domains/roomDesigner/designerDocument";
 
 // PlanCanvas uses a ResizeObserver for its wrapper size; jsdom has none.
@@ -353,5 +353,47 @@ describe("PlanCanvas two-finger touch gestures", () => {
     const end = gridTranslate(svg);
     expect(end.x).toBeCloseTo(12, 4);
     expect(end.y).toBeCloseTo(12, 4);
+  });
+});
+
+describe("autoPanDelta — auto-pan while drawing", () => {
+  const size = { w: 800, h: 600 };
+
+  it("returns zero inside the viewport", () => {
+    expect(autoPanDelta({ x: 400, y: 300 }, size)).toEqual({ dx: 0, dy: 0 });
+    expect(autoPanDelta({ x: 0, y: 0 }, size)).toEqual({ dx: 0, dy: 0 });
+    expect(autoPanDelta({ x: 800, y: 600 }, size)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("shifts the view to bring an off-edge pointer back to the edge", () => {
+    // Left of canvas: content must move right (+ox) by the overshoot.
+    expect(autoPanDelta({ x: -30, y: 300 }, size)).toEqual({ dx: 30, dy: 0 });
+    // Right of canvas: content moves left.
+    expect(autoPanDelta({ x: 830, y: 300 }, size)).toEqual({ dx: -30, dy: 0 });
+    // Above: content moves down.
+    expect(autoPanDelta({ x: 400, y: -25 }, size)).toEqual({ dx: 0, dy: 25 });
+    // Below: content moves up.
+    expect(autoPanDelta({ x: 400, y: 650 }, size)).toEqual({ dx: 0, dy: -50 });
+  });
+
+  it("handles a corner overshoot on both axes", () => {
+    expect(autoPanDelta({ x: -10, y: 620 }, size)).toEqual({ dx: 10, dy: -20 });
+  });
+
+  it("returns zero when the canvas has no measured size", () => {
+    expect(autoPanDelta({ x: -30, y: 300 }, { w: 0, h: 0 })).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("the shifted view maps the plan point back under the finger", () => {
+    // Property the component wiring relies on: after applying (dx, dy) to
+    // the view, the plan point computed from (screen - delta) against the
+    // OLD view renders at the original finger position in the NEW view.
+    const view = { ox: 60, oy: 60, scale: 1.6 };
+    const screen = { x: -30, y: 700 };
+    const { dx, dy } = autoPanDelta(screen, size);
+    const plan = { x: (screen.x - dx - view.ox) / view.scale, y: (screen.y - dy - view.oy) / view.scale };
+    const rendered = { x: view.ox + dx + plan.x * view.scale, y: view.oy + dy + plan.y * view.scale };
+    expect(rendered.x).toBeCloseTo(screen.x, 9);
+    expect(rendered.y).toBeCloseTo(screen.y, 9);
   });
 });
