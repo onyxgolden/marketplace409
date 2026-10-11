@@ -38,4 +38,8 @@ describe("previewDataUrl", () => {
     expect(previewDataUrl({ bytes_b64: "QUJD" })).toBeNull();
     expect(previewDataUrl({ mime: "image/png" })).toBeNull();
   });
+
+  it("returns null for an empty byte string — an empty data: URL renders a silent white box", () => {
+    expect(previewDataUrl({ bytes_b64: "", mime: "image/png" })).toBeNull();
+  });
 });

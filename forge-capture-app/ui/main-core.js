@@ -15,9 +15,18 @@ export function formatCaptureFailedStatus(reason) {
 
 /** A data: URL for displaying a capture's bytes in an <img>, from the same
  * base64 + MIME payload shape get_capture_upload_payload/get_capture_preview_payload
- * both return. Pure string construction — no DOM, no fetch. */
+ * both return. Pure string construction — no DOM, no fetch.
+ *
+ * An empty byte string is treated as malformed (not as a valid empty image):
+ * handing an <img> an empty data: URL renders a silent blank box with no
+ * error, which is exactly the "white preview" failure this guards. */
 export function previewDataUrl(payload) {
-  if (!payload || typeof payload.bytes_b64 !== "string" || typeof payload.mime !== "string") {
+  if (
+    !payload ||
+    typeof payload.bytes_b64 !== "string" ||
+    payload.bytes_b64.length === 0 ||
+    typeof payload.mime !== "string"
+  ) {
     return null;
   }
   return `data:${payload.mime};base64,${payload.bytes_b64}`;
