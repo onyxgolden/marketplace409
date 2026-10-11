@@ -283,6 +283,13 @@ export async function runTask({ taskJson, trusted, corpus, expectations = null, 
     if (ch("sha256").update(oracleText, "utf8").digest("hex") !== oracleRec.oracle_sha256) {
       throw new Error("oracle-digest-mismatch");
     }
+    // The shared oracle library is executable oracle code (fixture oracles
+    // import it): verify it against the frozen manifest digest alongside the
+    // fixture oracle, before anything executes. Fail closed on mismatch.
+    const expectedLib = corpus.manifest.oracle_lib && corpus.manifest.oracle_lib.sha256;
+    if (!expectedLib || ch("sha256").update(libText, "utf8").digest("hex") !== expectedLib) {
+      throw new Error("oracle-lib-digest-mismatch");
+    }
     const seed = (expectations && expectations.seed) || 0;
     const writeTree = (dir, files) => {
       for (const [p, content] of Object.entries(files)) {

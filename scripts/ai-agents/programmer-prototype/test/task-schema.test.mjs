@@ -8,7 +8,7 @@ const goodEnvelope = () => ({
   brief_ref: {
     repo: "onyxgolden/forge-ai-drop",
     path: "commands/muse/ai-agent-programmer-agent-phase2-brief.md",
-    commit: "61b98528",
+    commit: "61b985284a074910c2da01fb001bcadefe3bc29c",
     blob: "5ea67130992f1c53f214d8b336df4892e03c2bff",
     algorithm: "git-sha1",
   },
@@ -61,6 +61,32 @@ describe("validateTaskEnvelope", () => {
     const r = validateTaskEnvelope(e);
     expect(r.ok).toBe(false);
     expect(r.detail).toMatch(/brief_ref\.blob/);
+  });
+
+  it("rejects an abbreviated brief_ref commit (provenance requires the exact 40-char id)", () => {
+    const e = goodEnvelope();
+    e.brief_ref.commit = "61b98528";
+    const r = validateTaskEnvelope(e);
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe("BLOCKED");
+    expect(r.reason_codes).toContain(REASON.TASK_MALFORMED);
+    expect(r.detail).toMatch(/brief_ref\.commit/);
+  });
+
+  it("rejects a non-hex or wrong-length brief_ref commit", () => {
+    for (const bad of [
+      "61b985284a074910c2da01fb001bcadefe3bc29", // 39 chars
+      "61b985284a074910c2da01fb001bcadefe3bc29c0", // 41 chars
+      "61b985284a074910c2da01fb001bcadefe3bc29g", // non-hex
+      "61B985284A074910C2DA01FB001BCADEFE3BC29C", // uppercase
+      "",
+    ]) {
+      const e = goodEnvelope();
+      e.brief_ref.commit = bad;
+      const r = validateTaskEnvelope(e);
+      expect(r.ok).toBe(false);
+      expect(r.detail).toMatch(/brief_ref\.commit/);
+    }
   });
 
   it("rejects an unsupported family", () => {

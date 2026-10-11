@@ -18,7 +18,7 @@ import { sha256 } from "./generators.mjs";
 export const BRIEF_REF = {
   repo: "onyxgolden/forge-ai-drop",
   path: "commands/muse/ai-agent-programmer-agent-phase2-brief.md",
-  commit: "61b98528",
+  commit: "61b985284a074910c2da01fb001bcadefe3bc29c",
   blob: "5ea67130992f1c53f214d8b336df4892e03c2bff",
   algorithm: "git-sha1",
 };
@@ -151,6 +151,9 @@ export function buildCorpus({ outDir, oracleDir, seed = CORPUS_SEED }) {
   fs.mkdirSync(reposRoot, { recursive: true });
 
   // 1. Fixture repos (deterministic).
+  // The shared oracle library is part of the executable oracle set: freeze
+  // its digest here so the corpus digest binds it (P1 provenance).
+  const libSha256 = sha256(fs.readFileSync(path.join(oracleDir, "_lib.mjs"), "utf8"));
   const fixtures = {};
   for (const fid of FIXTURE_IDS) {
     const def = FIXTURES[fid];
@@ -477,6 +480,7 @@ export function buildCorpus({ outDir, oracleDir, seed = CORPUS_SEED }) {
     prototype_version: PROTOTYPE_VERSION,
     policy_version: POLICY_VERSION,
     brief: BRIEF_REF,
+    oracle_lib: { file: "oracles/_lib.mjs", sha256: libSha256 },
     fixtures,
     authorized_fixtures: [
       ...Object.values(fixtures).map((f) => ({

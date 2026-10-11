@@ -81,7 +81,9 @@ export function validateTaskEnvelope(input) {
   for (const [k, test] of [
     ["repo", (v) => isStr(v, 256)],
     ["path", (v) => isStr(v, 512)],
-    ["commit", (v) => isStr(v, 64)],
+    // Provenance: the brief commit must be the exact 40-char git object id,
+    // not an abbreviated prefix. Abbreviations are ambiguous identities.
+    ["commit", (v) => typeof v === "string" && HEX40.test(v)],
     ["blob", (v) => typeof v === "string" && HEX40.test(v)],
     ["algorithm", (v) => v === "git-sha1"],
   ]) {
