@@ -312,4 +312,46 @@ describe("PlanCanvas two-finger touch gestures", () => {
     touch(svg, "pointerup", 2, 350, 100);
     expect(scaleFromGrid(svg)).toBeCloseTo(1.6, 5);
   });
+
+  it("touch drag from empty background pans the canvas", () => {
+    renderCanvas("select");
+    const init = gridTranslate(svg);
+    expect(init.x).toBeCloseTo(12, 4); // 60 % majorPx
+    expect(init.y).toBeCloseTo(12, 4);
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointermove", 1, 150, 130);
+    touch(svg, "pointerup", 1, 150, 130);
+    const t = gridTranslate(svg);
+    expect(t.x).toBeCloseTo(14, 4); // (60 + 50) % 48
+    expect(t.y).toBeCloseTo(42, 4); // (60 + 30) % 48
+    expect(scaleFromGrid(svg)).toBeCloseTo(1.6, 5); // pan never zooms
+  });
+
+  it("touch tap on empty background still deselects without panning", () => {
+    renderCanvas("select");
+    touch(svg, "pointerdown", 1, 100, 100);
+    touch(svg, "pointerup", 1, 100, 100);
+    const still = gridTranslate(svg);
+    expect(still.x).toBeCloseTo(12, 4);
+    expect(still.y).toBeCloseTo(12, 4);
+    expect(dispatch).toHaveBeenCalledWith({ type: "SELECT", selection: null });
+  });
+
+  it("mouse drag from empty background does not pan (desktop behavior unchanged)", () => {
+    renderCanvas("select");
+    act(() => {
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 100, clientY: 100 })
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointermove", { bubbles: true, button: 0, clientX: 150, clientY: 130 })
+      );
+      svg.dispatchEvent(
+        new window.PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 150, clientY: 130 })
+      );
+    });
+    const end = gridTranslate(svg);
+    expect(end.x).toBeCloseTo(12, 4);
+    expect(end.y).toBeCloseTo(12, 4);
+  });
 });
