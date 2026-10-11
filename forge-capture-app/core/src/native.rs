@@ -337,6 +337,175 @@ pub(crate) fn cursor_icon_origin(
     )
 }
 
+/// Validate raw blit pixels BEFORE cursor compositing (614-001).
+///
+/// A cursor must never authenticate capture content: on a successful-but-empty
+/// screen blit (e.g. a fully clipped source rect after a DPI coordinate-space
+/// mismatch) the bitmap holds the black pre-fill, and drawing a visible
+/// cursor into it before the blank check would make the pixels non-uniform,
+/// letting a mostly-blank "successful" image through and suppressing the
+/// PrintWindow fallback. Callers run this on the pre-cursor buffer and
+/// composite the cursor only after it passes. Pure and platform-independent
+/// for unit testing.
+#[cfg(any(windows, test))]
+pub(crate) fn validate_raw_blit(
+    blt_ok: bool,
+    lines: i32,
+    rgba: &[u8],
+    rect: RectI,
+) -> Result<(), CaptureError> {
+    if !blt_ok {
+        return Err(CaptureError::NativeApi(
+            "BitBlt reported failure; frame not persisted".into(),
+        ));
+    }
+    if lines <= 0 {
+        return Err(CaptureError::NativeApi(
+            "GetDIBits returned no lines; frame not persisted".into(),
+        ));
+    }
+    // A real screen capture is never one uniform color. A uniform frame
+    // means the OS handed us a blank surface (fully clipped blit,
+    // uninitialized bitmap, or a render that produced nothing) — persisting
+    // it would write a misleading "successful" image, so it is a loud
+    // failure instead.
+    if is_uniform_rgba(rgba) {
+        return Err(CaptureError::NativeApi(format!(
+            "blank frame: screen blit for rect ({},{}) {}x{} produced a uniform color; \
+             not persisted (possible DPI coordinate-space mismatch or compositor issue)",
+            rect.x, rect.y, rect.w, rect.h
+        )));
+    }
+    Ok(())
+}
+
+/// Window-relative offset of a requested `piece` inside the full window rect
+/// (614-002).
+///
+/// `PrintWindow` renders the whole window from its own origin, so a clipped
+/// piece (window partially off-monitor) must be cropped out of the full
+/// render at this offset. Returns `None` when the piece is not fully inside
+/// the window rect — callers refuse loudly rather than persist misregistered
+/// pixels. Pure and platform-independent for unit testing.
+#[cfg(any(windows, test))]
+pub(crate) fn window_relative_offset(full: RectI, piece: RectI) -> Option<(i64, i64)> {
+    if full.is_empty() || piece.is_empty() {
+        return None;
+    }
+    let ox = piece.x.checked_sub(full.x)?;
+    let oy = piece.y.checked_sub(full.y)?;
+    if ox < 0 || oy < 0 {
+        return None;
+    }
+    // u64 -> i64 is safe: real window/rect sizes never approach i64::MAX.
+    if ox.saturating_add(piece.w as i64) > full.w as i64 {
+        return None;
+    }
+    if oy.saturating_add(piece.h as i64) > full.h as i64 {
+        return None;
+    }
+    Some((ox, oy))
+}
+
+/// Crop a `(w x h)` sub-rectangle at `(x, y)` out of an RGBA buffer
+/// (`src_w` x `src_h`, row-major). Returns `None` for out-of-bounds or
+/// degenerate requests. Pure and platform-independent for unit testing.
+#[cfg(any(windows, test))]
+pub(crate) fn crop_rgba(
+    src: &[u8],
+    src_w: i32,
+    src_h: i32,
+    x: i64,
+    y: i64,
+    w: i64,
+    h: i64,
+) -> Option<Vec<u8>> {
+    if src_w <= 0 || src_h <= 0 || w <= 0 || h <= 0 || x < 0 || y < 0 {
+        return None;
+    }
+    let (sw, sh) = (src_w as i64, src_h as i64);
+    if x.saturating_add(w) > sw || y.saturating_add(h) > sh {
+        return None;
+    }
+    if src.len() != sw as usize * sh as usize * 4 {
+        return None;
+    }
+    let (x, y, w, h) = (x as usize, y as usize, w as usize, h as usize);
+    let mut out = vec![0u8; w * h * 4];
+    for row in 0..h {
+        let src_off = ((y + row) * sw as usize + x) * 4;
+        let dst_off = row * w * 4;
+        out[dst_off..dst_off + w * 4].copy_from_slice(&src[src_off..src_off + w * 4]);
+    }
+    Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// Bounded PrintWindow-style render worker (614-003). Platform-independent
+// machinery; the render function is injected (Windows GDI in production,
+// stubs in unit tests). `PrintWindow` is synchronous and blocks on the
+// target application, so the fallback runs on an isolated worker with a
+// caller-side timeout instead of in the capture path.
+// ---------------------------------------------------------------------------
+
+/// Render function signature for the bounded worker: HWND carried as `isize`
+/// (Send-safe; converted back inside the worker).
+#[cfg(any(windows, test))]
+pub(crate) type PrintRenderFn = fn(isize, i32, i32) -> Option<Vec<u8>>;
+
+/// One render job for the PrintWindow worker thread.
+#[cfg(any(windows, test))]
+pub(crate) struct PrintRenderJob {
+    pub hwnd_value: isize,
+    pub w: i32,
+    pub h: i32,
+    pub render: PrintRenderFn,
+    pub reply: std::sync::mpsc::Sender<Option<Vec<u8>>>,
+}
+
+/// Worker loop: run each render to completion on this thread, then report.
+/// All GDI objects are created, used, and destroyed inside `render`, so an
+/// abandoned caller (timed out, receiver dropped) can never cause premature
+/// resource destruction — the worker cleans up when the render finishes.
+#[cfg(any(windows, test))]
+pub(crate) fn print_render_worker(rx: std::sync::mpsc::Receiver<PrintRenderJob>) {
+    for job in rx {
+        let pixels = (job.render)(job.hwnd_value, job.w, job.h);
+        // The caller may have timed out; the pixels are then discarded.
+        let _ = job.reply.send(pixels);
+    }
+}
+
+/// Run one render on the worker with a bounded wait (614-003).
+///
+/// Fails fast with `None` when the worker's queue is saturated (a hung target
+/// is occupying it): queueing behind a stuck render would only delay the
+/// inevitable timeout, and unbounded queueing would accumulate jobs nobody
+/// waits for. A caller-side timeout turns a hung target into a loud
+/// bounded failure that persists no artifact.
+#[cfg(any(windows, test))]
+pub(crate) fn print_render_bounded(
+    sender: &std::sync::mpsc::SyncSender<PrintRenderJob>,
+    render: PrintRenderFn,
+    hwnd_value: isize,
+    w: i32,
+    h: i32,
+    timeout: std::time::Duration,
+) -> Option<Vec<u8>> {
+    let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+    let job = PrintRenderJob {
+        hwnd_value,
+        w,
+        h,
+        render,
+        reply: reply_tx,
+    };
+    if sender.try_send(job).is_err() {
+        return None;
+    }
+    reply_rx.recv_timeout(timeout).ok().flatten()
+}
+
 // ---------------------------------------------------------------------------
 // Windows implementation (GDI). Compile-checked for the Windows target;
 // runtime-verified only on real Windows hardware (see docs).
@@ -541,53 +710,12 @@ mod win {
             )
             .is_ok();
 
-            let mut cursor = CursorState {
-                captured: false,
-                position_physical: None,
-            };
-            if blt_ok && include_cursor {
-                let mut ci = CURSORINFO {
-                    cbSize: std::mem::size_of::<CURSORINFO>() as u32,
-                    ..Default::default()
-                };
-                if GetCursorInfo(&mut ci).is_ok() && ci.flags.0 & CURSOR_SHOWING.0 != 0 {
-                    // ptScreenPos is the cursor *hotspot*: subtract it so the
-                    // hotspot lands on the reported position instead of the
-                    // icon's top-left corner.
-                    let hotspot = cursor_hotspot(ci.hCursor);
-                    let (ix, iy) = super::cursor_icon_origin(
-                        (ci.ptScreenPos.x, ci.ptScreenPos.y),
-                        hotspot,
-                        (rect.x, rect.y),
-                    );
-                    if ix >= 0 && iy >= 0 && ix < w && iy < h {
-                        let _ = DrawIconEx(
-                            mem_dc,
-                            ix,
-                            iy,
-                            windows::Win32::UI::WindowsAndMessaging::HICON(ci.hCursor.0),
-                            0,
-                            0,
-                            0,
-                            None,
-                            DI_NORMAL,
-                        );
-                        cursor = CursorState {
-                            captured: true,
-                            position_physical: Some((
-                                ci.ptScreenPos.x as i64,
-                                ci.ptScreenPos.y as i64,
-                            )),
-                        };
-                    }
-                }
-            }
-
             // GetDIBits requires the bitmap to NOT be selected into a DC, so
             // deselect it before pulling pixels.
             SelectObject(mem_dc, old);
 
-            // Pull pixels back as top-down 32-bit RGBA.
+            // Pull the RAW source pixels (pre-cursor) back as top-down
+            // 32-bit RGBA.
             let mut rgba = vec![0u8; w as usize * h as usize * 4];
             let mut bmi = BITMAPINFO::default();
             bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
@@ -609,34 +737,99 @@ mod win {
             // `bgra_to_rgba_force_opaque`).
             super::bgra_to_rgba_force_opaque(&mut rgba);
 
+            // 614-001: validate the SOURCE pixels before cursor compositing.
+            // A cursor must never authenticate capture content: on a
+            // successful-but-empty blit the bitmap holds the black pre-fill,
+            // and drawing a visible cursor into it before the blank check
+            // would make the pixels non-uniform, letting a mostly-blank
+            // "successful" image through and suppressing the PrintWindow
+            // fallback. The cursor is composited only after this passes.
+            if let Err(e) = super::validate_raw_blit(blt_ok, lines, &rgba, rect) {
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(mem_dc);
+                ReleaseDC(None, screen_dc);
+                return Err(e);
+            }
+
+            let mut cursor = CursorState {
+                captured: false,
+                position_physical: None,
+            };
+            if include_cursor {
+                let mut ci = CURSORINFO {
+                    cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetCursorInfo(&mut ci).is_ok() && ci.flags.0 & CURSOR_SHOWING.0 != 0 {
+                    // ptScreenPos is the cursor *hotspot*: subtract it so the
+                    // hotspot lands on the reported position instead of the
+                    // icon's top-left corner.
+                    let hotspot = cursor_hotspot(ci.hCursor);
+                    let (ix, iy) = super::cursor_icon_origin(
+                        (ci.ptScreenPos.x, ci.ptScreenPos.y),
+                        hotspot,
+                        (rect.x, rect.y),
+                    );
+                    if ix >= 0 && iy >= 0 && ix < w && iy < h {
+                        // Re-select the bitmap, composite the cursor, then
+                        // deselect and re-read: `rgba` above is the validated
+                        // source, the re-read buffer is the delivered frame.
+                        let prev = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
+                        if !prev.is_invalid() {
+                            let _ = DrawIconEx(
+                                mem_dc,
+                                ix,
+                                iy,
+                                windows::Win32::UI::WindowsAndMessaging::HICON(
+                                    ci.hCursor.0,
+                                ),
+                                0,
+                                0,
+                                0,
+                                None,
+                                DI_NORMAL,
+                            );
+                            SelectObject(mem_dc, prev);
+                            let mut composited =
+                                vec![0u8; w as usize * h as usize * 4];
+                            let lines2 = GetDIBits(
+                                mem_dc,
+                                bitmap,
+                                0,
+                                h as u32,
+                                Some(composited.as_mut_ptr() as *mut _),
+                                &mut bmi as *mut _,
+                                DIB_RGB_COLORS,
+                            );
+                            if lines2 != 0 {
+                                super::bgra_to_rgba_force_opaque(&mut composited);
+                                rgba = composited;
+                                cursor = CursorState {
+                                    captured: true,
+                                    position_physical: Some((
+                                        ci.ptScreenPos.x as i64,
+                                        ci.ptScreenPos.y as i64,
+                                    )),
+                                };
+                            }
+                            // If the re-read failed, keep the validated raw
+                            // pixels and report no cursor: never fail a good
+                            // capture over decoration.
+                        }
+                    }
+                }
+            }
+
             let _ = DeleteObject(HGDIOBJ(bitmap.0));
             let _ = DeleteDC(mem_dc);
             ReleaseDC(None, screen_dc);
 
-            if !blt_ok {
-                return Err(last_error("BitBlt"));
-            }
-            if lines == 0 {
-                return Err(last_error("GetDIBits"));
-            }
-            // A real screen capture is never one uniform color. A uniform
-            // frame means the OS handed us a blank surface (fully clipped
-            // blit, uninitialized bitmap, or a render that produced
-            // nothing) — persisting it would write a misleading
-            // "successful" image, so it is a loud failure instead.
-            if super::is_uniform_rgba(&rgba) {
-                return Err(CaptureError::NativeApi(format!(
-                    "blank frame: screen blit for rect ({},{}) {}x{} produced a uniform color; \
-                     not persisted (possible DPI coordinate-space mismatch or compositor issue)",
-                    rect.x, rect.y, rect.w, rect.h
-                )));
-            }
             Ok(NativeFrame { rect, rgba, cursor })
         }
     }
 
     /// Render `hwnd`'s own content with `PrintWindow` (`PW_RENDERFULLCONTENT`)
-    /// into an RGBA buffer for `rect`'s size.
+    /// into a full-window RGBA buffer.
     ///
     /// This is the fallback when the screen-DC `BitBlt` path produces a
     /// blank frame: `PrintWindow` asks the window itself to paint instead of
@@ -646,15 +839,14 @@ mod win {
     /// their occluders' pixels. A blank render is a loud `None`, never
     /// pixels — the caller decides whether to surface that as the error.
     ///
-    /// Note: `PrintWindow` can block on an unresponsive window. Callers only
-    /// invoke this for windows just verified visible via `find_window`, and
-    /// the process-training pipeline's heavier timeout-thread machinery
-    /// (`process_capture`) remains the answer for arbitrary untrusted
-    /// targets; this direct call keeps the Image-tab path simple.
-    fn print_window_rgba(hwnd: HWND, w: i32, h: i32) -> Option<Vec<u8>> {
+    /// Runs on the PrintWindow worker thread (see `print_window_bounded`):
+    /// every GDI object here is created, used, and destroyed on this thread.
+    /// The HWND travels as an `isize` so no `unsafe impl Send` is needed.
+    fn render_print_window(hwnd_value: isize, w: i32, h: i32) -> Option<Vec<u8>> {
         if w <= 0 || h <= 0 {
             return None;
         }
+        let hwnd = HWND(hwnd_value as *mut c_void);
         unsafe {
             // Reference DC only, so the bitmap's pixel format matches the
             // display. Nothing is ever blitted from it.
@@ -723,6 +915,51 @@ mod win {
         }
     }
 
+    /// Timeout for one `PrintWindow` fallback attempt (614-003).
+    /// `PrintWindow` is synchronous and blocks on the target application; a
+    /// hung window must fail bounded, never hang the capture path. Ten
+    /// seconds is generous for a render that normally completes in
+    /// milliseconds, while keeping the Image-tab path responsive.
+    const PRINT_WINDOW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// The single shared PrintWindow worker (614-003).
+    ///
+    /// At most one worker thread and one queued job ever exist: a hung
+    /// target can therefore never accumulate abandoned threads no matter how
+    /// many captures are attempted. When the worker is saturated, callers
+    /// fail fast (see `print_render_bounded`) instead of queueing behind a
+    /// stuck render. A permanently stuck worker degrades the fallback to a
+    /// loud bounded error — safe, never a hang, never a leak.
+    fn print_worker_sender() -> &'static std::sync::mpsc::SyncSender<super::PrintRenderJob> {
+        static SENDER: std::sync::OnceLock<std::sync::mpsc::SyncSender<super::PrintRenderJob>> =
+            std::sync::OnceLock::new();
+        SENDER.get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<super::PrintRenderJob>(1);
+            std::thread::Builder::new()
+                .name("forge-printwindow".to_string())
+                .spawn(move || super::print_render_worker(rx))
+                .expect("spawn PrintWindow worker");
+            tx
+        })
+    }
+
+    /// `PrintWindow` with a bounded failure path (614-003).
+    ///
+    /// The render runs on the shared worker thread; the caller waits at most
+    /// `PRINT_WINDOW_TIMEOUT`. A hung target yields `None` (loud bounded
+    /// failure, no persisted artifact), and the worker cleans up its own GDI
+    /// objects whenever the stuck render eventually returns.
+    fn print_window_bounded(hwnd_value: isize, w: i32, h: i32) -> Option<Vec<u8>> {
+        super::print_render_bounded(
+            print_worker_sender(),
+            render_print_window,
+            hwnd_value,
+            w,
+            h,
+            PRINT_WINDOW_TIMEOUT,
+        )
+    }
+
     /// Window capture with a `PrintWindow` fallback: try the fast screen-DC
     /// blit first; if it fails or yields a blank frame, render the window's
     /// own content via `PrintWindow`. Returns the first non-blank result, or
@@ -743,20 +980,75 @@ mod win {
                     ))
                 })?;
                 let hwnd = HWND(hwnd_value as *mut c_void);
-                if unsafe { !IsWindow(Some(hwnd)).as_bool() } {
+                // 614-002: PrintWindow renders the whole window from its own
+                // origin, so the clipped piece's width/height alone would
+                // misregister pixels (the verdict's concrete case: window at
+                // x=-100 w=600, clipped piece x=0 w=500 — rendering 500 wide
+                // starts at window-local x=0 and drops the rightmost 100
+                // pixels). Re-read the live window rect: render full-window,
+                // then crop the requested piece at its window-relative
+                // offset. A piece that is not fully inside the live rect
+                // (window moved/resized since planning, or an inconsistent
+                // piece) is refused loudly rather than persisting
+                // misregistered pixels.
+                let mut wrect = RECT::default();
+                if unsafe { GetWindowRect(hwnd, &mut wrect) }.is_err() {
                     return Err(blit_err);
                 }
-                let w = rect.w.min(i32::MAX as u64) as i32;
-                let h = rect.h.min(i32::MAX as u64) as i32;
-                match print_window_rgba(hwnd, w, h) {
-                    Some(rgba) => Ok(NativeFrame {
-                        rect,
-                        rgba,
-                        cursor: CursorState {
-                            captured: false,
-                            position_physical: None,
-                        },
-                    }),
+                let full = RectI {
+                    x: wrect.left as i64,
+                    y: wrect.top as i64,
+                    w: (wrect.right - wrect.left).max(0) as u64,
+                    h: (wrect.bottom - wrect.top).max(0) as u64,
+                };
+                let (ox, oy) = super::window_relative_offset(full, rect).ok_or_else(|| {
+                    CaptureError::NativeApi(format!(
+                        "PrintWindow fallback refused: requested piece ({},{}) {}x{} is not \
+                         within live window rect ({},{}) {}x{}; misregistered pixels are \
+                         never persisted",
+                        rect.x, rect.y, rect.w, rect.h, full.x, full.y, full.w, full.h
+                    ))
+                })?;
+                let full_w = full.w.min(i32::MAX as u64) as i32;
+                let full_h = full.h.min(i32::MAX as u64) as i32;
+                if full_w <= 0 || full_h <= 0 {
+                    return Err(blit_err);
+                }
+                // 614-003: bounded render — a hung target fails here instead
+                // of hanging the capture path.
+                match print_window_bounded(hwnd_value, full_w, full_h) {
+                    Some(full_rgba) => {
+                        let rgba = super::crop_rgba(
+                            &full_rgba,
+                            full_w,
+                            full_h,
+                            ox,
+                            oy,
+                            rect.w as i64,
+                            rect.h as i64,
+                        )
+                        .ok_or_else(|| {
+                            CaptureError::NativeApi(
+                                "PrintWindow crop out of bounds; not persisted".into(),
+                            )
+                        })?;
+                        // The piece itself must also be non-blank: it is
+                        // what gets persisted, under the requested rect.
+                        if super::is_uniform_rgba(&rgba) {
+                            return Err(CaptureError::NativeApi(format!(
+                                "window capture failed: screen blit ({blit_err}) and \
+                                 PrintWindow fallback both produced no usable frame; not persisted"
+                            )));
+                        }
+                        Ok(NativeFrame {
+                            rect,
+                            rgba,
+                            cursor: CursorState {
+                                captured: false,
+                                position_physical: None,
+                            },
+                        })
+                    }
                     None => Err(CaptureError::NativeApi(format!(
                         "window capture failed: screen blit ({blit_err}) and \
                          PrintWindow fallback both produced no usable frame; not persisted"
@@ -1752,6 +2044,328 @@ mod tests {
         assert_eq!(
             cursor_icon_origin((-3800, 200), (5, 5), (-3840, 0)),
             (35, 195)
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 614-001: raw blit validation runs on pre-cursor pixels.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn raw_blit_validation_rejects_blank_before_cursor() {
+        let rect = RectI {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 2,
+        };
+        // Empty blit: uniform black raw pixels -> blank refusal. A visible
+        // cursor composited afterwards would have defeated the uniform
+        // detector, so the check must run on these pre-cursor pixels.
+        let uniform = vec![0u8; 2 * 2 * 4];
+        assert!(validate_raw_blit(true, 2, &uniform, rect).is_err());
+        // The pixel-model reason the ordering matters: one cursor-like pixel
+        // is enough to defeat the detector...
+        let mut with_cursor_pixel = uniform.clone();
+        with_cursor_pixel[0] = 255;
+        assert!(!is_uniform_rgba(&with_cursor_pixel));
+        // ...so validation happens first. Genuine content passes and the
+        // cursor may then be composited onto it.
+        let mut content = vec![0u8; 2 * 2 * 4];
+        content[0] = 1;
+        content[4] = 2;
+        assert!(validate_raw_blit(true, 2, &content, rect).is_ok());
+        // Failed blit / zero GetDIBits lines still fail, in order.
+        assert!(validate_raw_blit(false, 2, &content, rect).is_err());
+        assert!(validate_raw_blit(true, 0, &content, rect).is_err());
+    }
+
+    #[test]
+    fn raw_blit_blank_error_names_the_rect() {
+        let rect = RectI {
+            x: 5,
+            y: 6,
+            w: 1,
+            h: 1,
+        };
+        let err = validate_raw_blit(true, 1, &vec![0u8; 4], rect).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("blank frame") && msg.contains("(5,6)"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 614-002: window-relative crop geometry for the PrintWindow fallback.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn window_relative_offset_negative_origin() {
+        // The verdict's concrete case: full window x=-100 w=600 on a monitor
+        // starting at x=0 -> visible piece x=0 w=500. Correct pixels start at
+        // window-local x=100.
+        let full = RectI {
+            x: -100,
+            y: 0,
+            w: 600,
+            h: 400,
+        };
+        let piece = RectI {
+            x: 0,
+            y: 0,
+            w: 500,
+            h: 400,
+        };
+        assert_eq!(window_relative_offset(full, piece), Some((100, 0)));
+    }
+
+    #[test]
+    fn window_relative_offset_top_clipping() {
+        let full = RectI {
+            x: 0,
+            y: -50,
+            w: 300,
+            h: 200,
+        };
+        let piece = RectI {
+            x: 0,
+            y: 0,
+            w: 300,
+            h: 150,
+        };
+        assert_eq!(window_relative_offset(full, piece), Some((0, 50)));
+    }
+
+    #[test]
+    fn window_relative_offset_fully_contained_is_identity() {
+        let full = RectI {
+            x: 10,
+            y: 20,
+            w: 100,
+            h: 100,
+        };
+        assert_eq!(window_relative_offset(full, full), Some((0, 0)));
+    }
+
+    #[test]
+    fn window_relative_offset_refuses_non_contained_pieces() {
+        let full = RectI {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 100,
+        };
+        // Fully outside.
+        let outside = RectI {
+            x: 200,
+            y: 200,
+            w: 50,
+            h: 50,
+        };
+        assert_eq!(window_relative_offset(full, outside), None);
+        // Partial overlap is also refused: persisting it would misregister.
+        let overlap = RectI {
+            x: 50,
+            y: 50,
+            w: 100,
+            h: 100,
+        };
+        assert_eq!(window_relative_offset(full, overlap), None);
+        // Degenerate pieces refused.
+        assert_eq!(
+            window_relative_offset(
+                full,
+                RectI {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 100
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            window_relative_offset(
+                RectI {
+                    x: 0,
+                    y: 0,
+                    w: 0,
+                    h: 0
+                },
+                full
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn crop_rgba_extracts_window_relative_piece() {
+        // 4x3 image with distinguishable columns/rows: R = column, G = row.
+        let (sw, sh) = (4usize, 3usize);
+        let mut src = vec![0u8; sw * sh * 4];
+        for y in 0..sh {
+            for x in 0..sw {
+                let o = (y * sw + x) * 4;
+                src[o] = x as u8;
+                src[o + 1] = y as u8;
+                src[o + 2] = 0;
+                src[o + 3] = 255;
+            }
+        }
+        // Crop columns 1..3, rows 1..3 — the negative-origin case, where the
+        // piece starts at window-local (1, 1).
+        let out = crop_rgba(&src, sw as i32, sh as i32, 1, 1, 2, 2).unwrap();
+        assert_eq!(out.len(), 2 * 2 * 4);
+        assert_eq!(&out[0..4], &[1u8, 1, 0, 255]); // source (1,1)
+        assert_eq!(&out[4..8], &[2u8, 1, 0, 255]); // source (2,1)
+        assert_eq!(&out[8..12], &[1u8, 2, 0, 255]); // source (1,2)
+        assert_eq!(&out[12..16], &[2u8, 2, 0, 255]); // source (2,2)
+    }
+
+    #[test]
+    fn crop_rgba_rejects_out_of_bounds() {
+        let src = vec![0u8; 4 * 4 * 4];
+        assert!(crop_rgba(&src, 4, 4, 3, 3, 2, 2).is_none()); // overflows
+        assert!(crop_rgba(&src, 4, 4, -1, 0, 2, 2).is_none()); // negative
+        assert!(crop_rgba(&src, 4, 4, 0, 0, 0, 2).is_none()); // degenerate
+        assert!(crop_rgba(&src, 4, 4, 0, 0, 4, 4).is_some()); // whole image
+        assert!(crop_rgba(&[0u8; 10], 4, 4, 0, 0, 2, 2).is_none()); // bad len
+    }
+
+    // ------------------------------------------------------------------
+    // 614-003: bounded PrintWindow-style render worker lifecycle.
+    // ------------------------------------------------------------------
+
+    fn stub_render_success(_hwnd: isize, w: i32, h: i32) -> Option<Vec<u8>> {
+        Some(vec![7u8; w as usize * h as usize * 4])
+    }
+
+    fn stub_render_error(_hwnd: isize, _w: i32, _h: i32) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn stub_render_hang(_hwnd: isize, _w: i32, _h: i32) -> Option<Vec<u8>> {
+        // Never returns: models PrintWindow blocked on a hung target.
+        std::thread::park();
+        None
+    }
+
+    /// Signals when the hung render stub has started (saturation test only).
+    static HANG_STARTED_TX: std::sync::OnceLock<std::sync::mpsc::Sender<()>> =
+        std::sync::OnceLock::new();
+
+    fn stub_render_hang_signaled(_hwnd: isize, _w: i32, _h: i32) -> Option<Vec<u8>> {
+        if let Some(tx) = HANG_STARTED_TX.get() {
+            let _ = tx.send(());
+        }
+        stub_render_hang(0, 0, 0)
+    }
+
+    fn spawn_test_worker() -> std::sync::mpsc::SyncSender<PrintRenderJob> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+        std::thread::spawn(move || print_render_worker(rx));
+        tx
+    }
+
+    #[test]
+    fn bounded_render_returns_successful_pixels() {
+        let tx = spawn_test_worker();
+        let px = print_render_bounded(
+            &tx,
+            stub_render_success,
+            1,
+            4,
+            4,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(px, Some(vec![7u8; 4 * 4 * 4]));
+    }
+
+    #[test]
+    fn bounded_render_propagates_render_error() {
+        let tx = spawn_test_worker();
+        let px = print_render_bounded(
+            &tx,
+            stub_render_error,
+            1,
+            4,
+            4,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(px, None);
+    }
+
+    #[test]
+    fn bounded_render_hang_fails_within_timeout_and_persists_nothing() {
+        let tx = spawn_test_worker();
+        let start = std::time::Instant::now();
+        let px = print_render_bounded(
+            &tx,
+            stub_render_hang,
+            1,
+            4,
+            4,
+            std::time::Duration::from_millis(300),
+        );
+        let elapsed = start.elapsed();
+        assert_eq!(px, None, "a hung render must not persist an artifact");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "hung render took {elapsed:?}: the wait is not bounded"
+        );
+    }
+
+    #[test]
+    fn bounded_render_saturated_queue_fails_fast_without_accumulation() {
+        // One-slot queue: occupy the worker with a hung job and fill the
+        // queue slot; the next call must fail immediately instead of
+        // queueing behind the stuck render.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<PrintRenderJob>(1);
+        std::thread::spawn(move || print_render_worker(rx));
+        // Blocking send returns once the worker has taken the job: the
+        // worker is now parked inside the hung render.
+        let (hung_reply, _hung_rx) = std::sync::mpsc::channel();
+        // Send the hung job, then wait for the worker to signal it has
+        // entered the hung render: from that point it can never drain the
+        // queue again, so the queue state below is deterministic.
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let _ = HANG_STARTED_TX.set(started_tx);
+        tx.send(PrintRenderJob {
+            hwnd_value: 1,
+            w: 1,
+            h: 1,
+            render: stub_render_hang_signaled,
+            reply: hung_reply,
+        })
+        .unwrap();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker did not start the hung render");
+        // Fill the single queue slot.
+        let (q_reply, _q_rx) = std::sync::mpsc::channel();
+        tx.try_send(PrintRenderJob {
+            hwnd_value: 2,
+            w: 1,
+            h: 1,
+            render: stub_render_hang,
+            reply: q_reply,
+        })
+        .unwrap();
+        // Third call: queue full -> immediate None, no unbounded buildup.
+        let start = std::time::Instant::now();
+        let px = print_render_bounded(
+            &tx,
+            stub_render_success,
+            3,
+            4,
+            4,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(px, None);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "saturated queue did not fail fast"
         );
     }
 
