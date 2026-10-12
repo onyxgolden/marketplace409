@@ -172,7 +172,10 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
         collectFromRevision({ sourceKey: key, commit: pin.commit, bytes, text, meta, pin, recordScopeIds: null });
       } catch (e) {
         if (e instanceof BudgetError) throw e;
-        diagnostics.push(diagnostic(e instanceof ResolutionError ? e.code : "SOURCE_UNVERIFIED", "error", `pinned source failed verification: ${e.message}`, { ...pin }));
+        // KVP-003 round 3: the pin names explicitly requested evidence.
+        // Its verification failure is a relevant coverage gap — never
+        // HIGH/complete while required evidence is unverified.
+        diagnostics.push(diagnostic(e instanceof ResolutionError ? e.code : "SOURCE_UNVERIFIED", "error", `pinned source failed verification: ${e.message}`, { ...pin }, null, { reducesConfidence: true }));
       }
     }
   } else {
@@ -217,10 +220,15 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
         const pin = { repo: sel.ref.repo, path: sel.ref.path, commit: sel.ref.commit, blob: meta.blob, algorithm: meta.algorithm ?? "git-sha1", revision: meta.revision ?? "" };
         try {
           const { bytes, text } = resolveSourceRef(pin, ctx.sources, budget);
-          collectFromRevision({ sourceKey: refKey, commit: sel.ref.commit, bytes, text, meta, pin, recordScopeIds: sel.appliedScopeIds });
+          collectFromRevision({ sourceKey: refKey, commit: sel.ref.commit, bytes, text, meta, pin, recordScopeIds: sel.appliedScopeIds, authorityScopeIds: sel.appliedAuthorityScopeIds });
         } catch (e) {
           if (e instanceof BudgetError) throw e;
-          diagnostics.push(diagnostic(e instanceof ResolutionError ? e.code : "SOURCE_UNVERIFIED", "error", `effective revision failed verification: ${e.message}`, { ...pin }));
+          // KVP-003 round 3: this source held claim facts for the query
+          // (scopes were found) and was selected as the effective
+          // revision. Its verification failure is a relevant coverage
+          // gap — supported claims from other sources cannot claim
+          // complete confidence while this evidence is unverified.
+          diagnostics.push(diagnostic(e instanceof ResolutionError ? e.code : "SOURCE_UNVERIFIED", "error", `effective revision failed verification: ${e.message}`, { ...pin }, null, { reducesConfidence: true }));
         }
       } else if (sel.status === "read-denied") {
         diagnostics.push(diagnostic("READ_DENIED", "error", sel.reason));
@@ -230,7 +238,7 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
     }
   }
 
-  function collectFromRevision({ sourceKey, commit, bytes, text, meta, pin, recordScopeIds }) {
+  function collectFromRevision({ sourceKey, commit, bytes, text, meta, pin, recordScopeIds, authorityScopeIds }) {
     // Age comes from the authenticated effective/verification ledger
     // times, never file mtime.
     const effectiveMs = Date.parse(meta.effective_at);
@@ -262,16 +270,21 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
       const lineKey = `${sourceKey}|${commit}|${fact.line}`;
       if (seenLines.has(lineKey)) continue;
       seenLines.add(lineKey);
-      // Supersession scope coverage: when the revision was selected
-      // through authenticated supersession records, each emitted fact
-      // must be covered by the records' effective scope (their
-      // intersection) — not by the union of query scopes. A
-      // steward-authorized record cannot launder an out-of-scope claim.
-      if (recordScopeIds !== null && recordScopeIds !== undefined) {
-        const covered = fact.scope_ids.some((s) => recordScopeIds.includes(s));
+      // Supersession scope coverage (KVP-001 round 3): when the revision
+      // was selected through authenticated supersession records, EVERY
+      // emitted fact scope must be covered by the effective AUTHENTICATED
+      // scope — the issuers' steward authority — not merely one
+      // overlapping token. A fact naming a scope outside the steward's
+      // authority (e.g. finance when the steward holds only facilities)
+      // is excluded in full, never quoted with HIGH confidence. A scope
+      // inside the authority (e.g. site-a for steward-ops) remains
+      // emittable even when the individual record's scope list is
+      // narrower.
+      if (authorityScopeIds !== null && authorityScopeIds !== undefined) {
+        const covered = fact.scope_ids.length > 0 && fact.scope_ids.every((s) => authorityScopeIds.includes(s));
         if (!covered) {
           diagnostics.push(
-            diagnostic("SCOPE_NOT_COVERED", "warning", `claim '${fact.claim_key}' in ${sourceKey} is outside the authenticated supersession scope [${recordScopeIds.join(",")}]; excluded, not quoted`, { ...pin }, null, { reducesConfidence: true })
+            diagnostic("SCOPE_NOT_COVERED", "warning", `claim '${fact.claim_key}' in ${sourceKey} names scope(s) outside the authenticated steward authority [${authorityScopeIds.join(",")}]; excluded, not quoted`, { ...pin }, null, { reducesConfidence: true })
           );
           continue;
         }
@@ -281,7 +294,11 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
         span = verifySpan(bytes, fact.line, budget);
       } catch (e) {
         if (e instanceof BudgetError) throw e;
-        diagnostics.push(diagnostic("SPAN_MISMATCH", "error", `quoted span verification failed for claim '${fact.claim_key}' in ${sourceKey}: ${e.message}`, { ...pin }));
+        // KVP-003 round 3: the fact was extracted from this source's
+        // text but its quoted span cannot be verified. Relevant
+        // evidence failure — a coverage gap even when other claims
+        // survive.
+        diagnostics.push(diagnostic("SPAN_MISMATCH", "error", `quoted span verification failed for claim '${fact.claim_key}' in ${sourceKey}: ${e.message}`, { ...pin }, null, { reducesConfidence: true }));
         continue;
       }
       const citation = {

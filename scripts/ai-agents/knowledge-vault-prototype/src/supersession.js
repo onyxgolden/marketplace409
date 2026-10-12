@@ -75,6 +75,27 @@ export function authenticateRecord(record, ctx, clockMs, budget) {
         return deny(`registration '${record.registration_ref}' applicability does not cover record ${which} source '${sk}'`);
       }
     }
+    // KVP-001 round 3: source keys alone never authorize an arbitrary
+    // revision pair. The registration must declare the exact old/new pin
+    // transition; the record's pins must match one declared transition
+    // exactly (repo, path, commit, blob). No authority expansion from
+    // the same source key.
+    const transitioned = (app.transitions ?? []).some(
+      (t) => refIdentityEquals(t.old_ref, record.old_ref) && refIdentityEquals(t.new_ref, record.new_ref)
+    );
+    if (!transitioned) {
+      return deny(`registration '${record.registration_ref}' applicability declares no exact transition matching record '${record.record_id}' (${record.old_ref.commit.slice(0, 8)} -> ${record.new_ref.commit.slice(0, 8)})`);
+    }
+  }
+
+  // KVP-004 round 3: permission BEFORE resolution. A denied pin's bytes
+  // are never inspected — not even to hash them. Authentication without
+  // access yields metadata insufficiency, never a text-derived verdict.
+  if (!hasReadGrant(record.old_ref, ctx.readGrants)) {
+    return deny(`read permission denied for superseded ${record.old_ref.repo}/${record.old_ref.path}@${record.old_ref.commit.slice(0, 8)}; pin cannot be authenticated without access`);
+  }
+  if (!hasReadGrant(record.new_ref, ctx.readGrants)) {
+    return deny(`read permission denied for replacement ${record.new_ref.repo}/${record.new_ref.path}@${record.new_ref.commit.slice(0, 8)}; pin cannot be authenticated without access`);
   }
 
   // Both pins must resolve through the fixture Git object store.
@@ -93,11 +114,12 @@ export function authenticateRecord(record, ctx, clockMs, budget) {
     return deny(`new_ref pin failed (${code}): ${e.message}`);
   }
 
-  if (!hasReadGrant(record.new_ref, ctx.readGrants)) {
-    return deny(`read permission denied for replacement ${record.new_ref.repo}/${record.new_ref.path}@${record.new_ref.commit.slice(0, 8)}`);
-  }
-
   return { authenticated: true, flags };
+}
+
+/** Exact pin identity: repo, path, commit and blob must all match. */
+function refIdentityEquals(a, b) {
+  return a.repo === b.repo && a.path === b.path && a.commit === b.commit && a.blob === b.blob;
 }
 
 function sourceKeyOfRef(ref) {
@@ -122,7 +144,8 @@ function intersectScopes(lists) {
  * @param {number|null} asOfMs historical pin (null = current)
  * @param {object} budget
  * @returns {status:"ok", ref:{repo,path,commit}, appliedRecords:[record_id],
- *           appliedScopeIds:[scope]|null, stewardFlags:[...]} |
+ *           appliedScopeIds:[scope]|null, appliedAuthorityScopeIds:[scope]|null,
+ *           stewardFlags:[...]} |
  *          {status:"ambiguous"|"uncertain"|"read-denied", reason, code,
  *           reducesConfidence:boolean, stewardFlags:[...]}
  *
@@ -131,9 +154,10 @@ function intersectScopes(lists) {
  * facts that could not be resolved. It is false for pure temporal
  * inapplicability (no revision effective at T) — correctly excluding a
  * not-yet-existing revision is not missing coverage.
- * appliedScopeIds is the intersection of the applied records' scopes:
- * only facts covered by that authenticated scope may be emitted from
- * the selected revision (no scope expansion via the query-scope union).
+ * appliedScopeIds is the intersection of the applied records' scopes.
+ * appliedAuthorityScopeIds is the intersection of the applied records'
+ * issuers' steward authority scopes: the effective authenticated scope
+ * for fact emission (KVP-001 round 3).
  */
 export function selectEffectiveRevision(sourceKey, queryScopes, ctx, clockMs, asOfMs, budget) {
   const T = asOfMs === null || asOfMs === undefined ? clockMs : asOfMs;
@@ -263,11 +287,25 @@ function finishSelection(repo, path, commit, ctx, appliedRecords, stewardFlags) 
     };
   }
   const appliedScopeIds = intersectScopes(appliedRecords.map((r) => r.scope_ids));
+  // KVP-001 round 3: the effective AUTHENTICATED scope for emission is
+  // the issuers' steward authority (intersection across applied
+  // records), not the narrower record scope list. A fact naming a scope
+  // inside the steward's authority is emittable; a scope outside that
+  // authority (e.g. finance when the steward holds only facilities) is
+  // never quoted. Record scopes are already ALL-subset of their
+  // issuer's authority, so this is the authoritative bound.
+  const appliedAuthorityScopeIds = intersectScopes(
+    appliedRecords.map((r) => {
+      const st = ctx.stewards.find((s) => s.steward_id === r.issuer);
+      return st ? st.authority_scope_ids : [];
+    })
+  );
   return {
     status: "ok",
     ref: { repo, path, commit },
     appliedRecords: appliedRecords.map((r) => r.record_id),
     appliedScopeIds,
+    appliedAuthorityScopeIds,
     stewardFlags,
   };
 }

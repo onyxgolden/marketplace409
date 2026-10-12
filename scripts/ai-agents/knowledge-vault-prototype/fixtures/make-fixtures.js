@@ -672,6 +672,33 @@ const supersessionRecords = [
   },
 ];
 
+// KVP-001 round 3: bind every supersede registration's applicability to
+// the exact old/new pin transitions it authorizes. Source keys alone
+// never authorize an arbitrary revision pair. reg-020 authorizes a
+// generator.md transition that no record exercises, keeping its
+// valve.md negative meaningful.
+function txOf(...ids) {
+  return ids.map((id) => {
+    const r = supersessionRecords.find((x) => x.record_id === id);
+    return { old_ref: { ...r.old_ref }, new_ref: { ...r.new_ref } };
+  });
+}
+const declaredTransitions = {
+  "reg-001": txOf("sup-001", "sup-004", "sup-005", "sup-010", "sup-020", "sup-021"),
+  "reg-002": txOf("sup-002", "sup-003"),
+  "reg-003": txOf("sup-011"),
+  "reg-004": txOf("sup-007"),
+  "reg-020": [
+    { old_ref: srcRef("vault", "facilities/generator.md", genC1, "rev-1"),
+      new_ref: srcRef("vault", "facilities/generator.md", genC2, "rev-2") },
+  ],
+};
+for (const reg of registrations) {
+  if (reg.action_ids.includes("supersede")) {
+    reg.applicability.transitions = declaredTransitions[reg.registration_ref] ?? [];
+  }
+}
+
 // ---------------------------------------------------------------- vocabulary
 const vocabulary = [
   { query_key: "parking-rules", phrases: ["parking rules", "parking policy", "where can i park", "parking time limit"] },

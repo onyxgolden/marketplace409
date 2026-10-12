@@ -4420,7 +4420,7 @@
       "claims": [],
       "contradiction_count": 0,
       "diagnostic_codes": [
-        "BUDGET_EXCEEDED"
+        "INPUT_LIMIT"
       ],
       "quarantined_count": 0,
       "quarantined_paths": [],

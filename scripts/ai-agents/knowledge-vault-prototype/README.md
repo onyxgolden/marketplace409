@@ -19,14 +19,21 @@ writes, no model calls, no network.
   one overlapping token never authorizes a mixed-scope record)**,
   **exact registration applicability (the record's scopes and old/new
   source keys must fall inside the registration's declared
-  `applicability`)**, both pin verifications (Git blob SHA-1 recomputed
-  with the blob header), and read permission. No source-internal chain
-  fallback, no commit-order heuristic, no revision-name authority. Forks
-  and broken chains retain uncertainty — never a claim of current policy.
-- Emits each claim **only if its own scopes overlap the authenticated
-  records' effective scope** (their intersection): a
-  steward-authorized record cannot launder an out-of-scope claim into the
-  answer (excluded claims raise `SCOPE_NOT_COVERED`).
+  `applicability`, AND the record's exact old/new pins must match one of
+  the registration's declared `transitions` — source keys alone never
+  authorize an arbitrary revision pair)**, both pin verifications (Git
+  blob SHA-1 recomputed with the blob header), and read permission, with
+  the read grant checked BEFORE either pin is resolved (a denied pin's
+  bytes are never inspected, not even to hash them). No source-internal
+  chain fallback, no commit-order heuristic, no revision-name authority.
+  Forks and broken chains retain uncertainty — never a claim of current
+  policy.
+- Emits each claim **only if EVERY one of its scopes is covered by the
+  effective authenticated scope** (the applied records' issuers' steward
+  authority): a steward-authorized record cannot launder an out-of-scope
+  claim into the answer. A fact naming both an authorized and an
+  unauthorized scope is excluded in full, never quoted with `HIGH`
+  (excluded claims raise `SCOPE_NOT_COVERED`, a coverage gap).
 - Returns claims as **exact quoted extracts** with `SourceRef` citations
   (`quoted_span` === `span.quoted_text`, byte offsets verified against
   source bytes). Source facts are parsed from a bounded exact-text
@@ -51,9 +58,9 @@ writes, no model calls, no network.
   limit, no conflict, no coverage gaps), `MEDIUM` (explicitly partial
   coverage), `LOW` (staleness, ambiguity, conflict, unverifiable
   annotations, **or any relevant coverage gap — stale/ambiguous evidence,
-  scope-excluded claims, future-effective pins — even when another
-  supported claim survives**). No verifiable claims → `UNVERIFIABLE`,
-  never a fabricated answer.
+  scope-excluded claims, future-effective pins, relevant hash/span/schema
+  verification failures — even when another supported claim survives**).
+  No verifiable claims → `UNVERIFIABLE`, never a fabricated answer.
 - `complete` is accurate, not status-derived: true only when the answer
   is `ANSWERED` with zero contradictions and zero coverage-gap
   diagnostics.
@@ -64,10 +71,14 @@ writes, no model calls, no network.
   persistent cache.
 - **Budgets cover everything consulted**: every vocabulary phrase, source
   entry, revision ledger entry, grant, steward, registration, record,
-  revision scan, and payload byte is charged BEFORE use. **Source text is
+  revision scan, and payload byte is charged BEFORE use. **Registry
+  metadata payload bytes are accounted before validation** (source text
+  excluded without being read); a single huge string inside an otherwise
+  valid registration trips `INPUT_LIMIT`. **Source text is
   never accessed without a read grant** — relevance of denied sources is
   decided from adapter-supplied `claim_keys` metadata only; denied bytes
-  are never parsed, scanned, or quoted. Any budget breach
+  are never parsed, scanned, quoted, or hashed (supersession pins check
+  the grant before resolving). Any budget breach
   (`INPUT_LIMIT` / `BUDGET_EXCEEDED`) refuses with `complete: false` and
   no partial answer — `BudgetError` is never converted into a domain
   diagnostic.

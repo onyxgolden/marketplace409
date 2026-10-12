@@ -1,13 +1,13 @@
 {
-  "corpus_digest": "6e0251825f1c0a9ac1d99e12cc4fc1cec118f9f0c888b69f61a567e34a3790ee",
+  "corpus_digest": "48172019c2abcca237e7fc9e151cd7e804e644530865856de682f96a3e9712a8",
   "files": [
     {
       "path": "README.md",
-      "sha256": "e99cce96373eb43b2bf7954d25a7e09ef9f85c01ddf572ad251786da7501522b"
+      "sha256": "76a363cad78f45efe65bfcc016fffa9375b34fc8ce6ab0b2801f71f63e872ba9"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "448b52d7175c244e02cebe5f23d1f1cabc1d30d538cdf56025dc0f04707093af"
+      "sha256": "bef79bbb0df66a29c6b6f0eede222e4dde364819b5dd5734197f9023320d2354"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -19,11 +19,11 @@
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "61fe2bd3c52283854a737166d107cdc5a699326ab48ee505f7fb8210e70c9fc0"
+      "sha256": "f792e0c7a615255cfdb06bc5fa7e824dc5954a50bb0b511942b5d5b50734ee1a"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "fca295f86df0218e990bff35948c55ec49e689cb3ff9a181dc9c266ad4a4f6e6"
+      "sha256": "d26ac7e9028d3e63a7b1abc82b75975824c06471376683f83c9c15efdf8b9525"
     },
     {
       "path": "fixtures/vocabulary.json",
@@ -31,7 +31,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "1baa136e973ef79aae2bf57027e92cd8e431b01770e016d7e6a0d09622362071"
+      "sha256": "5c1d616830dcca63f7a138268e2a7e62aa50521a1d612bbb208dd280796c8366"
     },
     {
       "path": "runner/measure-latency.js",
@@ -63,15 +63,15 @@
     },
     {
       "path": "src/retriever.js",
-      "sha256": "f3c80fdbf3fbdfa2fa4f3d242e3c92916755b10ce86323e0d95d8e4f9415cb52"
+      "sha256": "247706cc23770b7d6786c2fde88dca7c71fb431a87ad93121c9e6619c186ae1b"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "8b43a0b0f0a46f210186c29c4ab8f30cead95f35f76d1d5116344b183ecda129"
+      "sha256": "2c5db39ad7d3eceae95e94fee3fcd37eb116355d19a25996b4ddb3985fd3e1ed"
     },
     {
       "path": "src/supersession.js",
-      "sha256": "c26c2b06f4e4117d3f2826981d5f69d30031ab12e0a8f565508bcff89e281626"
+      "sha256": "dc2b31082ea94abb7504266d79a6335b1a9451605f28f4dcbd29595862cfd381"
     },
     {
       "path": "src/vocabulary.js",
@@ -103,7 +103,7 @@
     },
     {
       "path": "tests/kvp-fixes.test.js",
-      "sha256": "eb836f103efe8acf41de87011b1c2df2cef5236a351508af8ea075c5c95709c9"
+      "sha256": "93ac54c5385a41552cfab695d2dbbc911d6bfb7c2561d0285da99448458599f5"
     },
     {
       "path": "tests/markdown.test.js",

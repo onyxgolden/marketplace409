@@ -6,7 +6,7 @@
  * Pure Node 24 ESM, zero dependencies.
  */
 
-import { HEX40 } from "./canonical.js";
+import { HEX40, canonicalJson } from "./canonical.js";
 
 export class SchemaError extends Error {
   constructor(message) {
@@ -154,12 +154,15 @@ export function validateRegistration(value, where) {
   // declare exactly which scopes and source keys the steward may
   // supersede. The record's old/new source keys and every record scope
   // must fall inside it — generic "may supersede anything" grants are
-  // not valid.
+  // not valid. KVP-001 round 3: source keys alone never authorize an
+  // arbitrary revision pair. The registration must declare the exact
+  // old/new pin transitions it authorizes; a record's pins must match
+  // one declared transition exactly (repo, path, commit, blob).
   let applicability = null;
   if (value.applicability !== undefined && value.applicability !== null) {
     const app = value.applicability;
     if (!isPlainObject(app)) fail(where, "applicability must be an object");
-    exactKeys(app, ["scope_ids", "source_keys"], `${where}.applicability`);
+    exactKeys(app, ["scope_ids", "source_keys", "transitions"], `${where}.applicability`);
     const scope_ids = validateScopeIds(app.scope_ids, `${where}.applicability`);
     if (!Array.isArray(app.source_keys) || app.source_keys.length === 0) {
       fail(where, "applicability.source_keys must be a non-empty array");
@@ -174,7 +177,24 @@ export function validateRegistration(value, where) {
       seen.add(k);
       source_keys.push(k);
     }
-    applicability = { scope_ids, source_keys };
+    let transitions = [];
+    if (app.transitions !== undefined) {
+      if (!Array.isArray(app.transitions) || app.transitions.length === 0) {
+        fail(where, "applicability.transitions must be a non-empty array");
+      }
+      transitions = app.transitions.map((t, i) => {
+        const tw = `${where}.applicability.transitions[${i}]`;
+        if (!isPlainObject(t)) fail(tw, "transition must be an object");
+        exactKeys(t, ["old_ref", "new_ref"], tw);
+        return {
+          old_ref: validateSourceRef(t.old_ref, `${tw}.old_ref`),
+          new_ref: validateSourceRef(t.new_ref, `${tw}.new_ref`),
+        };
+      });
+    } else if (value.action_ids.includes("supersede")) {
+      fail(where, "registration authorizing 'supersede' must declare applicability.transitions (exact old/new pins)");
+    }
+    applicability = { scope_ids, source_keys, transitions };
   } else if (value.action_ids.includes("supersede")) {
     fail(where, "registration authorizing 'supersede' must declare applicability (scope_ids + source_keys)");
   }
@@ -287,14 +307,40 @@ export function validateVocabularyEntry(value, where) {
  * Source revision BYTES are never touched here — metadata only, so a
  * read-denied source's text is not accessed during validation.
  */
+/** Metadata-only projection for byte accounting: drops every `text`
+ *  property WITHOUT reading it. Destructuring `{ text, ...meta }` would
+ *  invoke a text getter — denied bytes must never be touched, not even
+ *  to exclude them. Object.keys never fires getters. */
+function metadataWithoutText(value) {
+  if (Array.isArray(value)) return value.map(metadataWithoutText);
+  if (isPlainObject(value)) {
+    const out = {};
+    for (const k of Object.keys(value)) {
+      if (k === "text") continue;
+      out[k] = metadataWithoutText(value[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function validateContext(context, budget = null) {
   const charge = (what) => { if (budget) budget.countConsulted(what); };
+  // KVP-004 round 3: serialized payload accounting for every registry
+  // object BEFORE it is validated or used. A single huge string inside
+  // an otherwise valid registration must trip the payload budget, not
+  // ride in on a 1-object consulted charge. Source revision TEXT is
+  // excluded here (permission-gated later, per source); text bytes are
+  // budgeted on actual resolution/parse.
+  const chargeBytes = (obj, what) => {
+    if (budget) budget.countPayload(canonicalJson(obj), what);
+  };
   if (!isPlainObject(context)) fail("context", "must be an object");
   exactKeys(context, ["clock", "vocabulary", "sources", "readGrants", "stewards", "registrations", "supersessionRecords"], "context");
   const clock = context.clock;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
   if (!Array.isArray(context.vocabulary) || context.vocabulary.length === 0) fail("context", "vocabulary must be a non-empty array");
-  const vocabulary = context.vocabulary.map((e, i) => { charge("vocabulary entry"); return validateVocabularyEntry(e, `context.vocabulary[${i}]`); });
+  const vocabulary = context.vocabulary.map((e, i) => { charge("vocabulary entry"); chargeBytes(e, `vocabulary entry ${i} payload`); return validateVocabularyEntry(e, `context.vocabulary[${i}]`); });
   const keySeen = new Set();
   for (const e of vocabulary) {
     if (keySeen.has(e.query_key)) fail("context", `duplicate vocabulary query_key '${e.query_key}'`);
@@ -312,6 +358,9 @@ export function validateContext(context, budget = null) {
     if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
     const revs = entry.revisions;
     if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+    // Metadata-only payload accounting: revision text excluded WITHOUT
+    // being read (metadataWithoutText never touches a text getter).
+    chargeBytes(metadataWithoutText(entry), `source '${sk}' metadata payload`);
     for (const commit of Object.keys(revs)) {
       charge("revision ledger entry");
       const rev = revs[commit];
@@ -324,23 +373,23 @@ export function validateContext(context, budget = null) {
     }
   }
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
-  const readGrants = context.readGrants.map((g, i) => { charge("read grant"); return validateReadGrant(g, `context.readGrants[${i}]`); });
+  const readGrants = context.readGrants.map((g, i) => { charge("read grant"); chargeBytes(g, `read grant ${i} payload`); return validateReadGrant(g, `context.readGrants[${i}]`); });
   if (!Array.isArray(context.stewards)) fail("context", "stewards must be an array");
-  const stewards = context.stewards.map((s, i) => { charge("steward"); return validateSteward(s, `context.stewards[${i}]`); });
+  const stewards = context.stewards.map((s, i) => { charge("steward"); chargeBytes(s, `steward ${i} payload`); return validateSteward(s, `context.stewards[${i}]`); });
   const stewardSeen = new Set();
   for (const s of stewards) {
     if (stewardSeen.has(s.steward_id)) fail("context", `duplicate steward_id '${s.steward_id}'`);
     stewardSeen.add(s.steward_id);
   }
   if (!Array.isArray(context.registrations)) fail("context", "registrations must be an array");
-  const registrations = context.registrations.map((r, i) => { charge("registration"); return validateRegistration(r, `context.registrations[${i}]`); });
+  const registrations = context.registrations.map((r, i) => { charge("registration"); chargeBytes(r, `registration ${i} payload`); return validateRegistration(r, `context.registrations[${i}]`); });
   const regSeen = new Set();
   for (const r of registrations) {
     if (regSeen.has(r.registration_ref)) fail("context", `duplicate registration_ref '${r.registration_ref}'`);
     regSeen.add(r.registration_ref);
   }
   if (!Array.isArray(context.supersessionRecords)) fail("context", "supersessionRecords must be an array");
-  const supersessionRecords = context.supersessionRecords.map((r, i) => { charge("supersession record"); return validateSupersessionRecord(r, `context.supersessionRecords[${i}]`); });
+  const supersessionRecords = context.supersessionRecords.map((r, i) => { charge("supersession record"); chargeBytes(r, `supersession record ${i} payload`); return validateSupersessionRecord(r, `context.supersessionRecords[${i}]`); });
   const recSeen = new Set();
   for (const r of supersessionRecords) {
     if (recSeen.has(r.record_id)) fail("context", `duplicate supersession record_id '${r.record_id}'`);

@@ -804,6 +804,116 @@
           "vault|archive/old-policy.md",
           "vault|facilities/generator.md",
           "vault|facilities/pump.md"
+        ],
+        "transitions": [
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "handbook/policies.md",
+              "commit": "3a40935dc0ad4b6e07366e8aea2e75458a423429",
+              "blob": "c2ea9182fbf98335f14dcdbd04b7b2dba650a455",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "handbook/policies.md",
+              "commit": "d979ca333e399b46d73b1308408f46885ff898dd",
+              "blob": "7ba49f726a977ff0b536ceb1b9c3961a07b6513e",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          },
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "facilities/hvac.md",
+              "commit": "8f2be569c34e60ec86a78b4b01829313bfaade3d",
+              "blob": "46f4963dd2bc6f7b405b5cee1ffe50664a1a4e29",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "facilities/hvac.md",
+              "commit": "42b5555bb8bd5d592bcb149c2f6dc6606e6844ca",
+              "blob": "ee628ce18a400e74ee264b12a3496f34e44dddff",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          },
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "facilities/hvac.md",
+              "commit": "42b5555bb8bd5d592bcb149c2f6dc6606e6844ca",
+              "blob": "ee628ce18a400e74ee264b12a3496f34e44dddff",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "facilities/hvac.md",
+              "commit": "f42df383fd090e4a86a1d90f7c26331018bf1dae",
+              "blob": "e2df12acd38a6179c141c54c06bc02d6c84e4170",
+              "algorithm": "git-sha1",
+              "revision": "rev-3"
+            }
+          },
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "archive/old-policy.md",
+              "commit": "5288b058883846e1ff340e326bca6671ed1ad89f",
+              "blob": "a988947896725fd55a3361e94de654782a8cb79f",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "archive/old-policy.md",
+              "commit": "3d109872fc38108ff152e056d743ff9872fd0d25",
+              "blob": "2b3feaf397cd82dbd65fe3a6a4aeeb5116f96d84",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          },
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "facilities/generator.md",
+              "commit": "d0dfb65b9439ffd193ba390a242f30447f687555",
+              "blob": "1daf2a8c37745be532af33f689d983bd43250c49",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "facilities/generator.md",
+              "commit": "f662eb9b27dd5f18044d67862b01dda148fd9329",
+              "blob": "58b469fe2638d6377c13ef3fa9f2e3902e06b50e",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          },
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "facilities/pump.md",
+              "commit": "f777badac777436e6d1616145bf76d1d3d539dae",
+              "blob": "fafa82e208d1ff935d833f0b63b8a4f4531774c2",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "facilities/pump.md",
+              "commit": "327a2e8d45c8e314fba2c4338292c05402c47d9d",
+              "blob": "5698c7028636e2c2dcca09cae10056b099bb5a1e",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          }
         ]
       }
     },
@@ -822,6 +932,44 @@
         ],
         "source_keys": [
           "vault|safety/evac.md"
+        ],
+        "transitions": [
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "safety/evac.md",
+              "commit": "c2e35b47c5d16d2cfb80ce4059cb94856ce1394b",
+              "blob": "dd9d474412dec7e616628c80ad58f9c1266b4186",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "safety/evac.md",
+              "commit": "2709fdbcb19a0ae7f251fa070f0bbdbcf50df3d1",
+              "blob": "b1580387f4d1d22cc084c70bb0c0c274624086bc",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          },
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "safety/evac.md",
+              "commit": "c2e35b47c5d16d2cfb80ce4059cb94856ce1394b",
+              "blob": "dd9d474412dec7e616628c80ad58f9c1266b4186",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "safety/evac.md",
+              "commit": "af3dbc1587074fd6716faa6c99e493dbb9d848b8",
+              "blob": "1498b3239ff09033eee1ad1ad33011d3778b9097",
+              "algorithm": "git-sha1",
+              "revision": "rev-3"
+            }
+          }
         ]
       }
     },
@@ -841,6 +989,26 @@
         "source_keys": [
           "vault|it/vpn.md",
           "vault|restricted/vpn-dr.md"
+        ],
+        "transitions": [
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "it/vpn.md",
+              "commit": "4b5d1e4a46f98f0c9ede393a865dda368ec8443c",
+              "blob": "6aaa8686ef9024a27def8c411a2ccd64afeec58e",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "restricted/vpn-dr.md",
+              "commit": "d6dc8778129413b06550f563e8f798de004da0f1",
+              "blob": "4cea34f64618fd7008750226bcbaa734edb5f3e1",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            }
+          }
         ]
       }
     },
@@ -859,6 +1027,26 @@
         ],
         "source_keys": [
           "vault|handbook/wifi.md"
+        ],
+        "transitions": [
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "handbook/wifi.md",
+              "commit": "9794b6853d916c6726d128819e95dc3d95fb8365",
+              "blob": "2ed09911dd39ce4093b20ee3d8eac1c00f6a997e",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "handbook/wifi.md",
+              "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "blob": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          }
         ]
       }
     },
@@ -887,6 +1075,26 @@
         ],
         "source_keys": [
           "vault|facilities/generator.md"
+        ],
+        "transitions": [
+          {
+            "old_ref": {
+              "repo": "vault",
+              "path": "facilities/generator.md",
+              "commit": "d0dfb65b9439ffd193ba390a242f30447f687555",
+              "blob": "1daf2a8c37745be532af33f689d983bd43250c49",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            "new_ref": {
+              "repo": "vault",
+              "path": "facilities/generator.md",
+              "commit": "f662eb9b27dd5f18044d67862b01dda148fd9329",
+              "blob": "58b469fe2638d6377c13ef3fa9f2e3902e06b50e",
+              "algorithm": "git-sha1",
+              "revision": "rev-2"
+            }
+          }
         ]
       }
     }
