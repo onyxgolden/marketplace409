@@ -80,10 +80,21 @@ function briefRef(path, br) {
 }
 
 function approval(o) {
+  // EM-002: subject_ref exactly binds the approval to the brief it was
+  // issued for (repo/path/commit/blob). subjectBlob carries the TRUE brief
+  // blob even when o.blob is overridden to simulate a stale/forged record.
+  const subjectBlob = o.subjectBlob ?? o.blob;
   return {
     record_id: o.record_id,
     issuer: o.issuer ?? "jason",
-    subject_ref: null,
+    subject_ref: {
+      repo: REPO,
+      path: o.briefPath,
+      commit: sha1("fixture-commit:" + o.briefPath),
+      blob: subjectBlob,
+      algorithm: "git-sha1",
+      revision: "fixture-main",
+    },
     resource: o.briefPath,
     scope_ids: o.scopes,
     action_ids: o.actions,
@@ -143,6 +154,7 @@ function makeCase(caseId, category, path, br, opts = {}) {
     fixture: {
       brief: br,
       approvals: opts.approvals ?? [],
+      relays: opts.relays ?? [],
       related_briefs: related,
       owners: OWNERS,
       clock: opts.clock ?? CLOCK,
@@ -367,6 +379,7 @@ function restrictedCase(caseId, n, scopeIds, specs, approvalFn, extra = {}) {
   const gateCount = new Set(specs.flatMap((s) => s.external_gate_ids)).size;
   return makeCase(caseId, "approved-restricted", path, br, {
     approvals,
+    relays: extra.relays,
     expected: {
       status: "PLANNED",
       planning_state: approvalFn ? "approval_verified" : "unapproved",
@@ -417,7 +430,16 @@ function restrictedCase(caseId, n, scopeIds, specs, approvalFn, extra = {}) {
       [spec("r5a", { title: "Relay-approved transfer review", actions: ["process_payment"] })],
       (blob, path) => [r(blob, path, ["financial"], ["process_payment"], "appr-r5",
         { issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-77" })],
-      { recordId: "appr-r5" })
+      {
+        recordId: "appr-r5",
+        relays: [{
+          relay_record_id: "relay-77",
+          registered_by: "jason",
+          valid_from: "2026-01-01T00:00:00Z",
+          expires_at: "2027-01-01T00:00:00Z",
+          revoked: false,
+        }],
+      })
   );
   // mixed: only the restricted-action task is approval-gated
   cases.push(
@@ -550,12 +572,14 @@ danglingCase("dangling-05", 5, [spec("d5a", {}), spec("d5b", { deps: ["d5a"] }),
 function dupKeyCase(caseId, n, specs, uniqueCount) {
   const path = `commands/chatgpt/brief-dupkey-${n}.md`;
   const br = brief(`objective-dupkey-${n}`, ["general"], specs);
+  // EM-003: duplicate keys invalidate the whole graph — never a first-wins
+  // repair. Every retained node is explicitly blocked.
   const seen = new Set();
   const nodes = {};
   for (const s of specs) {
     if (seen.has(s.local_key)) continue;
     seen.add(s.local_key);
-    nodes[s.local_key] = N("PROPOSED", { deps: s.dependency_keys });
+    nodes[s.local_key] = N("BLOCKED", { codes: ["DUPLICATE_LOCAL_KEY"], deps: s.dependency_keys });
   }
   const edges = [];
   for (const s of specs) {
@@ -567,7 +591,7 @@ function dupKeyCase(caseId, n, specs, uniqueCount) {
   cases.push(
     makeCase(caseId, "negative-dupkey", path, br, {
       expected: {
-        status: "PLANNED",
+        status: "BLOCKED",
         planning_state: "unapproved",
         approval_record_id: null,
         node_count: uniqueCount,
@@ -605,6 +629,7 @@ function approvalNeg(caseId, n, scopeIds, specs, approvalMods, expectedCode) {
     record_id: `appr-neg-${n}`,
     briefPath: path,
     blob,
+    subjectBlob: blob,
     scopes: scopeIds,
     actions: [...new Set(specs.flatMap((s) => s.action_ids))],
   };
@@ -700,9 +725,11 @@ approvalNeg("forged-01", 7, ["financial"], fin2, { issuer: "mallory", origin: "j
 approvalNeg("forged-02", 8, ["tenant"], [spec("t8a", { title: "Notify", actions: ["send_tenant_notice"] })], { issuer: "mallory", origin: "authorized_muse_relay", relay: "relay-x" }, "AUTH_UNVERIFIED");
 approvalNeg("forged-03", 9, ["production"], [spec("p9a", { title: "Rotate", actions: ["production_write"] })], { issuer: "mallory" }, "AUTH_UNVERIFIED");
 
-// wrong scope/action coverage (3)
-approvalNeg("wrongscope-01", 10, ["financial"], fin2, { approvedScopes: ["tenant"] }, "SCOPE_MISMATCH");
-approvalNeg("wrongscope-02", 11, ["financial"], fin2, { approvedActions: ["send_tenant_notice"] }, "SCOPE_MISMATCH");
+// wrong scope/action coverage (3): contradictory supplemental sets fail
+// with AUTH_CONTRADICTORY; an empty supplemental grant narrows coverage to
+// nothing and fails with SCOPE_MISMATCH.
+approvalNeg("wrongscope-01", 10, ["financial"], fin2, { approvedScopes: ["tenant"] }, "AUTH_CONTRADICTORY");
+approvalNeg("wrongscope-02", 11, ["financial"], fin2, { approvedActions: ["send_tenant_notice"] }, "AUTH_CONTRADICTORY");
 approvalNeg("wrongscope-03", 12, ["enrollment"], [spec("e12a", { title: "Onboard", actions: ["enroll_tenant"] })], { approvedScopes: [], approvedActions: [] }, "SCOPE_MISMATCH");
 
 // stale head: brief_blob does not match the resolved brief (2)

@@ -71,6 +71,7 @@ describe("zero side effects", () => {
         briefs,
         approvals: c.fixture.approvals ?? [],
         owners: c.fixture.owners ?? [],
+        relays: c.fixture.relays ?? [],
       });
     }
     assert.deepEqual(treeFiles(ROOT), beforeFiles);
@@ -94,7 +95,7 @@ describe("zero side effects", () => {
     for (const c of battery.slice(0, 10)) {
       const briefs = {};
       if (c.fixture.brief) briefs[c.task.brief_ref.repo + NUL + c.task.brief_ref.path + NUL + c.task.brief_ref.commit] = { brief: c.fixture.brief, blob: c.task.brief_ref.blob };
-      const r = planner.run(c.task, { clock: c.fixture.clock, briefs, approvals: [], owners: c.fixture.owners ?? [] });
+      const r = planner.run(c.task, { clock: c.fixture.clock, briefs, approvals: [], owners: c.fixture.owners ?? [], relays: c.fixture.relays ?? [] });
       assert.equal(r.advisory, true);
       assert.equal(r.fixture_only, true);
       assert.equal(r.schema_version, "1");

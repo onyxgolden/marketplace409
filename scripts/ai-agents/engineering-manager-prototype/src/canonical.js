@@ -39,6 +39,19 @@ export function sha256HexBytes(bytes) {
 }
 
 /**
+ * Git blob SHA-1 of a UTF-8 string: SHA-1("blob <byteLen>\0" + bytes).
+ * This is the independently recomputed content binding for brief pins
+ * (EM-001): the resolver never trusts a supplied blob label alone.
+ */
+export function gitBlobSha1Utf8(s) {
+  const bytes = Buffer.from(s, "utf8");
+  return createHash("sha1")
+    .update(Buffer.from(`blob ${bytes.length}\0`, "utf8"))
+    .update(bytes)
+    .digest("hex");
+}
+
+/**
  * Stable node ID per the brief: SHA-256 of canonical
  * {brief:{repo,path,blob}, objective_id, local_key}.
  */

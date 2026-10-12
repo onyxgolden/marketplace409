@@ -1,13 +1,13 @@
 {
-  "corpus_digest": "75908286378cf1f457f598be24717c0a0b0dd0ac78704dcd777f81cd75f711be",
+  "corpus_digest": "813ff021d720fe771f08a45517531aee085206c75a5f9978e36f9d77e31a75b9",
   "files": [
     {
       "path": "README.md",
-      "sha256": "776344fb2e6bb9c06cd97f117c153ef3d3a79c33b2c64b902367f92580e83d14"
+      "sha256": "76f94278efd1a594b718d347385610814d22b4272b355fc21f9059cb63b66f73"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "18e873e302060f81b918ea257212d682ff9dcaa2b4b8dc07f8894992d0ae46d6"
+      "sha256": "3d8bcaef235a9c1b5f5b16b64e12368ea2c7ce424f50f929d2bb83c0e7aa16e0"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,7 +15,7 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "abe1257c4767084ea6ab0e44c433c1075e78e6f25e306a775d8eb8cdab410174"
+      "sha256": "36c69e5b5457162ca1fcc1c9f4f8d38fcbccd6a908bd32fb5031278489e1ce2a"
     },
     {
       "path": "fixtures/owners.json",
@@ -27,7 +27,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "619a2daf8c6d67f7f15e2c9ff6f057c51e1c7f7944873c7c7f2366ac1432492f"
+      "sha256": "6421339bf1411fb2b7bfed04c4ff179404b5e2e80af2e48fd20e889c1ffd112d"
     },
     {
       "path": "runner/run-manual.js",
@@ -35,15 +35,15 @@
     },
     {
       "path": "src/approvals.js",
-      "sha256": "0ed57dc05daa38eb7e1f5b7d273faf38edd9100395883e9e75531027015e08b1"
+      "sha256": "f8373954692fc97fc0040ee6283d18fc6167d0bf159cf103b16d28afc7662d3e"
     },
     {
       "path": "src/canonical.js",
-      "sha256": "b26657775818336d7f4b6e466cfc0e2f1aae7b7330444088a23039f47137f7fa"
+      "sha256": "6258f708da404ceb0d9ad041ee2bbb278453adab74ec83a0eef4a95285e79040"
     },
     {
       "path": "src/index.js",
-      "sha256": "ba4ce2097f600900521b68315026a4d6292a4c4c994e1d48f2bdec6d66d20617"
+      "sha256": "5d8ca3a66f734767edf73aea706524f742f76294c982e0b9516b71c966a51e88"
     },
     {
       "path": "src/injection.js",
@@ -55,23 +55,31 @@
     },
     {
       "path": "src/planner.js",
-      "sha256": "ae3f9443420a48ebb4a67c29ae9ff76568ae72a862d2fe17a2ac9b6bf0e9ed52"
+      "sha256": "78d9b69d1c55264ab9218abd1f6310cce2fc388f6b287ba197836bf14a3032d7"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "89b3dfa08bef82d65ba9e9f56b0afe24a6f14b6032ac0746bf41a6eef08fe24b"
+      "sha256": "e5d4f6f2577b6a7a7ccf0218b618fbb9e5cf96e278b8b221c03be951725072e6"
     },
     {
       "path": "tests/battery.test.js",
-      "sha256": "93cade97335cd3670a006fc99b81161d16fbfad8d15a8bfc91ec71e0f056b846"
+      "sha256": "f1e1cf87d6b1ec80b1ae5f2009db8bc77a41b11fb91ca1d7ff47e5cbfedd2095"
+    },
+    {
+      "path": "tests/case-worker.js",
+      "sha256": "a5e3f0f5fcb9b63eda0a7e20005e8f805e6da62ac27f959bc91ea7cbd98f1297"
     },
     {
       "path": "tests/determinism.test.js",
-      "sha256": "7a3d22df6ed64148e025c3412a0fc1d17c5ba74f9b324d8f76777887e1c19330"
+      "sha256": "a5ecd727461aa19345cb287dafb8a3013b2bf73237d35772abd0dd49b118626b"
+    },
+    {
+      "path": "tests/em-regressions.test.js",
+      "sha256": "124b646a64d1b89152e4e66226cf97d34daca42a2793fce3729d76f7c60d7174"
     },
     {
       "path": "tests/harness.js",
-      "sha256": "7ce611ac2d695a808362935cb73074738c90dd10c98da7df1c06adca91627b26"
+      "sha256": "39dc60278ffc44d2e23dd52e0c6ad80f08efdcf877076d7d9e6b4cab21ad057a"
     },
     {
       "path": "tests/mutation.test.js",
@@ -79,15 +87,23 @@
     },
     {
       "path": "tests/run-battery.js",
-      "sha256": "c09cad7cf459dd2176bf483c42c9e067b0dbcd3a7cbf9ef6f2e5c91fd555a76d"
+      "sha256": "d7cd62fb180a88eb159c797bb790a7daa0c4440899fff1fab75eb2e4245b0d2c"
     },
     {
       "path": "tests/schemas.test.js",
       "sha256": "d7f04307fc1c7965e612acc0200c12946b98d5ed8440caae10344b767a9b7195"
     },
     {
+      "path": "tests/watchdog.js",
+      "sha256": "10218d1faeae06516531dee573d20460121b106bbd2717000e1330b447326256"
+    },
+    {
+      "path": "tests/watchdog.test.js",
+      "sha256": "472e3963444652c257833f6efb2490371e8bef7f388118056fbb845d085b0d38"
+    },
+    {
       "path": "tests/zerotools.test.js",
-      "sha256": "f927e6fbc2200ab927534c6e1c84565aa0c7fef0a9f4db4f6f3de9656ac42461"
+      "sha256": "69b2b972219782fc522a16978ab1b5d060a6b2d69ab3906aa2bc9e2130af3029"
     }
   ]
 }

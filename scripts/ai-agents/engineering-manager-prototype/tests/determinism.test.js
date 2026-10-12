@@ -65,6 +65,7 @@ function contextFor(c) {
     briefs,
     approvals: c.fixture.approvals ?? [],
     owners: c.fixture.owners ?? [],
+    relays: c.fixture.relays ?? [],
   };
 }
 
@@ -101,24 +102,41 @@ describe("determinism", () => {
     }
   });
 
-  it("permutations of independent declarations yield the same DAG", () => {
+  it("permutations of independent declarations yield the same DAG", async () => {
     const battery = JSON.parse(readFileSync(join(ROOT, "corpus", "battery.json"), "utf8"));
     // approved chains/branches/joins: shuffle task_specs declaration order
     const targets = battery.filter((c) => ["approved-chain", "approved-branch", "approved-join"].includes(c.category));
     assert.ok(targets.length === 30);
+    // EM-001: a permutation changes the serialized brief bytes, so each
+    // permuted run carries a NEWLY VALID pin for its own bytes — the old
+    // pin must never be accepted for altered bytes. Because node IDs bind
+    // the pin, the comparison is over the defined DAG semantics
+    // (local-key structural projection), not byte identity.
+    const harness = await import(pathToFileURL(join(ROOT, "tests", "harness.js")).href);
+    const gitBlobSha1 = (s) => {
+      const b = Buffer.from(s, "utf8");
+      return createHash("sha1").update(Buffer.from(`blob ${b.length}\0`, "utf8")).update(b).digest("hex");
+    };
     for (const c of targets) {
       const ctx = contextFor(c);
-      const base = canonicalJson(run(c.task, ctx));
+      const base = harness.structuralOf(run(c.task, ctx));
       for (let s = 1; s <= 3; s++) {
         const task2 = JSON.parse(JSON.stringify(c.task));
         // shuffle is applied to the fixture brief's task_specs instead
         const brief2 = JSON.parse(JSON.stringify(c.fixture.brief));
         brief2.task_specs = shuffled(brief2.task_specs, s * 7919 + c.case_id.length);
+        const newBlob = gitBlobSha1(canonicalJson(brief2));
+        task2.brief_ref = { ...task2.brief_ref, blob: newBlob };
         const briefs = {};
-        briefs[briefKey(task2.brief_ref)] = { brief: brief2, blob: task2.brief_ref.blob };
+        briefs[briefKey(task2.brief_ref)] = { brief: brief2, blob: newBlob };
         const ctx2 = { ...ctx, briefs };
-        const r2 = canonicalJson(run(task2, ctx2));
-        assert.equal(r2, base, `${c.case_id}: permutation ${s} changed the DAG`);
+        const r2 = run(task2, ctx2);
+        assert.equal(r2.status, "PLANNED", `${c.case_id}: permutation ${s} did not plan`);
+        assert.deepEqual(
+          harness.structuralOf(r2),
+          base,
+          `${c.case_id}: permutation ${s} changed the DAG semantics`
+        );
       }
     }
   });

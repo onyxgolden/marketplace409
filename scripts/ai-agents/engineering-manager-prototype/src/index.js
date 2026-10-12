@@ -38,7 +38,7 @@ function envelope(task, payload) {
  */
 export function run(task, context) {
   try {
-    const payload = buildPlan(task, context);
+    const { payload } = buildPlan(task, context);
     return envelope(task, payload);
   } catch (e) {
     if (e instanceof PlannerError) {

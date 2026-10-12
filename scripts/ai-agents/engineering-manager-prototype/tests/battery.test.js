@@ -96,9 +96,10 @@ before(async () => {
   // any scored code is imported or executed.
   approvedDigest = authenticateTrustRoot();
   harness = await import(pathToFileURL(join(ROOT, "tests", "harness.js")).href);
-  const planner = await import(pathToFileURL(join(ROOT, "src", "index.js")).href);
+  await import(pathToFileURL(join(ROOT, "src", "index.js")).href);
   // Manifest verification happens inside runBattery before any case runs.
-  battery = await harness.runBattery(ROOT, planner);
+  // Each case runs in a worker thread under the host watchdog.
+  battery = await harness.runBattery(ROOT, { timeoutMs: 5000 });
 });
 
 describe("corpus integrity", () => {

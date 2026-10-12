@@ -5,8 +5,9 @@
  * complete membership) and returns the corpus digest. Called only AFTER the
  * entrypoint's pre-import trust authentication.
  *
- * runBattery(root): runs all 100 frozen cases through the planner and
- * compares structural output against the hand-derived expectations.
+ * runBattery(root, {timeoutMs}): runs all 100 frozen cases through the
+ * planner — each in a worker thread under the host watchdog — and compares
+ * structural output against the hand-derived expectations.
  * Returns {outputs, corpusDigest}.
  */
 
@@ -14,6 +15,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, normalize } from "node:path";
 import { pathToFileURL } from "node:url";
+import { runCaseWithWatchdog, watchdogRefusal } from "./watchdog.js";
 
 export class ManifestError extends Error {
   constructor(reason) {
@@ -128,7 +130,7 @@ export function isTopoValid(result) {
   return true;
 }
 
-export async function runBattery(root, plannerModule) {
+export async function runBattery(root, { timeoutMs = 5000 } = {}) {
   const v = await verifyManifest(root);
   const battery = JSON.parse(readFileSync(join(root, "corpus", "battery.json"), "utf8"));
   const outputs = [];
@@ -145,10 +147,22 @@ export async function runBattery(root, plannerModule) {
       briefs,
       approvals: c.fixture.approvals ?? [],
       owners: c.fixture.owners ?? [],
+      relays: c.fixture.relays ?? [],
     };
+    // EM-005: every case runs in a worker thread under the host watchdog.
+    // A stuck case is terminated and refused with WATCHDOG_TIMEOUT —
+    // never a silent hang, never a partial result.
     const t0 = Date.now();
-    const result = plannerModule.run(c.task, context);
+    const outcome = await runCaseWithWatchdog(root, c.task, context, { timeoutMs });
     const elapsed = Date.now() - t0;
+    let result;
+    if (outcome.timeout) {
+      result = watchdogRefusal(c.task, timeoutMs);
+    } else if (outcome.ok) {
+      result = outcome.result;
+    } else {
+      throw new Error(`worker failed for case ${c.case_id}: ${outcome.error}`);
+    }
     outputs.push({
       case_id: c.case_id,
       category: c.category,

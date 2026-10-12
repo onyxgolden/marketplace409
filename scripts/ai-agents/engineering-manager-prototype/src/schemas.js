@@ -250,14 +250,53 @@ export function validateApprovalRecord(rec) {
     return `authority_origin must be one of: ${AUTHORITY_ORIGINS.join(", ")}`;
   if (rec.relay_record_id !== null && !isNonEmptyString(rec.relay_record_id))
     return "relay_record_id must be null or a non-empty string";
-  if (rec.subject_ref !== null && rec.subject_ref !== undefined && !isPlainObject(rec.subject_ref))
-    return "subject_ref must be an object or null";
+  // EM-002: the approval target is bound by a required subject_ref.
+  // A missing or malformed subject reference can never authorize work.
+  const subjErr = validateSourceRef(rec.subject_ref);
+  if (subjErr) return `subject_ref invalid: ${subjErr}`;
   return null;
 }
 
 /** Validate the injected clock. Returns null when valid, else a reason. */
 export function validateClock(clock) {
   if (!isValidDateString(clock)) return "clock must be a valid YYYY-MM-DD or UTC ISO timestamp";
+  return null;
+}
+
+const SPAN_KEYS = ["byte_start", "byte_end", "label"];
+
+/**
+ * Validate source_spans against the resolved brief's canonical bytes
+ * (EM-001). Every citation must be a well-formed {byte_start, byte_end}
+ * range inside the resolved bytes that decodes as clean UTF-8 — which
+ * rejects forged, malformed, out-of-range, and multibyte-splitting spans.
+ * An empty array claims no citations and is valid. Returns null when valid,
+ * else a reason.
+ */
+export function validateSourceSpans(spans, briefBytes) {
+  if (!Array.isArray(spans)) return "source_spans must be an array";
+  const bytes = Buffer.from(briefBytes, "utf8");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i];
+    if (!isPlainObject(s)) return `source_spans[${i}] must be an object`;
+    const badKey = Object.keys(s).find((k) => !SPAN_KEYS.includes(k));
+    if (badKey) return `source_spans[${i}] has unknown property ${JSON.stringify(badKey)}`;
+    const { byte_start, byte_end, label } = s;
+    if (!Number.isInteger(byte_start) || byte_start < 0)
+      return `source_spans[${i}].byte_start must be a non-negative integer`;
+    if (!Number.isInteger(byte_end) || byte_end <= byte_start)
+      return `source_spans[${i}].byte_end must be an integer greater than byte_start`;
+    if (byte_end > bytes.length)
+      return `source_spans[${i}] cites bytes past the end of the resolved brief (${bytes.length} bytes)`;
+    if (label !== undefined && (typeof label !== "string" || label.length > 128))
+      return `source_spans[${i}].label must be a string of at most 128 characters`;
+    try {
+      decoder.decode(bytes.subarray(byte_start, byte_end));
+    } catch {
+      return `source_spans[${i}] does not cite a valid UTF-8 slice of the resolved brief bytes`;
+    }
+  }
   return null;
 }
 

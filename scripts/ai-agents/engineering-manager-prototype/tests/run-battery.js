@@ -85,10 +85,10 @@ if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) 
 }
 
 // 3. Only now import scored code.
-const planner = await import(pathToFileURL(join(ROOT, "src", "index.js")).href);
+await import(pathToFileURL(join(ROOT, "src", "index.js")).href);
 const harness = await import(pathToFileURL(join(ROOT, "tests", "harness.js")).href);
 
-const { outputs, corpusDigest } = await harness.runBattery(ROOT, planner);
+const { outputs, corpusDigest } = await harness.runBattery(ROOT, { timeoutMs: 5000 });
 const m = harness.acceptanceMetrics(outputs);
 const topoBad = outputs
   .filter((o) => !(o.expected.diag_codes ?? []).includes("CYCLE_DETECTED"))
