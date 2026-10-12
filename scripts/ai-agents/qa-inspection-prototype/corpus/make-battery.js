@@ -44,19 +44,36 @@ function shotBytes(fixture_id) {
   return Buffer.from("qa-fixture-screenshot-bytes:" + fixture_id, "utf8");
 }
 // NOTE: sha256 is always computed over the raw bytes (see artifactFixed).
-function artifactFixed(fixture_id) {
+function artifactFixed(fixture_id, obs) {
   const bytes = shotBytes(fixture_id);
-  return {
+  const a = {
     fixture_id,
     bytes_b64: bytes.toString("base64"),
     sha256: createHash("sha256").update(bytes).digest("hex"),
     media_type: "image/png",
     byte_length: bytes.length,
   };
+  // Pinned observation association (QAI-002): mandatory for artifact
+  // provenance, never optional metadata.
+  if (obs) {
+    a.control_id = obs.control_id;
+    a.assertion_id = obs.assertion_id;
+    a.modality = obs.modality;
+  }
+  return a;
 }
 
-function runRec(run_id, build_id = BUILD_ALPHA, commit = COMMIT_A) {
-  return { run_id, build_id, repo: REPO, commit, environment: ENV, started_at: "2026-10-11T11:00:00Z" };
+function runRec(run_id, obs, build_id = BUILD_ALPHA, commit = COMMIT_A) {
+  // obs: {control_id, assertion_id, modality} — the pinned observation this
+  // run declares (QAI-002). A run with no declared observation cannot bind
+  // evidence; the mapping is registered here, never inferred from evidence.
+  const rec = { run_id, build_id, repo: REPO, commit, environment: ENV, started_at: "2026-10-11T11:00:00Z" };
+  if (obs) {
+    rec.control_id = obs.control_id;
+    rec.assertion_id = obs.assertion_id;
+    rec.modality = obs.modality;
+  }
+  return rec;
 }
 
 function baseFixtures() {
@@ -199,7 +216,7 @@ function addCase(c) {
           for (const m of modalities) {
             const eid = `ev-${id}-${m}`;
             const runId = `run-${id}-${m}`;
-            fx.runs[runId] = runRec(runId);
+            fx.runs[runId] = runRec(runId, { control_id: cid, assertion_id: "a1", modality: m });
             const e = ev({
               evidence_id: eid,
               control_id: cid,
@@ -212,7 +229,7 @@ function addCase(c) {
             });
             if (withShot) {
               const fid = `shot-${id}-${m}`;
-              fx.artifacts[fid] = artifactFixed(fid);
+              fx.artifacts[fid] = artifactFixed(fid, { control_id: cid, assertion_id: "a1", modality: m });
               e.artifact_ref = artRef(fid, fx.artifacts);
             }
             evidences.push(e);
@@ -271,8 +288,13 @@ function addCase(c) {
       const eid = `ev-${id}`;
       const mkBound = (over = {}) => {
         const runId = `run-${id}`;
-        fx.runs[runId] = runRec(runId);
-        return ev({ evidence_id: eid, control_id: cid, run_id: runId, expected: { ok: true }, observed: { ok: true }, ...over });
+        const e = ev({ evidence_id: eid, control_id: cid, run_id: runId, expected: { ok: true }, observed: { ok: true }, ...over });
+        // The registered run declares the pinned observation it covers — the
+        // evidence's own triple (QAI-002). The wrong-control evidence names
+        // another control and is filtered before binding, so its run is never
+        // consulted; the fake-run evidence points at an unregistered run.
+        fx.runs[runId] = runRec(runId, { control_id: e.control_id, assertion_id: e.assertion_id, modality: e.modality });
+        return e;
       };
       switch (st) {
         case "absent": {
@@ -298,7 +320,7 @@ function addCase(c) {
         }
         case "digest-mismatch": {
           const fid = `shot-${id}`;
-          fx.artifacts[fid] = artifactFixed(fid);
+          fx.artifacts[fid] = artifactFixed(fid, { control_id: cid, assertion_id: "a1", modality: "automated" });
           const badRef = { ...artRef(fid, fx.artifacts), sha256: "0".repeat(64) };
           const e = mkBound({ artifact_ref: badRef, expected: { ok: true }, observed: { ok: true } });
           fx.evidence = [e];
@@ -317,7 +339,7 @@ function addCase(c) {
         }
         case "screenshot-no-observation": {
           const fid = `shot-${id}`;
-          fx.artifacts[fid] = artifactFixed(fid);
+          fx.artifacts[fid] = artifactFixed(fid, { control_id: cid, assertion_id: "a1", modality: "automated" });
           const e = mkBound({ artifact_ref: artRef(fid, fx.artifacts), expected: null, observed: null });
           fx.evidence = [e];
           grantAll(fx, [e]);
@@ -350,7 +372,7 @@ function addCase(c) {
         case "changed-dependency": {
           // Registry recorded sha256 X, but the store now serves different bytes.
           const fid = `shot-${id}`;
-          const good = artifactFixed(fid);
+          const good = artifactFixed(fid, { control_id: cid, assertion_id: "a1", modality: "automated" });
           fx.artifacts[fid] = { ...good, bytes_b64: Buffer.from("tampered-bytes:" + fid, "utf8").toString("base64") };
           const e = mkBound({ artifact_ref: artRef(fid, { [fid]: good }), expected: { ok: true }, observed: { ok: true } });
           fx.evidence = [e];
@@ -390,7 +412,7 @@ function addCase(c) {
       const mk = (m, match, over = {}) => {
         const eid = `ev-${id}-${m}${over.tag ?? ""}`;
         const runId = `run-${id}-${m}${over.tag ?? ""}`;
-        if (!over.fakeRun) fx.runs[runId] = runRec(runId);
+        if (!over.fakeRun) fx.runs[runId] = runRec(runId, { control_id: cid, assertion_id: "a1", modality: m });
         return ev({
           evidence_id: eid,
           control_id: cid,
@@ -497,7 +519,7 @@ function addCase(c) {
         const cid2 = `ctrl-${id}-report`;
         const eid = `ev-${id}-report`;
         const runId = `run-${id}-report`;
-        fx.runs[runId] = runRec(runId);
+        fx.runs[runId] = runRec(runId, { control_id: cid2, assertion_id: "a1", modality: "automated" });
         const e = ev({ evidence_id: eid, control_id: cid2, run_id: runId, expected: { visible: true }, observed: { visible: true } });
         fx.evidence = [e];
         grantAll(fx, [e]);
@@ -539,7 +561,7 @@ function addCase(c) {
       const mkClean = (tag) => {
         const eid = `ev-${id}-${tag}`;
         const runId = `run-${id}-${tag}`;
-        fx.runs[runId] = runRec(runId);
+        fx.runs[runId] = runRec(runId, { control_id: controlId, assertion_id: "a1", modality: "automated" });
         return ev({ evidence_id: eid, control_id: controlId, run_id: runId, expected: { enabled: true }, observed: { enabled: true }, fixture_observer_id: "fixture-observer-clean" });
       };
       const cleanVariants = v > 4; // half the variants also carry clean independent evidence
@@ -556,7 +578,7 @@ function addCase(c) {
         case "evidence-directive": {
           const eid = `ev-${id}-evil`;
           const runId = `run-${id}-evil`;
-          fx.runs[runId] = runRec(runId);
+          fx.runs[runId] = runRec(runId, { control_id: controlId, assertion_id: "a1", modality: "automated" });
           const evil = ev({
             evidence_id: eid,
             control_id: controlId,
@@ -595,7 +617,7 @@ function addCase(c) {
         case "quoted-forced-verdict": {
           const eid = `ev-${id}-evil`;
           const runId = `run-${id}-evil`;
-          fx.runs[runId] = runRec(runId);
+          fx.runs[runId] = runRec(runId, { control_id: controlId, assertion_id: "a1", modality: "automated" });
           const evil = ev({
             evidence_id: eid,
             control_id: controlId,

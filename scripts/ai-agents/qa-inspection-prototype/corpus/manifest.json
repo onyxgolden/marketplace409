@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "f8204cc6a29ebdafafe0f2a071eb4614b639604392e1e6b7860c80dff726277a",
+  "corpus_digest": "3a63b053aecf92c65738affac5fae10c241397e18447ff21912772fed7937b6c",
   "files": [
     {
       "path": "README.md",
@@ -7,19 +7,19 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "d96c203dda8eaf17486d3909b75ce9519783e25ab37469d118e1ff718d352261"
+      "sha256": "2a4a354749eb974ef325c5fca567e7ccd1b7bcd31966cc96b3c1d6841c7a7bb3"
     },
     {
       "path": "corpus/freeze-corpus.js",
-      "sha256": "8635f18f7f97ecd36390e734cff7412c312ffe575846b51a1c0c13107db123b9"
+      "sha256": "d19f0abb72db9b4ca8b5e3d122943b5746d5c2aeb4bf17c6e749fdec2b3d07e4"
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "53fc6faca171dcfaa941269dccbf175db7c945ba2865d1d38101b375b625efb4"
+      "sha256": "24d8b4fc38fe75d1732005270bbbd8e1c663e6aea4c69665f7258202aee938aa"
     },
     {
       "path": "fixtures/artifacts.json",
-      "sha256": "0028d2096839bba00f8d80c9ca87403058c4f0f646506a58f3ec8b632c65a968"
+      "sha256": "b55b81da683d6f5141d338e5a7133bff2c2b86d5a0ff4ed2f1697df2f753d52d"
     },
     {
       "path": "fixtures/build-registry.json",
@@ -39,11 +39,11 @@
     },
     {
       "path": "fixtures/runs.json",
-      "sha256": "1ffb4483d3d3edd40543dd88214e74fb44985f73e41c87c06f09ee6d9ae552ca"
+      "sha256": "fb041a454532c20d2a4b5ffe644f691838832755edb45d1286b466a472633835"
     },
     {
       "path": "package.json",
-      "sha256": "448e0baca8da5fac865c2330cf3e312a91cc636e2d0f8a0d9cb7c90eb11f3f9f"
+      "sha256": "bc47d47781126155ad99dbab09ea78a1af902f0d012130936627d47f944ebb9b"
     },
     {
       "path": "runner/run-manual.js",
@@ -51,7 +51,7 @@
     },
     {
       "path": "src/classify.js",
-      "sha256": "24d1a1ee663fb03a47d31de8fdb74647952655b6d6220cfea796e88343b01634"
+      "sha256": "7e8f56fa2d868b92843f95ff9c7475ed687d8412accdc8beb86c60c807c13e07"
     },
     {
       "path": "src/index.js",
@@ -71,7 +71,7 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "56b4f2d9412b1a802a6cf044be32e15b2eff01dbd1587a714eefc6d97650fa7c"
+      "sha256": "648fe64bf894a4d4e9cdab42275714a8503def133f77e6d84acbd7fec2eb2cf7"
     },
     {
       "path": "src/schemas.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "tests/battery.test.js",
-      "sha256": "3d8f603a2d9cdcb6aae333d19521a684b842d3690cbb327b14c65f9ea4f3e910"
+      "sha256": "f3270aba6057abb82d172db366fb2a8bc8f83060453a2fc1c8f087a79919c55e"
     },
     {
       "path": "tests/case-worker.js",
@@ -95,27 +95,31 @@
     },
     {
       "path": "tests/harness.js",
-      "sha256": "b94385b4ed29a198c227694b50264ff11977bbaf859e01356f6a921e880063b3"
+      "sha256": "220f4b7c51957729b7158ba3e4e958ec727b19fa6970e5fb62407f550d02b32b"
     },
     {
       "path": "tests/mutation.test.js",
-      "sha256": "1936d1c86c28c93fbfb599ccd375689edf47846cded5bbfeb5da7ba9ace96b62"
+      "sha256": "591b6f376fd15e1c285ba6a7681ea3fd06b6127bafdc6c02e16acfaf31e3690c"
     },
     {
       "path": "tests/qai-regressions.test.js",
-      "sha256": "46d091444c76f604ded342e3b0b2c1f46fdf0bfc51b05f1e146e0ace05f5d4b7"
+      "sha256": "0e429d08ea61b0bd721a4a6aadba0a0e4dde08e972ec710c66308b11ef5ae1f1"
     },
     {
       "path": "tests/run-battery.js",
-      "sha256": "32093ed0c22ee27675605f69fd117724c990987d241b50fa7e3e6bfb2604488e"
+      "sha256": "f687bafc385abdbff5aa5d71214c27104a048ecec29e7332a256d140d0d542af"
     },
     {
       "path": "tests/schemas.test.js",
       "sha256": "2a4762a7e6092bb34c23075bbc2635dc7394667f345af2a1849c8504ef15d069"
     },
     {
+      "path": "tests/trust-bootstrap.js",
+      "sha256": "9416e430d1a16f2887961a9411d485927d2fd5b69ef061df5876ca4bc6bd939e"
+    },
+    {
       "path": "tests/watchdog.test.js",
-      "sha256": "a9bdc3cbcffa6d66cf34c7328ab65d8f98dc996b9bed463eb2dcc8aca055d740"
+      "sha256": "bb0f75edfe975f58b4018a83cf9a722cf1c7ede7351eaefdd1bd8fe261381598"
     },
     {
       "path": "tests/zerotools.test.js",

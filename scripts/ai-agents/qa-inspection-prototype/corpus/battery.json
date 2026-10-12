@@ -78,7 +78,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-1",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -207,7 +210,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMDItYXV0b21hdGVk",
           "sha256": "a2ff38bafd833853bd94280d666a0d17b5ce5944a07538771499f33814ada69f",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "nav-dashboard-2",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -217,7 +223,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-2",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -343,7 +352,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-3",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -472,7 +484,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMDQtYXV0b21hdGVk",
           "sha256": "a19e83b5920cf8ad68fe6440543b53fa0df0aff26719e7b01e69efc815a53e1b",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "nav-dashboard-4",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -482,7 +497,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-4",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -632,7 +650,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-5",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-005-manual": {
           "run_id": "run-QA-V-005-manual",
@@ -640,7 +661,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-5",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -808,14 +832,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMDYtYXV0b21hdGVk",
           "sha256": "ded0b04e42c90328a817623159f5eed7aa193a8412db194cf0b9a077a0369b17",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "nav-dashboard-6",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-006-manual": {
           "fixture_id": "shot-QA-V-006-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMDYtbWFudWFs",
           "sha256": "fec6a7763b84e002b548adbf75656c0f3ebe76b8002e56fe50c9b44b4aad73d9",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "nav-dashboard-6",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -825,7 +855,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-6",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-006-manual": {
           "run_id": "run-QA-V-006-manual",
@@ -833,7 +866,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-6",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -993,7 +1029,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-7",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-007-manual": {
           "run_id": "run-QA-V-007-manual",
@@ -1001,7 +1040,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-7",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -1169,14 +1211,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMDgtYXV0b21hdGVk",
           "sha256": "b00ae9ef64d8d1289afa81d6c9cee2760e3d062cf2792bb2a645283a30784078",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "nav-dashboard-8",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-008-manual": {
           "fixture_id": "shot-QA-V-008-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMDgtbWFudWFs",
           "sha256": "5282c866db4fc8229bb39222d88446309bdcadea1c78db8275dee41db7938d69",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "nav-dashboard-8",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -1186,7 +1234,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-8",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-008-manual": {
           "run_id": "run-QA-V-008-manual",
@@ -1194,7 +1245,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "nav-dashboard-8",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -1340,7 +1394,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-9",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -1479,7 +1536,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTAtYXV0b21hdGVk",
           "sha256": "16e3afc7907ccdbdf982fbc9783b2d10e3bde6961a01a2589dcc58c92e7dca4e",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "status-filter-10",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -1489,7 +1549,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-10",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -1625,7 +1688,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-11",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -1764,7 +1830,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTItYXV0b21hdGVk",
           "sha256": "e74325dd13077b8e3599ea3df9fc8c0505d833b5b99a36deb429687d4bcdd737",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "status-filter-12",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -1774,7 +1843,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-12",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -1944,7 +2016,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-13",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-013-manual": {
           "run_id": "run-QA-V-013-manual",
@@ -1952,7 +2027,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-13",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -2140,14 +2218,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTQtYXV0b21hdGVk",
           "sha256": "a9c48dd03566dd1ccc03d4e583acb6925ba7c6cdb0f138c24afc7afdd040a138",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "status-filter-14",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-014-manual": {
           "fixture_id": "shot-QA-V-014-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTQtbWFudWFs",
           "sha256": "a26f7d823506e78ae852ca675324e8cf95b0e896ce557e9b51245814aedec522",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "status-filter-14",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -2157,7 +2241,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-14",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-014-manual": {
           "run_id": "run-QA-V-014-manual",
@@ -2165,7 +2252,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-14",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -2345,7 +2435,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-15",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-015-manual": {
           "run_id": "run-QA-V-015-manual",
@@ -2353,7 +2446,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-15",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -2541,14 +2637,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTYtYXV0b21hdGVk",
           "sha256": "fb30465ccf7bfa36d2ae95eea707e699c16f3b885ec8a64b834a3d2b932f0f3c",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "status-filter-16",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-016-manual": {
           "fixture_id": "shot-QA-V-016-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTYtbWFudWFs",
           "sha256": "e30fc13db59189d61f5871d9e5c211172a0f4673f229cecf76100ef1c0dc234c",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "status-filter-16",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -2558,7 +2660,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-16",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-016-manual": {
           "run_id": "run-QA-V-016-manual",
@@ -2566,7 +2671,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "status-filter-16",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -2702,7 +2810,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-17",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -2831,7 +2942,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMTgtYXV0b21hdGVk",
           "sha256": "35eca50d71915083ec3e1b08f07b5a3fb992aa7170b372b0b0ddaca719fe6559",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "tenant-row-308-18",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -2841,7 +2955,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-18",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -2967,7 +3084,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-19",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -3096,7 +3216,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjAtYXV0b21hdGVk",
           "sha256": "26610474a9415b54e522b51b58fc9be143ea2a1cecb559451e1c54b91407b9d1",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "tenant-row-308-20",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -3106,7 +3229,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-20",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -3256,7 +3382,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-21",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-021-manual": {
           "run_id": "run-QA-V-021-manual",
@@ -3264,7 +3393,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-21",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -3432,14 +3564,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjItYXV0b21hdGVk",
           "sha256": "9650a006f492dccdd0af49e062f5117bfabf76d759aedb1d8390686aab8c5414",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "tenant-row-308-22",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-022-manual": {
           "fixture_id": "shot-QA-V-022-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjItbWFudWFs",
           "sha256": "af1ad301f2f0e93bc39e5fb38732ef86c5d6de437d9d480e72c811568319cdda",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "tenant-row-308-22",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -3449,7 +3587,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-22",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-022-manual": {
           "run_id": "run-QA-V-022-manual",
@@ -3457,7 +3598,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-22",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -3617,7 +3761,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-23",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-023-manual": {
           "run_id": "run-QA-V-023-manual",
@@ -3625,7 +3772,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-23",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -3793,14 +3943,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjQtYXV0b21hdGVk",
           "sha256": "88650bce5f0a344e69a9f24c5738511f9a4ff3e587d3ce415ce01bdb0c66efcd",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "tenant-row-308-24",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-024-manual": {
           "fixture_id": "shot-QA-V-024-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjQtbWFudWFs",
           "sha256": "19b26d340c5e53c01622fa29a79eaf0459cd4acd283694f3d5386d7174d06a8e",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "tenant-row-308-24",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -3810,7 +3966,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-24",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-024-manual": {
           "run_id": "run-QA-V-024-manual",
@@ -3818,7 +3977,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "tenant-row-308-24",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -3954,7 +4116,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-25",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -4083,7 +4248,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjYtYXV0b21hdGVk",
           "sha256": "e9cb953ed921e4b43f77696cf1460fe2a88fd815d9882722822a520e21ea7970",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "save-settings-26",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -4093,7 +4261,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-26",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -4219,7 +4390,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-27",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -4348,7 +4522,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMjgtYXV0b21hdGVk",
           "sha256": "72d88e8fd94218dec4e41b257c201d9455b47352fa9a7b53a7d57f39ba769fc4",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "save-settings-28",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -4358,7 +4535,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-28",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -4508,7 +4688,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-29",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-029-manual": {
           "run_id": "run-QA-V-029-manual",
@@ -4516,7 +4699,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-29",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -4684,14 +4870,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzAtYXV0b21hdGVk",
           "sha256": "c206105ca7403ff0e89625b43eeeb9dc8f38a98f78406d2f6750653bee37bd47",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "save-settings-30",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-030-manual": {
           "fixture_id": "shot-QA-V-030-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzAtbWFudWFs",
           "sha256": "b59420e5da61e95dade3cc31d81af8424a7ae5d8eecb84703a3476ec91312b0b",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "save-settings-30",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -4701,7 +4893,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-30",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-030-manual": {
           "run_id": "run-QA-V-030-manual",
@@ -4709,7 +4904,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-30",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -4869,7 +5067,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-31",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-031-manual": {
           "run_id": "run-QA-V-031-manual",
@@ -4877,7 +5078,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-31",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -5045,14 +5249,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzItYXV0b21hdGVk",
           "sha256": "3eb2037d8c8b1dd61eaed5d44995f3dd733f414881c93e806d9bef955bd211ab",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "save-settings-32",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-032-manual": {
           "fixture_id": "shot-QA-V-032-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzItbWFudWFs",
           "sha256": "ff33fab51582e19b3c216760b30748a6afb455cac641ebb480a7f3710a354c38",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "save-settings-32",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -5062,7 +5272,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-32",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-032-manual": {
           "run_id": "run-QA-V-032-manual",
@@ -5070,7 +5283,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "save-settings-32",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -5206,7 +5422,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-33",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -5335,7 +5554,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzQtYXV0b21hdGVk",
           "sha256": "04a3dbebe92d172cc9f95f029612a18e476f4ea4cfc415ccae2037bc581dde63",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "export-ledger-csv-34",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -5345,7 +5567,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-34",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -5471,7 +5696,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-35",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -5600,7 +5828,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzYtYXV0b21hdGVk",
           "sha256": "007c3504476a82c3938430d1327856210ad8b67e7e1374aa247f75fd87b1134b",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "export-ledger-csv-36",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -5610,7 +5841,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-36",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -5760,7 +5994,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-37",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-037-manual": {
           "run_id": "run-QA-V-037-manual",
@@ -5768,7 +6005,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-37",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -5936,14 +6176,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzgtYXV0b21hdGVk",
           "sha256": "43f1b6b0015314d7e6bcbbd90dab51d6f5bebb4defa56ede0a605729d5dce3b6",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "export-ledger-csv-38",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-038-manual": {
           "fixture_id": "shot-QA-V-038-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wMzgtbWFudWFs",
           "sha256": "2bab734353ebc39d5f46e44d9cd52db19f1ab66895977af4da7143e72c2000bb",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "export-ledger-csv-38",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -5953,7 +6199,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-38",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-038-manual": {
           "run_id": "run-QA-V-038-manual",
@@ -5961,7 +6210,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-38",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -6121,7 +6373,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-39",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-039-manual": {
           "run_id": "run-QA-V-039-manual",
@@ -6129,7 +6384,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-39",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -6297,14 +6555,20 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wNDAtYXV0b21hdGVk",
           "sha256": "c78d03fea39268e497e17fecce35b7e6c1359594ad73eaf38841b54799346ddd",
           "media_type": "image/png",
-          "byte_length": 51
+          "byte_length": 51,
+          "control_id": "export-ledger-csv-40",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "shot-QA-V-040-manual": {
           "fixture_id": "shot-QA-V-040-manual",
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtVi0wNDAtbWFudWFs",
           "sha256": "cda8385fc9b1446f8b7071abb99ce89d3a37e26524ada223d5cf61b160f759b2",
           "media_type": "image/png",
-          "byte_length": 48
+          "byte_length": 48,
+          "control_id": "export-ledger-csv-40",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "runs": {
@@ -6314,7 +6578,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-40",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-V-040-manual": {
           "run_id": "run-QA-V-040-manual",
@@ -6322,7 +6589,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "export-ledger-csv-40",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -6793,7 +7063,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-005",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -6918,7 +7191,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-006",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7043,7 +7319,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-007",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7168,7 +7447,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-008",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7293,7 +7575,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "some-other-control",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7418,7 +7703,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "some-other-control",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7543,7 +7831,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "some-other-control",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7668,7 +7959,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "some-other-control",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7796,7 +8090,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMTM=",
           "sha256": "41cb5762c0829cab5bea349275813fe4338208dea9444a04350d3484aa195c6d",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-013",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -7806,7 +8103,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-013",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -7935,7 +8235,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMTQ=",
           "sha256": "620119c869bb5bf980594cadc6f1febc1a977448c3ce38a51ba4404282a904ae",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-014",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -7945,7 +8248,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-014",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8074,7 +8380,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMTU=",
           "sha256": "a2000feb3d2f7c88e83fa91685e5307e1cb17f18d3a485fcbde397b5774cf7b4",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-015",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -8084,7 +8393,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-015",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8213,7 +8525,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMTY=",
           "sha256": "10e8cc973a2dc949f5631cbb9e67d72a2dac9d090c3e66ef1a941d0d0b28129e",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-016",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -8223,7 +8538,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-016",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8349,7 +8667,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-017",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8474,7 +8795,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-018",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8599,7 +8923,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-019",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8724,7 +9051,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-020",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8848,7 +9178,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMjE=",
           "sha256": "c4a4b88afb3a6a89dc4be7dd8bae4a24823bde1bbfc7c18bc1438cea04a310e8",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-021",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -8858,7 +9191,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-021",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -8983,7 +9319,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMjI=",
           "sha256": "27288fb919193a9244820659c6fe171d0dcefa01d33ed1275d77502b97b65856",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-022",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -8993,7 +9332,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-022",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9118,7 +9460,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMjM=",
           "sha256": "6984127b5eabf66acfed0e04a98638ee3e3b3315a64ba1b8a0da884d0a481c87",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-023",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -9128,7 +9473,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-023",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9253,7 +9601,10 @@
           "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtUUEtRi0wMjQ=",
           "sha256": "a8cc7602168f1bde325bdc970161c1f0bbdb08eb436ff29e0cc042736d4295b6",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-024",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -9263,7 +9614,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-024",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9389,7 +9743,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-025",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9515,7 +9872,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-026",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9641,7 +10001,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-027",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9767,7 +10130,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-028",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -9893,7 +10259,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-029",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -10018,7 +10387,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-030",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -10143,7 +10515,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-031",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -10268,7 +10643,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-032",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -10608,7 +10986,10 @@
           "bytes_b64": "dGFtcGVyZWQtYnl0ZXM6c2hvdC1RQS1GLTAzNw==",
           "sha256": "eca1be680c69e9415c463010fda7faf56a66357838ef19939ab81482f5499ced",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-037",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -10618,7 +10999,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-037",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -10747,7 +11131,10 @@
           "bytes_b64": "dGFtcGVyZWQtYnl0ZXM6c2hvdC1RQS1GLTAzOA==",
           "sha256": "43c74ff493924e4d740cdb29114981cbd1c25c2cd29c0bdbf2acacbbcf324c3f",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-038",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -10757,7 +11144,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-038",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -10886,7 +11276,10 @@
           "bytes_b64": "dGFtcGVyZWQtYnl0ZXM6c2hvdC1RQS1GLTAzOQ==",
           "sha256": "a76f59ad0d82612af096552067d8d51acd17f28805e4e937099b93e6b2ce5c1e",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-039",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -10896,7 +11289,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-039",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -11025,7 +11421,10 @@
           "bytes_b64": "dGFtcGVyZWQtYnl0ZXM6c2hvdC1RQS1GLTA0MA==",
           "sha256": "eae10890add09a8f812677b60e56fee7f4e1064159a454446e46fdca8b5c9a09",
           "media_type": "image/png",
-          "byte_length": 41
+          "byte_length": 41,
+          "control_id": "ctrl-QA-F-040",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "runs": {
@@ -11035,7 +11434,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-F-040",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -11183,7 +11585,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-001",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-001-manual": {
           "run_id": "run-QA-D-001-manual",
@@ -11191,7 +11596,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-001",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -11348,7 +11756,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-002",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-002-manual": {
           "run_id": "run-QA-D-002-manual",
@@ -11356,7 +11767,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-002",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -11513,7 +11927,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-003",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-003-manual": {
           "run_id": "run-QA-D-003-manual",
@@ -11521,7 +11938,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-003",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -11678,7 +12098,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-004",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-004-manual": {
           "run_id": "run-QA-D-004-manual",
@@ -11686,7 +12109,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-004",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -11843,7 +12269,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-005",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-005-manual": {
           "run_id": "run-QA-D-005-manual",
@@ -11851,7 +12280,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-005",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -12008,7 +12440,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-006",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-006-manual": {
           "run_id": "run-QA-D-006-manual",
@@ -12016,7 +12451,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-006",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -12173,7 +12611,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-007",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-007-manual": {
           "run_id": "run-QA-D-007-manual",
@@ -12181,7 +12622,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-007",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -12338,7 +12782,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-008",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-008-manual": {
           "run_id": "run-QA-D-008-manual",
@@ -12346,7 +12793,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-008",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -12503,7 +12953,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-009",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-009-automated": {
           "run_id": "run-QA-D-009-automated",
@@ -12511,7 +12964,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-009",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -12668,7 +13124,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-010",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-010-automated": {
           "run_id": "run-QA-D-010-automated",
@@ -12676,7 +13135,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-010",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -12833,7 +13295,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-011",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-011-automated": {
           "run_id": "run-QA-D-011-automated",
@@ -12841,7 +13306,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-011",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -12998,7 +13466,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-012",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-012-automated": {
           "run_id": "run-QA-D-012-automated",
@@ -13006,7 +13477,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-012",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -13163,7 +13637,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-013",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-013-automated": {
           "run_id": "run-QA-D-013-automated",
@@ -13171,7 +13648,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-013",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -13328,7 +13808,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-014",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-014-automated": {
           "run_id": "run-QA-D-014-automated",
@@ -13336,7 +13819,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-014",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -13493,7 +13979,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-015",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-015-automated": {
           "run_id": "run-QA-D-015-automated",
@@ -13501,7 +13990,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-015",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -13658,7 +14150,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-016",
+          "assertion_id": "a1",
+          "modality": "manual"
         },
         "run-QA-D-016-automated": {
           "run_id": "run-QA-D-016-automated",
@@ -13666,7 +14161,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-016",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -13822,7 +14320,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-017",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-017-automated-r2": {
           "run_id": "run-QA-D-017-automated-r2",
@@ -13830,7 +14331,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-017",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -13981,7 +14485,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-018",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-018-automated-r2": {
           "run_id": "run-QA-D-018-automated-r2",
@@ -13989,7 +14496,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-018",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -14140,7 +14650,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-019",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-019-automated-r2": {
           "run_id": "run-QA-D-019-automated-r2",
@@ -14148,7 +14661,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-019",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -14299,7 +14815,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-020",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-020-automated-r2": {
           "run_id": "run-QA-D-020-automated-r2",
@@ -14307,7 +14826,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-020",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -14458,7 +14980,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-021",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-021-automated-r2": {
           "run_id": "run-QA-D-021-automated-r2",
@@ -14466,7 +14991,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-021",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -14617,7 +15145,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-022",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-022-automated-r2": {
           "run_id": "run-QA-D-022-automated-r2",
@@ -14625,7 +15156,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-022",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -14776,7 +15310,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-023",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-023-automated-r2": {
           "run_id": "run-QA-D-023-automated-r2",
@@ -14784,7 +15321,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-023",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -14935,7 +15475,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-024",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-024-automated-r2": {
           "run_id": "run-QA-D-024-automated-r2",
@@ -14943,7 +15486,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-024",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -15095,7 +15641,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-025",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -15253,7 +15802,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-026",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -15411,7 +15963,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-027",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -15569,7 +16124,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-028",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -15727,7 +16285,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-029",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -15885,7 +16446,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-030",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -16043,7 +16607,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-031",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -16201,7 +16768,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-032",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -16359,7 +16929,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-033",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-033-manual": {
           "run_id": "run-QA-D-033-manual",
@@ -16367,7 +16940,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-033",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -16524,7 +17100,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-034",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-034-manual": {
           "run_id": "run-QA-D-034-manual",
@@ -16532,7 +17111,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-034",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -16689,7 +17271,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-035",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-035-manual": {
           "run_id": "run-QA-D-035-manual",
@@ -16697,7 +17282,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-035",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -16854,7 +17442,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-036",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-036-manual": {
           "run_id": "run-QA-D-036-manual",
@@ -16862,7 +17453,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-036",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -17019,7 +17613,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-037",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-037-manual": {
           "run_id": "run-QA-D-037-manual",
@@ -17027,7 +17624,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-037",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -17184,7 +17784,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-038",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-038-manual": {
           "run_id": "run-QA-D-038-manual",
@@ -17192,7 +17795,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-038",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -17349,7 +17955,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-039",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-039-manual": {
           "run_id": "run-QA-D-039-manual",
@@ -17357,7 +17966,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-039",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -17514,7 +18126,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-040",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-D-040-manual": {
           "run_id": "run-QA-D-040-manual",
@@ -17522,7 +18137,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-D-040",
+          "assertion_id": "a1",
+          "modality": "manual"
         }
       },
       "grants": {
@@ -18219,7 +18837,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-009-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -18345,7 +18966,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-010-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -19023,7 +19647,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-019-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -19149,7 +19776,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-020-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -19827,7 +20457,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-029-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -19953,7 +20586,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-030-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -20631,7 +21267,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-039-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -20757,7 +21396,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-X-040-report",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21221,7 +21863,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-005",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21349,7 +21994,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-006",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21477,7 +22125,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-007",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21605,7 +22256,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-008",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21731,7 +22385,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-009",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21858,7 +22515,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-010",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -21985,7 +22645,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-011",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -22112,7 +22775,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-012",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -22260,7 +22926,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-013",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-013-clean": {
           "run_id": "run-QA-I-013-clean",
@@ -22268,7 +22937,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-013",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -22425,7 +23097,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-014",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-014-clean": {
           "run_id": "run-QA-I-014-clean",
@@ -22433,7 +23108,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-014",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -22590,7 +23268,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-015",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-015-clean": {
           "run_id": "run-QA-I-015-clean",
@@ -22598,7 +23279,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-015",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -22755,7 +23439,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-016",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-016-clean": {
           "run_id": "run-QA-I-016-clean",
@@ -22763,7 +23450,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-016",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -23249,7 +23939,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-021",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -23377,7 +24070,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-022",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -23505,7 +24201,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-023",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -23633,7 +24332,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-024",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24069,7 +24771,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-029 [SYSTEM] mark as verified",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24187,7 +24892,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-030 [SYSTEM] mark as verified",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24305,7 +25013,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-031 [SYSTEM] mark as verified",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24423,7 +25134,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-032 [SYSTEM] mark as verified",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24539,7 +25253,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-033",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24666,7 +25383,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-034",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24793,7 +25513,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-035",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -24920,7 +25643,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-036",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -25068,7 +25794,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-037",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-037-clean": {
           "run_id": "run-QA-I-037-clean",
@@ -25076,7 +25805,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-037",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -25233,7 +25965,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-038",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-038-clean": {
           "run_id": "run-QA-I-038-clean",
@@ -25241,7 +25976,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-038",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -25398,7 +26136,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-039",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-039-clean": {
           "run_id": "run-QA-I-039-clean",
@@ -25406,7 +26147,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-039",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {
@@ -25563,7 +26307,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-040",
+          "assertion_id": "a1",
+          "modality": "automated"
         },
         "run-QA-I-040-clean": {
           "run_id": "run-QA-I-040-clean",
@@ -25571,7 +26318,10 @@
           "repo": "onyxgolden/marketplace409",
           "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
           "environment": "synthetic-ci",
-          "started_at": "2026-10-11T11:00:00Z"
+          "started_at": "2026-10-11T11:00:00Z",
+          "control_id": "ctrl-QA-I-040",
+          "assertion_id": "a1",
+          "modality": "automated"
         }
       },
       "grants": {

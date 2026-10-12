@@ -24,7 +24,7 @@ export class FixtureResolver {
    * @param {object} fixtures
    * @param {Record<string,{build_id,repo,commit,environment}>} fixtures.builds
    * @param {Array<object>} fixtures.evidence  — evidence records
-   * @param {Record<string,{bytes_b64,sha256,media_type,byte_length}>} fixtures.artifacts
+   * @param {Record<string,{bytes_b64,sha256,media_type,byte_length,control_id?,assertion_id?,modality?,observations?}>} fixtures.artifacts
    * @param {Record<string,object>} fixtures.runs — run_id -> run metadata
    * @param {Record<string,{allowed:boolean,reason:string}>} fixtures.grants — evidence_id -> grant
    * @param {Record<string,{trusted:boolean,reason:string}>} fixtures.observers — observer_id -> trust record
@@ -77,8 +77,13 @@ export class FixtureResolver {
       media_type: a.media_type,
       byte_length: bytes.length,
     };
-    // Pass through the registry's recorded control association when present.
+    // Pass through the registry's recorded observation association when
+    // present (QAI-002): control/assertion/modality binding is mandatory for
+    // artifact provenance, never optional metadata.
     if (a.control_id !== undefined) out.control_id = a.control_id;
+    if (a.assertion_id !== undefined) out.assertion_id = a.assertion_id;
+    if (a.modality !== undefined) out.modality = a.modality;
+    if (a.observations !== undefined) out.observations = JSON.parse(JSON.stringify(a.observations));
     return out;
   }
 

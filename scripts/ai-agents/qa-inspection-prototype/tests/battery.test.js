@@ -1,8 +1,10 @@
 /**
  * battery.test.js — the 200-case acceptance battery.
  *
- * 1. The verifier's own bytes are checked against the pinned manifest entry
- *    BEFORE the harness module is imported (QAI-004).
+ * 1. The trust bootstrap's bytes are checked against the pinned manifest
+ *    entry, then the whole corpus is authenticated against the separately
+ *    trusted host input QA_APPROVED_ROOT — BEFORE the harness module is
+ *    imported (QAI-004, round 2).
  * 2. Manifest + corpus digest verify BEFORE any case executes.
  * 3. All 200 frozen cases: classification, evidence binding, per-modality
  *    outcomes/evidence, ledger status, contradiction and quarantine counts
@@ -28,27 +30,32 @@ let acceptanceMetrics;
 let approvedDigest;
 
 before(async () => {
-  // Pre-import check: the verifier's bytes must match the pinned manifest
-  // entry before the harness module is imported or executed.
+  // Pre-import trust bootstrap (QAI-004, round 2): verify the bootstrap's own
+  // bytes against its pinned manifest entry, then authenticate the whole
+  // corpus against the separately trusted host input QA_APPROVED_ROOT —
+  // before the harness module or any scored code is imported or executed.
   const manifest = JSON.parse(readFileSync(join(ROOT, "corpus", "manifest.json"), "utf8"));
-  const entry = (manifest.files ?? []).find((e) => e.path === "tests/harness.js");
-  const actual = createHash("sha256").update(readFileSync(join(ROOT, "tests", "harness.js"))).digest("hex");
-  assert.ok(entry && actual === entry.sha256, "tests/harness.js does not match the pinned manifest entry");
+  const entry = (manifest.files ?? []).find((e) => e.path === "tests/trust-bootstrap.js");
+  const actual = createHash("sha256").update(readFileSync(join(ROOT, "tests", "trust-bootstrap.js"))).digest("hex");
+  assert.ok(entry && actual === entry.sha256, "tests/trust-bootstrap.js does not match the pinned manifest entry");
+  const bootstrap = await import(pathToFileURL(join(ROOT, "tests", "trust-bootstrap.js")).href);
+  const trusted = bootstrap.verifyTrustRoot(ROOT);
+  approvedDigest = trusted.root;
   const harness = await import(pathToFileURL(join(ROOT, "tests", "harness.js")).href);
   verifyManifest = harness.verifyManifest;
   acceptanceMetrics = harness.acceptanceMetrics;
-  approvedDigest = harness.APPROVED_CORPUS_DIGEST;
   // Manifest verification happens inside runBattery before any case runs.
   battery = await harness.runBattery(ROOT);
 });
 
 describe("corpus integrity", () => {
-  it("manifest verifies and corpus digest is the approved reviewed digest", async () => {
+  it("manifest verifies and corpus digest is the separately trusted approved root", async () => {
     const v = await verifyManifest(ROOT);
     assert.equal(v.ok, true);
     assert.match(v.corpusDigest, /^[0-9a-f]{64}$/);
     assert.equal(v.corpusDigest, battery.corpusDigest);
     assert.equal(v.corpusDigest, approvedDigest);
+    assert.equal(approvedDigest, process.env.QA_APPROVED_ROOT);
   });
 
   it("battery holds exactly 200 cases across 5 categories", () => {

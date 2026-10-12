@@ -1,20 +1,28 @@
 /**
  * harness.js — battery verification harness (trusted, host-side).
  *
- * Trust model (QAI-004):
+ * Trust model (QAI-004, round 2):
+ * - The approved root is a SEPARATELY TRUSTED host input: the QA_APPROVED_ROOT
+ *   environment variable, supplied by the reviewed invocation (npm script).
+ *   It is never read from the corpus it authenticates — no in-corpus anchor
+ *   can vouch for the corpus.
  * - verifyManifest(moduleRoot) re-checks every pinned SHA-256 in
  *   corpus/manifest.json, enforces confined paths and complete file
- *   membership, and recomputes the corpus digest over the scored corpus.
+ *   membership, and recomputes the corpus digest over the scored corpus,
+ *   which INCLUDES the scorer/verifier files themselves (tests/harness.js,
+ *   tests/run-battery.js, …). The only exclusion is package.json, which
+ *   carries QA_APPROVED_ROOT in its scripts and therefore cannot be covered
+ *   by the value it carries (circularity); package.json is still hash-pinned
+ *   in the manifest.
  * - The recomputed digest must equal the manifest's corpus_digest, the
- *   separately recorded corpus/corpus_digest.txt, AND the reviewer-supplied
- *   APPROVED_CORPUS_DIGEST constant below. A self-rehashed manifest alone
- *   can never pass: a legitimate corpus change requires a new recorded
- *   digest and exact-head review.
- * - The digest covers every pinned file EXCEPT tests/harness.js itself, so
- *   the approval pin can live inside the verifier without circularity. The
- *   verifier's own bytes are still hash-checked via its manifest entry, and
- *   entry points verify those bytes BEFORE importing this module
- *   (see checkHarnessBytes / the worker bootstrap).
+ *   separately recorded corpus/corpus_digest.txt, AND the host-supplied
+ *   QA_APPROVED_ROOT. Mutating the scorer and rehashing its own manifest
+ *   entry changes the recomputed digest, which will not equal the separately
+ *   trusted root — the attack fails before any case executes or any scorer
+ *   code is imported.
+ * - Entry points (tests/run-battery.js, tests/*.test.js) perform the same
+ *   verification with node:fs/node:crypto ONLY, before importing this module
+ *   or any scored code (see their pre-import bootstraps).
  * - runBattery executes each case in a worker thread (tests/case-worker.js)
  *   with a 5-second watchdog: a stuck case is terminated from the process
  *   boundary with a named incomplete failure — never a success (QAI-005).
@@ -26,15 +34,20 @@ import { createHash } from "node:crypto";
 import { Worker } from "node:worker_threads";
 
 /**
- * Reviewer-supplied approval pin for the scored corpus digest.
- * Set by freeze-corpus.js at review time; any corpus change requires a new
- * recorded value and exact-head review.
+ * The separately trusted approval root: a host input, never an in-corpus
+ * anchor. Fail closed when absent — without it there is nothing trustworthy
+ * to authenticate the corpus against.
  */
-export const APPROVED_CORPUS_DIGEST =
-  "f8204cc6a29ebdafafe0f2a071eb4614b639604392e1e6b7860c80dff726277a";
-
-/** This verifier's own file is pinned by hash but excluded from the digest. */
-const VERIFIER_PATH = "tests/harness.js";
+export function approvedRoot() {
+  const v = process.env.QA_APPROVED_ROOT;
+  if (typeof v !== "string" || !/^[0-9a-f]{64}$/.test(v)) {
+    throw new ManifestError(
+      "no separately trusted approval root: QA_APPROVED_ROOT must be a 64-hex digest supplied by the reviewed invocation",
+      [{ path: "(host)", reason: "missing or malformed QA_APPROVED_ROOT" }]
+    );
+  }
+  return v;
+}
 
 export class ManifestError extends Error {
   constructor(message, failures) {
@@ -46,25 +59,6 @@ export class ManifestError extends Error {
 
 function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-/**
- * Verify the verifier's own bytes against the manifest entry BEFORE importing
- * or executing it. Entry points (run-battery.js, battery.test.js) must call
- * this first; it uses only node:fs/node:crypto, no scored modules.
- */
-export function checkHarnessBytes(moduleRoot) {
-  const manifestPath = join(moduleRoot, "corpus", "manifest.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const entry = (manifest.files ?? []).find((e) => e.path === VERIFIER_PATH);
-  if (!entry) throw new ManifestError("no manifest entry for the verifier", [{ path: VERIFIER_PATH, reason: "missing entry" }]);
-  const actual = sha256Bytes(readFileSync(join(moduleRoot, VERIFIER_PATH)));
-  if (actual !== entry.sha256) {
-    throw new ManifestError("verifier bytes do not match the pinned manifest entry", [
-      { path: VERIFIER_PATH, reason: "hash mismatch", expected: entry.sha256, actual },
-    ]);
-  }
-  return { ok: true };
 }
 
 function confinedPath(p) {
@@ -126,11 +120,14 @@ export async function verifyManifest(moduleRoot) {
   for (const p of expectedPinnedFiles(moduleRoot)) {
     if (!seen.has(p)) failures.push({ path: p, reason: "unlisted file" });
   }
-  // Scored-corpus digest: every pinned file EXCEPT this verifier (the
-  // approval pin lives inside it, so it cannot cover itself).
+  // Scored-corpus digest: every pinned file EXCEPT package.json (which
+  // carries the approval root in its scripts — circularity; package.json is
+  // still hash-pinned above). The scorer/verifier files ARE covered: a
+  // tampered scorer rehashing its own manifest entry still changes the
+  // recomputed digest.
   const canonical = JSON.stringify(
     manifest.files
-      .filter((e) => e.path !== VERIFIER_PATH)
+      .filter((e) => e.path !== "package.json")
       .map((e) => ({ path: e.path, sha256: e.sha256 }))
   );
   const digest = sha256Bytes(Buffer.from(canonical, "utf8"));
@@ -147,14 +144,16 @@ export async function verifyManifest(moduleRoot) {
   if (recorded !== null && recorded !== manifest.corpus_digest) {
     failures.push({ path: "corpus/corpus_digest.txt", reason: "digest mismatch", expected: manifest.corpus_digest, actual: recorded });
   }
-  // The reviewer-supplied approval pin must agree: a self-rehashed manifest
-  // alone can never pass.
-  if (manifest.corpus_digest !== APPROVED_CORPUS_DIGEST) {
+  // The separately trusted host-supplied root must agree: a self-rehashed
+  // manifest alone can never pass, because the root does not come from the
+  // corpus being verified.
+  const approved = approvedRoot();
+  if (digest !== approved) {
     failures.push({
       path: "corpus/manifest.json",
-      reason: "corpus digest is not the approved reviewed digest",
-      expected: APPROVED_CORPUS_DIGEST,
-      actual: manifest.corpus_digest,
+      reason: "corpus digest is not the separately trusted approved root",
+      expected: approved,
+      actual: digest,
     });
   }
   if (failures.length > 0) {

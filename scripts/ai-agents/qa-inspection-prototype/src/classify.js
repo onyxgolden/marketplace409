@@ -59,9 +59,10 @@ class BudgetExceeded extends Error {
 
 /**
  * Counts and bounds every resolver access. Every method call is one object
- * resolution; every evidence record returned is one span check; returned
- * payload bytes accumulate against the resolved-input byte cap. Exhaustion
- * throws BudgetExceeded — never a partial success.
+ * resolution; every evidence record returned is one span check; every
+ * returned payload's bytes accumulate against the resolved-input byte cap —
+ * including grant and observer responses (QAI-005). Exhaustion throws
+ * BudgetExceeded — never a partial success.
  */
 class BudgetedResolver {
   constructor(resolver, budget) {
@@ -124,12 +125,18 @@ class BudgetedResolver {
   checkGrant(evidence_id) {
     this.budget.resolutions += 1;
     this._check();
-    return this.inner.checkGrant(evidence_id);
+    const g = this.inner.checkGrant(evidence_id);
+    this._countPayload(g);
+    this._check();
+    return g;
   }
   checkObserver(observer_id) {
     this.budget.resolutions += 1;
     this._check();
-    return this.inner.checkObserver(observer_id);
+    const o = this.inner.checkObserver(observer_id);
+    this._countPayload(o);
+    this._check();
+    return o;
   }
 }
 
@@ -216,6 +223,41 @@ function denial(task_id, code, reason, source_refs = []) {
   env.coverage = { by_modality: {}, by_result: {}, by_assertion: {}, controls_total: 0, assertions_total: 0 };
   env.diagnostics = [diag(code, "error", reason)];
   return env;
+}
+
+/**
+ * Pinned observation declarations on a run or artifact record (QAI-002).
+ *
+ * A run or artifact used as evidence provenance MUST declare what it
+ * observed: either a single top-level (control_id, assertion_id, modality)
+ * triple, or an `observations` array of such triples (suite-level records
+ * observing several controls). Every entry must be complete — partial
+ * metadata is not a binding. The mapping is read from the registered record
+ * itself, never inferred from the candidate evidence record.
+ *
+ * Returns the list of complete declared observations (possibly empty).
+ */
+function declaredObservations(record) {
+  const out = [];
+  const push = (o) => {
+    if (
+      o !== null &&
+      typeof o === "object" &&
+      typeof o.control_id === "string" &&
+      o.control_id.length > 0 &&
+      typeof o.assertion_id === "string" &&
+      o.assertion_id.length > 0 &&
+      typeof o.modality === "string" &&
+      o.modality.length > 0
+    ) {
+      out.push({ control_id: o.control_id, assertion_id: o.assertion_id, modality: o.modality });
+    }
+  };
+  push(record);
+  if (Array.isArray(record.observations)) {
+    for (const o of record.observations) push(o);
+  }
+  return out;
 }
 
 /**
@@ -306,7 +348,12 @@ function bindEvidence(ev, task, control, context, budget) {
   }
   // 8. Run binding: run_id is independently resolved with full provenance —
   //    repository identity, build, control, assertion, and modality are all
-  //    bound to the observation. A fake or mismatched run fails binding.
+  //    bound to the observation. The observation binding is MANDATORY: a run
+  //    that declares no pinned observation covering this evidence cannot
+  //    support a claim — absence of provenance is never treated as
+  //    sufficient, and the mapping is never inferred from the candidate
+  //    evidence record. A suite-level run may omit per-control metadata only
+  //    when its registered `observations` list supplies the mapping.
   if (ev.run_id !== null) {
     const run = context.resolver.resolveRun(ev.run_id);
     if (run === null) {
@@ -320,18 +367,45 @@ function bindEvidence(ev, task, control, context, budget) {
     if (run.repo !== pin.repo) mismatches.push("repo");
     if (run.commit !== pin.commit) mismatches.push("commit");
     if (run.environment !== pin.environment) mismatches.push("environment");
-    if (run.control_id !== undefined && run.control_id !== ev.control_id) mismatches.push("control_id");
-    if (run.assertion_id !== undefined && run.assertion_id !== ev.assertion_id) mismatches.push("assertion_id");
-    if (run.modality !== undefined && run.modality !== ev.modality) mismatches.push("modality");
     if (mismatches.length > 0) {
       diagnostics.push(
         diag("RUN_MISMATCH", "error", `run observation mismatches [${mismatches.join(",")}]`, control.control_id, ev.evidence_id)
       );
       return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
     }
+    const obs = declaredObservations(run);
+    if (obs.length === 0) {
+      diagnostics.push(
+        diag(
+          "UNBOUND_OBSERVATION",
+          "error",
+          "run declares no pinned observation binding repo/build/environment/control/assertion/modality",
+          control.control_id,
+          ev.evidence_id
+        )
+      );
+      return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
+    }
+    const covered = obs.some(
+      (o) => o.control_id === ev.control_id && o.assertion_id === ev.assertion_id && o.modality === ev.modality
+    );
+    if (!covered) {
+      diagnostics.push(
+        diag(
+          "RUN_MISMATCH",
+          "error",
+          `run observation binding covers [${obs.map((o) => `${o.control_id}/${o.assertion_id}/${o.modality}`).join(", ")}] — not control "${ev.control_id}" assertion "${ev.assertion_id}" modality "${ev.modality}"`,
+          control.control_id,
+          ev.evidence_id
+        )
+      );
+      return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
+    }
   }
-  // 8. Artifact binding: digest recomputed over actual registered bytes, plus
-  //    the artifact's recorded control association when the registry states one.
+  // 9. Artifact binding: digest recomputed over actual registered bytes, and
+  //    the artifact MUST declare a pinned control/assertion/modality
+  //    observation association — a hash of generic bytes is not an
+  //    observation binding, and the association is not optional metadata.
   if (ev.artifact_ref !== null) {
     const art = context.resolver.resolveArtifact(ev.artifact_ref.fixture_id);
     const artOk =
@@ -345,14 +419,30 @@ function bindEvidence(ev, task, control, context, budget) {
       );
       return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
     }
-    if (art.control_id !== undefined && art.control_id !== ev.control_id) {
+    const aObs = declaredObservations(art);
+    if (aObs.length === 0) {
       diagnostics.push(
-        diag("ARTIFACT_MISMATCH", "error", "artifact is registered for a different control", control.control_id, ev.evidence_id)
+        diag(
+          "UNBOUND_ARTIFACT",
+          "error",
+          "artifact declares no pinned control/assertion/modality observation association",
+          control.control_id,
+          ev.evidence_id
+        )
+      );
+      return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
+    }
+    const aCovered = aObs.some(
+      (o) => o.control_id === ev.control_id && o.assertion_id === ev.assertion_id && o.modality === ev.modality
+    );
+    if (!aCovered) {
+      diagnostics.push(
+        diag("ARTIFACT_MISMATCH", "error", "artifact observation association does not cover this evidence's control/assertion/modality", control.control_id, ev.evidence_id)
       );
       return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
     }
   }
-  // 9. Structured assertion required: screenshot presence alone proves nothing.
+  // 10. Structured assertion required: screenshot presence alone proves nothing.
   if (ev.expected === null || ev.expected === undefined || ev.observed === null || ev.observed === undefined) {
     diagnostics.push(
       diag(
@@ -365,7 +455,7 @@ function bindEvidence(ev, task, control, context, budget) {
     );
     return { usable: false, blocking: false, evidence: null, diagnostics, quarantined: false };
   }
-  // 10. Computed match decides; a contradicting claimed outcome is flagged.
+  // 11. Computed match decides; a contradicting claimed outcome is flagged.
   const match = deepEqual(ev.expected, ev.observed);
   if ((ev.outcome === "pass") !== match) {
     diagnostics.push(

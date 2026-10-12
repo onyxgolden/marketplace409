@@ -66,6 +66,10 @@ function mkEvidence(over = {}) {
 }
 
 function addRun(fx, run_id, over = {}) {
+  // Default pinned observation: the standard test control/assertion/modality.
+  // Tests exercising other triples pass explicit control_id/assertion_id/
+  // modality (top-level) or an observations array (QAI-002).
+  const { observations, ...rest } = over;
   fx.runs[run_id] = {
     run_id,
     build_id: BUILD,
@@ -73,7 +77,8 @@ function addRun(fx, run_id, over = {}) {
     commit: COMMIT,
     environment: ENV,
     started_at: "2026-10-11T11:00:00Z",
-    ...over,
+    observations: observations ?? [{ control_id: "c1", assertion_id: "a1", modality: "automated" }],
+    ...rest,
   };
   return fx;
 }
@@ -129,7 +134,7 @@ describe("QAI-001 aggregation", () => {
   it("required automated PASS plus verified manual FAIL -> FAIL with contradiction; modalities keep independent states", () => {
     const fx = baseFixtures();
     addRun(fx, "run-auto");
-    addRun(fx, "run-manual");
+    addRun(fx, "run-manual", { observations: [{ control_id: "c1", assertion_id: "a1", modality: "manual" }] });
     fx.evidence = [
       mkEvidence({ evidence_id: "ev-auto", modality: "automated", run_id: "run-auto" }),
       mkEvidence({ evidence_id: "ev-manual", modality: "manual", run_id: "run-manual", observed: { ok: false }, outcome: "fail" }),
@@ -158,7 +163,7 @@ describe("QAI-001 aggregation", () => {
   it("automated FAIL / manual PASS converse -> FAIL; manual stays PASS", () => {
     const fx = baseFixtures();
     addRun(fx, "run-auto");
-    addRun(fx, "run-manual");
+    addRun(fx, "run-manual", { observations: [{ control_id: "c1", assertion_id: "a1", modality: "manual" }] });
     fx.evidence = [
       mkEvidence({ evidence_id: "ev-auto", modality: "automated", run_id: "run-auto", observed: { ok: false }, outcome: "fail" }),
       mkEvidence({ evidence_id: "ev-manual", modality: "manual", run_id: "run-manual" }),
@@ -203,7 +208,7 @@ describe("QAI-001 aggregation", () => {
     const mkFx = (order) => {
       const fx = baseFixtures();
       addRun(fx, "run-1");
-      addRun(fx, "run-2");
+      addRun(fx, "run-2", { observations: [{ control_id: "c1", assertion_id: "a2", modality: "automated" }] });
       const e1 = mkEvidence({ evidence_id: "ev-1", assertion_id: "a1", run_id: "run-1" });
       const e2 = mkEvidence({ evidence_id: "ev-2", assertion_id: "a2", run_id: "run-2", observed: { ok: false }, outcome: "fail" });
       fx.evidence = order === "fwd" ? [e1, e2] : [e2, e1];
@@ -274,9 +279,9 @@ describe("QAI-002 evidence pinning", () => {
 
   it("run bound to the wrong control/assertion/modality -> RUN_MISMATCH", () => {
     for (const [label, over] of [
-      ["control", { control_id: "other-control" }],
-      ["assertion", { assertion_id: "a9" }],
-      ["modality", { modality: "manual" }],
+      ["control", { observations: [{ control_id: "other-control", assertion_id: "a1", modality: "automated" }] }],
+      ["assertion", { observations: [{ control_id: "c1", assertion_id: "a9", modality: "automated" }] }],
+      ["modality", { observations: [{ control_id: "c1", assertion_id: "a1", modality: "manual" }] }],
     ]) {
       const fx = baseFixtures();
       addRun(fx, "run-1", over);
@@ -299,6 +304,8 @@ describe("QAI-002 evidence pinning", () => {
       media_type: "image/png",
       byte_length: bytes.length,
       control_id: "other-control",
+      assertion_id: "a1",
+      modality: "automated",
     };
     const ref = { fixture_id: "shot-1", sha256: fx.artifacts["shot-1"].sha256, media_type: "image/png", byte_length: bytes.length };
     fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1", artifact_ref: ref })];
@@ -344,6 +351,9 @@ describe("QAI-002 evidence pinning", () => {
       sha256: createHash("sha256").update(bytes).digest("hex"),
       media_type: "image/png",
       byte_length: bytes.length,
+      control_id: "c1",
+      assertion_id: "a1",
+      modality: "automated",
     };
     const ref = { fixture_id: "shot-1", sha256: fx.artifacts["shot-1"].sha256, media_type: "image/png", byte_length: bytes.length };
     fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1", artifact_ref: ref })];
@@ -524,5 +534,172 @@ describe("QAI-005 budgets", () => {
     const rOver = run(baseTask(), ctx(mkFx(14, 2)));
     assert.equal(rOver.status, "REFUSED");
     assert.ok(codesOf(rOver).includes("BUDGET_EXCEEDED"), `codes: ${codesOf(rOver)}`);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* QAI-002 remaining — mandatory observation binding                   */
+/* ------------------------------------------------------------------ */
+describe("QAI-002 remaining: mandatory observation binding", () => {
+  function mkArtifact(fx, fid, over = {}) {
+    const bytes = Buffer.from("shot-bytes-" + fid, "utf8");
+    fx.artifacts[fid] = {
+      bytes_b64: bytes.toString("base64"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      media_type: "image/png",
+      byte_length: bytes.length,
+      ...over,
+    };
+    const a = fx.artifacts[fid];
+    return { fixture_id: fid, sha256: a.sha256, media_type: a.media_type, byte_length: a.byte_length };
+  }
+
+  it("run with no observation metadata -> UNBOUND_OBSERVATION, cannot PASS", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-1", { observations: [] });
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1" })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    const c = ctrlResult(r, "c1");
+    assert.equal(c.result, "UNVERIFIED");
+    assert.ok(c.diagnostic_codes.includes("UNBOUND_OBSERVATION"), `codes: ${c.diagnostic_codes}`);
+    assert.ok(c.diagnostic_codes.includes("NO_EVIDENCE"));
+  });
+
+  it("partial observation metadata (control_id only) is not a binding -> UNBOUND_OBSERVATION", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-1", { observations: [], control_id: "c1" });
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1" })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    const c = ctrlResult(r, "c1");
+    assert.equal(c.result, "UNVERIFIED");
+    assert.ok(c.diagnostic_codes.includes("UNBOUND_OBSERVATION"), `codes: ${c.diagnostic_codes}`);
+  });
+
+  it("generic build-level run reused for a different control -> RUN_MISMATCH, never PASS", () => {
+    const fx = baseFixtures();
+    // The run is registered and build-bound, but its pinned observations name
+    // another control: the mapping is not inferred from the evidence.
+    addRun(fx, "run-1", { observations: [{ control_id: "other-control", assertion_id: "a1", modality: "automated" }] });
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1" })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    const c = ctrlResult(r, "c1");
+    assert.equal(c.result, "UNVERIFIED");
+    assert.ok(c.diagnostic_codes.includes("RUN_MISMATCH"), `codes: ${c.diagnostic_codes}`);
+  });
+
+  it("suite-level run with a registered observations list covering the evidence -> PASS", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-suite", {
+      observations: [
+        { control_id: "c1", assertion_id: "a1", modality: "automated" },
+        { control_id: "c9", assertion_id: "a1", modality: "manual" },
+      ],
+    });
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-suite" })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(ctrlResult(r, "c1").result, "PASS");
+  });
+
+  it("artifact-only evidence without an observation association -> UNBOUND_ARTIFACT", () => {
+    const fx = baseFixtures();
+    const ref = mkArtifact(fx, "shot-1");
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: null, artifact_ref: ref })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    const c = ctrlResult(r, "c1");
+    assert.equal(c.result, "UNVERIFIED");
+    assert.ok(c.diagnostic_codes.includes("UNBOUND_ARTIFACT"), `codes: ${c.diagnostic_codes}`);
+  });
+
+  it("artifact-only evidence with a pinned association -> PASS", () => {
+    const fx = baseFixtures();
+    const ref = mkArtifact(fx, "shot-1", { control_id: "c1", assertion_id: "a1", modality: "automated" });
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: null, artifact_ref: ref })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(ctrlResult(r, "c1").result, "PASS");
+  });
+
+  it("artifact association for a different assertion -> ARTIFACT_MISMATCH", () => {
+    const fx = baseFixtures();
+    const ref = mkArtifact(fx, "shot-1", { control_id: "c1", assertion_id: "a9", modality: "automated" });
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: null, artifact_ref: ref })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    const c = ctrlResult(r, "c1");
+    assert.equal(c.result, "UNVERIFIED");
+    assert.ok(c.diagnostic_codes.includes("ARTIFACT_MISMATCH"), `codes: ${c.diagnostic_codes}`);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* QAI-005 remaining — grant/observer payload byte accounting          */
+/* ------------------------------------------------------------------ */
+describe("QAI-005 remaining: grant/observer payload accounting", () => {
+  it("oversized grant payload -> BUDGET_EXCEEDED, REFUSED, no PASS", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-1");
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1" })];
+    fx.grants["ev-1"] = { allowed: true, reason: "x".repeat(300000) };
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(r.status, "REFUSED");
+    assert.ok(codesOf(r).includes("BUDGET_EXCEEDED"), `codes: ${codesOf(r)}`);
+    assert.deepEqual(r.results, []);
+  });
+
+  it("oversized observer payload -> BUDGET_EXCEEDED, REFUSED, no PASS", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-1");
+    fx.observers[OBS] = { trusted: true, reason: "x".repeat(300000) };
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1" })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(r.status, "REFUSED");
+    assert.ok(codesOf(r).includes("BUDGET_EXCEEDED"), `codes: ${codesOf(r)}`);
+  });
+
+  it("mixture of small responses exhausting aggregate resolved bytes -> BUDGET_EXCEEDED", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-1");
+    // ~160KiB evidence payload (counted via evidenceFor, under the cap alone)
+    // + ~110KiB grant payload (counted via checkGrant) exceeds the 256KiB
+    // resolved-byte cap in aggregate.
+    const pad = { pad: "x".repeat(80000) };
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1", observed: pad, expected: { pad: pad.pad } })];
+    fx.grants["ev-1"] = { allowed: true, reason: "y".repeat(110000) };
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(r.status, "REFUSED");
+    assert.ok(codesOf(r).includes("BUDGET_EXCEEDED"), `codes: ${codesOf(r)}`);
+  });
+
+  it("ordinary small grant/observer payloads stay green", () => {
+    const fx = baseFixtures();
+    addRun(fx, "run-1");
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: "run-1" })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(r.status, "REPORTED");
+    assert.equal(ctrlResult(r, "c1").result, "PASS");
+  });
+
+  it("BudgetedResolver counts grant and observer payload bytes directly", () => {
+    const big = { allowed: true, reason: "x".repeat(300000) };
+    const inner = { checkGrant: () => big, checkObserver: () => ({ trusted: true, reason: "ok" }) };
+    const b = new BudgetedResolver(inner, { resolutions: 0, spans: 0, resolvedBytes: 0 });
+    assert.throws(
+      () => b.checkGrant("ev-1"),
+      (e) => e instanceof BudgetExceeded && e.dimension === "resolved-input-bytes"
+    );
+    const b2 = new BudgetedResolver(
+      { checkGrant: () => ({ allowed: true, reason: "ok" }), checkObserver: () => ({ trusted: true, reason: "ok" }) },
+      { resolutions: 0, spans: 0, resolvedBytes: 0 }
+    );
+    assert.deepEqual(b2.checkGrant("ev-1"), { allowed: true, reason: "ok" });
+    assert.deepEqual(b2.checkObserver("obs-1"), { trusted: true, reason: "ok" });
+    assert.equal(BUDGET_LIMITS.maxResolvedBytes, 256 * 1024);
   });
 });

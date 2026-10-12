@@ -41,15 +41,21 @@ const files = [
 
 const entries = files.map((p) => ({ path: p, sha256: sha256File(join(ROOT, p)) }));
 // Canonical JSON: sorted keys, no whitespace ambiguity.
-// The digest covers every pinned file EXCEPT tests/harness.js: the
-// reviewer-supplied APPROVED_CORPUS_DIGEST lives inside that file, so it
-// cannot cover itself (QAI-004). The verifier's own bytes are still
-// hash-checked via its manifest entry, and entry points verify those bytes
-// before importing it.
-const scored = entries.filter((e) => e.path !== "tests/harness.js");
+// The digest covers every pinned file EXCEPT package.json: package.json
+// carries the QA_APPROVED_ROOT in its npm scripts (the separately trusted
+// host input), so it cannot be covered by the value it carries —
+// circularity. package.json is still hash-pinned in the manifest (a lone
+// tamper without a manifest rehash fails), and any manifest rehash changes
+// the digest, which is authenticated against the host-supplied root before
+// any scored module loads. Crucially, the scorer/verifier files themselves
+// (tests/harness.js, tests/run-battery.js, …) ARE covered: mutating the
+// scorer can never be hidden by rehashing its own manifest entry, because
+// the recomputed digest will not equal the separately trusted root (QAI-004).
+const scored = entries.filter((e) => e.path !== "package.json");
 const canonical = JSON.stringify(scored.map((e) => ({ path: e.path, sha256: e.sha256 })));
 const digest = createHash("sha256").update(canonical, "utf8").digest("hex");
 
 writeFileSync(join(ROOT, "corpus", "manifest.json"), JSON.stringify({ corpus_digest: digest, files: entries }, null, 2) + "\n");
 writeFileSync(join(ROOT, "corpus", "corpus_digest.txt"), digest + "\n");
 console.log(`manifest: ${entries.length} files, corpus_digest=${digest}`);
+console.log(`approved root for QA_APPROVED_ROOT: ${digest}`);
