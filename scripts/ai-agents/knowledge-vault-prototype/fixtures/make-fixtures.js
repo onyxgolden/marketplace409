@@ -539,13 +539,18 @@ function srcRef(repo, path, commit, label) {
 
 const supersessionRecords = [
   // b1: valid steward supersession (parking rev-1 -> rev-2).
+  // KVP-001 round 4: the record's scope explicitly includes site-a —
+  // the parking claim's full scope. A narrower record cannot authorize
+  // emission of a scope it does not cover; the grant intersection
+  // (steward authority ∩ registration applicability ∩ record scopes)
+  // is the emission bound.
   {
     record_id: "sup-001",
     issuer: "steward-ops",
     old_ref: srcRef("vault", "handbook/policies.md", parkingC1, "rev-1"),
     new_ref: srcRef("vault", "handbook/policies.md", parkingC2, "rev-2"),
     effective_at: "2026-06-01T00:00:00Z",
-    scope_ids: ["facilities"],
+    scope_ids: ["facilities", "site-a"],
     registration_ref: "reg-001",
   },
   // b4: fork — two authenticated records, same old, different new.
@@ -605,13 +610,17 @@ const supersessionRecords = [
     registration_ref: "reg-004",
   },
   // Archive chain (b2 companion): archive rev-1 -> rev-2, valid.
+  // KVP-001 round 4: the record's scope explicitly includes site-a —
+  // the archive claim's full scope. The grant intersection
+  // (steward authority ∩ registration applicability ∩ record scopes)
+  // is the emission bound.
   {
     record_id: "sup-010",
     issuer: "steward-ops",
     old_ref: srcRef("vault", "archive/old-policy.md", archC1, "rev-1"),
     new_ref: srcRef("vault", "archive/old-policy.md", archC2, "rev-2"),
     effective_at: "2026-04-01T00:00:00Z",
-    scope_ids: ["facilities"],
+    scope_ids: ["facilities", "site-a"],
     registration_ref: "reg-001",
   },
   // Read-denied replacement: new_ref has no read grant -> unauthenticated.
@@ -643,7 +652,9 @@ const supersessionRecords = [
     old_ref: srcRef("vault", "facilities/generator.md", genC1, "rev-1"),
     new_ref: srcRef("vault", "facilities/generator.md", genC2, "rev-2"),
     effective_at: "2026-06-01T00:00:00Z",
-    scope_ids: ["facilities"],
+    // KVP-001 round 4: the record's scope explicitly includes site-a —
+    // the generator rev-2 claim's full scope (legitimate positive).
+    scope_ids: ["facilities", "site-a"],
     registration_ref: "reg-001",
   },
   // KVP-001 uncovered-claim negative: the record authenticates, but the

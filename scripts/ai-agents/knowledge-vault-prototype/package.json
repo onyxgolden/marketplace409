@@ -5,8 +5,8 @@
   },
   "name": "knowledge-vault-prototype",
   "scripts": {
-    "battery": "KV_APPROVED_ROOT=48172019c2abcca237e7fc9e151cd7e804e644530865856de682f96a3e9712a8 node tests/run-battery.js",
-    "test": "KV_APPROVED_ROOT=48172019c2abcca237e7fc9e151cd7e804e644530865856de682f96a3e9712a8 node tests/run-tests.js"
+    "battery": "KV_APPROVED_ROOT=248b88403acdf6215442bd1d7bc75ec1b5889e2fa31b96dd0c2850f6d020b202 node tests/run-battery.js",
+    "test": "KV_APPROVED_ROOT=248b88403acdf6215442bd1d7bc75ec1b5889e2fa31b96dd0c2850f6d020b202 node tests/run-tests.js"
   },
   "type": "module",
   "version": "0.1.0"

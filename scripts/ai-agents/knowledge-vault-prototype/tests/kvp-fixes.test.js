@@ -338,9 +338,14 @@ test("KVP-004: span exhaustion during retrieval refuses, no partial answer", () 
 
 // ---------- KVP-001 round 3: per-fact ALL-scope coverage; exact transition binding ----------
 
-function kvp1r3Ctx({ stewardScopes, recordScopes, factScopes, recordId = "sup-t1" }) {
+function kvp1r3Ctx({ stewardScopes, recordScopes, factScopes, recordId = "sup-t1", registrationScopes = null, oldFactScopes = null }) {
+  // KVP-001 round 4: the old revision may carry a different fact scope
+  // than the new revision. The query-scope union across revisions is
+  // what selects the record; the emission grant is what bounds the
+  // emitted (new-revision) fact.
+  const oldLine = `claim: t1-key = v0; units: state; scopes: ${(oldFactScopes ?? factScopes).join(",")}`;
   const claimLine = `claim: t1-key = v1; units: state; scopes: ${factScopes.join(",")}`;
-  const text1 = ["# T1 rev1", claimLine, ""].join("\n");
+  const text1 = ["# T1 rev1", oldLine, ""].join("\n");
   const text2 = ["# T1 rev2", claimLine, ""].join("\n");
   const c1 = createHash("sha256").update(`t1a${text1}`, "utf8").digest("hex").slice(0, 40);
   const c2 = createHash("sha256").update(`t1b${text2}`, "utf8").digest("hex").slice(0, 40);
@@ -370,7 +375,9 @@ function kvp1r3Ctx({ stewardScopes, recordScopes, factScopes, recordId = "sup-t1
       registration_ref: "reg-1", steward_id: "steward-1", action_ids: ["supersede"],
       valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false,
       applicability: {
-        scope_ids: stewardScopes, source_keys: ["vault|t/t1.md"],
+        // KVP-001 round 4: registration applicability is an independent
+        // grant bound — it may be narrower than steward authority.
+        scope_ids: registrationScopes ?? stewardScopes, source_keys: ["vault|t/t1.md"],
         transitions: [{ old_ref: oldRef, new_ref: newRef }],
       },
     }],
@@ -392,9 +399,12 @@ test("KVP-001r3: mixed-scope fact (authorized + unauthorized scope) is not quote
 });
 
 test("KVP-001r3: fully-covered fact is emitted HIGH", () => {
-  // Steward holds [facilities, site-a]; fact names [facilities, site-a].
-  // Every fact scope is inside the authenticated authority -> emitted.
-  const ctx = kvp1r3Ctx({ stewardScopes: ["facilities", "site-a"], recordScopes: ["facilities"], factScopes: ["facilities", "site-a"] });
+  // Steward holds [facilities, site-a]; record AND registration cover
+  // [facilities, site-a]; fact names [facilities, site-a]. Every fact
+  // scope is inside the grant intersection -> emitted HIGH.
+  // (Round 4: the record must actually cover the fact's scopes —
+  // steward authority alone no longer suffices.)
+  const ctx = kvp1r3Ctx({ stewardScopes: ["facilities", "site-a"], recordScopes: ["facilities", "site-a"], factScopes: ["facilities", "site-a"] });
   const r = run(task("t1 probe"), ctx);
   assert.equal(r.status, "ANSWERED");
   assert.equal(r.claims.length, 1);
@@ -425,6 +435,123 @@ test("KVP-001r3: record pins not matching a declared transition fail closed", ()
   const { authenticated, flags } = authenticateRecord(evilRecord, vctx, CLOCK, budget);
   assert.equal(authenticated, false);
   assert.match(flags[0].reason, /no exact transition matching/);
+});
+
+// ---------- KVP-001 round 4: emission bounded by the grant intersection ----------
+// (steward authority ∩ registration applicability ∩ record scopes)
+
+test("KVP-001r4: broader steward / narrower record — site-a fact not emitted", () => {
+  // Exact replication of the round-3 independent probe: steward holds
+  // [facilities, site-a]; record scope_ids=[facilities]; registration
+  // applicability.scope_ids=[facilities]. The OLD revision's facilities
+  // fact supplies the query-scope overlap that selects the record; the
+  // NEW revision's [site-a] fact is inside the steward's general
+  // authority but outside BOTH the scoped record and its registration
+  // -> excluded in full, never HIGH.
+  const ctx = kvp1r3Ctx({
+    stewardScopes: ["facilities", "site-a"],
+    recordScopes: ["facilities"],
+    registrationScopes: ["facilities"],
+    oldFactScopes: ["facilities"],
+    factScopes: ["site-a"],
+  });
+  const r = run(task("t1 probe"), ctx);
+  assert.equal(r.claims.length, 0, "site-a fact outside the grant must not be emitted");
+  assert.ok(r.diagnostics.some((d) => d.code === "SCOPE_NOT_COVERED" && d.reducesConfidence === true));
+  assert.equal(r.confidence, "LOW");
+  assert.equal(r.complete, false);
+  assert.ok(!r.answer_text.includes("v1"), "uncovered value must not be quoted");
+});
+
+test("KVP-001r4: narrower registration applicability blocks emission", () => {
+  // Steward holds [facilities, site-a]; the trusted registration's
+  // applicability covers only [facilities]; the record is scoped
+  // [facilities] (it authenticates: record ⊆ registration). A [site-a]
+  // fact is outside the registration grant -> excluded. The registration
+  // term of the grant intersection binds independently of steward
+  // authority.
+  const ctx = kvp1r3Ctx({
+    stewardScopes: ["facilities", "site-a"],
+    recordScopes: ["facilities"],
+    registrationScopes: ["facilities"],
+    oldFactScopes: ["facilities"],
+    factScopes: ["site-a"],
+  });
+  const r = run(task("t1 probe"), ctx);
+  assert.equal(r.claims.length, 0, "fact outside registration applicability must not be emitted");
+  assert.ok(r.diagnostics.some((d) => d.code === "SCOPE_NOT_COVERED" && d.reducesConfidence === true));
+  assert.equal(r.confidence, "LOW");
+  assert.equal(r.complete, false);
+});
+
+test("KVP-001r4: multi-step chain — grant is the intersection across records", () => {
+  // Two-record chain rev-1 -> rev-2 -> rev-3. Record 1 covers
+  // [facilities, site-a]; record 2 narrows to [facilities]. The grant
+  // across the chain is [facilities], so a [facilities, site-a] fact in
+  // the head revision is excluded (site-a dropped by the second record).
+  const scopes = { steward: ["facilities", "site-a"], registration: ["facilities", "site-a"] };
+  const factLine = "claim: t4-key = v1; units: state; scopes: facilities,site-a";
+  const texts = ["# T4 rev1", "# T4 rev2", "# T4 rev3"].map((h) => [h, factLine, ""].join("\n"));
+  const commits = texts.map((t, i) => createHash("sha256").update(`t4${i}${t}`, "utf8").digest("hex").slice(0, 40));
+  const mkRev = (t, eff) => ({
+    blob: gitBlobId(t), revision: "rev", text: t,
+    effective_at: eff, verified_at: "2026-01-02T00:00:00Z", algorithm: "git-sha1",
+  });
+  const ref = (i) => ({ repo: "vault", path: "t/t4.md", commit: commits[i], blob: gitBlobId(texts[i]), algorithm: "git-sha1", revision: "rev" });
+  const effs = ["2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z", "2026-07-01T00:00:00Z"];
+  const revisions = {};
+  commits.forEach((c, i) => { revisions[c] = mkRev(texts[i], effs[i]); });
+  const rec1 = {
+    record_id: "sup-t4a", issuer: "steward-1",
+    old_ref: ref(0), new_ref: ref(1),
+    effective_at: "2026-06-01T00:00:00Z", scope_ids: ["facilities", "site-a"], registration_ref: "reg-1",
+  };
+  const rec2 = {
+    record_id: "sup-t4b", issuer: "steward-1",
+    old_ref: ref(1), new_ref: ref(2),
+    effective_at: "2026-07-15T00:00:00Z", scope_ids: ["facilities"], registration_ref: "reg-1",
+  };
+  const ctx = {
+    clock: CLOCK,
+    vocabulary: [{ query_key: "t4-key", phrases: ["t4 probe"] }],
+    sources: {
+      "vault|t/t4.md": { repo: "vault", path: "t/t4.md", tags: [], claim_keys: ["t4-key"], revisions },
+    },
+    readGrants: [{ repo: "vault", path: "t/t4.md" }],
+    stewards: [{ steward_id: "steward-1", registered_by: "jason", authority_scope_ids: scopes.steward, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false }],
+    registrations: [{
+      registration_ref: "reg-1", steward_id: "steward-1", action_ids: ["supersede"],
+      valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false,
+      applicability: {
+        scope_ids: scopes.registration, source_keys: ["vault|t/t4.md"],
+        transitions: [{ old_ref: ref(0), new_ref: ref(1) }, { old_ref: ref(1), new_ref: ref(2) }],
+      },
+    }],
+    supersessionRecords: [rec1, rec2],
+  };
+  const r = run(task("t4 probe"), ctx);
+  assert.equal(r.claims.length, 0, "site-a scope dropped by the narrower second record must not be emitted");
+  assert.ok(r.diagnostics.some((d) => d.code === "SCOPE_NOT_COVERED" && d.reducesConfidence === true));
+  assert.equal(r.confidence, "LOW");
+  assert.equal(r.complete, false);
+});
+
+test("KVP-001r4: fully covered grant emits HIGH", () => {
+  // Steward authority, registration applicability, and record scopes all
+  // cover [facilities, site-a]; the [facilities, site-a] fact is inside
+  // the full grant intersection -> ANSWERED / HIGH / complete.
+  const ctx = kvp1r3Ctx({
+    stewardScopes: ["facilities", "site-a"],
+    recordScopes: ["facilities", "site-a"],
+    registrationScopes: ["facilities", "site-a"],
+    factScopes: ["facilities", "site-a"],
+  });
+  const r = run(task("t1 probe"), ctx);
+  assert.equal(r.status, "ANSWERED");
+  assert.equal(r.claims.length, 1);
+  assert.match(r.claims[0].text, /scopes: facilities,site-a/);
+  assert.equal(r.confidence, "HIGH");
+  assert.equal(r.complete, true);
 });
 
 // ---------- KVP-003 round 3: hash/verification failures are coverage gaps ----------

@@ -1121,7 +1121,8 @@
       },
       "effective_at": "2026-06-01T00:00:00Z",
       "scope_ids": [
-        "facilities"
+        "facilities",
+        "site-a"
       ],
       "registration_ref": "reg-001"
     },
@@ -1271,7 +1272,8 @@
       },
       "effective_at": "2026-04-01T00:00:00Z",
       "scope_ids": [
-        "facilities"
+        "facilities",
+        "site-a"
       ],
       "registration_ref": "reg-001"
     },
@@ -1346,7 +1348,8 @@
       },
       "effective_at": "2026-06-01T00:00:00Z",
       "scope_ids": [
-        "facilities"
+        "facilities",
+        "site-a"
       ],
       "registration_ref": "reg-001"
     },

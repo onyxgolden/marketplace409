@@ -1,9 +1,9 @@
 {
-  "corpus_digest": "48172019c2abcca237e7fc9e151cd7e804e644530865856de682f96a3e9712a8",
+  "corpus_digest": "248b88403acdf6215442bd1d7bc75ec1b5889e2fa31b96dd0c2850f6d020b202",
   "files": [
     {
       "path": "README.md",
-      "sha256": "76a363cad78f45efe65bfcc016fffa9375b34fc8ce6ab0b2801f71f63e872ba9"
+      "sha256": "37b5d14c382db4b6c2c50d422eb8ac9c85b12c7512f1ee14f76354cc4853fd67"
     },
     {
       "path": "corpus/battery.json",
@@ -19,11 +19,11 @@
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "f792e0c7a615255cfdb06bc5fa7e824dc5954a50bb0b511942b5d5b50734ee1a"
+      "sha256": "6bf6e2449996674b6023b85749b1b5bc248af0c3ed1afd9e08945da5303a6a02"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "d26ac7e9028d3e63a7b1abc82b75975824c06471376683f83c9c15efdf8b9525"
+      "sha256": "5e0b5dab199d13f5e9cd8550a703a47c6a0b9c24797c74999decc5ca3d8362ff"
     },
     {
       "path": "fixtures/vocabulary.json",
@@ -31,7 +31,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "5c1d616830dcca63f7a138268e2a7e62aa50521a1d612bbb208dd280796c8366"
+      "sha256": "0d12fa277ed291a1e954b434f353aa65af57d874138249f39ccec525205fe096"
     },
     {
       "path": "runner/measure-latency.js",
@@ -63,7 +63,7 @@
     },
     {
       "path": "src/retriever.js",
-      "sha256": "247706cc23770b7d6786c2fde88dca7c71fb431a87ad93121c9e6619c186ae1b"
+      "sha256": "8e0aeaec9e62cda0764e2a88826e03b1005491b37a673fb9e1060f7ba903ff70"
     },
     {
       "path": "src/schemas.js",
@@ -71,7 +71,7 @@
     },
     {
       "path": "src/supersession.js",
-      "sha256": "dc2b31082ea94abb7504266d79a6335b1a9451605f28f4dcbd29595862cfd381"
+      "sha256": "d81902e3eac5edf7398436576df0ed0990d8cead4206658038c461d22ec83049"
     },
     {
       "path": "src/vocabulary.js",
@@ -103,7 +103,7 @@
     },
     {
       "path": "tests/kvp-fixes.test.js",
-      "sha256": "93ac54c5385a41552cfab695d2dbbc911d6bfb7c2561d0285da99448458599f5"
+      "sha256": "7b82787bac388410ef0f57a48cc3f929b969a0cc5968e26d757b7ede29409f79"
     },
     {
       "path": "tests/markdown.test.js",

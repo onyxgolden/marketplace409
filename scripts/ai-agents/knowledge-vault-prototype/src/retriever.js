@@ -220,7 +220,7 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
         const pin = { repo: sel.ref.repo, path: sel.ref.path, commit: sel.ref.commit, blob: meta.blob, algorithm: meta.algorithm ?? "git-sha1", revision: meta.revision ?? "" };
         try {
           const { bytes, text } = resolveSourceRef(pin, ctx.sources, budget);
-          collectFromRevision({ sourceKey: refKey, commit: sel.ref.commit, bytes, text, meta, pin, recordScopeIds: sel.appliedScopeIds, authorityScopeIds: sel.appliedAuthorityScopeIds });
+          collectFromRevision({ sourceKey: refKey, commit: sel.ref.commit, bytes, text, meta, pin, recordScopeIds: sel.appliedScopeIds, authorityScopeIds: sel.appliedGrantScopeIds });
         } catch (e) {
           if (e instanceof BudgetError) throw e;
           // KVP-003 round 3: this source held claim facts for the query
@@ -270,21 +270,21 @@ export function retrieveAnswer({ query, query_key, matchedPhrases, task, ctx, cl
       const lineKey = `${sourceKey}|${commit}|${fact.line}`;
       if (seenLines.has(lineKey)) continue;
       seenLines.add(lineKey);
-      // Supersession scope coverage (KVP-001 round 3): when the revision
+      // Supersession scope coverage (KVP-001 round 4): when the revision
       // was selected through authenticated supersession records, EVERY
-      // emitted fact scope must be covered by the effective AUTHENTICATED
-      // scope — the issuers' steward authority — not merely one
-      // overlapping token. A fact naming a scope outside the steward's
-      // authority (e.g. finance when the steward holds only facilities)
-      // is excluded in full, never quoted with HIGH confidence. A scope
-      // inside the authority (e.g. site-a for steward-ops) remains
-      // emittable even when the individual record's scope list is
-      // narrower.
+      // emitted fact scope must be covered by the effective GRANT — the
+      // intersection of (a) the issuers' steward authority, (b) the
+      // trusted registrations' applicability scopes, and (c) the applied
+      // records' scopes. A fact naming a scope outside ANY of the three
+      // (e.g. site-a when the record and registration cover only
+      // facilities, even though the steward holds site-a) is excluded in
+      // full, never quoted with HIGH confidence. Principal capability is
+      // not the scope of a particular supersession.
       if (authorityScopeIds !== null && authorityScopeIds !== undefined) {
         const covered = fact.scope_ids.length > 0 && fact.scope_ids.every((s) => authorityScopeIds.includes(s));
         if (!covered) {
           diagnostics.push(
-            diagnostic("SCOPE_NOT_COVERED", "warning", `claim '${fact.claim_key}' in ${sourceKey} names scope(s) outside the authenticated steward authority [${authorityScopeIds.join(",")}]; excluded, not quoted`, { ...pin }, null, { reducesConfidence: true })
+            diagnostic("SCOPE_NOT_COVERED", "warning", `claim '${fact.claim_key}' in ${sourceKey} names scope(s) outside the effective supersession grant [${authorityScopeIds.join(",")}] (steward authority ∩ registration applicability ∩ record scopes); excluded, not quoted`, { ...pin }, null, { reducesConfidence: true })
           );
           continue;
         }

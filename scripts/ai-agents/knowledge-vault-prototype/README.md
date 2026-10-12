@@ -29,11 +29,15 @@ writes, no model calls, no network.
   Forks and broken chains retain uncertainty — never a claim of current
   policy.
 - Emits each claim **only if EVERY one of its scopes is covered by the
-  effective authenticated scope** (the applied records' issuers' steward
-  authority): a steward-authorized record cannot launder an out-of-scope
-  claim into the answer. A fact naming both an authorized and an
-  unauthorized scope is excluded in full, never quoted with `HIGH`
-  (excluded claims raise `SCOPE_NOT_COVERED`, a coverage gap).
+  effective emission grant**: the intersection of (a) the applied
+  records' issuers' steward authority, (b) the trusted registrations'
+  `applicability` scopes, and (c) the applied records' scopes across the
+  selected transitions. Principal capability is not the scope of a
+  particular supersession: a fact inside the steward's broader authority
+  but outside the record or its registration is excluded in full, never
+  quoted with `HIGH` (excluded claims raise `SCOPE_NOT_COVERED`, a
+  coverage gap). A mixed-scope fact naming both a covered and an
+  uncovered scope is excluded in full.
 - Returns claims as **exact quoted extracts** with `SourceRef` citations
   (`quoted_span` === `span.quoted_text`, byte offsets verified against
   source bytes). Source facts are parsed from a bounded exact-text

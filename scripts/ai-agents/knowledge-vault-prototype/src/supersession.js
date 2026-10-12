@@ -145,6 +145,7 @@ function intersectScopes(lists) {
  * @param {object} budget
  * @returns {status:"ok", ref:{repo,path,commit}, appliedRecords:[record_id],
  *           appliedScopeIds:[scope]|null, appliedAuthorityScopeIds:[scope]|null,
+ *           appliedGrantScopeIds:[scope]|null,
  *           stewardFlags:[...]} |
  *          {status:"ambiguous"|"uncertain"|"read-denied", reason, code,
  *           reducesConfidence:boolean, stewardFlags:[...]}
@@ -156,8 +157,11 @@ function intersectScopes(lists) {
  * not-yet-existing revision is not missing coverage.
  * appliedScopeIds is the intersection of the applied records' scopes.
  * appliedAuthorityScopeIds is the intersection of the applied records'
- * issuers' steward authority scopes: the effective authenticated scope
- * for fact emission (KVP-001 round 3).
+ * issuers' steward authority scopes.
+ * appliedGrantScopeIds is the effective emission grant: the intersection
+ * of (a) steward authority, (b) the trusted registrations' applicability
+ * scopes, and (c) the applied records' scopes (KVP-001 round 4). Fact
+ * emission is bounded by this grant, never by steward authority alone.
  */
 export function selectEffectiveRevision(sourceKey, queryScopes, ctx, clockMs, asOfMs, budget) {
   const T = asOfMs === null || asOfMs === undefined ? clockMs : asOfMs;
@@ -287,18 +291,32 @@ function finishSelection(repo, path, commit, ctx, appliedRecords, stewardFlags) 
     };
   }
   const appliedScopeIds = intersectScopes(appliedRecords.map((r) => r.scope_ids));
-  // KVP-001 round 3: the effective AUTHENTICATED scope for emission is
-  // the issuers' steward authority (intersection across applied
-  // records), not the narrower record scope list. A fact naming a scope
-  // inside the steward's authority is emittable; a scope outside that
-  // authority (e.g. finance when the steward holds only facilities) is
-  // never quoted. Record scopes are already ALL-subset of their
-  // issuer's authority, so this is the authoritative bound.
+  // KVP-001 round 3: the issuers' steward authority (intersection across
+  // applied records). Principal capability alone is NOT the emission
+  // grant — see appliedGrantScopeIds below.
   const appliedAuthorityScopeIds = intersectScopes(
     appliedRecords.map((r) => {
       const st = ctx.stewards.find((s) => s.steward_id === r.issuer);
       return st ? st.authority_scope_ids : [];
     })
+  );
+  // KVP-001 round 4: the effective emission grant is the intersection of
+  // (a) steward authority, (b) the trusted registrations' applicability
+  // scopes, and (c) the applied records' scopes. A fact whose scope lies
+  // outside ANY of the three is never quoted — even when it sits inside
+  // the steward's broader authority. Principal capability is not the
+  // scope of a particular supersession. Null when no records applied
+  // (same null-propagation as the other scope fields).
+  const appliedApplicabilityScopeIds = intersectScopes(
+    appliedRecords.map((r) => {
+      const reg = ctx.registrations.find((x) => x.registration_ref === r.registration_ref);
+      return reg && reg.applicability && Array.isArray(reg.applicability.scope_ids)
+        ? reg.applicability.scope_ids
+        : [];
+    })
+  );
+  const appliedGrantScopeIds = intersectScopes(
+    [appliedScopeIds, appliedAuthorityScopeIds, appliedApplicabilityScopeIds].filter((x) => x !== null)
   );
   return {
     status: "ok",
@@ -306,6 +324,7 @@ function finishSelection(repo, path, commit, ctx, appliedRecords, stewardFlags) 
     appliedRecords: appliedRecords.map((r) => r.record_id),
     appliedScopeIds,
     appliedAuthorityScopeIds,
+    appliedGrantScopeIds,
     stewardFlags,
   };
 }
