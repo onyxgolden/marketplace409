@@ -1,0 +1,1 @@
+{"principals":[{"expires_at":"2027-01-01T00:00:00Z","note":"Jason's established Muse relay; fixture registry for the gate simulator","principal_id":"muse","registered_by":"jason","revoked":false,"valid_from":"2026-01-01T00:00:00Z"},{"note":"Designated reviewer identity; never self-issued by this agent","principal_id":"chatgpt","role":"designated_reviewer"}]}

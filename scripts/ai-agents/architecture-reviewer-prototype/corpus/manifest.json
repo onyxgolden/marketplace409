@@ -1,0 +1,117 @@
+{
+  "corpus_digest": "33b5e8317123149bd7996be6e918f98ccac1aaec7d401659f750726e901d73a1",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "445617279061d2d216d711b6df6158768efd0f030f7de49a5baaafb7544bb716"
+    },
+    {
+      "path": "corpus/battery.json",
+      "sha256": "2a410131da275e142745775bd035ed9bbe91a7ee0876a86d270652456b382bab"
+    },
+    {
+      "path": "corpus/freeze-corpus.js",
+      "sha256": "dc2427221658e411355ac6662276e9a22e150fb7e7f6b9fd1cb15737f69ccf42"
+    },
+    {
+      "path": "corpus/make-battery.js",
+      "sha256": "5ef8197169906c46d66c4b443a2116e7190c15dedc29ee08b9c09e0c74393858"
+    },
+    {
+      "path": "fixtures/principals.json",
+      "sha256": "43d2266cf55aff759cc5c02d7307c461f7cfbed3983a5c26e7fca90cb525b4d7"
+    },
+    {
+      "path": "package.json",
+      "sha256": "4a48c5a3252e3cbf248a0a1e5350ffdde5c141977c464a1997c523bc9e623994"
+    },
+    {
+      "path": "runner/run-manual.js",
+      "sha256": "b285da76841b6db6c229b09b806f50fba8b26e16850f41b6a2f992cff38977b3"
+    },
+    {
+      "path": "src/canonical.js",
+      "sha256": "46586987ca3013ab6dc09f00c3d006b1e6e1ae9b1c97c8ec0acb1f5bbaa2466e"
+    },
+    {
+      "path": "src/checks.js",
+      "sha256": "69af5e14713b0ecfa0589dee252176704340bca30c6127b66021c9c8b8ff884d"
+    },
+    {
+      "path": "src/gates.js",
+      "sha256": "79cc862752d623ab8c9458b7b7c062c8a3d85ee8f90e81355cdbc5acd9024018"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "b5484f55e491d2dbca5e2f211e871fa53f2f6074acc40f44c54930347b418b74"
+    },
+    {
+      "path": "src/injection.js",
+      "sha256": "2192b99ad084a6f5da34d26a19b8d6d918cf90360f0fa6781cd8d509cf582c88"
+    },
+    {
+      "path": "src/markdown.js",
+      "sha256": "ee4108fd00324a4c921d82b6faffa98ec1dffd6dba6d1ad3782799b12e1f7236"
+    },
+    {
+      "path": "src/resolver.js",
+      "sha256": "c3aafac99b28cd92eb249ea0338f91ec878a048b177e64d005701588189fc7c8"
+    },
+    {
+      "path": "src/reviewer.js",
+      "sha256": "7d1aec5029d73549e06d079c4717f70cb2e7f25c0df594dc1e5acf3f31ac58b2"
+    },
+    {
+      "path": "src/schemas.js",
+      "sha256": "c7b2ee35d924e13f0418875ef83d99ab1127d56e13893d9d1736a64abda55a46"
+    },
+    {
+      "path": "tests/ar-regressions.test.js",
+      "sha256": "8da383f24a24fc1ecac9bd84663d420dacb0dcc111e8723aa474f7ac76424680"
+    },
+    {
+      "path": "tests/battery.test.js",
+      "sha256": "e24d34b501d281f3b242dc946a9b57a00e971a941fd93606d476d8a24e3c7633"
+    },
+    {
+      "path": "tests/case-worker.js",
+      "sha256": "e04483fa3013ac5bfe57b5456bd7cf3caa9d5dde7f5f008c602e703516263cac"
+    },
+    {
+      "path": "tests/determinism.test.js",
+      "sha256": "b9367c76b6d2246333ddc984a5770666cec8b7bcdafe75012cdae5d2b7196eff"
+    },
+    {
+      "path": "tests/harness.js",
+      "sha256": "9d7545ced5148ab14d3ca2c699c838184337dcce8cc4b45e0b63f01436ff50bc"
+    },
+    {
+      "path": "tests/mutation.test.js",
+      "sha256": "0db0da6f67416ed6948d47a359475ebbb52b4b9e98506d40ae2c7f7f9bda3913"
+    },
+    {
+      "path": "tests/run-battery.js",
+      "sha256": "cae271f2068fe7daf1803639582d80a64e5f21e9e0f66da5bc654fd07f4dd28c"
+    },
+    {
+      "path": "tests/run-tests.js",
+      "sha256": "0c50181b04f2048e3b881b7adef5a62128063df310ef5493e46bc0406a1008f3"
+    },
+    {
+      "path": "tests/schemas.test.js",
+      "sha256": "20134bf2ba5e1d88378302cb574569391062d250674a498e2f3c6ad95b5beb08"
+    },
+    {
+      "path": "tests/watchdog.js",
+      "sha256": "3c2b967dc64d7e83668b56a080671ad4aca0de867e33f85b95117945e223289e"
+    },
+    {
+      "path": "tests/watchdog.test.js",
+      "sha256": "8fc5a4cf5054a774cd6b4d53afa3e5e5c7bf9cf7e772094bd50e95b7cb965127"
+    },
+    {
+      "path": "tests/zerotools.test.js",
+      "sha256": "62aa595d48735047f5b597bf8dc60f0bb976ea35700a2649faa943856ace9a59"
+    }
+  ]
+}

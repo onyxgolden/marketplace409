@@ -1,0 +1,13 @@
+{
+  "description": "Architecture Reviewer agent Phase 2 slice 1 synthetic prototype: evidence-linked design checklist evaluator with advisory verdict proposals and fixture gate simulator. Advisory only; no live activation, no design approval, no merge.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "architecture-reviewer-prototype",
+  "scripts": {
+    "battery": "AR_APPROVED_ROOT=33b5e8317123149bd7996be6e918f98ccac1aaec7d401659f750726e901d73a1 node tests/run-battery.js",
+    "test": "AR_APPROVED_ROOT=33b5e8317123149bd7996be6e918f98ccac1aaec7d401659f750726e901d73a1 node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
