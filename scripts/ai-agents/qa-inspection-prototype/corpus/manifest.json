@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "3a63b053aecf92c65738affac5fae10c241397e18447ff21912772fed7937b6c",
+  "corpus_digest": "b3bf34c5eeb11ffd778127e69d09a9199aa20bdd33e1734b2fc9d7e9ee93f7fa",
   "files": [
     {
       "path": "README.md",
@@ -43,7 +43,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "bc47d47781126155ad99dbab09ea78a1af902f0d012130936627d47f944ebb9b"
+      "sha256": "65535c61f8f1c05c37a54dc8d184caa20f72bdc864166b6582c56ffdf577c42f"
     },
     {
       "path": "runner/run-manual.js",
@@ -51,7 +51,7 @@
     },
     {
       "path": "src/classify.js",
-      "sha256": "7e8f56fa2d868b92843f95ff9c7475ed687d8412accdc8beb86c60c807c13e07"
+      "sha256": "8c2b8833e34ade200c61801343090e2238440e6b6712c401e32e481da7bebaeb"
     },
     {
       "path": "src/index.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "tests/battery.test.js",
-      "sha256": "f3270aba6057abb82d172db366fb2a8bc8f83060453a2fc1c8f087a79919c55e"
+      "sha256": "98c3fbb82cc5faf5ce8b374cdd60c5023a78fbb6e3f90a2c808161dde088e5e6"
     },
     {
       "path": "tests/case-worker.js",
@@ -99,11 +99,11 @@
     },
     {
       "path": "tests/mutation.test.js",
-      "sha256": "591b6f376fd15e1c285ba6a7681ea3fd06b6127bafdc6c02e16acfaf31e3690c"
+      "sha256": "5938cc1da71a64471b5d3098cf0db1ca28ace1d780715be4c7380bda40b1ec1c"
     },
     {
       "path": "tests/qai-regressions.test.js",
-      "sha256": "0e429d08ea61b0bd721a4a6aadba0a0e4dde08e972ec710c66308b11ef5ae1f1"
+      "sha256": "97156ad9f99bd1ed200f25fb176bee915f4195c082dcff362c9eecb219f61f0f"
     },
     {
       "path": "tests/run-battery.js",
@@ -119,7 +119,7 @@
     },
     {
       "path": "tests/watchdog.test.js",
-      "sha256": "bb0f75edfe975f58b4018a83cf9a722cf1c7ede7351eaefdd1bd8fe261381598"
+      "sha256": "c9f6b03c85da554990c6519c14d04b81c674684021e4cad0d84dbb5f41ab890d"
     },
     {
       "path": "tests/zerotools.test.js",

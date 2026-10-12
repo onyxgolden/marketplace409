@@ -61,8 +61,8 @@ class BudgetExceeded extends Error {
  * Counts and bounds every resolver access. Every method call is one object
  * resolution; every evidence record returned is one span check; every
  * returned payload's bytes accumulate against the resolved-input byte cap —
- * including grant and observer responses (QAI-005). Exhaustion throws
- * BudgetExceeded — never a partial success.
+ * including grant and observer responses and artifact association metadata
+ * (QAI-005). Exhaustion throws BudgetExceeded — never a partial success.
  */
 class BudgetedResolver {
   constructor(resolver, budget) {
@@ -117,7 +117,15 @@ class BudgetedResolver {
     this._check();
     const a = this.inner.resolveArtifact(fixture_id);
     if (a) {
+      // Raw artifact bytes counted at their actual length — never the
+      // Buffer's JSON form — plus every byte of association metadata:
+      // control/assertion/modality binding and the observations list
+      // (QAI-005, round 3). Metadata is resolved input too: it is counted
+      // and enforced BEFORE the association list is processed. Exhaustion
+      // is BUDGET_EXCEEDED with no domain success.
       this.budget.resolvedBytes += a.byte_length;
+      const { bytes: _rawBytes, ...associationMeta } = a;
+      this._countPayload(associationMeta);
       this._check();
     }
     return a;

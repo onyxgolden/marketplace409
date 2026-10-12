@@ -703,3 +703,118 @@ describe("QAI-005 remaining: grant/observer payload accounting", () => {
     assert.equal(BUDGET_LIMITS.maxResolvedBytes, 256 * 1024);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* QAI-005 round 3 — artifact association metadata byte accounting      */
+/* ------------------------------------------------------------------ */
+describe("QAI-005 round 3: artifact association metadata byte accounting", () => {
+  function mkArtifactWithObservations(fx, fid, observations) {
+    const bytes = Buffer.from("shot-bytes-" + fid, "utf8");
+    fx.artifacts[fid] = {
+      bytes_b64: bytes.toString("base64"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      media_type: "image/png",
+      byte_length: bytes.length,
+      observations,
+    };
+    const a = fx.artifacts[fid];
+    return { fixture_id: fid, sha256: a.sha256, media_type: a.media_type, byte_length: a.byte_length };
+  }
+
+  it("380KB observations association list -> BUDGET_EXCEEDED, REFUSED, no PASS", () => {
+    // The verdict's probe: a positive artifact-backed case whose registered
+    // observations list (5,000+ valid covering triples, no redundant
+    // top-level association) exceeds the 256-KiB resolved-input cap. The
+    // association metadata is resolved input and must be counted.
+    const fx = baseFixtures();
+    const observations = Array.from({ length: 6230 }, () => ({
+      control_id: "c1",
+      assertion_id: "a1",
+      modality: "automated",
+    }));
+    const obsBytes = Buffer.byteLength(JSON.stringify(observations), "utf8");
+    assert.ok(obsBytes > 256 * 1024, `test setup: observations list must exceed the cap, got ${obsBytes}`);
+    const ref = mkArtifactWithObservations(fx, "shot-big", observations);
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: null, artifact_ref: ref })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(r.status, "REFUSED");
+    assert.ok(codesOf(r).includes("BUDGET_EXCEEDED"), `codes: ${codesOf(r)}`);
+    assert.deepEqual(r.results, []);
+  });
+
+  it("artifact metadata: exactly 256KiB allowed, 256KiB+1 refused", () => {
+    const base = { sha256: "s".repeat(64), media_type: "image/png", byte_length: 0 };
+    const baseLen = Buffer.byteLength(JSON.stringify(base), "utf8");
+    // '"pad":"xxx"' contributes ',"pad":"' (8 chars) + pad + closing quote
+    // (1 char); size the pad so the counted metadata is exactly the cap,
+    // then one byte over.
+    const padLen = BUDGET_LIMITS.maxResolvedBytes - baseLen - 9;
+    assert.ok(padLen > 0, "test setup: pad length must be positive");
+    const inner = (extra) => ({
+      resolveArtifact: () => ({
+        bytes: Buffer.alloc(0),
+        ...base,
+        pad: "x".repeat(padLen + extra),
+      }),
+    });
+    const mk = (extra) => new BudgetedResolver(inner(extra), { resolutions: 0, spans: 0, resolvedBytes: 0 });
+    mk(0).resolveArtifact("a"); // exactly at the cap: allowed
+    assert.throws(
+      () => mk(1).resolveArtifact("a"),
+      (e) => e instanceof BudgetExceeded && e.dimension === "resolved-input-bytes"
+    );
+    assert.equal(BUDGET_LIMITS.maxResolvedBytes, 256 * 1024);
+  });
+
+  it("artifact metadata accumulates across artifacts: second over-cap read refused", () => {
+    const mkInner = () => ({
+      resolveArtifact: () => ({
+        bytes: Buffer.alloc(10),
+        byte_length: 10,
+        sha256: "s".repeat(64),
+        media_type: "image/png",
+        observations: [{ control_id: "c1", assertion_id: "a1", modality: "automated", pad: "x".repeat(150000) }],
+      }),
+    });
+    const b = new BudgetedResolver(mkInner(), { resolutions: 0, spans: 0, resolvedBytes: 0 });
+    b.resolveArtifact("a1"); // ~150KiB of metadata: under the cap
+    assert.throws(
+      () => b.resolveArtifact("a2"), // aggregate ~300KiB: over the cap
+      (e) => e instanceof BudgetExceeded && e.dimension === "resolved-input-bytes"
+    );
+  });
+
+  it("raw artifact bytes counted at actual length, metadata counted canonically", () => {
+    // The Buffer's JSON form must never substitute for its byte length:
+    // a 3-byte artifact counts 3 bytes, not the ~400 chars of its JSON.
+    const inner = {
+      resolveArtifact: () => ({
+        bytes: Buffer.from("abc", "utf8"),
+        byte_length: 3,
+        sha256: "s".repeat(64),
+        media_type: "image/png",
+      }),
+    };
+    const b = new BudgetedResolver(inner, { resolutions: 0, spans: 0, resolvedBytes: 10 });
+    b.resolveArtifact("a");
+    const metaLen = Buffer.byteLength(
+      JSON.stringify({ sha256: "s".repeat(64), media_type: "image/png", byte_length: 3 }),
+      "utf8"
+    );
+    // 10 (prior) + 3 (raw bytes) + canonical metadata bytes.
+    assert.equal(b.budget.resolvedBytes, 13 + metaLen);
+  });
+
+  it("ordinary small artifact-positive case stays green", () => {
+    const fx = baseFixtures();
+    const ref = mkArtifactWithObservations(fx, "shot-1", [
+      { control_id: "c1", assertion_id: "a1", modality: "automated" },
+    ]);
+    fx.evidence = [mkEvidence({ evidence_id: "ev-1", run_id: null, artifact_ref: ref })];
+    grant(fx, "ev-1");
+    const r = run(baseTask(), ctx(fx));
+    assert.equal(r.status, "REPORTED");
+    assert.equal(ctrlResult(r, "c1").result, "PASS");
+  });
+});

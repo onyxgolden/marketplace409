@@ -5,8 +5,8 @@
   },
   "name": "qa-inspection-prototype",
   "scripts": {
-    "battery": "QA_APPROVED_ROOT=3a63b053aecf92c65738affac5fae10c241397e18447ff21912772fed7937b6c node tests/run-battery.js",
-    "test": "QA_APPROVED_ROOT=3a63b053aecf92c65738affac5fae10c241397e18447ff21912772fed7937b6c node --test tests/*.test.js"
+    "battery": "QA_APPROVED_ROOT=b3bf34c5eeb11ffd778127e69d09a9199aa20bdd33e1734b2fc9d7e9ee93f7fa node tests/run-battery.js",
+    "test": "QA_APPROVED_ROOT=b3bf34c5eeb11ffd778127e69d09a9199aa20bdd33e1734b2fc9d7e9ee93f7fa node --test tests/*.test.js"
   },
   "type": "module",
   "version": "0.1.0"
