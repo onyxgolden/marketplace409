@@ -40,6 +40,7 @@ const fixtures = {
   artifacts: readJson(join(fixturesDir, "artifacts.json")),
   runs: readJson(join(fixturesDir, "runs.json")),
   grants: readJson(join(fixturesDir, "grants.json")),
+  observers: readJson(join(fixturesDir, "observers.json")),
 };
 
 const context = {
@@ -49,6 +50,7 @@ const context = {
 
 const report = run(task, context);
 
+console.error("[runner] manual run: arbitrary task/fixtures supplied — NOT the reviewed corpus. Acceptance is established only via `npm run battery`.");
 if (flag("--markdown")) {
   console.log(reportToMarkdown(report));
 } else {

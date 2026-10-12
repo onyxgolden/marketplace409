@@ -27,6 +27,7 @@ export class FixtureResolver {
    * @param {Record<string,{bytes_b64,sha256,media_type,byte_length}>} fixtures.artifacts
    * @param {Record<string,object>} fixtures.runs — run_id -> run metadata
    * @param {Record<string,{allowed:boolean,reason:string}>} fixtures.grants — evidence_id -> grant
+   * @param {Record<string,{trusted:boolean,reason:string}>} fixtures.observers — observer_id -> trust record
    */
   constructor(fixtures) {
     this.builds = fixtures.builds ?? {};
@@ -34,6 +35,7 @@ export class FixtureResolver {
     this.artifacts = fixtures.artifacts ?? {};
     this.runs = fixtures.runs ?? {};
     this.grants = fixtures.grants ?? {};
+    this.observers = fixtures.observers ?? {};
     // Instrumentation for the zero-side-effect gate: the harness counts these.
     this.stats = { buildReads: 0, evidenceReads: 0, runReads: 0, artifactReads: 0, grantReads: 0 };
   }
@@ -69,12 +71,15 @@ export class FixtureResolver {
     const a = this.artifacts[fixture_id];
     if (!a) return null;
     const bytes = Buffer.from(a.bytes_b64, "base64");
-    return {
+    const out = {
       bytes,
       sha256: sha256Hex(bytes),
       media_type: a.media_type,
       byte_length: bytes.length,
     };
+    // Pass through the registry's recorded control association when present.
+    if (a.control_id !== undefined) out.control_id = a.control_id;
+    return out;
   }
 
   /** Scoped read grant for an evidence record. Default deny. */
@@ -84,11 +89,24 @@ export class FixtureResolver {
     if (!g) return { allowed: false, reason: "no grant registered" };
     return { allowed: g.allowed === true, reason: g.reason ?? "" };
   }
+
+  /**
+   * Authenticate the fixture observer through the trusted adapter.
+   * An evidence record's observer label is never trusted on its own: the
+   * observer must be registered and marked trusted by the harness.
+   * Default: untrusted.
+   */
+  checkObserver(observer_id) {
+    this.stats.observerReads = (this.stats.observerReads ?? 0) + 1;
+    const o = this.observers[observer_id];
+    if (!o) return { trusted: false, reason: "observer not registered" };
+    return { trusted: o.trusted === true, reason: o.reason ?? "" };
+  }
 }
 
 /**
  * Build a FixtureResolver from plain JSON fixture files (harness-side helper).
  */
-export function resolverFromJson({ builds, evidence, artifacts, runs, grants }) {
-  return new FixtureResolver({ builds, evidence, artifacts, runs, grants });
+export function resolverFromJson({ builds, evidence, artifacts, runs, grants, observers }) {
+  return new FixtureResolver({ builds, evidence, artifacts, runs, grants, observers });
 }

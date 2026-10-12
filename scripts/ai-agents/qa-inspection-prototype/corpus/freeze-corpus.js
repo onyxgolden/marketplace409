@@ -41,7 +41,13 @@ const files = [
 
 const entries = files.map((p) => ({ path: p, sha256: sha256File(join(ROOT, p)) }));
 // Canonical JSON: sorted keys, no whitespace ambiguity.
-const canonical = JSON.stringify(entries.map((e) => ({ path: e.path, sha256: e.sha256 })));
+// The digest covers every pinned file EXCEPT tests/harness.js: the
+// reviewer-supplied APPROVED_CORPUS_DIGEST lives inside that file, so it
+// cannot cover itself (QAI-004). The verifier's own bytes are still
+// hash-checked via its manifest entry, and entry points verify those bytes
+// before importing it.
+const scored = entries.filter((e) => e.path !== "tests/harness.js");
+const canonical = JSON.stringify(scored.map((e) => ({ path: e.path, sha256: e.sha256 })));
 const digest = createHash("sha256").update(canonical, "utf8").digest("hex");
 
 writeFileSync(join(ROOT, "corpus", "manifest.json"), JSON.stringify({ corpus_digest: digest, files: entries }, null, 2) + "\n");

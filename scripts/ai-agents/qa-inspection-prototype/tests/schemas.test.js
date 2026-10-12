@@ -96,7 +96,13 @@ describe("task schema denials", () => {
     const badCtx = { clock: "not-a-date", resolver: ctx().resolver };
     const r = run(t, badCtx);
     assert.equal(r.status, "REFUSED");
-    assert.ok(codesOf(r).includes("INVALID_INPUT"));
+    // The injected clock yields a named denial (not a generic input error).
+    assert.ok(codesOf(r).includes("INVALID_CLOCK"));
+    // A nonexistent calendar date is rejected even in the timestamp branch
+    // (JS Date.parse would roll 2026-02-30 into March).
+    const r2 = run(t, { clock: "2026-02-30T12:00:00Z", resolver: ctx().resolver });
+    assert.equal(r2.status, "REFUSED");
+    assert.ok(codesOf(r2).includes("INVALID_CLOCK"));
   });
 
   it("rejects non-object tasks without throwing", () => {

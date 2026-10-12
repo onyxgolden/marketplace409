@@ -2,7 +2,7 @@
  * qa-inspection-prototype — public entry.
  * Pure Node 24 ESM, zero runtime dependencies, zero model calls.
  */
-export { run, AGENT_ID, SCHEMA_VERSION, canonicalJson, canonicalize } from "./classify.js";
+export { run, AGENT_ID, SCHEMA_VERSION, canonicalJson, canonicalize, BudgetedResolver, BudgetExceeded, BUDGET_LIMITS } from "./classify.js";
 export { validateTask, validateEvidenceRecord, isValidDateString, KINDS, OPERATIONS, MODALITIES } from "./schemas.js";
 export { FixtureResolver, resolverFromJson, sha256Hex } from "./resolver.js";
 export { reportToMarkdown } from "./markdown.js";

@@ -77,6 +77,42 @@ function grantAll(fx, evidence) {
   return fx;
 }
 
+/**
+ * Register every observer named by the case's evidence as trusted through the
+ * harness adapter. Observer labels are never trusted on their own (QAI-002).
+ */
+function trustObservers(fx) {
+  fx.observers = fx.observers ?? {};
+  for (const e of fx.evidence) {
+    fx.observers[e.fixture_observer_id] = { trusted: true, reason: "fixture: harness-registered observer" };
+  }
+  return fx;
+}
+
+/**
+ * Hand-derived per-modality expectation row, from the brief's rules.
+ * Each modality's state is computed from its own verified observations.
+ */
+function perMod(rows) {
+  return rows.map(({ modality, result, evidence_ids }) => ({
+    modality,
+    result,
+    evidence_ids: [...evidence_ids].sort(),
+  }));
+}
+
+/** Both modalities asserted; only the listed ones carry evidence. */
+function bothModalities(passModalities) {
+  // passModalities: {automated: {result, evidence_ids}, manual: {...}}
+  return perMod(
+    ["automated", "manual"].map((m) => ({
+      modality: m,
+      result: passModalities[m]?.result ?? "UNVERIFIED",
+      evidence_ids: passModalities[m]?.evidence_ids ?? [],
+    }))
+  );
+}
+
 function mkTask({ task_id, surface, build_pin, controls, evidence_sources = [] }) {
   return { task_id, surface, build_pin, controls, evidence_sources };
 }
@@ -183,12 +219,15 @@ function addCase(c) {
           }
           fx.evidence = evidences;
           grantAll(fx, evidences);
+          trustObservers(fx);
           const task = mkTask({
             task_id: id,
             surface: surf,
             build_pin: pin(),
             controls: [ctrl(cid, kind, "report", ["a1"], modalities)],
           });
+          const perModality = {};
+          for (const m of modalities) perModality[m] = { result: "PASS", evidence_ids: [`ev-${id}-${m}`] };
           addCase({
             id,
             category: "valid",
@@ -197,6 +236,7 @@ function addCase(c) {
             expected: {
               status: "REPORTED",
               results: { [cid]: expResult("PASS", []) },
+              per_modality: { [cid]: bothModalities(perModality) },
               contradictions: 0,
               quarantined: 0,
               ledger: { [cid]: "Verified" },
@@ -324,6 +364,10 @@ function addCase(c) {
       if (st === "empty-surface") {
         expected.results = {};
       }
+      // No subtype yields usable evidence: every modality stays UNVERIFIED.
+      // (empty-surface declares no controls, so nothing is asserted.)
+      expected.per_modality = st === "empty-surface" ? {} : { [cid]: bothModalities({}) };
+      trustObservers(fx);
       addCase({ id, category: "evidence-failure", subtype: st, task, fixtures: fx, expected });
     }
   }
@@ -389,6 +433,31 @@ function addCase(c) {
       }
       fx.evidence = evidences;
       grantAll(fx, evidences);
+      trustObservers(fx);
+      // Per-modality states from each modality's own verified observations
+      // (hand-derived from the brief): a modality FAILs only when its own
+      // usable evidence mismatches — never copied from the aggregate.
+      const pm = {
+        "auto-pass-manual-fail": {
+          automated: { result: "PASS", evidence_ids: [`ev-${id}-automated`] },
+          manual: { result: "FAIL", evidence_ids: [`ev-${id}-manual`] },
+        },
+        "manual-pass-auto-fail": {
+          automated: { result: "FAIL", evidence_ids: [`ev-${id}-automated`] },
+          manual: { result: "PASS", evidence_ids: [`ev-${id}-manual`] },
+        },
+        "auto-auto-oppose": {
+          automated: { result: "FAIL", evidence_ids: [`ev-${id}-automated-r1`, `ev-${id}-automated-r2`] },
+        },
+        "one-side-unbound": {
+          automated: { result: "PASS", evidence_ids: [`ev-${id}-automated`] },
+        },
+        "both-agree": {
+          automated: { result: "PASS", evidence_ids: [`ev-${id}-automated`] },
+          manual: { result: "PASS", evidence_ids: [`ev-${id}-manual`] },
+        },
+      }[st];
+      expected.per_modality = { [cid]: bothModalities(pm) };
       const reqModalities = expected.modalities ?? both;
       delete expected.modalities;
       const task = mkTask({ task_id: id, surface: surf, build_pin: pin(), controls: [ctrl(cid, "filter", "report", ["a1"], reqModalities)] });
@@ -442,6 +511,7 @@ function addCase(c) {
         };
       }
       const task = mkTask({ task_id: id, surface: surf, build_pin: pin(), controls });
+      trustObservers(fx);
       addCase({ id, category: "exercise-refused", task, fixtures: fx, expected });
     }
   }
@@ -546,13 +616,21 @@ function addCase(c) {
       }
       fx.evidence = evidences;
       grantAll(fx, evidences);
+      trustObservers(fx);
       const task = mkTask({ task_id: id, surface: surf, build_pin: pin(), controls: [ctrl(controlId, "filter", "report", ["a1"], ["automated"])] });
+      // Per-modality: only a clean, bound automated observation verifies.
+      // Quarantined evidence (evidence-level injection) supports nothing, so
+      // both modalities stay UNVERIFIED. A tainted control id quarantines the
+      // whole control before the modality loop, so no modality rows exist.
+      const evidenceLevel = st === "evidence-directive" || st === "quoted-forced-verdict" || st === "control-id-directive";
+      const hasUsableClean = cleanVariants && st !== "control-id-directive";
+      const pmInject = st === "control-id-directive"
+        ? []
+        : bothModalities(hasUsableClean ? { automated: { result: "PASS", evidence_ids: [`ev-${id}-clean`] } } : {});
       // Codes, hand-derived. Evidence-level injection is quarantined inside the
       // control's binding path (per-control code). Task-label injection is
       // flagged at top level only (labels never affect control classification).
       // When no usable (clean, bound) evidence remains, NO_EVIDENCE is emitted.
-      const evidenceLevel = st === "evidence-directive" || st === "quoted-forced-verdict" || st === "control-id-directive";
-      const hasUsableClean = cleanVariants && st !== "control-id-directive";
       const codes = evidenceLevel
         ? (hasUsableClean ? ["INSTRUCTION_INJECTION"] : ["INSTRUCTION_INJECTION", "NO_EVIDENCE"])
         : (hasUsableClean ? [] : ["NO_EVIDENCE"]);
@@ -565,6 +643,7 @@ function addCase(c) {
         expected: {
           status: "REPORTED",
           results: { [controlId]: expResult(expectedResult, codes) },
+          per_modality: { [controlId]: pmInject },
           contradictions: 0,
           quarantined,
           topCodes: ["INSTRUCTION_INJECTION"],

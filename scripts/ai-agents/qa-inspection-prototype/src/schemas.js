@@ -37,26 +37,50 @@ function isNonEmptyString(v, maxLen = MAX_ID_LEN) {
   return typeof v === "string" && v.length > 0 && v.length <= maxLen;
 }
 
-/** Real YYYY-MM-DD (calendar-valid) or finite UTC ISO-8601 timestamp with Z. */
+/** Real YYYY-MM-DD (calendar-valid) or real UTC ISO-8601 instant (calendar-valid,
+ *  Zulu only). Rollover dates such as 2026-02-30 are rejected: components are
+ *  round-tripped through Date.UTC and must match exactly. No locale parsing. */
 export function isValidDateString(s) {
   if (typeof s !== "string" || s.length === 0 || s.length > 64) return false;
   let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (m) {
+    return validYMD(Number(m[1]), Number(m[2]), Number(m[3]));
+  }
+  m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?Z$/.exec(s);
+  if (m) {
     const y = Number(m[1]);
     const mo = Number(m[2]);
     const d = Number(m[3]);
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
-    const dim = [
-      31,
-      y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
-      31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-    ];
-    return d <= dim[mo - 1];
-  }
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(s)) {
-    return Number.isFinite(Date.parse(s));
+    const hh = Number(m[4]);
+    const mi = Number(m[5]);
+    const ss = Number(m[6]);
+    if (!validYMD(y, mo, d)) return false;
+    if (hh > 23 || mi > 59 || ss > 59) return false;
+    const ms = m[7] ? Math.round(Number(m[7]) * 1000) : 0;
+    // Round-trip through Date.UTC: any parser rollover (e.g. Feb 30 -> Mar 2)
+    // fails the component comparison, so no invented dates are accepted.
+    const dt = new Date(Date.UTC(y, mo - 1, d, hh, mi, ss, ms));
+    return (
+      dt.getUTCFullYear() === y &&
+      dt.getUTCMonth() === mo - 1 &&
+      dt.getUTCDate() === d &&
+      dt.getUTCHours() === hh &&
+      dt.getUTCMinutes() === mi &&
+      dt.getUTCSeconds() === ss
+    );
   }
   return false;
+}
+
+function validYMD(y, mo, d) {
+  if (!Number.isInteger(y) || y < 1 || y > 9999) return false;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  const dim = [
+    31,
+    y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28,
+    31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+  ];
+  return d <= dim[mo - 1];
 }
 
 class Collector {
@@ -137,8 +161,8 @@ function validateControl(c, ctrl, path, seenControlIds) {
   if (!OPERATIONS.includes(ctrl.requested_operation)) {
     c.add("INVALID_OPERATION", `${path}.requested_operation`, "requested_operation must be report|exercise");
   }
-  if (!Array.isArray(ctrl.assertion_ids) || ctrl.assertion_ids.length > 64) {
-    c.add("INVALID_ASSERTIONS", `${path}.assertion_ids`, "assertion_ids must be an array of at most 64 ids");
+  if (!Array.isArray(ctrl.assertion_ids) || ctrl.assertion_ids.length === 0 || ctrl.assertion_ids.length > 64) {
+    c.add("INVALID_ASSERTIONS", `${path}.assertion_ids`, "assertion_ids must be a non-empty array of at most 64 ids");
   } else {
     const seen = new Set();
     for (const [i, a] of ctrl.assertion_ids.entries()) {

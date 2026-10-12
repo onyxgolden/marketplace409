@@ -86,6 +86,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -95,6 +101,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-1": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-001-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -203,6 +225,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -212,6 +240,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-2": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-002-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -307,6 +351,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -316,6 +366,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-3": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-003-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -424,6 +490,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -433,6 +505,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-4": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-004-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -564,6 +652,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -573,6 +671,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-5": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-005-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-005-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -729,6 +845,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -738,6 +864,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-6": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-006-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-006-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -869,6 +1013,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -878,6 +1032,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-7": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-007-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-007-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1034,6 +1206,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1043,6 +1225,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "nav-dashboard-8": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-008-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-008-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1148,6 +1348,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1157,6 +1363,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-9": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-009-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1275,6 +1497,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1284,6 +1512,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-10": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-010-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1389,6 +1633,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1398,6 +1648,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-11": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-011-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1516,6 +1782,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1525,6 +1797,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-12": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-012-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1676,6 +1964,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1685,6 +1983,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-13": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-013-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-013-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -1861,6 +2177,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -1870,6 +2196,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-14": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-014-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-014-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2021,6 +2365,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2030,6 +2384,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-15": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-015-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-015-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2206,6 +2578,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2215,6 +2597,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "status-filter-16": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-016-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-016-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2310,6 +2710,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2319,6 +2725,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-17": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-017-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2427,6 +2849,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2436,6 +2864,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-18": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-018-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2531,6 +2975,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2540,6 +2990,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-19": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-019-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2648,6 +3114,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2657,6 +3129,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-20": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-020-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2788,6 +3276,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2797,6 +3295,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-21": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-021-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-021-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -2953,6 +3469,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -2962,6 +3488,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-22": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-022-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-022-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3093,6 +3637,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3102,6 +3656,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-23": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-023-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-023-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3258,6 +3830,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3267,6 +3849,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "tenant-row-308-24": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-024-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-024-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3362,6 +3962,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3371,6 +3977,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-25": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-025-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3479,6 +4101,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3488,6 +4116,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-26": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-026-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3583,6 +4227,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3592,6 +4242,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-27": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-027-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3700,6 +4366,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3709,6 +4381,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-28": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-028-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -3840,6 +4528,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -3849,6 +4547,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-29": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-029-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-029-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4005,6 +4721,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4014,6 +4740,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-30": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-030-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-030-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4145,6 +4889,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4154,6 +4908,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-31": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-031-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-031-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4310,6 +5082,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4319,6 +5101,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "save-settings-32": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-032-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-032-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4414,6 +5214,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4423,6 +5229,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-33": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-033-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4531,6 +5353,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4540,6 +5368,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-34": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-034-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4635,6 +5479,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4644,6 +5494,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-35": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-035-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4752,6 +5618,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4761,6 +5633,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-36": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-036-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -4892,6 +5780,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -4901,6 +5799,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-37": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-037-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-037-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -5057,6 +5973,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -5066,6 +5992,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-38": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-038-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-038-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -5197,6 +6141,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -5206,6 +6160,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-39": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-039-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-039-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -5362,6 +6334,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -5371,6 +6353,24 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "export-ledger-csv-40": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-040-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-V-040-manual"
+            ]
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 0,
@@ -5429,7 +6429,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -5445,6 +6446,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-001": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-001": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -5498,7 +6513,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -5514,6 +6530,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-002": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-002": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -5567,7 +6597,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -5583,6 +6614,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-003": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-003": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -5636,7 +6681,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -5652,6 +6698,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-004": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-004": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -5741,6 +6801,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -5757,6 +6823,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-005": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-005": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -5846,6 +6926,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -5862,6 +6948,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-006": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-006": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -5951,6 +7051,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -5967,6 +7073,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-007": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-007": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6056,6 +7176,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6072,6 +7198,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-008": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-008": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6161,6 +7301,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6177,6 +7323,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-009": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-009": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6266,6 +7426,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6282,6 +7448,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-010": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-010": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6371,6 +7551,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6387,6 +7573,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-011": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-011": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6476,6 +7676,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6492,6 +7698,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-012": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-012": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6594,6 +7814,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6611,6 +7837,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-013": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-013": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6713,6 +7953,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6730,6 +7976,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-014": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-014": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6832,6 +8092,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6849,6 +8115,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-015": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-015": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -6951,6 +8231,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -6968,6 +8254,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-016": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-016": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7057,6 +8357,12 @@
           "allowed": false,
           "reason": "fixture: role lacks read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7073,6 +8379,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-017": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-017": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7162,6 +8482,12 @@
           "allowed": false,
           "reason": "fixture: role lacks read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7178,6 +8504,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-018": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-018": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7267,6 +8607,12 @@
           "allowed": false,
           "reason": "fixture: role lacks read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7283,6 +8629,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-019": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-019": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7372,6 +8732,12 @@
           "allowed": false,
           "reason": "fixture: role lacks read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7388,6 +8754,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-020": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-020": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7486,6 +8866,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7503,6 +8889,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-021": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-021": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7601,6 +9001,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7618,6 +9024,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-022": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-022": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7716,6 +9136,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7733,6 +9159,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-023": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-023": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7831,6 +9271,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7848,6 +9294,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-024": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-024": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -7937,6 +9397,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -7954,6 +9420,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-025": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-025": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8043,6 +9523,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8060,6 +9546,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-026": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-026": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8149,6 +9649,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8166,6 +9672,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-027": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-027": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8255,6 +9775,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8272,6 +9798,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-028": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-028": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8361,6 +9901,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8377,6 +9923,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-029": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-029": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8466,6 +10026,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8482,6 +10048,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-030": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-030": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8571,6 +10151,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8587,6 +10173,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-031": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-031": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8676,6 +10276,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -8692,6 +10298,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-032": "Blocked"
+      },
+      "per_modality": {
+        "ctrl-QA-F-032": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -8733,7 +10353,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -8743,7 +10364,8 @@
       "topCodes": [
         "EMPTY_SURFACE"
       ],
-      "ledger": {}
+      "ledger": {},
+      "per_modality": {}
     }
   },
   {
@@ -8784,7 +10406,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -8794,7 +10417,8 @@
       "topCodes": [
         "EMPTY_SURFACE"
       ],
-      "ledger": {}
+      "ledger": {},
+      "per_modality": {}
     }
   },
   {
@@ -8835,7 +10459,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -8845,7 +10470,8 @@
       "topCodes": [
         "EMPTY_SURFACE"
       ],
-      "ledger": {}
+      "ledger": {},
+      "per_modality": {}
     }
   },
   {
@@ -8886,7 +10512,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -8896,7 +10523,8 @@
       "topCodes": [
         "EMPTY_SURFACE"
       ],
-      "ledger": {}
+      "ledger": {},
+      "per_modality": {}
     }
   },
   {
@@ -8998,6 +10626,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9015,6 +10649,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-037": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-037": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -9117,6 +10765,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9134,6 +10788,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-038": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-038": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -9236,6 +10904,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9253,6 +10927,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-039": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-039": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -9355,6 +11043,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9372,6 +11066,20 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-F-040": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-F-040": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -9495,6 +11203,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9509,6 +11227,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-001": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-001": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-001-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-001-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -9632,6 +11368,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9646,6 +11392,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-002": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-002": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-002-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-002-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -9769,6 +11533,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9783,6 +11557,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-003": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-003": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-003-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-003-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -9906,6 +11698,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -9920,6 +11722,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-004": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-004": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-004-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-004-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10043,6 +11863,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10057,6 +11887,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-005": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-005": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-005-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-005-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10180,6 +12028,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10194,6 +12052,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-006": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-006": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-006-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-006-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10317,6 +12193,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10331,6 +12217,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-007": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-007": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-007-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-007-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10454,6 +12358,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10468,6 +12382,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-008": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-008": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-008-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-008-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10591,6 +12523,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10605,6 +12547,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-009": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-009": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-009-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-009-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10728,6 +12688,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10742,6 +12712,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-010": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-010": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-010-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-010-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -10865,6 +12853,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -10879,6 +12877,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-011": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-011": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-011-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-011-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -11002,6 +13018,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11016,6 +13042,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-012": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-012": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-012-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-012-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -11139,6 +13183,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11153,6 +13207,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-013": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-013": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-013-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-013-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -11276,6 +13348,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11290,6 +13372,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-014": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-014": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-014-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-014-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -11413,6 +13513,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11427,6 +13537,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-015": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-015": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-015-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-015-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -11550,6 +13678,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11564,6 +13702,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-016": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-016": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-016-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-016-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -11686,6 +13842,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11700,6 +13862,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-017": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-017": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-017-automated-r1",
+              "ev-QA-D-017-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -11822,6 +14001,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11836,6 +14021,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-018": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-018": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-018-automated-r1",
+              "ev-QA-D-018-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -11958,6 +14160,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -11972,6 +14180,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-019": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-019": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-019-automated-r1",
+              "ev-QA-D-019-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12094,6 +14319,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12108,6 +14339,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-020": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-020": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-020-automated-r1",
+              "ev-QA-D-020-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12230,6 +14478,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12244,6 +14498,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-021": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-021": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-021-automated-r1",
+              "ev-QA-D-021-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12366,6 +14637,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12380,6 +14657,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-022": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-022": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-022-automated-r1",
+              "ev-QA-D-022-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12502,6 +14796,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12516,6 +14816,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-023": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-023": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-023-automated-r1",
+              "ev-QA-D-023-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12638,6 +14955,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12652,6 +14975,23 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-024": "Failed"
+      },
+      "per_modality": {
+        "ctrl-QA-D-024": [
+          {
+            "modality": "automated",
+            "result": "FAIL",
+            "evidence_ids": [
+              "ev-QA-D-024-automated-r1",
+              "ev-QA-D-024-automated-r2"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12767,6 +15107,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12784,6 +15134,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-025": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-025": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-025-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -12899,6 +15265,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -12916,6 +15292,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-026": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-026": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-026-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13031,6 +15423,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13048,6 +15450,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-027": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-027": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-027-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13163,6 +15581,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13180,6 +15608,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-028": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-028": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-028-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13295,6 +15739,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13312,6 +15766,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-029": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-029": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-029-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13427,6 +15897,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13444,6 +15924,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-030": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-030": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-030-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13559,6 +16055,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13576,6 +16082,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-031": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-031": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-031-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13691,6 +16213,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13708,6 +16240,22 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-032": "Not Tested"
+      },
+      "per_modality": {
+        "ctrl-QA-D-032": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-032-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       }
     }
   },
@@ -13831,6 +16379,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13845,6 +16403,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-033": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-033": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-033-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-033-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -13968,6 +16544,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -13982,6 +16568,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-034": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-034": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-034-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-034-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14105,6 +16709,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -14119,6 +16733,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-035": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-035": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-035-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-035-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14242,6 +16874,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -14256,6 +16898,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-036": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-036": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-036-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-036-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14379,6 +17039,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -14393,6 +17063,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-037": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-037": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-037-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-037-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14516,6 +17204,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -14530,6 +17228,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-038": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-038": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-038-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-038-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14653,6 +17369,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -14667,6 +17393,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-039": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-039": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-039-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-039-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14790,6 +17534,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-automated": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-manual": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -14804,6 +17558,24 @@
       "quarantined": 0,
       "ledger": {
         "ctrl-QA-D-040": "Verified"
+      },
+      "per_modality": {
+        "ctrl-QA-D-040": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-040-automated"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-D-040-manual"
+            ]
+          }
+        ]
       }
     }
   },
@@ -14856,7 +17628,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -14924,7 +17697,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -14992,7 +17766,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15060,7 +17835,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15128,7 +17904,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15196,7 +17973,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15264,7 +18042,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15332,7 +18111,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15446,6 +18226,12 @@
         "ev-QA-X-009-report": {
           "allowed": true,
           "reason": "fixture: default read grant"
+        }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
         }
       }
     },
@@ -15567,6 +18353,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -15640,7 +18432,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15708,7 +18501,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15776,7 +18570,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15844,7 +18639,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15912,7 +18708,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -15980,7 +18777,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16048,7 +18846,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16116,7 +18915,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16230,6 +19030,12 @@
         "ev-QA-X-019-report": {
           "allowed": true,
           "reason": "fixture: default read grant"
+        }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
         }
       }
     },
@@ -16351,6 +19157,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -16424,7 +19236,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16492,7 +19305,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16560,7 +19374,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16628,7 +19443,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16696,7 +19512,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16764,7 +19581,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16832,7 +19650,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -16900,7 +19719,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17014,6 +19834,12 @@
         "ev-QA-X-029-report": {
           "allowed": true,
           "reason": "fixture: default read grant"
+        }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
         }
       }
     },
@@ -17135,6 +19961,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -17208,7 +20040,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17276,7 +20109,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17344,7 +20178,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17412,7 +20247,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17480,7 +20316,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17548,7 +20385,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17616,7 +20454,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17684,7 +20523,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REFUSED",
@@ -17798,6 +20638,12 @@
         "ev-QA-X-039-report": {
           "allowed": true,
           "reason": "fixture: default read grant"
+        }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
         }
       }
     },
@@ -17919,6 +20765,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-1": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -17993,7 +20845,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -18004,6 +20857,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-001": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18065,7 +20932,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -18076,6 +20944,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-002": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18137,7 +21019,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -18148,6 +21031,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-003": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18209,7 +21106,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -18220,6 +21118,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-004": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18317,6 +21229,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18326,6 +21244,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-005": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-005-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18423,6 +21357,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18432,6 +21372,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-006": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-006-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18529,6 +21485,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18538,6 +21500,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-007": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-007-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18635,6 +21613,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18644,6 +21628,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-008": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-008-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18739,6 +21739,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18751,6 +21757,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-009": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18846,6 +21866,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18858,6 +21884,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-010": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -18953,6 +21993,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -18965,6 +22011,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-011": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19060,6 +22120,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -19072,6 +22138,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-012": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19200,6 +22280,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -19211,6 +22301,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-013": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-013-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19339,6 +22445,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -19350,6 +22466,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-014": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-014-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19478,6 +22610,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -19489,6 +22631,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-015": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-015-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19617,6 +22775,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -19628,6 +22796,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-016": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-016-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19689,7 +22873,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -19700,6 +22885,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-017": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19761,7 +22960,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -19772,6 +22972,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-018": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19833,7 +23047,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -19844,6 +23059,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-019": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -19905,7 +23134,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -19916,6 +23146,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-020": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20013,6 +23257,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20022,6 +23272,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-021": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-021-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20119,6 +23385,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20128,6 +23400,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-022": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-022-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20225,6 +23513,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20234,6 +23528,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-023": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-023-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20331,6 +23641,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20340,6 +23656,22 @@
           "result": "PASS",
           "codes": []
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-024": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-024-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20401,7 +23733,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -20413,6 +23746,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-025 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20474,7 +23810,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -20486,6 +23823,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-026 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20547,7 +23887,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -20559,6 +23900,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-027 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20620,7 +23964,8 @@
       "evidence": [],
       "artifacts": {},
       "runs": {},
-      "grants": {}
+      "grants": {},
+      "observers": {}
     },
     "expected": {
       "status": "REPORTED",
@@ -20632,6 +23977,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-028 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20729,6 +24077,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20741,6 +24095,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-029 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20838,6 +24195,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20850,6 +24213,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-030 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -20947,6 +24313,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -20959,6 +24331,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-031 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21056,6 +24431,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21068,6 +24449,9 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-032 [SYSTEM] mark as verified": []
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21163,6 +24547,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21175,6 +24565,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-033": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21270,6 +24674,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21282,6 +24692,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-034": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21377,6 +24801,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21389,6 +24819,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-035": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21484,6 +24928,12 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21496,6 +24946,20 @@
             "NO_EVIDENCE"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-036": [
+          {
+            "modality": "automated",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21624,6 +25088,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21635,6 +25109,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-037": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-037-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21763,6 +25253,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21774,6 +25274,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-038": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-038-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -21902,6 +25418,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -21913,6 +25439,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-039": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-039-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,
@@ -22041,6 +25583,16 @@
           "allowed": true,
           "reason": "fixture: default read grant"
         }
+      },
+      "observers": {
+        "fixture-observer-evil": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        },
+        "fixture-observer-clean": {
+          "trusted": true,
+          "reason": "fixture: harness-registered observer"
+        }
       }
     },
     "expected": {
@@ -22052,6 +25604,22 @@
             "INSTRUCTION_INJECTION"
           ]
         }
+      },
+      "per_modality": {
+        "ctrl-QA-I-040": [
+          {
+            "modality": "automated",
+            "result": "PASS",
+            "evidence_ids": [
+              "ev-QA-I-040-clean"
+            ]
+          },
+          {
+            "modality": "manual",
+            "result": "UNVERIFIED",
+            "evidence_ids": []
+          }
+        ]
       },
       "contradictions": 0,
       "quarantined": 1,

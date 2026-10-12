@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "208bdfe26bcf43d0243418f034bac09efaf7ec1e47e1f24eb85855dcc91a8ce6",
+  "corpus_digest": "f8204cc6a29ebdafafe0f2a071eb4614b639604392e1e6b7860c80dff726277a",
   "files": [
     {
       "path": "README.md",
@@ -7,15 +7,15 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "cbb754218e3dfb8a407d26c2abb1ef62451a8d4d09c99b4fe0c5ef7d1ffd1f43"
+      "sha256": "d96c203dda8eaf17486d3909b75ce9519783e25ab37469d118e1ff718d352261"
     },
     {
       "path": "corpus/freeze-corpus.js",
-      "sha256": "879c8df60a08fb982987e18c309b07391c509f6e03351ff7df43a72b5d2e2aa3"
+      "sha256": "8635f18f7f97ecd36390e734cff7412c312ffe575846b51a1c0c13107db123b9"
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "30dcf41f951660492f61a10a66fa513edb02fa27c0b2342968d6bdad58c76a7b"
+      "sha256": "53fc6faca171dcfaa941269dccbf175db7c945ba2865d1d38101b375b625efb4"
     },
     {
       "path": "fixtures/artifacts.json",
@@ -34,6 +34,10 @@
       "sha256": "fb57b1c1e956921842743688c1d59d8d50028ab579d63771681b9b632db709f4"
     },
     {
+      "path": "fixtures/observers.json",
+      "sha256": "d50d97b155d3b954e8b77f735b0fa77d8d1a726a5ebc35a91b4b603466e3067b"
+    },
+    {
       "path": "fixtures/runs.json",
       "sha256": "1ffb4483d3d3edd40543dd88214e74fb44985f73e41c87c06f09ee6d9ae552ca"
     },
@@ -43,15 +47,15 @@
     },
     {
       "path": "runner/run-manual.js",
-      "sha256": "ff1fe82330fab6f16693d0c6da87072bfcaa177b6caa6cdbe53f65800d2b96d1"
+      "sha256": "959509afae8e37b9f7889d716f9f8dfffb9842d77cf44630cc3528df607a7929"
     },
     {
       "path": "src/classify.js",
-      "sha256": "8a6ba12dff386dda96dd23766ecd7b5f4e2d8fdc070cbfd56cfea70849a91c1a"
+      "sha256": "24d1a1ee663fb03a47d31de8fdb74647952655b6d6220cfea796e88343b01634"
     },
     {
       "path": "src/index.js",
-      "sha256": "a03fbb73dba45c20ceb0959f8275dac64e21ebf760e26c0ac3d57a4af5494d90"
+      "sha256": "be6ae5f18a4d46dea480b8f8a69d876e4e9a2476f24bdfc844750b68d423cf3a"
     },
     {
       "path": "src/injection.js",
@@ -67,35 +71,51 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "904486d77b5b202ead8acf7ad2569fda5af650f4dc3aaa3d55074dbd41ec266a"
+      "sha256": "56b4f2d9412b1a802a6cf044be32e15b2eff01dbd1587a714eefc6d97650fa7c"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "e5fd3611378da70912e0f77d737b59ff15d73f955dade14b86d8cceebc8a15ec"
+      "sha256": "d5b7bf8b716587cc48cb94b194e434870a745a216d8586a3c616e22176d0436a"
     },
     {
       "path": "tests/battery.test.js",
-      "sha256": "90857b32b26981f4170693715907f31a9efb630e027c3d3659accfe6380c55e0"
+      "sha256": "3d8f603a2d9cdcb6aae333d19521a684b842d3690cbb327b14c65f9ea4f3e910"
+    },
+    {
+      "path": "tests/case-worker.js",
+      "sha256": "ccaac5c3cd86ce4d97efd62194c10d035fe07ed473770f1bd4b07a8b545c7228"
     },
     {
       "path": "tests/determinism.test.js",
       "sha256": "489dbd32fd7df8b10f4dc06990a8e7a527f335cf1d1ce0aae7b5e6996465af20"
     },
     {
+      "path": "tests/hang-worker.js",
+      "sha256": "e37bedddcbfc18a3c40b47983101ca1471e5656b541256e41737f763e8d39059"
+    },
+    {
       "path": "tests/harness.js",
-      "sha256": "15f31faaffb2b45964bae64464e67931e49bc351297f12c20266b3f54310917b"
+      "sha256": "b94385b4ed29a198c227694b50264ff11977bbaf859e01356f6a921e880063b3"
     },
     {
       "path": "tests/mutation.test.js",
-      "sha256": "7d9139829872669262a4351a84bd8450d8016290edb26f05ad15b09fcb03268b"
+      "sha256": "1936d1c86c28c93fbfb599ccd375689edf47846cded5bbfeb5da7ba9ace96b62"
+    },
+    {
+      "path": "tests/qai-regressions.test.js",
+      "sha256": "46d091444c76f604ded342e3b0b2c1f46fdf0bfc51b05f1e146e0ace05f5d4b7"
     },
     {
       "path": "tests/run-battery.js",
-      "sha256": "ae3585053ffa27f97c33f8ba6f4774a9e24b7fc052874c8898490f431e395617"
+      "sha256": "32093ed0c22ee27675605f69fd117724c990987d241b50fa7e3e6bfb2604488e"
     },
     {
       "path": "tests/schemas.test.js",
-      "sha256": "f4fde7c2006662a83972befbc5254ab68da7b11f56773e9c75ae57ab92b6411e"
+      "sha256": "2a4762a7e6092bb34c23075bbc2635dc7394667f345af2a1849c8504ef15d069"
+    },
+    {
+      "path": "tests/watchdog.test.js",
+      "sha256": "a9bdc3cbcffa6d66cf34c7328ab65d8f98dc996b9bed463eb2dcc8aca055d740"
     },
     {
       "path": "tests/zerotools.test.js",
