@@ -15,18 +15,58 @@
  *    the supplemental approved_* sets may only narrow that coverage —
  *    they can never contradict or expand it;
  *  - a relay issuer (authorized_muse_relay) must present a relay_record_id
- *    that exists in the separately injected registered relay registry, is
- *    registered by jason, is unrevoked, and is valid at the task clock;
+ *    that resolves to a registration which passes a strict runtime schema
+ *    BEFORE use (required revoked boolean, calendar-valid dates, known
+ *    properties only, no duplicate conflicting IDs), is registered by
+ *    jason, is unrevoked, and is valid at the task clock;
+ *  - the relay registry is consulted (budgeted) input: its envelope is
+ *    bounded before scanning and every inspected record is counted, so a
+ *    padded registry cannot silently authorize restricted routing;
  *  - clock window, revocation, and nonce checks are retained.
  *
  * checkApproval stays pure; resolveApproval walks the injected store and
  * budgets every inspected record through the host counter.
  */
 
-import { validateApprovalRecord } from "./schemas.js";
+import { validateApprovalRecord, validateRelayRegistration, strictDateMs } from "./schemas.js";
+import { canonicalJson } from "./canonical.js";
 
 /** Jason-origin issuers. No aliases, no inference. */
 const TRUSTED_ISSUERS = ["jason", "authorized_muse_relay"];
+
+/**
+ * Find a registration by ID in the injected relay registry (EM-002 +
+ * EM-005). Every inspected record is a consulted object and is budgeted
+ * through the host counters: registry envelope (one serialized store
+ * read) plus each inspected record (distinct returned reads) — the same
+ * charging model as the approval store. Duplicate relay_record_id values
+ * whose contents conflict are rejected; a full scan is required to detect
+ * them, and the scan is bounded by the object budget.
+ * Returns {ok:true, found} or {ok:false, code, reason}.
+ */
+function matchRelayRegistration(relays, relayRecordId, countObject, countPayload) {
+  const list = Array.isArray(relays) ? relays : [];
+  let found = null;
+  const seen = new Map();
+  for (const r of list) {
+    countObject();
+    countPayload(r, "relay registration record");
+    const id = r !== null && typeof r === "object" ? r.relay_record_id : undefined;
+    if (typeof id === "string" && seen.has(id)) {
+      if (canonicalJson(seen.get(id)) !== canonicalJson(r)) {
+        return {
+          ok: false,
+          code: "RELAY_UNREGISTERED",
+          reason: `duplicate conflicting relay_record_id ${JSON.stringify(id)} in the relay registry`,
+        };
+      }
+      continue;
+    }
+    seen.set(id, r);
+    if (id === relayRecordId) found = r;
+  }
+  return { ok: true, found };
+}
 
 /**
  * Check one approval record against the planning requirement.
@@ -38,10 +78,11 @@ const TRUSTED_ISSUERS = ["jason", "authorized_muse_relay"];
  *   scopeIds,             // restricted scope IDs the plan needs covered
  *   actionIds,            // restricted action IDs the plan needs covered
  * }
- * relays = registered relay registry entries:
- *   [{relay_record_id, registered_by, valid_from, expires_at, revoked}]
+ * relays = registered relay registry entries. countObject/countPayload are
+ * the host budget counters: the relay registry is consulted (budgeted)
+ * input like the approval store itself.
  */
-export function checkApproval(rec, requirement, clockMs, relays = []) {
+export function checkApproval(rec, requirement, clockMs, relays = [], countObject = () => {}, countPayload = () => {}) {
   const shapeErr = validateApprovalRecord(rec);
   if (shapeErr) return { ok: false, code: "AUTH_UNVERIFIED", reason: `malformed approval record: ${shapeErr}` };
   if (typeof rec.issuer !== "string" || !TRUSTED_ISSUERS.includes(rec.issuer))
@@ -66,26 +107,36 @@ export function checkApproval(rec, requirement, clockMs, relays = []) {
     return { ok: false, code: "TARGET_MISMATCH", reason: "approval resource does not match the brief path" };
 
   // EM-002: registered relay validation. A non-null relay_record_id alone is
-  // never sufficient — it must be a live registration in the injected
-  // registry.
+  // never sufficient — it must resolve to a live registration in the
+  // injected registry. The registration's runtime schema is validated
+  // BEFORE use: required `revoked` boolean (missing never defaults to
+  // unrevoked), calendar-valid dates (2026-02-30 is rejected), known
+  // properties only, and no duplicate conflicting registration IDs.
   if (rec.issuer === "authorized_muse_relay") {
     if (typeof rec.relay_record_id !== "string" || rec.relay_record_id.length === 0)
       return { ok: false, code: "AUTH_UNVERIFIED", reason: "relay issuer requires a relay_record_id" };
-    const reg = (Array.isArray(relays) ? relays : []).find(
-      (r) => r && r.relay_record_id === rec.relay_record_id
-    );
+    // EM-005: the relay registry is consulted input — its envelope is
+    // bounded before any record is scanned, so a padded registry cannot
+    // authorize restricted routing.
+    countPayload(relays, "relay registry");
+    const match = matchRelayRegistration(relays, rec.relay_record_id, countObject, countPayload);
+    if (!match.ok) return match;
+    const reg = match.found;
     if (!reg)
       return {
         ok: false,
         code: "RELAY_UNREGISTERED",
         reason: `relay_record_id ${rec.relay_record_id} is not a registered relay`,
       };
+    const regErr = validateRelayRegistration(reg);
+    if (regErr)
+      return { ok: false, code: "RELAY_UNREGISTERED", reason: `malformed relay registration: ${regErr}` };
     if (reg.registered_by !== "jason")
       return { ok: false, code: "RELAY_UNREGISTERED", reason: "relay registration is not Jason-registered" };
     if (reg.revoked)
       return { ok: false, code: "RELAY_UNREGISTERED", reason: "relay registration is revoked" };
-    const from = Date.parse(reg.valid_from);
-    const until = Date.parse(reg.expires_at);
+    const from = strictDateMs(reg.valid_from);
+    const until = strictDateMs(reg.expires_at);
     if (!Number.isFinite(from) || !Number.isFinite(until) || clockMs < from || clockMs >= until)
       return { ok: false, code: "RELAY_UNREGISTERED", reason: "relay registration is not valid at the task clock" };
   }
@@ -154,7 +205,7 @@ export function resolveApproval(
   for (const rec of approvals) {
     countObject();
     countPayload(rec, "approval record");
-    const r = checkApproval(rec, requirement, clockMs, relays);
+    const r = checkApproval(rec, requirement, clockMs, relays, countObject, countPayload);
     if (r.ok) return { ok: true, record: rec };
     if (!first) first = r;
   }

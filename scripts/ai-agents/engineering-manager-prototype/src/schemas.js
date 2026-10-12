@@ -263,6 +263,40 @@ export function validateClock(clock) {
   return null;
 }
 
+const RELAY_REGISTRATION_KEYS = ["relay_record_id", "registered_by", "valid_from", "expires_at", "revoked"];
+
+/**
+ * Strict runtime schema for a relay registration record (EM-002).
+ * Validated BEFORE the registration is used to authorize anything:
+ *  - required `revoked` boolean — a missing field never defaults to
+ *    unrevoked;
+ *  - calendar-valid validity dates via the strict date checker — rollover
+ *    dates such as 2026-02-30 are rejected, not silently rolled forward;
+ *  - known properties only — unknown control fields are rejected.
+ * Returns null when valid, else a reason.
+ */
+export function validateRelayRegistration(reg) {
+  if (!isPlainObject(reg)) return "registration must be an object";
+  for (const k of Object.keys(reg)) {
+    if (!RELAY_REGISTRATION_KEYS.includes(k)) return `unknown registration property: ${k}`;
+  }
+  if (!isNonEmptyString(reg.relay_record_id)) return "relay_record_id must be a non-empty string";
+  if (!isNonEmptyString(reg.registered_by)) return "registered_by must be a non-empty string";
+  if (!isValidDateString(reg.valid_from)) return "valid_from must be a real UTC ISO timestamp";
+  if (!isValidDateString(reg.expires_at)) return "expires_at must be a real UTC ISO timestamp";
+  if (typeof reg.revoked !== "boolean") return "revoked must be a boolean";
+  return null;
+}
+
+/**
+ * Strict ISO/Zulu timestamp to epoch milliseconds. The input must pass
+ * isValidDateString (which rejects calendar rollover), so the parsed
+ * value is a real instant. Returns NaN when invalid.
+ */
+export function strictDateMs(s) {
+  return isValidDateString(s) ? Date.parse(s) : NaN;
+}
+
 const SPAN_KEYS = ["byte_start", "byte_end", "label"];
 
 /**

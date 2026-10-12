@@ -56,12 +56,14 @@ function authenticateTrustRoot() {
 
 let run;
 let canonicalJson;
+let buildPlan;
 
 before(async () => {
   authenticateTrustRoot();
   const mod = await import(pathToFileURL(join(ROOT, "src", "index.js")).href);
   run = mod.run;
   canonicalJson = mod.canonicalJson;
+  buildPlan = mod.buildPlan;
 });
 
 /* ---------------- fixture builders ---------------- */
@@ -216,7 +218,7 @@ describe("EM-001 source content/objective/evidence binding", () => {
     assert.ok(diagCodes(out).includes("SPAN_INVALID"));
   });
 
-  it("valid spans plan and emit grounded node evidence", () => {
+  it("valid spans plan and emit contract-conforming SourceRef/Citation evidence", () => {
     const br = brief("objective-em1h", ["general"], [spec("a", {}), spec("b", { deps: ["a"] })]);
     // Cite the objective_id region: it precedes task_specs in canonical key
     // order, so the offset is stable when the span values are filled in.
@@ -231,16 +233,48 @@ describe("EM-001 source content/objective/evidence binding", () => {
     const { out, ref } = planCase({ briefForPin: br });
     assert.equal(out.status, "PLANNED");
     const node = out.nodes.find((n) => n.local_key === "a");
+    // Whole-brief evidence: a complete verified SourceRef with an explicit
+    // evidence role (common contract provenance schema).
     const briefCite = node.evidence.find((e) => e.kind === "brief_citation");
     assert.ok(briefCite, "node carries a brief citation");
-    assert.equal(briefCite.brief_ref.blob, ref.blob);
+    assert.equal(briefCite.role, "whole-brief-verified-source");
     assert.equal(briefCite.objective_id, "objective-em1h");
+    assert.equal(briefCite.verification, "VERIFIED");
+    assert.deepEqual(briefCite.source_ref, {
+      repo: ref.repo,
+      path: ref.path,
+      commit: ref.commit,
+      blob: ref.blob, // independently recomputed, never the supplied label alone
+      algorithm: "git-sha1",
+      revision: ref.revision,
+    });
+    // Span evidence: contract Citation records. Derived excerpts equal BOTH
+    // quoted fields AND the exact UTF-8 slice of the resolved bytes.
     const spanCite = node.evidence.find((e) => e.kind === "source_citation");
     assert.ok(spanCite, "node carries a source citation");
-    assert.equal(spanCite.byte_start, start);
-    assert.equal(spanCite.byte_end, end);
-    assert.equal(spanCite.excerpt, target);
-    assert.equal(spanCite.brief_ref.blob, ref.blob);
+    assert.equal(spanCite.label, "objective");
+    const c = spanCite.citation;
+    assert.deepEqual(
+      { repo: c.repo, path: c.path, commit: c.commit, blob: c.blob, algorithm: c.algorithm, revision: c.revision },
+      { repo: ref.repo, path: ref.path, commit: ref.commit, blob: ref.blob, algorithm: "git-sha1", revision: ref.revision }
+    );
+    assert.equal(c.quoted_span, target);
+    assert.deepEqual(c.span, { start_byte: start, end_byte: end, quoted_text: target });
+    assert.equal(c.quoted_span, c.span.quoted_text, "quoted_span and span.quoted_text are exactly equal");
+    assert.equal(c.verification, "VERIFIED");
+  });
+
+  it("evidence is a detached snapshot: mutating a result cannot alter the next run", () => {
+    const br = brief("objective-em1i", ["general"], [spec("a", { spans: [{ byte_start: 0, byte_end: 10 }] })]);
+    const first = planCase({ briefForPin: br }).out;
+    assert.equal(first.status, "PLANNED");
+    const canon1 = canonicalJson(first);
+    // Hostile caller mutation of the returned object.
+    first.nodes[0].evidence.push({ kind: "forged" });
+    first.nodes[0].evidence[1].citation.quoted_span = "MUTATED";
+    first.status = "MUTATED";
+    const second = planCase({ briefForPin: br }).out;
+    assert.equal(canonicalJson(second), canon1, "re-run is byte-identical: returned objects are detached");
   });
 });
 
@@ -377,6 +411,81 @@ describe("EM-002 approval target and authenticated binding", () => {
     const { out } = planCase({ briefForPin: br, path, approvals: [appr], relays });
     assert.equal(out.status, "PLANNED");
     assert.equal(out.planning_state, "approval_verified");
+  });
+
+  it("relay registration with a rollover date (2026-02-30) fails closed", () => {
+    const br = restrictedBrief();
+    const path = "commands/chatgpt/brief-em2k.md";
+    const appr = approvalFor(br, path, { issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-x" });
+    const relays = [{
+      relay_record_id: "relay-x",
+      registered_by: "jason",
+      valid_from: "2026-02-30T00:00:00Z", // impossible date: must not authenticate
+      expires_at: "2027-01-01T00:00:00Z",
+      revoked: false,
+    }];
+    const { out } = planCase({ briefForPin: br, path, approvals: [appr], relays });
+    const r = blockedApprovalCodes(out);
+    assert.equal(r.status, "BLOCKED");
+    assert.ok(r.codes.includes("RELAY_UNREGISTERED"), `codes: ${r.codes}`);
+  });
+
+  it("relay registration with a missing revoked field fails closed", () => {
+    const br = restrictedBrief();
+    const path = "commands/chatgpt/brief-em2l.md";
+    const appr = approvalFor(br, path, { issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-x" });
+    const relays = [{
+      relay_record_id: "relay-x",
+      registered_by: "jason",
+      valid_from: "2026-01-01T00:00:00Z",
+      expires_at: "2027-01-01T00:00:00Z",
+      // no revoked field: must never default to unrevoked
+    }];
+    const { out } = planCase({ briefForPin: br, path, approvals: [appr], relays });
+    assert.ok(blockedApprovalCodes(out).codes.includes("RELAY_UNREGISTERED"));
+  });
+
+  it("relay registration with an unknown control field fails closed", () => {
+    const br = restrictedBrief();
+    const path = "commands/chatgpt/brief-em2m.md";
+    const appr = approvalFor(br, path, { issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-x" });
+    const relays = [{
+      relay_record_id: "relay-x",
+      registered_by: "jason",
+      valid_from: "2026-01-01T00:00:00Z",
+      expires_at: "2027-01-01T00:00:00Z",
+      revoked: false,
+      extra_control: "smuggled",
+    }];
+    const { out } = planCase({ briefForPin: br, path, approvals: [appr], relays });
+    assert.ok(blockedApprovalCodes(out).codes.includes("RELAY_UNREGISTERED"));
+  });
+
+  it("duplicate conflicting registration IDs fail closed", () => {
+    const br = restrictedBrief();
+    const path = "commands/chatgpt/brief-em2n.md";
+    const appr = approvalFor(br, path, { issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-x" });
+    const relays = [
+      { relay_record_id: "relay-x", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
+      { relay_record_id: "relay-x", registered_by: "mallory", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
+    ];
+    const { out } = planCase({ briefForPin: br, path, approvals: [appr], relays });
+    assert.ok(blockedApprovalCodes(out).codes.includes("RELAY_UNREGISTERED"));
+  });
+
+  it("relay registration outside the clock window fails closed", () => {
+    const br = restrictedBrief();
+    const path = "commands/chatgpt/brief-em2o.md";
+    const appr = approvalFor(br, path, { issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-x" });
+    const relays = [{
+      relay_record_id: "relay-x",
+      registered_by: "jason",
+      valid_from: "2027-01-01T00:00:00Z",
+      expires_at: "2028-01-01T00:00:00Z",
+      revoked: false,
+    }];
+    const { out } = planCase({ briefForPin: br, path, approvals: [appr], relays });
+    assert.ok(blockedApprovalCodes(out).codes.includes("RELAY_UNREGISTERED"));
   });
 
   it("host revalidation rejects a changed target (approval for brief A, planning brief B)", () => {
@@ -557,38 +666,69 @@ describe("EM-004 canonical semantic task-spec comparison", () => {
       "uncertainty is explicit on every node"
     );
     assert.ok(!diagCodes(out).includes("CONFLICTING_SPEC"));
+    assert.equal(out.complete, false, "public complete reflects unresolved related coverage");
+  });
+
+  it("hash-mismatched related source marks coverage incomplete (complete:false)", () => {
+    const br = brief("objective-em4v", ["general"], [spec("k", {})]);
+    const rbr = brief("objective-em4v-rel", ["general"], [spec("k", {})]);
+    const { out } = planCase({
+      briefForPin: br,
+      path: "commands/chatgpt/brief-em4v.md",
+      related: [{ path: "commands/chatgpt/brief-em4v-rel.md", brief: rbr, storeBrief: brief("objective-em4v-rel", ["general"], [spec("k", { title: "Tampered" })]) }],
+    });
+    assert.equal(out.status, "PLANNED");
+    assert.ok(diagCodes(out).includes("RELATED_SOURCE_UNVERIFIED"));
+    assert.equal(out.complete, false, "changed related bytes under the pin are incomplete coverage");
+  });
+
+  it("resolvable related brief with no conflicts stays complete:true", () => {
+    const br = brief("objective-em4w", ["general"], [spec("k", {})]);
+    const rbr = brief("objective-em4w-rel", ["general"], [spec("k", {})]);
+    const { out } = planCase({
+      briefForPin: br,
+      path: "commands/chatgpt/brief-em4w.md",
+      related: [{ path: "commands/chatgpt/brief-em4w-rel.md", brief: rbr }],
+    });
+    assert.equal(out.status, "PLANNED");
+    assert.ok(!diagCodes(out).includes("RELATED_SOURCE_UNVERIFIED"));
+    assert.equal(out.complete, true, "fully resolved coverage is complete");
   });
 });
 
 /* ---------------- EM-005: budgets and the host watchdog ---------------- */
 
 describe("EM-005 scoped budgets (exact limit / limit+1)", () => {
-  it("related sources: 63 resolve within the 64-object budget, the 64th exceeds it", () => {
+  it("related sources: 62 resolve within the 64-object budget, the 63rd exceeds it", () => {
+    // Object budget: 1 (primary brief) + 1 (owner registry, one consulted
+    // store object) + 1 per related brief = 64 at 62 related sources.
     const mkRelated = (n) =>
       Array.from({ length: n }, (_, i) => ({
         path: `commands/chatgpt/brief-em5r-${i}.md`,
         brief: brief(`objective-em5r-${i}`, ["general"], [spec(`rk${i}`, { title: `Related ${i}` })]),
       }));
     const br = brief("objective-em5s", ["general"], [spec("a", {})]);
-    const okOut = planCase({ briefForPin: br, path: "commands/chatgpt/brief-em5s.md", related: mkRelated(63) }).out;
-    assert.equal(okOut.status, "PLANNED", `63 related sources must plan, got ${okOut.status}`);
-    const overOut = planCase({ briefForPin: br, path: "commands/chatgpt/brief-em5s.md", related: mkRelated(64) }).out;
+    const okOut = planCase({ briefForPin: br, path: "commands/chatgpt/brief-em5s.md", related: mkRelated(62) }).out;
+    assert.equal(okOut.status, "PLANNED", `62 related sources must plan, got ${okOut.status}`);
+    const overOut = planCase({ briefForPin: br, path: "commands/chatgpt/brief-em5s.md", related: mkRelated(63) }).out;
     assert.equal(overOut.status, "REFUSED");
     assert.ok(diagCodes(overOut).includes("BUDGET_EXCEEDED"), `codes: ${diagCodes(overOut)}`);
     assert.equal(overOut.complete, false, "no partial success on exhaustion");
   });
 
-  it("approval records: 63 inspected within budget, the 64th exceeds it", () => {
+  it("approval records: 62 inspected within budget, the 63rd exceeds it", () => {
+    // Object budget: 1 (primary brief) + 1 (owner registry) + 1 per
+    // inspected approval record = 64 at 62 records.
     const br = restrictedBrief();
     const path = "commands/chatgpt/brief-em5t.md";
     const mkApprovals = (n) =>
       Array.from({ length: n }, (_, i) => approvalFor(br, path, { record_id: `appr-bad-${i}`, issuer: "mallory", origin: "jason" }));
-    // 63 invalid records: every record is inspected and budgeted, then the
+    // 62 invalid records: every record is inspected and budgeted, then the
     // plan is blocked for lack of a valid approval (not refused).
-    const okOut = planCase({ briefForPin: br, path, approvals: mkApprovals(63) }).out;
-    assert.equal(okOut.status, "BLOCKED", `63 records must block (not refuse), got ${okOut.status}`);
+    const okOut = planCase({ briefForPin: br, path, approvals: mkApprovals(62) }).out;
+    assert.equal(okOut.status, "BLOCKED", `62 records must block (not refuse), got ${okOut.status}`);
     assert.ok(diagCodes(okOut).includes("AUTH_UNVERIFIED"));
-    const overOut = planCase({ briefForPin: br, path, approvals: mkApprovals(64) }).out;
+    const overOut = planCase({ briefForPin: br, path, approvals: mkApprovals(63) }).out;
     assert.equal(overOut.status, "REFUSED");
     assert.ok(diagCodes(overOut).includes("BUDGET_EXCEEDED"), `codes: ${diagCodes(overOut)}`);
     assert.equal(overOut.complete, false, "no partial success on exhaustion");
@@ -648,5 +788,108 @@ describe("EM-005 scoped budgets (exact limit / limit+1)", () => {
     assert.equal(out.status, "BLOCKED");
     assert.ok(diagCodes(out).includes("SOURCE_UNVERIFIED"));
     assert.equal(out.complete, true);
+  });
+
+  it("relay registry: consulted relay bytes at exactly the input cap plan, one byte more refuses", () => {
+    const LIMIT = 256 * 1024;
+    const br = restrictedBrief();
+    const path = "commands/chatgpt/brief-em5u.md";
+    const mkRelays = (pad) => [
+      { relay_record_id: "relay-1", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
+      { relay_record_id: "relay-pad", padding: "x".repeat(pad) },
+    ];
+    const mkAppr = () => [approvalFor(br, path, { record_id: "appr-relay-cap", issuer: "authorized_muse_relay", origin: "authorized_muse_relay", relay: "relay-1" })];
+    const inputBytesOf = (relays, owners) => {
+      const ref = briefRef(path, br);
+      const task = { brief_ref: ref, objective_id: br.objective_id, constraints: stdConstraints(), requested_action: "plan", related_brief_refs: [] };
+      const briefs = {};
+      briefs[briefKey(ref)] = { brief: br, blob: ref.blob };
+      const context = { clock: CLOCK, briefs, approvals: mkAppr(), owners, relays };
+      return buildPlan(task, context).budget.inputBytes;
+    };
+    // Charging model: each pad char costs exactly 2 counted bytes — once in
+    // the registry-envelope read, once in the per-record read. An odd slack
+    // is finished with one owner-registry char (counted once).
+    const base = inputBytesOf(mkRelays(0), OWNERS);
+    const slack = LIMIT - base;
+    assert.ok(slack >= 0, "base input must fit within the cap");
+    const pad = Math.floor(slack / 2);
+    const oddOwners = slack % 2 === 1 ? [...OWNERS, "z"] : OWNERS;
+    assert.equal(inputBytesOf(mkRelays(pad), oddOwners), LIMIT, "input lands exactly on the cap");
+    const atOut = planCase({ briefForPin: br, path, approvals: mkAppr(), relays: mkRelays(pad), owners: oddOwners }).out;
+    assert.equal(atOut.status, "PLANNED", `relay bytes exactly at the cap must plan, got ${atOut.status}`);
+    assert.equal(atOut.planning_state, "approval_verified");
+    // One more byte anywhere in the consulted relay input refuses.
+    const overOut = planCase({ briefForPin: br, path, approvals: mkAppr(), relays: mkRelays(pad + 1), owners: oddOwners }).out;
+    assert.equal(overOut.status, "REFUSED");
+    assert.ok(diagCodes(overOut).includes("INPUT_LIMIT"), `codes: ${diagCodes(overOut)}`);
+    assert.equal(overOut.complete, false, "no partial success on exhaustion");
+  });
+
+  it("final output envelope: exactly at the byte cap plans, one byte more refuses (OUTPUT_LIMIT)", () => {
+    const LIMIT = 256 * 1024;
+    const N = 64;
+    const PATH = "commands/chatgpt/brief-em5v.md";
+    const mkBrief = (len, tune = "") => {
+      const specs = [];
+      for (let i = 0; i < N; i++) {
+        specs.push(
+          spec(`z${i}`, {
+            title: `Node ${i}${i === 0 ? tune : ""}`,
+            checks: [{ check_id: `z${i}-ac1`, expected: "x".repeat(len), evidence_kind: "fixture_record" }],
+          })
+        );
+      }
+      return brief("objective-em5v", ["general"], specs);
+    };
+    // Measure the EXACT final public envelope (planner payload + envelope
+    // fields) without the cap, via buildPlan + the same envelope math as
+    // run(). buildPlan throwing (input cap) counts as over.
+    const probeBytes = (len, tune = "") => {
+      const b = mkBrief(len, tune);
+      const ref = briefRef(PATH, b);
+      const task = { brief_ref: ref, objective_id: b.objective_id, constraints: stdConstraints(), requested_action: "plan", related_brief_refs: [] };
+      const briefs = {};
+      briefs[briefKey(ref)] = { brief: b, blob: ref.blob };
+      const context = { clock: CLOCK, briefs, approvals: [], owners: OWNERS, relays: [] };
+      try {
+        const { payload } = buildPlan(task, context);
+        const tid = "em-" + createHash("sha256").update(canonicalJson(task), "utf8").digest("hex").slice(0, 16);
+        const result = {
+          schema_version: "1", agent: "engineering-manager", task_id: tid,
+          advisory: true, fixture_only: true, source_refs: [{ ...task.brief_ref }], ...payload,
+        };
+        return Buffer.byteLength(canonicalJson(result), "utf8");
+      } catch {
+        return Infinity;
+      }
+    };
+    let lo = 0;
+    let hi = 1;
+    while (probeBytes(hi) <= LIMIT) hi *= 2;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (probeBytes(mid) <= LIMIT) lo = mid;
+      else hi = mid - 1;
+    }
+    const L = lo;
+    const atBytes = probeBytes(L);
+    assert.ok(atBytes <= LIMIT, "binary search lands at or under the cap");
+    assert.ok(probeBytes(L + 1) > LIMIT, "one more char per node exceeds the cap");
+    // Fine-tune a single title (each char is 1 output byte, well under the
+    // 512-char title cap) to land EXACTLY on the cap.
+    const tune = "t".repeat(LIMIT - atBytes);
+    assert.ok(tune.length < 64, "tune-up stays within one node's granularity");
+    const exactOut = planCase({ briefForPin: mkBrief(L, tune), path: PATH }).out;
+    assert.equal(probeBytes(L, tune), LIMIT, "final envelope is exactly 256 KiB");
+    assert.equal(exactOut.status, "PLANNED", `envelope exactly at the cap must plan, got ${exactOut.status}`);
+    assert.equal(exactOut.complete, true);
+    // One more byte: a small complete:false refusal with no domain success.
+    const overOut = planCase({ briefForPin: mkBrief(L, tune + "t"), path: PATH }).out;
+    assert.equal(overOut.status, "REFUSED");
+    assert.ok(diagCodes(overOut).includes("OUTPUT_LIMIT"), `codes: ${diagCodes(overOut)}`);
+    assert.equal(overOut.complete, false, "no domain success on exhaustion");
+    assert.equal(overOut.nodes.length, 0);
+    assert.ok(Buffer.byteLength(canonicalJson(overOut), "utf8") < 2048, "the refusal itself is small");
   });
 });

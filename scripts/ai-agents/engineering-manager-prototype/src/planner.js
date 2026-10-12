@@ -33,11 +33,31 @@
  * Budgets (per the common contract): 256 KiB total input UTF-8, 64 resolved
  * objects, 512 evidence spans, 256 output records, 256 KiB output.
  * Exceeding a budget throws PlannerError — never a partial success.
- * Every consulted object and every returned UTF-8 payload is counted
- * (task, primary brief, related briefs, owner registry, approval records),
- * and the complete output envelope (nodes, edges, gates, conflicts,
- * diagnostics, quarantined sources, routing flags) is record-counted —
- * including the early missing-source refusals (EM-005).
+ * Scoped charging model (EM-005): the task envelope, the primary brief,
+ * each related brief, the owner registry (one consulted store object),
+ * the approval store envelope and each inspected approval record, the
+ * relay registry envelope and each inspected registration record are all
+ * counted as objects and/or UTF-8 payloads. The complete output envelope
+ * (nodes, edges, gates, conflicts, diagnostics, quarantined sources,
+ * routing flags) is record-counted — including the early missing-source
+ * refusals.
+ *
+ * Evidence (EM-001): every node cites the verified brief with the common
+ * contract's single provenance schema. SourceRef = {repo, path, commit,
+ * blob, algorithm:"git-sha1", revision}; Citation = SourceRef +
+ * {quoted_span, span:{start_byte,end_byte,quoted_text},
+ * verification:"VERIFIED"}. The blob is the independently recomputed Git
+ * blob SHA-1 of the resolved bytes — never a supplied label. Derived
+ * excerpts equal both quoted fields and the exact UTF-8 slice; the
+ * whole-brief evidence is a complete verified SourceRef with an explicit
+ * evidence role. validateSourceSpans checks byte-range well-formedness
+ * against the resolved bytes; it does not validate an externally asserted
+ * quotation (excerpts here are derived from verified bytes, never asserted
+ * by the brief).
+ *
+ * Completeness (EM-004): the primary brief may plan with explicit
+ * uncertainty, but whenever required related conflict coverage is
+ * unresolved (RELATED_SOURCE_UNVERIFIED), complete is false.
  */
 
 import { canonicalJson, stableNodeId, sha256HexUtf8, gitBlobSha1Utf8 } from "./canonical.js";
@@ -388,7 +408,9 @@ export function buildPlan(task, context) {
     "primary brief spans"
   );
 
-  // The owner registry is consulted input.
+  // The owner registry is consulted input: one consulted store object
+  // (EM-005) plus its serialized bytes.
+  countObject();
   countPayload(owners, "owner registry");
 
   if (brief.task_specs.length > task.constraints.max_nodes) {
@@ -422,24 +444,44 @@ export function buildPlan(task, context) {
   const seenKeys = new Set();
   const duplicateKeys = new Set();
 
-  // EM-001: grounded node evidence. Every node cites the verified brief
-  // (repo/path/commit/recomputed blob + objective) and each validated
-  // source span cites its exact byte range and excerpt.
+  // EM-001: grounded node evidence in the common contract's single
+  // provenance schema. SourceRef = {repo, path, commit, blob,
+  // algorithm:"git-sha1", revision}; Citation = SourceRef + {quoted_span,
+  // span:{start_byte,end_byte,quoted_text}, verification}. The blob is the
+  // independently recomputed Git blob SHA-1 of the resolved bytes — never
+  // a supplied label. Derived excerpts equal BOTH quoted fields and the
+  // exact UTF-8 slice; the whole-brief evidence is a complete verified
+  // SourceRef with an explicit evidence role.
+  const contractSourceRef = {
+    repo: ref.repo,
+    path: ref.path,
+    commit: ref.commit,
+    blob: computedBlob,
+    algorithm: "git-sha1",
+    revision: ref.revision,
+  };
   const briefCitation = {
     kind: "brief_citation",
-    brief_ref: { repo: ref.repo, path: ref.path, commit: ref.commit, blob: computedBlob },
+    role: "whole-brief-verified-source",
     objective_id: brief.objective_id,
+    verification: "VERIFIED",
+    source_ref: { ...contractSourceRef },
   };
   const briefByteBuf = Buffer.from(briefBytes, "utf8");
   const spanEvidence = (spans) =>
-    (spans ?? []).map((sp) => ({
-      kind: "source_citation",
-      brief_ref: { repo: ref.repo, path: ref.path, commit: ref.commit, blob: computedBlob },
-      byte_start: sp.byte_start,
-      byte_end: sp.byte_end,
-      ...(sp.label !== undefined ? { label: sp.label } : {}),
-      excerpt: briefByteBuf.subarray(sp.byte_start, sp.byte_end).toString("utf8"),
-    }));
+    (spans ?? []).map((sp) => {
+      const excerpt = briefByteBuf.subarray(sp.byte_start, sp.byte_end).toString("utf8");
+      return {
+        kind: "source_citation",
+        ...(sp.label !== undefined ? { label: sp.label } : {}),
+        citation: {
+          ...contractSourceRef,
+          quoted_span: excerpt,
+          span: { start_byte: sp.byte_start, end_byte: sp.byte_end, quoted_text: excerpt },
+          verification: "VERIFIED",
+        },
+      };
+    });
 
   for (const spec of brief.task_specs) {
     if (seenKeys.has(spec.local_key)) {
@@ -523,7 +565,13 @@ export function buildPlan(task, context) {
   // ---- related-brief conflicts (EM-001 + EM-004) -------------------------
   const conflicts = [];
   const related = task.related_brief_refs ?? [];
+  // EM-004: the primary brief may plan with explicit uncertainty, but
+  // whenever required related conflict coverage is unresolved, the public
+  // completeness flag is false — never complete:true over incomplete
+  // coverage.
+  let relatedComplete = true;
   const flagUnresolvedRelated = () => {
+    relatedComplete = false;
     for (const n of nodes) {
       if (!n.uncertainty_flags.includes("UNRESOLVED_RELATED_SOURCE"))
         n.uncertainty_flags.push("UNRESOLVED_RELATED_SOURCE");
@@ -695,7 +743,7 @@ export function buildPlan(task, context) {
     diagnostics: sortDiags(),
     quarantined_sources: quarantinedSources,
     routing_flags: [...routingFlags].sort(),
-    complete: true,
+    complete: relatedComplete,
   };
   checkOutputBudget(payload, "plan output");
   if (byteLen(canonicalJson(payload)) > BUDGET_LIMITS.maxOutputBytes) {

@@ -1,9 +1,9 @@
 {
-  "corpus_digest": "813ff021d720fe771f08a45517531aee085206c75a5f9978e36f9d77e31a75b9",
+  "corpus_digest": "efd54f546012077b12edef8ee8ca028e6b9f7b83e9126bc4a199cf9e472e59a5",
   "files": [
     {
       "path": "README.md",
-      "sha256": "76f94278efd1a594b718d347385610814d22b4272b355fc21f9059cb63b66f73"
+      "sha256": "ff51f97ba65eec8488a4576287f01813d404128b1927682155b3461e9cadb6db"
     },
     {
       "path": "corpus/battery.json",
@@ -27,7 +27,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "6421339bf1411fb2b7bfed04c4ff179404b5e2e80af2e48fd20e889c1ffd112d"
+      "sha256": "b9b937398af07db6c1a2aec9d582e70afd0afc9c0984b5a6a90eb2f3a4552b15"
     },
     {
       "path": "runner/run-manual.js",
@@ -35,7 +35,7 @@
     },
     {
       "path": "src/approvals.js",
-      "sha256": "f8373954692fc97fc0040ee6283d18fc6167d0bf159cf103b16d28afc7662d3e"
+      "sha256": "1a7766d2ad8deb3763ad40f7ab8ad7e4c0a5a47d8a34a72b425e416cab08c0e8"
     },
     {
       "path": "src/canonical.js",
@@ -43,7 +43,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "5d8ca3a66f734767edf73aea706524f742f76294c982e0b9516b71c966a51e88"
+      "sha256": "b461d480f6bed8e1f9ce02e1cf4b43a6596c8cc5f6bed7008053669a4a720883"
     },
     {
       "path": "src/injection.js",
@@ -55,11 +55,11 @@
     },
     {
       "path": "src/planner.js",
-      "sha256": "78d9b69d1c55264ab9218abd1f6310cce2fc388f6b287ba197836bf14a3032d7"
+      "sha256": "8df8773abf6be12701eb2b9d2c8c1eca11034ebc44a841096697be8e62383fbb"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "e5d4f6f2577b6a7a7ccf0218b618fbb9e5cf96e278b8b221c03be951725072e6"
+      "sha256": "666b7100254f92091fc2c01cf31daa7db21a3ab0b918c1a609c2ecaab4f37e28"
     },
     {
       "path": "tests/battery.test.js",
@@ -75,7 +75,7 @@
     },
     {
       "path": "tests/em-regressions.test.js",
-      "sha256": "124b646a64d1b89152e4e66226cf97d34daca42a2793fce3729d76f7c60d7174"
+      "sha256": "a1af8afd378a01462e58240f36edc88c83c364c234f49a0db31a7f63715ae749"
     },
     {
       "path": "tests/harness.js",
