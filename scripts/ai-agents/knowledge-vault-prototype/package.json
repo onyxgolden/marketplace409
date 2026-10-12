@@ -1,0 +1,13 @@
+{
+  "description": "Knowledge Vault agent Phase 2 slice 1 synthetic prototype: permission-filtered deterministic retrieval and extractive answers from fixture Git sources only. Advisory only; no live activation, no knowledge writes, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "knowledge-vault-prototype",
+  "scripts": {
+    "battery": "KV_APPROVED_ROOT=e16aa42490c2c229fee318300f271937a1e15a1b1cd5449c30bf04d2e078fd2a node tests/run-battery.js",
+    "test": "KV_APPROVED_ROOT=e16aa42490c2c229fee318300f271937a1e15a1b1cd5449c30bf04d2e078fd2a node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

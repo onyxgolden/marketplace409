@@ -1,0 +1,110 @@
+[
+  {
+    "query_key": "parking-rules",
+    "phrases": [
+      "parking rules",
+      "parking policy",
+      "where can i park",
+      "parking time limit"
+    ]
+  },
+  {
+    "query_key": "wifi-password",
+    "phrases": [
+      "wifi password",
+      "wi-fi password",
+      "guest wifi",
+      "wireless password"
+    ]
+  },
+  {
+    "query_key": "evac-assembly-point",
+    "phrases": [
+      "evacuation assembly point",
+      "where do we assemble",
+      "emergency meeting point",
+      "evacuation point"
+    ]
+  },
+  {
+    "query_key": "vpn-endpoint",
+    "phrases": [
+      "vpn endpoint",
+      "vpn server",
+      "vpn address",
+      "how do i connect to vpn"
+    ]
+  },
+  {
+    "query_key": "holiday-schedule",
+    "phrases": [
+      "holiday schedule",
+      "company holidays",
+      "how many holidays",
+      "holiday calendar"
+    ]
+  },
+  {
+    "query_key": "password-rotation",
+    "phrases": [
+      "password rotation",
+      "password policy",
+      "how often change password",
+      "password expiry"
+    ]
+  },
+  {
+    "query_key": "onboarding-checklist",
+    "phrases": [
+      "onboarding checklist",
+      "new hire checklist",
+      "first day checklist"
+    ]
+  },
+  {
+    "query_key": "extinguisher-inspection",
+    "phrases": [
+      "extinguisher inspection",
+      "fire extinguisher check",
+      "how often inspect extinguishers"
+    ]
+  },
+  {
+    "query_key": "kitchen-hours",
+    "phrases": [
+      "kitchen hours",
+      "when is the kitchen open",
+      "cafeteria hours"
+    ]
+  },
+  {
+    "query_key": "hvac-setpoint",
+    "phrases": [
+      "hvac setpoint",
+      "thermostat setting",
+      "temperature setting",
+      "office temperature"
+    ]
+  },
+  {
+    "query_key": "board-meeting-cadence",
+    "phrases": [
+      "board meeting cadence",
+      "how often does the board meet"
+    ]
+  },
+  {
+    "query_key": "server-room-code",
+    "phrases": [
+      "server room code",
+      "server room access code"
+    ]
+  },
+  {
+    "query_key": "printer-code",
+    "phrases": [
+      "printer code",
+      "printer access code"
+    ]
+  }
+]
