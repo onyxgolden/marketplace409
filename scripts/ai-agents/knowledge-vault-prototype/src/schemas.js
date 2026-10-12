@@ -140,7 +140,7 @@ export function validateSteward(value, where) {
 /** Steward action registration (what a steward may do). */
 export function validateRegistration(value, where) {
   if (!isPlainObject(value)) fail(where, "registration must be an object");
-  exactKeys(value, ["registration_ref", "steward_id", "action_ids", "valid_from", "expires_at", "revoked"], where);
+  exactKeys(value, ["registration_ref", "steward_id", "action_ids", "valid_from", "expires_at", "revoked", "applicability"], where);
   const registration_ref = validateRecordId(value.registration_ref, where);
   const steward_id = validateRecordId(value.steward_id, where);
   if (!Array.isArray(value.action_ids) || value.action_ids.length === 0) fail(where, "action_ids must be a non-empty array");
@@ -150,7 +150,35 @@ export function validateRegistration(value, where) {
   validateIsoDate(value.valid_from, `${where}.valid_from`);
   validateIsoDate(value.expires_at, `${where}.expires_at`);
   if (typeof value.revoked !== "boolean") fail(where, "revoked must be a boolean");
-  return { registration_ref, steward_id, action_ids: [...value.action_ids], valid_from: value.valid_from, expires_at: value.expires_at, revoked: value.revoked };
+  // Exact applicability: a registration authorizing 'supersede' must
+  // declare exactly which scopes and source keys the steward may
+  // supersede. The record's old/new source keys and every record scope
+  // must fall inside it — generic "may supersede anything" grants are
+  // not valid.
+  let applicability = null;
+  if (value.applicability !== undefined && value.applicability !== null) {
+    const app = value.applicability;
+    if (!isPlainObject(app)) fail(where, "applicability must be an object");
+    exactKeys(app, ["scope_ids", "source_keys"], `${where}.applicability`);
+    const scope_ids = validateScopeIds(app.scope_ids, `${where}.applicability`);
+    if (!Array.isArray(app.source_keys) || app.source_keys.length === 0) {
+      fail(where, "applicability.source_keys must be a non-empty array");
+    }
+    const source_keys = [];
+    const seen = new Set();
+    for (const k of app.source_keys) {
+      if (typeof k !== "string" || !/^[a-z][a-z0-9-]{0,63}\|[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*\.(md|txt)$/.test(k)) {
+        fail(where, `invalid applicability source key '${String(k)}'`);
+      }
+      if (seen.has(k)) fail(where, `duplicate applicability source key '${k}'`);
+      seen.add(k);
+      source_keys.push(k);
+    }
+    applicability = { scope_ids, source_keys };
+  } else if (value.action_ids.includes("supersede")) {
+    fail(where, "registration authorizing 'supersede' must declare applicability (scope_ids + source_keys)");
+  }
+  return { registration_ref, steward_id, action_ids: [...value.action_ids], valid_from: value.valid_from, expires_at: value.expires_at, revoked: value.revoked, applicability };
 }
 
 /**
@@ -247,14 +275,26 @@ export function validateVocabularyEntry(value, where) {
   return { query_key, phrases };
 }
 
-/** Full host-adapter context validation. */
-export function validateContext(context) {
+/** Full host-adapter context validation.
+ *
+ * Every consulted registry object (vocabulary entry, source entry,
+ * revision ledger entry, grant, steward, registration, record) is
+ * charged against the per-task budget BEFORE it is used, so unbounded
+ * registries fail closed with BUDGET_EXCEEDED instead of being scanned
+ * for free. Revision ledger dates (effective_at/verified_at) are
+ * validated here at runtime: an invalid or missing ledger date is an
+ * INVALID_INPUT context, never a NaN that bypasses age comparisons.
+ * Source revision BYTES are never touched here — metadata only, so a
+ * read-denied source's text is not accessed during validation.
+ */
+export function validateContext(context, budget = null) {
+  const charge = (what) => { if (budget) budget.countConsulted(what); };
   if (!isPlainObject(context)) fail("context", "must be an object");
   exactKeys(context, ["clock", "vocabulary", "sources", "readGrants", "stewards", "registrations", "supersessionRecords"], "context");
   const clock = context.clock;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
   if (!Array.isArray(context.vocabulary) || context.vocabulary.length === 0) fail("context", "vocabulary must be a non-empty array");
-  const vocabulary = context.vocabulary.map((e, i) => validateVocabularyEntry(e, `context.vocabulary[${i}]`));
+  const vocabulary = context.vocabulary.map((e, i) => { charge("vocabulary entry"); return validateVocabularyEntry(e, `context.vocabulary[${i}]`); });
   const keySeen = new Set();
   for (const e of vocabulary) {
     if (keySeen.has(e.query_key)) fail("context", `duplicate vocabulary query_key '${e.query_key}'`);
@@ -263,24 +303,44 @@ export function validateContext(context) {
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
+  // Validate the source identity/effective-time ledger: revision dates
+  // are real calendar dates, blob pins are 40-hex. Text bytes are NOT
+  // read here (permission-gated later, per source).
+  for (const sk of sourceKeys) {
+    charge("source entry");
+    const entry = context.sources[sk];
+    if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
+    const revs = entry.revisions;
+    if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+    for (const commit of Object.keys(revs)) {
+      charge("revision ledger entry");
+      const rev = revs[commit];
+      if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
+      validateIsoDate(rev.effective_at, `context.sources['${sk}'].revisions[${commit}].effective_at`);
+      validateIsoDate(rev.verified_at, `context.sources['${sk}'].revisions[${commit}].verified_at`);
+      if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) {
+        fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
+      }
+    }
+  }
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
-  const readGrants = context.readGrants.map((g, i) => validateReadGrant(g, `context.readGrants[${i}]`));
+  const readGrants = context.readGrants.map((g, i) => { charge("read grant"); return validateReadGrant(g, `context.readGrants[${i}]`); });
   if (!Array.isArray(context.stewards)) fail("context", "stewards must be an array");
-  const stewards = context.stewards.map((s, i) => validateSteward(s, `context.stewards[${i}]`));
+  const stewards = context.stewards.map((s, i) => { charge("steward"); return validateSteward(s, `context.stewards[${i}]`); });
   const stewardSeen = new Set();
   for (const s of stewards) {
     if (stewardSeen.has(s.steward_id)) fail("context", `duplicate steward_id '${s.steward_id}'`);
     stewardSeen.add(s.steward_id);
   }
   if (!Array.isArray(context.registrations)) fail("context", "registrations must be an array");
-  const registrations = context.registrations.map((r, i) => validateRegistration(r, `context.registrations[${i}]`));
+  const registrations = context.registrations.map((r, i) => { charge("registration"); return validateRegistration(r, `context.registrations[${i}]`); });
   const regSeen = new Set();
   for (const r of registrations) {
     if (regSeen.has(r.registration_ref)) fail("context", `duplicate registration_ref '${r.registration_ref}'`);
     regSeen.add(r.registration_ref);
   }
   if (!Array.isArray(context.supersessionRecords)) fail("context", "supersessionRecords must be an array");
-  const supersessionRecords = context.supersessionRecords.map((r, i) => validateSupersessionRecord(r, `context.supersessionRecords[${i}]`));
+  const supersessionRecords = context.supersessionRecords.map((r, i) => { charge("supersession record"); return validateSupersessionRecord(r, `context.supersessionRecords[${i}]`); });
   const recSeen = new Set();
   for (const r of supersessionRecords) {
     if (recSeen.has(r.record_id)) fail("context", `duplicate supersession record_id '${r.record_id}'`);

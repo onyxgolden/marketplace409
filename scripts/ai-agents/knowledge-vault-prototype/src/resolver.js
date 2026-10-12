@@ -17,6 +17,7 @@ export const BUDGET_LIMITS = {
   maxPayloadBytes: 262144, // 256 KiB total UTF-8 data per task
   maxObjects: 64, // source object resolutions
   maxSpans: 512, // evidence span checks
+  maxConsultedObjects: 4096, // consulted registry/ledger/vocabulary/grant/revision objects
   maxOutputRecords: 256, // output records
   maxOutputBytes: 262144, // 256 KiB output
 };
@@ -37,9 +38,10 @@ export class ResolutionError extends Error {
   }
 }
 
-/** Per-task budget: every object resolution and span check is charged. */
+/** Per-task budget: every object resolution, span check, payload and
+ *  consulted registry/ledger object is charged. */
 export function makeBudget() {
-  const used = { objects: 0, spans: 0, payloadBytes: 0 };
+  const used = { objects: 0, spans: 0, payloadBytes: 0, consulted: 0 };
   return {
     used,
     countPayload(bytes, what) {
@@ -58,6 +60,12 @@ export function makeBudget() {
       used.spans += 1;
       if (used.spans > BUDGET_LIMITS.maxSpans) {
         throw new BudgetError("BUDGET_EXCEEDED", `span checks exceed ${BUDGET_LIMITS.maxSpans}`);
+      }
+    },
+    countConsulted(what) {
+      used.consulted += 1;
+      if (used.consulted > BUDGET_LIMITS.maxConsultedObjects) {
+        throw new BudgetError("BUDGET_EXCEEDED", `consulted ${what ?? "registry objects"} exceed ${BUDGET_LIMITS.maxConsultedObjects}`);
       }
     },
   };

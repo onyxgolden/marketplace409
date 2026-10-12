@@ -128,6 +128,7 @@ export function buildContext(root, c) {
   const ov = c.contextOverrides;
   if (ov) {
     if (ov.replaceSupersessionRecords) context.supersessionRecords = ov.replaceSupersessionRecords;
+    if (ov.replaceVocabulary) context.vocabulary = ov.replaceVocabulary;
     if (ov.removeGrants) {
       context.readGrants = context.readGrants.filter(
         (g) => !ov.removeGrants.includes(`${g.repo}|${g.path}`)

@@ -52,8 +52,25 @@ function addSource(repo, path, tags, revisions) {
       algorithm: r.algorithm ?? "git-sha1",
     };
   }
-  sources[`${repo}|${path}`] = { repo, path, tags, revisions: revs };
+  sources[`${repo}|${path}`] = { repo, path, tags, revisions: revs, claim_keys: [] };
   return revs;
+}
+
+/** Adapter-supplied claim-key index (metadata only): the sorted unique
+ *  claim keys appearing in any revision's text. Lets the retriever
+ *  decide relevance for read-denied sources without parsing bytes. */
+function indexClaimKeys() {
+  const keyRe = /^claim:\s*([a-z][a-z0-9-]{0,63})\s*=/;
+  for (const key of Object.keys(sources)) {
+    const found = new Set();
+    for (const rev of Object.values(sources[key].revisions)) {
+      for (const line of rev.text.split("\n")) {
+        const m = keyRe.exec(line);
+        if (m) found.add(m[1]);
+      }
+    }
+    sources[key].claim_keys = [...found].sort();
+  }
 }
 
 const claim = (key, value, units, scopes) =>
@@ -307,6 +324,152 @@ addSource("vault", "facilities/kitchen.md", ["official", "facilities"], [
   },
 ]);
 
+// ---- KVP-001 scope-coverage fixtures (generator / pump / valve) ----
+const genRevs = addSource("vault", "facilities/generator.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: ["# Generator", claim("generator-status", "standby", "state", "facilities"), ""].join("\n"),
+    effective_at: "2026-02-01T00:00:00Z",
+    verified_at: "2026-02-02T00:00:00Z",
+  },
+  {
+    // The new revision's claim carries an extra scope the record does
+    // not cover; the record's effective scope still covers it via
+    // overlap, so this is the correctly-restricted positive.
+    label: "rev-2",
+    text: ["# Generator", claim("generator-status", "running", "state", "facilities,site-a"), ""].join("\n"),
+    effective_at: "2026-06-01T00:00:00Z",
+    verified_at: "2026-06-02T00:00:00Z",
+  },
+]);
+const genC1 = Object.keys(genRevs)[0];
+const genC2 = Object.keys(genRevs)[1];
+
+const pumpRevs = addSource("vault", "facilities/pump.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: ["# Pump", claim("pump-status", "idle", "state", "facilities"), ""].join("\n"),
+    effective_at: "2026-02-01T00:00:00Z",
+    verified_at: "2026-02-02T00:00:00Z",
+  },
+  {
+    // KVP-001 negative: the replacement claim's scope (finance) is
+    // outside the record's authenticated scope (facilities). The
+    // record authenticates, but the claim must be excluded, not quoted.
+    label: "rev-2",
+    text: ["# Pump", claim("pump-status", "active", "state", "finance"), ""].join("\n"),
+    effective_at: "2026-06-01T00:00:00Z",
+    verified_at: "2026-06-02T00:00:00Z",
+  },
+]);
+const pumpC1 = Object.keys(pumpRevs)[0];
+const pumpC2 = Object.keys(pumpRevs)[1];
+
+const valveRevs = addSource("vault", "facilities/valve.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: ["# Valve", claim("valve-flow", "10", "gpm", "facilities"), ""].join("\n"),
+    effective_at: "2026-02-01T00:00:00Z",
+    verified_at: "2026-02-02T00:00:00Z",
+  },
+  {
+    label: "rev-2",
+    text: ["# Valve", claim("valve-flow", "12", "gpm", "facilities"), ""].join("\n"),
+    effective_at: "2026-06-01T00:00:00Z",
+    verified_at: "2026-06-02T00:00:00Z",
+  },
+]);
+const valveC1 = Object.keys(valveRevs)[0];
+const valveC2 = Object.keys(valveRevs)[1];
+
+// ---- KVP-002 same-source contradiction fixtures ----
+addSource("vault", "facilities/chiller.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: [
+      "# Chiller",
+      claim("chiller-mode", "cooling", "state", "facilities"),
+      claim("chiller-mode", "heating", "state", "facilities"),
+      "",
+    ].join("\n"),
+    effective_at: "2026-03-01T00:00:00Z",
+    verified_at: "2026-03-02T00:00:00Z",
+  },
+]);
+
+addSource("vault", "facilities/boiler.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: [
+      "# Boiler",
+      claim("boiler-mode", "idle", "state", "facilities"),
+      claim("boiler-mode", "heating", "state", "facilities"),
+      claim("boiler-mode", "cooling", "state", "facilities"),
+      "",
+    ].join("\n"),
+    effective_at: "2026-03-01T00:00:00Z",
+    verified_at: "2026-03-02T00:00:00Z",
+  },
+]);
+
+addSource("vault", "facilities/fan.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: [
+      "# Fan",
+      claim("fan-speed", "high", "level", "facilities"),
+      claim("fan-speed", "high", "level", "facilities"),
+      "",
+    ].join("\n"),
+    effective_at: "2026-03-01T00:00:00Z",
+    verified_at: "2026-03-02T00:00:00Z",
+  },
+]);
+
+addSource("vault", "facilities/damper.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: [
+      "# Damper",
+      claim("damper-position", "open", "state", "facilities"),
+      claim("damper-position", "closed", "state", "site-b"),
+      "",
+    ].join("\n"),
+    effective_at: "2026-03-01T00:00:00Z",
+    verified_at: "2026-03-02T00:00:00Z",
+  },
+]);
+
+addSource("vault", "facilities/meter.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: [
+      "# Meter",
+      claim("meter-flow", "10", "gpm", "facilities"),
+      claim("meter-flow", "38", "lpm", "facilities"),
+      "",
+    ].join("\n"),
+    effective_at: "2026-03-01T00:00:00Z",
+    verified_at: "2026-03-02T00:00:00Z",
+  },
+]);
+
+addSource("vault", "facilities/circulation.md", ["official", "facilities"], [
+  {
+    label: "rev-1",
+    text: [
+      "# Circulation pump",
+      claim("pump-rate", "fast", "level", "facilities"),
+      // Degraded (no units): per J4 this never contradicts the measured
+      // claim above, but its presence forces LOW confidence (J1).
+      "claim: pump-rate = slow",
+      "",
+    ].join("\n"),
+    effective_at: "2026-03-01T00:00:00Z",
+    verified_at: "2026-03-02T00:00:00Z",
+  },
+]);
+
 // ---------------------------------------------------------------- grants
 // Exact repo+path grants. restricted/* deliberately has no grant.
 const readGrants = Object.keys(sources)
@@ -353,11 +516,19 @@ const stewards = [
 ];
 
 const registrations = [
-  { registration_ref: "reg-001", steward_id: "steward-ops", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
-  { registration_ref: "reg-002", steward_id: "steward-safety", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
-  { registration_ref: "reg-003", steward_id: "steward-it", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
-  { registration_ref: "reg-004", steward_id: "steward-expired", action_ids: ["supersede"], valid_from: "2024-01-01T00:00:00Z", expires_at: "2025-01-01T00:00:00Z", revoked: false },
+  { registration_ref: "reg-001", steward_id: "steward-ops", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false,
+    applicability: { scope_ids: ["facilities", "site-a"], source_keys: ["vault|handbook/policies.md", "vault|facilities/hvac.md", "vault|archive/old-policy.md", "vault|facilities/generator.md", "vault|facilities/pump.md"] } },
+  { registration_ref: "reg-002", steward_id: "steward-safety", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false,
+    applicability: { scope_ids: ["safety"], source_keys: ["vault|safety/evac.md"] } },
+  { registration_ref: "reg-003", steward_id: "steward-it", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false,
+    applicability: { scope_ids: ["it"], source_keys: ["vault|it/vpn.md", "vault|restricted/vpn-dr.md"] } },
+  { registration_ref: "reg-004", steward_id: "steward-expired", action_ids: ["supersede"], valid_from: "2024-01-01T00:00:00Z", expires_at: "2025-01-01T00:00:00Z", revoked: false,
+    applicability: { scope_ids: ["facilities"], source_keys: ["vault|handbook/wifi.md"] } },
   { registration_ref: "reg-005", steward_id: "steward-ops", action_ids: ["read"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
+  // KVP-001 negative: applicability covers generator.md only; a record
+  // citing it for valve.md must fail authentication.
+  { registration_ref: "reg-020", steward_id: "steward-ops", action_ids: ["supersede"], valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false,
+    applicability: { scope_ids: ["facilities"], source_keys: ["vault|facilities/generator.md"] } },
 ];
 
 // ---------------------------------------------------------------- records
@@ -463,6 +634,42 @@ const supersessionRecords = [
     scope_ids: ["facilities"],
     registration_ref: "reg-005",
   },
+  // KVP-001 correctly-restricted positive: single-scope record,
+  // steward authority covers it, registration applicability covers the
+  // source; the new claim's extra scope overlaps the record scope.
+  {
+    record_id: "sup-020",
+    issuer: "steward-ops",
+    old_ref: srcRef("vault", "facilities/generator.md", genC1, "rev-1"),
+    new_ref: srcRef("vault", "facilities/generator.md", genC2, "rev-2"),
+    effective_at: "2026-06-01T00:00:00Z",
+    scope_ids: ["facilities"],
+    registration_ref: "reg-001",
+  },
+  // KVP-001 uncovered-claim negative: the record authenticates, but the
+  // replacement revision's claim scope (finance) is outside the
+  // record's authenticated scope (facilities) — the claim must be
+  // excluded, never quoted.
+  {
+    record_id: "sup-021",
+    issuer: "steward-ops",
+    old_ref: srcRef("vault", "facilities/pump.md", pumpC1, "rev-1"),
+    new_ref: srcRef("vault", "facilities/pump.md", pumpC2, "rev-2"),
+    effective_at: "2026-06-01T00:00:00Z",
+    scope_ids: ["facilities"],
+    registration_ref: "reg-001",
+  },
+  // KVP-001 registration-mismatch negative: reg-020's applicability
+  // covers generator.md only, not valve.md — unauthenticated.
+  {
+    record_id: "sup-022",
+    issuer: "steward-ops",
+    old_ref: srcRef("vault", "facilities/valve.md", valveC1, "rev-1"),
+    new_ref: srcRef("vault", "facilities/valve.md", valveC2, "rev-2"),
+    effective_at: "2026-06-01T00:00:00Z",
+    scope_ids: ["facilities"],
+    registration_ref: "reg-020",
+  },
 ];
 
 // ---------------------------------------------------------------- vocabulary
@@ -480,9 +687,20 @@ const vocabulary = [
   { query_key: "board-meeting-cadence", phrases: ["board meeting cadence", "how often does the board meet"] },
   { query_key: "server-room-code", phrases: ["server room code", "server room access code"] },
   { query_key: "printer-code", phrases: ["printer code", "printer access code"] },
+  { query_key: "generator-status", phrases: ["generator status", "backup generator state"] },
+  { query_key: "pump-status", phrases: ["pump status", "water pump state"] },
+  { query_key: "chiller-mode", phrases: ["chiller mode", "chiller setting"] },
+  { query_key: "boiler-mode", phrases: ["boiler mode", "boiler setting"] },
+  { query_key: "fan-speed", phrases: ["fan speed", "ventilation fan setting"] },
+  { query_key: "damper-position", phrases: ["damper position", "air damper setting"] },
+  { query_key: "valve-flow", phrases: ["valve flow", "valve flow rate"] },
+  { query_key: "meter-flow", phrases: ["meter flow", "flow meter reading"] },
+  { query_key: "pump-rate", phrases: ["pump rate", "circulation pump speed"] },
 ];
 
 const store = { sources, readGrants, stewards, registrations, supersessionRecords };
+
+indexClaimKeys();
 
 writeFileSync(join(ROOT, "fixtures", "store.json"), JSON.stringify(store, null, 2) + "\n");
 writeFileSync(join(ROOT, "fixtures", "vocabulary.json"), JSON.stringify(vocabulary, null, 2) + "\n");

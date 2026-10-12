@@ -24,7 +24,10 @@
           "verified_at": "2026-06-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "parking-rules"
+      ]
     },
     "vault|handbook/wifi.md": {
       "repo": "vault",
@@ -42,7 +45,10 @@
           "verified_at": "2026-02-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "wifi-password"
+      ]
     },
     "vault|it/guest-access.md": {
       "repo": "vault",
@@ -60,7 +66,10 @@
           "verified_at": "2026-03-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "wifi-password"
+      ]
     },
     "vault|safety/evac.md": {
       "repo": "vault",
@@ -94,7 +103,10 @@
           "verified_at": "2026-05-03T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "evac-assembly-point"
+      ]
     },
     "vault|it/vpn.md": {
       "repo": "vault",
@@ -112,7 +124,10 @@
           "verified_at": "2026-02-11T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "vpn-endpoint"
+      ]
     },
     "vault|handbook/holidays.md": {
       "repo": "vault",
@@ -130,7 +145,10 @@
           "verified_at": "2026-01-06T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "holiday-schedule"
+      ]
     },
     "vault|archive/old-policy.md": {
       "repo": "vault",
@@ -155,7 +173,10 @@
           "verified_at": "2026-04-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "parking-rules"
+      ]
     },
     "vault|facilities/hvac.md": {
       "repo": "vault",
@@ -189,7 +210,10 @@
           "verified_at": "2027-06-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "hvac-setpoint"
+      ]
     },
     "vault|facilities/hvac-legacy.md": {
       "repo": "vault",
@@ -206,7 +230,10 @@
           "verified_at": "2023-03-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "hvac-setpoint"
+      ]
     },
     "vault|it/password-policy.md": {
       "repo": "vault",
@@ -224,7 +251,10 @@
           "verified_at": "2026-02-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "password-rotation"
+      ]
     },
     "vault|hr/onboarding.md": {
       "repo": "vault",
@@ -242,7 +272,10 @@
           "verified_at": "2026-03-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "onboarding-checklist"
+      ]
     },
     "vault|safety/extinguisher.md": {
       "repo": "vault",
@@ -260,7 +293,10 @@
           "verified_at": "2026-02-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "extinguisher-inspection"
+      ]
     },
     "vault|restricted/exec.md": {
       "repo": "vault",
@@ -277,7 +313,10 @@
           "verified_at": "2026-01-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "board-meeting-cadence"
+      ]
     },
     "vault|restricted/vpn-dr.md": {
       "repo": "vault",
@@ -294,7 +333,10 @@
           "verified_at": "2026-08-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "vpn-endpoint"
+      ]
     },
     "vault|injected/malicious.md": {
       "repo": "vault",
@@ -312,7 +354,11 @@
           "verified_at": "2026-10-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "parking-rules",
+        "server-room-code"
+      ]
     },
     "vault|malformed/broken.md": {
       "repo": "vault",
@@ -330,7 +376,11 @@
           "verified_at": "2026-04-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "kitchen-hours",
+        "parking-rules"
+      ]
     },
     "vault|malformed/algo.md": {
       "repo": "vault",
@@ -348,7 +398,10 @@
           "verified_at": "2026-04-02T00:00:00Z",
           "algorithm": "md5"
         }
-      }
+      },
+      "claim_keys": [
+        "kitchen-hours"
+      ]
     },
     "vault|facilities/kitchen.md": {
       "repo": "vault",
@@ -366,7 +419,223 @@
           "verified_at": "2026-05-02T00:00:00Z",
           "algorithm": "git-sha1"
         }
-      }
+      },
+      "claim_keys": [
+        "kitchen-hours"
+      ]
+    },
+    "vault|facilities/generator.md": {
+      "repo": "vault",
+      "path": "facilities/generator.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "d0dfb65b9439ffd193ba390a242f30447f687555": {
+          "blob": "1daf2a8c37745be532af33f689d983bd43250c49",
+          "revision": "rev-1",
+          "text": "# Generator\nclaim: generator-status = standby; units: state; scopes: facilities\n",
+          "effective_at": "2026-02-01T00:00:00Z",
+          "verified_at": "2026-02-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        },
+        "f662eb9b27dd5f18044d67862b01dda148fd9329": {
+          "blob": "58b469fe2638d6377c13ef3fa9f2e3902e06b50e",
+          "revision": "rev-2",
+          "text": "# Generator\nclaim: generator-status = running; units: state; scopes: facilities,site-a\n",
+          "effective_at": "2026-06-01T00:00:00Z",
+          "verified_at": "2026-06-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "generator-status"
+      ]
+    },
+    "vault|facilities/pump.md": {
+      "repo": "vault",
+      "path": "facilities/pump.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "f777badac777436e6d1616145bf76d1d3d539dae": {
+          "blob": "fafa82e208d1ff935d833f0b63b8a4f4531774c2",
+          "revision": "rev-1",
+          "text": "# Pump\nclaim: pump-status = idle; units: state; scopes: facilities\n",
+          "effective_at": "2026-02-01T00:00:00Z",
+          "verified_at": "2026-02-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        },
+        "327a2e8d45c8e314fba2c4338292c05402c47d9d": {
+          "blob": "5698c7028636e2c2dcca09cae10056b099bb5a1e",
+          "revision": "rev-2",
+          "text": "# Pump\nclaim: pump-status = active; units: state; scopes: finance\n",
+          "effective_at": "2026-06-01T00:00:00Z",
+          "verified_at": "2026-06-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "pump-status"
+      ]
+    },
+    "vault|facilities/valve.md": {
+      "repo": "vault",
+      "path": "facilities/valve.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "51a53c90d9eeaf6e38610f72b7901409b0c30509": {
+          "blob": "27c365b76e03f03186b930b94f7d173f559cf7fe",
+          "revision": "rev-1",
+          "text": "# Valve\nclaim: valve-flow = 10; units: gpm; scopes: facilities\n",
+          "effective_at": "2026-02-01T00:00:00Z",
+          "verified_at": "2026-02-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        },
+        "98165467d476ddd36018473002db7422c69c1be5": {
+          "blob": "0b5c5b06b49e14ae5cad71327c1c938334645764",
+          "revision": "rev-2",
+          "text": "# Valve\nclaim: valve-flow = 12; units: gpm; scopes: facilities\n",
+          "effective_at": "2026-06-01T00:00:00Z",
+          "verified_at": "2026-06-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "valve-flow"
+      ]
+    },
+    "vault|facilities/chiller.md": {
+      "repo": "vault",
+      "path": "facilities/chiller.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "d6a45da164722228752b6df475087d324a1b3275": {
+          "blob": "1991f87075b8979c4e1a348ea04681b0b5c4a74a",
+          "revision": "rev-1",
+          "text": "# Chiller\nclaim: chiller-mode = cooling; units: state; scopes: facilities\nclaim: chiller-mode = heating; units: state; scopes: facilities\n",
+          "effective_at": "2026-03-01T00:00:00Z",
+          "verified_at": "2026-03-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "chiller-mode"
+      ]
+    },
+    "vault|facilities/boiler.md": {
+      "repo": "vault",
+      "path": "facilities/boiler.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "f80bf9fb989d825e6fd284a140c7749ab4a1f18e": {
+          "blob": "51b1dd30e5c37dcc1982ea1199bff30673cb93b8",
+          "revision": "rev-1",
+          "text": "# Boiler\nclaim: boiler-mode = idle; units: state; scopes: facilities\nclaim: boiler-mode = heating; units: state; scopes: facilities\nclaim: boiler-mode = cooling; units: state; scopes: facilities\n",
+          "effective_at": "2026-03-01T00:00:00Z",
+          "verified_at": "2026-03-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "boiler-mode"
+      ]
+    },
+    "vault|facilities/fan.md": {
+      "repo": "vault",
+      "path": "facilities/fan.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "2c77964f7e478e6c6c548c931934ae1f7ccfc9ee": {
+          "blob": "ece8abdc0a0265278423d8175af0516ed6dd0ac1",
+          "revision": "rev-1",
+          "text": "# Fan\nclaim: fan-speed = high; units: level; scopes: facilities\nclaim: fan-speed = high; units: level; scopes: facilities\n",
+          "effective_at": "2026-03-01T00:00:00Z",
+          "verified_at": "2026-03-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "fan-speed"
+      ]
+    },
+    "vault|facilities/damper.md": {
+      "repo": "vault",
+      "path": "facilities/damper.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "45c43663dd2a5b6fe6dc113cffc38e22625f857b": {
+          "blob": "a559424b5dc57640680b032bebd37fce4f061271",
+          "revision": "rev-1",
+          "text": "# Damper\nclaim: damper-position = open; units: state; scopes: facilities\nclaim: damper-position = closed; units: state; scopes: site-b\n",
+          "effective_at": "2026-03-01T00:00:00Z",
+          "verified_at": "2026-03-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "damper-position"
+      ]
+    },
+    "vault|facilities/meter.md": {
+      "repo": "vault",
+      "path": "facilities/meter.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "c35cdcb984153ce2a4c06741bcdbb3faf4c95a18": {
+          "blob": "d91c68e7a983210925a8ddd932fa60dddc15c88d",
+          "revision": "rev-1",
+          "text": "# Meter\nclaim: meter-flow = 10; units: gpm; scopes: facilities\nclaim: meter-flow = 38; units: lpm; scopes: facilities\n",
+          "effective_at": "2026-03-01T00:00:00Z",
+          "verified_at": "2026-03-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "meter-flow"
+      ]
+    },
+    "vault|facilities/circulation.md": {
+      "repo": "vault",
+      "path": "facilities/circulation.md",
+      "tags": [
+        "official",
+        "facilities"
+      ],
+      "revisions": {
+        "9f17a01e7876649632325d12aee274aa0e1737ac": {
+          "blob": "146492be4da0621032a7b7eb98b7ac7cec245b4a",
+          "revision": "rev-1",
+          "text": "# Circulation pump\nclaim: pump-rate = fast; units: level; scopes: facilities\nclaim: pump-rate = slow\n",
+          "effective_at": "2026-03-01T00:00:00Z",
+          "verified_at": "2026-03-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      },
+      "claim_keys": [
+        "pump-rate"
+      ]
     }
   },
   "readGrants": [
@@ -433,6 +702,42 @@
     {
       "repo": "vault",
       "path": "facilities/kitchen.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/generator.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/pump.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/valve.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/chiller.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/boiler.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/fan.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/damper.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/meter.md"
+    },
+    {
+      "repo": "vault",
+      "path": "facilities/circulation.md"
     }
   ],
   "stewards": [
@@ -487,7 +792,20 @@
       ],
       "valid_from": "2026-01-01T00:00:00Z",
       "expires_at": "2027-01-01T00:00:00Z",
-      "revoked": false
+      "revoked": false,
+      "applicability": {
+        "scope_ids": [
+          "facilities",
+          "site-a"
+        ],
+        "source_keys": [
+          "vault|handbook/policies.md",
+          "vault|facilities/hvac.md",
+          "vault|archive/old-policy.md",
+          "vault|facilities/generator.md",
+          "vault|facilities/pump.md"
+        ]
+      }
     },
     {
       "registration_ref": "reg-002",
@@ -497,7 +815,15 @@
       ],
       "valid_from": "2026-01-01T00:00:00Z",
       "expires_at": "2027-01-01T00:00:00Z",
-      "revoked": false
+      "revoked": false,
+      "applicability": {
+        "scope_ids": [
+          "safety"
+        ],
+        "source_keys": [
+          "vault|safety/evac.md"
+        ]
+      }
     },
     {
       "registration_ref": "reg-003",
@@ -507,7 +833,16 @@
       ],
       "valid_from": "2026-01-01T00:00:00Z",
       "expires_at": "2027-01-01T00:00:00Z",
-      "revoked": false
+      "revoked": false,
+      "applicability": {
+        "scope_ids": [
+          "it"
+        ],
+        "source_keys": [
+          "vault|it/vpn.md",
+          "vault|restricted/vpn-dr.md"
+        ]
+      }
     },
     {
       "registration_ref": "reg-004",
@@ -517,7 +852,15 @@
       ],
       "valid_from": "2024-01-01T00:00:00Z",
       "expires_at": "2025-01-01T00:00:00Z",
-      "revoked": false
+      "revoked": false,
+      "applicability": {
+        "scope_ids": [
+          "facilities"
+        ],
+        "source_keys": [
+          "vault|handbook/wifi.md"
+        ]
+      }
     },
     {
       "registration_ref": "reg-005",
@@ -528,6 +871,24 @@
       "valid_from": "2026-01-01T00:00:00Z",
       "expires_at": "2027-01-01T00:00:00Z",
       "revoked": false
+    },
+    {
+      "registration_ref": "reg-020",
+      "steward_id": "steward-ops",
+      "action_ids": [
+        "supersede"
+      ],
+      "valid_from": "2026-01-01T00:00:00Z",
+      "expires_at": "2027-01-01T00:00:00Z",
+      "revoked": false,
+      "applicability": {
+        "scope_ids": [
+          "facilities"
+        ],
+        "source_keys": [
+          "vault|facilities/generator.md"
+        ]
+      }
     }
   ],
   "supersessionRecords": [
@@ -755,6 +1116,81 @@
         "facilities"
       ],
       "registration_ref": "reg-005"
+    },
+    {
+      "record_id": "sup-020",
+      "issuer": "steward-ops",
+      "old_ref": {
+        "repo": "vault",
+        "path": "facilities/generator.md",
+        "commit": "d0dfb65b9439ffd193ba390a242f30447f687555",
+        "blob": "1daf2a8c37745be532af33f689d983bd43250c49",
+        "algorithm": "git-sha1",
+        "revision": "rev-1"
+      },
+      "new_ref": {
+        "repo": "vault",
+        "path": "facilities/generator.md",
+        "commit": "f662eb9b27dd5f18044d67862b01dda148fd9329",
+        "blob": "58b469fe2638d6377c13ef3fa9f2e3902e06b50e",
+        "algorithm": "git-sha1",
+        "revision": "rev-2"
+      },
+      "effective_at": "2026-06-01T00:00:00Z",
+      "scope_ids": [
+        "facilities"
+      ],
+      "registration_ref": "reg-001"
+    },
+    {
+      "record_id": "sup-021",
+      "issuer": "steward-ops",
+      "old_ref": {
+        "repo": "vault",
+        "path": "facilities/pump.md",
+        "commit": "f777badac777436e6d1616145bf76d1d3d539dae",
+        "blob": "fafa82e208d1ff935d833f0b63b8a4f4531774c2",
+        "algorithm": "git-sha1",
+        "revision": "rev-1"
+      },
+      "new_ref": {
+        "repo": "vault",
+        "path": "facilities/pump.md",
+        "commit": "327a2e8d45c8e314fba2c4338292c05402c47d9d",
+        "blob": "5698c7028636e2c2dcca09cae10056b099bb5a1e",
+        "algorithm": "git-sha1",
+        "revision": "rev-2"
+      },
+      "effective_at": "2026-06-01T00:00:00Z",
+      "scope_ids": [
+        "facilities"
+      ],
+      "registration_ref": "reg-001"
+    },
+    {
+      "record_id": "sup-022",
+      "issuer": "steward-ops",
+      "old_ref": {
+        "repo": "vault",
+        "path": "facilities/valve.md",
+        "commit": "51a53c90d9eeaf6e38610f72b7901409b0c30509",
+        "blob": "27c365b76e03f03186b930b94f7d173f559cf7fe",
+        "algorithm": "git-sha1",
+        "revision": "rev-1"
+      },
+      "new_ref": {
+        "repo": "vault",
+        "path": "facilities/valve.md",
+        "commit": "98165467d476ddd36018473002db7422c69c1be5",
+        "blob": "0b5c5b06b49e14ae5cad71327c1c938334645764",
+        "algorithm": "git-sha1",
+        "revision": "rev-2"
+      },
+      "effective_at": "2026-06-01T00:00:00Z",
+      "scope_ids": [
+        "facilities"
+      ],
+      "registration_ref": "reg-020"
     }
   ]
 }

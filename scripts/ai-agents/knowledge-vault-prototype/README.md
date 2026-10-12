@@ -14,28 +14,63 @@ writes, no model calls, no network.
   is guessed.
 - Selects the effective source revision **only through registered
   supersession records** authenticated against steward registrations:
-  steward validity, action authorization (`supersede`), authority scope,
-  both pin verifications (Git blob SHA-1 recomputed with the blob header),
-  and read permission. No source-internal chain fallback, no commit-order
-  heuristic, no revision-name authority. Forks and broken chains retain
-  uncertainty — never a claim of current policy.
+  steward validity, action authorization (`supersede`), **authority scope
+  coverage (EVERY record scope must fall inside the steward's authority —
+  one overlapping token never authorizes a mixed-scope record)**,
+  **exact registration applicability (the record's scopes and old/new
+  source keys must fall inside the registration's declared
+  `applicability`)**, both pin verifications (Git blob SHA-1 recomputed
+  with the blob header), and read permission. No source-internal chain
+  fallback, no commit-order heuristic, no revision-name authority. Forks
+  and broken chains retain uncertainty — never a claim of current policy.
+- Emits each claim **only if its own scopes overlap the authenticated
+  records' effective scope** (their intersection): a
+  steward-authorized record cannot launder an out-of-scope claim into the
+  answer (excluded claims raise `SCOPE_NOT_COVERED`).
 - Returns claims as **exact quoted extracts** with `SourceRef` citations
   (`quoted_span` === `span.quoted_text`, byte offsets verified against
   source bytes). Source facts are parsed from a bounded exact-text
   fixture grammar; a candidate's metadata is never trusted as truth.
+  **Claim IDs are unique and stable per fact** (query key + source key +
+  commit + exact fact line); byte-identical duplicate lines dedupe to one
+  claim, conflicting facts never dedupe.
 - Detects contradictions (same claim key, overlapping scopes, same units,
-  different values) and cites both exact spans.
+  different values) **across and within sources** and cites both exact
+  spans. **Degraded (unspecified-units) claims never contradict** a
+  measured claim. Multiple contradictions never collapse: pair identity
+  is per fact pair. A contradiction forces `LOW` with no asserted winner.
+- Explicit `source_pin` selects the pinned revision **exclusively**
+  (ignores `as_of_date`), but pin integrity identifies content, not
+  present applicability: a pin to a future-effective revision is labeled
+  uncertain (`FUTURE_EFFECTIVE`, `LOW`), never `HIGH`/current.
 - Quarantines sources containing seeded directive content; quarantined
   sources can never support claims, but clean independent evidence may
   still answer. Query-embedded directives and non-`answer` actions are
   refused (`INSTRUCTION_INJECTION` / `ACTION_DENIED`).
 - Confidence: `HIGH` (all claims verified, effective, readable, within age
-  limit, no conflict), `MEDIUM` (explicitly partial coverage), `LOW`
-  (staleness, ambiguity, conflict, or unverifiable annotations). No
-  verifiable claims → `UNVERIFIABLE`, never a fabricated answer.
+  limit, no conflict, no coverage gaps), `MEDIUM` (explicitly partial
+  coverage), `LOW` (staleness, ambiguity, conflict, unverifiable
+  annotations, **or any relevant coverage gap — stale/ambiguous evidence,
+  scope-excluded claims, future-effective pins — even when another
+  supported claim survives**). No verifiable claims → `UNVERIFIABLE`,
+  never a fabricated answer.
+- `complete` is accurate, not status-derived: true only when the answer
+  is `ANSWERED` with zero contradictions and zero coverage-gap
+  diagnostics.
 - Source age comes from authenticated effective/verification ledger times,
-  never file mtime. Every selected source and span is re-verified on every
-  answer; there is no persistent cache.
+  never file mtime; **ledger dates are runtime-validated** (invalid or
+  missing dates → `REFUSED / INVALID_INPUT`, never a NaN bypass). Every
+  selected source and span is re-verified on every answer; there is no
+  persistent cache.
+- **Budgets cover everything consulted**: every vocabulary phrase, source
+  entry, revision ledger entry, grant, steward, registration, record,
+  revision scan, and payload byte is charged BEFORE use. **Source text is
+  never accessed without a read grant** — relevance of denied sources is
+  decided from adapter-supplied `claim_keys` metadata only; denied bytes
+  are never parsed, scanned, or quoted. Any budget breach
+  (`INPUT_LIMIT` / `BUDGET_EXCEEDED`) refuses with `complete: false` and
+  no partial answer — `BudgetError` is never converted into a domain
+  diagnostic.
 
 ## Layout
 
@@ -45,9 +80,10 @@ writes, no model calls, no network.
   authentication, effective-revision selection), `retriever.js` (claim
   extraction, filters, contradictions, confidence), `injection.js`
   (seeded-family recognizer), `canonical.js`, `markdown.js`.
-- `fixtures/` — `store.json` (17 synthetic sources, 9 supersession
-  records, steward registrations, read grants), `vocabulary.json`
-  (13 query keys), `make-fixtures.js` (deterministic authoring tool).
+- `fixtures/` — `store.json` (27 synthetic sources, 12 supersession
+  records, steward registrations with exact applicability, read grants),
+  `vocabulary.json` (22 query keys), `make-fixtures.js` (deterministic
+  authoring tool).
 - `corpus/` — `battery.json` (120 frozen cases), `make-battery.js`
   (authoring tool), `freeze-corpus.js`, `manifest.json`,
   `corpus_digest.txt`.
@@ -86,7 +122,7 @@ node runner/measure-latency.js /tmp/kv-latency.json
   synthetic. Commit IDs are deterministic fixture identifiers, not real
   Git commits. Mock trusted registration is labeled simulated by the
   contract; no production identity or signing security is claimed.
-- Bounded vocabulary: only the 13 fixture query keys are answerable.
+- Bounded vocabulary: only the 22 fixture query keys are answerable.
 - Advisory output only: `advisory: true`, `fixture_only: true`; the
   output is never an execution token and satisfies no gate by itself.
 - Injection defense is structural (no write/tool capabilities,

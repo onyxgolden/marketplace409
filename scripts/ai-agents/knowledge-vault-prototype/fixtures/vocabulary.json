@@ -106,5 +106,68 @@
       "printer code",
       "printer access code"
     ]
+  },
+  {
+    "query_key": "generator-status",
+    "phrases": [
+      "generator status",
+      "backup generator state"
+    ]
+  },
+  {
+    "query_key": "pump-status",
+    "phrases": [
+      "pump status",
+      "water pump state"
+    ]
+  },
+  {
+    "query_key": "chiller-mode",
+    "phrases": [
+      "chiller mode",
+      "chiller setting"
+    ]
+  },
+  {
+    "query_key": "boiler-mode",
+    "phrases": [
+      "boiler mode",
+      "boiler setting"
+    ]
+  },
+  {
+    "query_key": "fan-speed",
+    "phrases": [
+      "fan speed",
+      "ventilation fan setting"
+    ]
+  },
+  {
+    "query_key": "damper-position",
+    "phrases": [
+      "damper position",
+      "air damper setting"
+    ]
+  },
+  {
+    "query_key": "valve-flow",
+    "phrases": [
+      "valve flow",
+      "valve flow rate"
+    ]
+  },
+  {
+    "query_key": "meter-flow",
+    "phrases": [
+      "meter flow",
+      "flow meter reading"
+    ]
+  },
+  {
+    "query_key": "pump-rate",
+    "phrases": [
+      "pump rate",
+      "circulation pump speed"
+    ]
   }
 ]

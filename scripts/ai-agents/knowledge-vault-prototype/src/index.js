@@ -120,8 +120,9 @@ export function run(task, context) {
 
   let ctx;
   try {
-    ctx = validateContext(context);
+    ctx = validateContext(context, budget);
   } catch (e) {
+    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", `context: ${e.message}`);
     if (e instanceof SchemaError) return baseDenial(task, "REFUSED", "INVALID_INPUT", "error", `context: ${e.message}`);
     throw e;
   }
@@ -130,7 +131,13 @@ export function run(task, context) {
   let query_key = validated.query_key;
   let matchedPhrases = [];
   if (query_key === null) {
-    const mapped = mapQuery(validated.query, ctx.vocabulary);
+    let mapped;
+    try {
+      mapped = mapQuery(validated.query, ctx.vocabulary, budget);
+    } catch (e) {
+      if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", `query mapping: ${e.message}`);
+      throw e;
+    }
     if (mapped.status === "unsupported") {
       return baseDenial(task, "REFUSED", "UNSUPPORTED_TASK", "error", "query does not map to any fixture vocabulary query_key; no claims guessed");
     }
@@ -166,7 +173,7 @@ export function run(task, context) {
       diagnostics: payload.diagnostics,
       quarantined_sources: payload.quarantined_sources,
       routing_flags: [],
-      complete: payload.status === "ANSWERED",
+      complete: payload.complete === true,
     });
     if (!finalEnvelopeWithinBudget(result)) {
       return baseDenial(task, "REFUSED", "OUTPUT_LIMIT", "error", `final output envelope exceeds ${BUDGET_LIMITS.maxOutputBytes} bytes`);

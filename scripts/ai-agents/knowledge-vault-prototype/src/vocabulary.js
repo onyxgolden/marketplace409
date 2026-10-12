@@ -17,15 +17,19 @@ const STOPWORDS = new Set([
 
 /**
  * Map a query to a query_key via the vocabulary.
+ * Every consulted phrase is charged against the task payload budget
+ * BEFORE it is matched, so an unbounded vocabulary fails closed with
+ * INPUT_LIMIT instead of being scanned for free.
  * Returns {status:"ok", query_key, matchedPhrases} |
  *         {status:"unsupported"} |
  *         {status:"ambiguous", candidates:[query_key...]}.
  */
-export function mapQuery(query, vocabulary) {
+export function mapQuery(query, vocabulary, budget = null) {
   const q = query.toLowerCase();
   const hits = new Map(); // query_key -> matched phrases
   for (const entry of vocabulary) {
     for (const phrase of entry.phrases) {
+      if (budget) budget.countPayload(phrase, "vocabulary phrase");
       if (q.includes(phrase.toLowerCase())) {
         if (!hits.has(entry.query_key)) hits.set(entry.query_key, []);
         hits.get(entry.query_key).push(phrase);

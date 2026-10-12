@@ -1,13 +1,13 @@
 {
-  "corpus_digest": "e16aa42490c2c229fee318300f271937a1e15a1b1cd5449c30bf04d2e078fd2a",
+  "corpus_digest": "6e0251825f1c0a9ac1d99e12cc4fc1cec118f9f0c888b69f61a567e34a3790ee",
   "files": [
     {
       "path": "README.md",
-      "sha256": "9e0a8fe2f16f4b6360d11c0ed7b259089f62d91b8bae8c1f1ca0ff8b03b26899"
+      "sha256": "e99cce96373eb43b2bf7954d25a7e09ef9f85c01ddf572ad251786da7501522b"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "30c95f20e7cd1ba0d6b5982d53868f7af6f03e02f73500fd4485a4ec5e6fa482"
+      "sha256": "448b52d7175c244e02cebe5f23d1f1cabc1d30d538cdf56025dc0f04707093af"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,23 +15,23 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "d05ebb50deb0427dfec5ec3d0007db380b7c82dda153d1f59779d3b76b726006"
+      "sha256": "7999030c4f25ae93b4052249405ec907a5810f3df59e45c72922daf3cba0dafc"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "8d89599b243fa0279694e938d51fcaee8926aa4a5927230d2a12a6eb33dcfb9d"
+      "sha256": "61fe2bd3c52283854a737166d107cdc5a699326ab48ee505f7fb8210e70c9fc0"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "25f2930f3ae3ef8b73f9d68d32d5abb27fc31225d1c9fefdd130bb10f8635756"
+      "sha256": "fca295f86df0218e990bff35948c55ec49e689cb3ff9a181dc9c266ad4a4f6e6"
     },
     {
       "path": "fixtures/vocabulary.json",
-      "sha256": "94fcdb20123622f7e104000a32a9cd1e14de0d3fd9b38ff8ee171cc7d9438fef"
+      "sha256": "150f764bd29fb93776777ca8801bf80080855804105ac2c4edde5d366b06e893"
     },
     {
       "path": "package.json",
-      "sha256": "739bdaa5bdf17b56e9890ee3407825f8c1ccfb45485288e9bff4b64411fc2eee"
+      "sha256": "1baa136e973ef79aae2bf57027e92cd8e431b01770e016d7e6a0d09622362071"
     },
     {
       "path": "runner/measure-latency.js",
@@ -47,7 +47,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "65ec05f43a0e0a773e226c50eb82c1048d74e16afc58f434c2e8615721f57bbc"
+      "sha256": "e29a929b72448bad3d8303ba44e0b0792395dff7bd856321d6515702a118e6a4"
     },
     {
       "path": "src/injection.js",
@@ -59,23 +59,23 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "c0ac00b497b9565a92440652c7bcf60699065d6ebad3cc35e71954092d1c8a4b"
+      "sha256": "670bee9c277ef254b353baeff5a95b7606cedc904cba91b395de876b607d2ba6"
     },
     {
       "path": "src/retriever.js",
-      "sha256": "9b3255df430c21a738ecd115648c7863138ddc3cc0607f6e14c49a7ab18fb2c2"
+      "sha256": "f3c80fdbf3fbdfa2fa4f3d242e3c92916755b10ce86323e0d95d8e4f9415cb52"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "d804fd56911c92e49c7ea6132f22cbeb9d847d95ec948574a0b6d7dd039c76e9"
+      "sha256": "8b43a0b0f0a46f210186c29c4ab8f30cead95f35f76d1d5116344b183ecda129"
     },
     {
       "path": "src/supersession.js",
-      "sha256": "a2475dfab9a573a7153fb75152502ec63a619a44dd75a85d99eb9aae5046ffb8"
+      "sha256": "c26c2b06f4e4117d3f2826981d5f69d30031ab12e0a8f565508bcff89e281626"
     },
     {
       "path": "src/vocabulary.js",
-      "sha256": "55cce725d446bff7da334d18ac8068292f78dbd5a0e479edc8513fbfcdb1b95c"
+      "sha256": "c744f9b1ef34970342045773c8f490715bbf23d756da2940c68a367269ea7202"
     },
     {
       "path": "tests/battery.test.js",
@@ -95,11 +95,15 @@
     },
     {
       "path": "tests/harness.js",
-      "sha256": "3d01157d1a3629d219371efe67e7b37b139352a7fc96b5c12877c93f3fac088b"
+      "sha256": "cd3da1d2cb314f66292da0e590c711ae1268eb1dc6b38921daf978aa57bb0248"
     },
     {
       "path": "tests/injection.test.js",
       "sha256": "8c7dbd28f1212a13d03ef2d32828d312102f975629fe673971b898b3a295da38"
+    },
+    {
+      "path": "tests/kvp-fixes.test.js",
+      "sha256": "eb836f103efe8acf41de87011b1c2df2cef5236a351508af8ea075c5c95709c9"
     },
     {
       "path": "tests/markdown.test.js",
