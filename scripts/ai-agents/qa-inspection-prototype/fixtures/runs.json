@@ -1,0 +1,10 @@
+{
+  "run-demo-1": {
+    "run_id": "run-demo-1",
+    "build_id": "build-alpha",
+    "repo": "onyxgolden/marketplace409",
+    "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
+    "environment": "synthetic-ci",
+    "started_at": "2026-10-11T11:00:00Z"
+  }
+}

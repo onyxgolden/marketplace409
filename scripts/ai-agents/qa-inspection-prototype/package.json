@@ -1,0 +1,13 @@
+{
+  "description": "QA/Inspection agent Phase 2 slice 1 synthetic prototype: fixture inspection-report generator plus inert ledger-row preview. Advisory only; no live activation, no control execution.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "qa-inspection-prototype",
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
