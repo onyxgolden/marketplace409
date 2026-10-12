@@ -5,8 +5,8 @@
   },
   "name": "architecture-reviewer-prototype",
   "scripts": {
-    "battery": "AR_APPROVED_ROOT=0c311ff3297dbff0abb6ec20dfce5c3ec0541863650b6514a3c4d05a509c14aa node tests/run-battery.js",
-    "test": "AR_APPROVED_ROOT=0c311ff3297dbff0abb6ec20dfce5c3ec0541863650b6514a3c4d05a509c14aa node tests/run-tests.js"
+    "battery": "AR_APPROVED_ROOT=33b5e8317123149bd7996be6e918f98ccac1aaec7d401659f750726e901d73a1 node tests/run-battery.js",
+    "test": "AR_APPROVED_ROOT=33b5e8317123149bd7996be6e918f98ccac1aaec7d401659f750726e901d73a1 node tests/run-tests.js"
   },
   "type": "module",
   "version": "0.1.0"

@@ -3532,7 +3532,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -3642,7 +3647,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -3752,7 +3762,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -3862,7 +3877,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -3972,7 +3992,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4082,7 +4107,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4192,7 +4222,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4302,7 +4337,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4412,7 +4452,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4522,7 +4567,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4657,7 +4707,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4767,7 +4822,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4869,7 +4929,12 @@
         ],
         "result_head": "1111111111111111111111111111111111111111",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -4979,7 +5044,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -5089,7 +5159,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -5224,7 +5299,12 @@
         ],
         "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
         "source": {
-          "repo": "fixture-repo"
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
         }
       },
       "verdicts": [
@@ -5302,6 +5382,811 @@
       "quarantined": 0,
       "complete": false,
       "gate_sufficient": null,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-17",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/other.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-18",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "9f101c9b62ed148a3905660659a57173b77c134b",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-19",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "2246b6fde94cc17018198a2d21da3b552ef5b32e",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-2"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-20",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/third.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-21",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "9f101c9b62ed148a3905660659a57173b77c134b",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-22",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "2246b6fde94cc17018198a2d21da3b552ef5b32e",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-2"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
+      "routing_flags": []
+    }
+  },
+  {
+    "case_id": "ar-gate-23",
+    "category": "gate",
+    "task": {
+      "requested_action": "check-gate",
+      "gate_evidence": {
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
+      }
+    },
+    "fixture": {
+      "design": null,
+      "clock": 1791806400000,
+      "principals": [
+        {
+          "principal_id": "muse",
+          "registered_by": "jason",
+          "revoked": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "gatePolicy": {
+        "required_round": "round-2",
+        "repo": "fixture-repo",
+        "resource": "designs/escrow.md",
+        "scope_ids": [
+          "escrow"
+        ],
+        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+        "source": {
+          "repo": "fixture-repo",
+          "path": "designs/escrow.md",
+          "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+          "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+          "algorithm": "git-sha1",
+          "revision": "fixture-rev-1"
+        }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "verdict_ref": "verdict-1",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/third.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "2bb308c1ea1b5143c02a0c79dc205e9d88a47bdf",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
+    },
+    "expected": {
+      "status": "REVIEWED",
+      "verdict": null,
+      "advisory": true,
+      "authorization_granted": false,
+      "finding_count": 0,
+      "findings": [],
+      "contradiction_count": 0,
+      "contradiction_checks": [],
+      "coverage": {
+        "required": [],
+        "verified": [],
+        "missing": [],
+        "unverifiable": []
+      },
+      "diag_codes": [],
+      "quarantined": 0,
+      "complete": true,
+      "gate_sufficient": false,
       "routing_flags": []
     }
   },

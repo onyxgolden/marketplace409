@@ -501,9 +501,13 @@ for (const [n, act] of [["01", "merge"], ["02", "deploy"], ["03", "execute"], ["
 // policy is the independently current target binding: exact current head
 // plus source identity. Verdict and agreement records carry required
 // source_ref; the agreement references the exact gated verdict record.
-const GATE_POLICY = { required_round: "round-2", repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"], result_head: null /* set below */, source: { repo: REPO } };
+const GATE_POLICY = { required_round: "round-2", repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"], result_head: null /* set below */, source: null /* set below */ };
 const GATE_HEAD = headFor("gate-reviewed-head");
 GATE_POLICY.result_head = GATE_HEAD;
+// AR-001 round 3: the policy's source identity must be a COMPLETE
+// SourceRef — the exact source the gate evaluates against.
+const GATE_SOURCE = { repo: REPO, path: "designs/escrow.md", commit: commitFor("gate-design"), blob: gitBlob("gate-design-bytes"), algorithm: "git-sha1", revision: FIXTURE_REV };
+GATE_POLICY.source = GATE_SOURCE;
 const MUSE_PRINCIPAL = { principal_id: "muse", registered_by: "jason", revoked: false, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z" };
 function gateVerdict(id, mut = {}) {
   return {
@@ -581,6 +585,36 @@ gateCase("16", { // AR-004: 400,000-char verdict record_id -> named INPUT_LIMIT 
   verdicts: [gateVerdict("verdict-1", { record_id: "x".repeat(400000) })],
   sufficient: false,
   expOverride: exp("REFUSED", null, [], { required: [], verified: [] }, { gate_sufficient: null, diag_codes: ["INPUT_LIMIT"], complete: false }),
+});
+// AR-001 round 3: same-repo wrong-source probes — repo alone does not bind
+// a record to a source revision.
+gateCase("17", { // verdict: same repo, wrong source path
+  verdictMut: { source_ref: { ...GATE_SOURCE, path: "designs/other.md" } },
+  sufficient: false,
+});
+gateCase("18", { // verdict: same repo, wrong source commit
+  verdictMut: { source_ref: { ...GATE_SOURCE, commit: commitFor("other-commit") } },
+  sufficient: false,
+});
+gateCase("19", { // verdict: same repo, wrong source blob/revision
+  verdictMut: { source_ref: { ...GATE_SOURCE, blob: gitBlob("other-bytes"), revision: "fixture-rev-2" } },
+  sufficient: false,
+});
+gateCase("20", { // agreement: same repo, wrong source path
+  agreementMut: { source_ref: { ...GATE_SOURCE, path: "designs/third.md" } },
+  sufficient: false,
+});
+gateCase("21", { // agreement: same repo, wrong source commit
+  agreementMut: { source_ref: { ...GATE_SOURCE, commit: commitFor("other-commit") } },
+  sufficient: false,
+});
+gateCase("22", { // agreement: same repo, wrong source blob/revision
+  agreementMut: { source_ref: { ...GATE_SOURCE, blob: gitBlob("other-bytes"), revision: "fixture-rev-2" } },
+  sufficient: false,
+});
+gateCase("23", { // mixed: valid verdict source + agreement on a different source path
+  agreementMut: { source_ref: { ...GATE_SOURCE, path: "designs/third.md", blob: gitBlob("third-bytes") } },
+  sufficient: false,
 });
 
 // ---------------- misc (7) ----------------

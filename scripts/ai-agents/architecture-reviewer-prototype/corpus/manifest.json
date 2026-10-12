@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "0c311ff3297dbff0abb6ec20dfce5c3ec0541863650b6514a3c4d05a509c14aa",
+  "corpus_digest": "33b5e8317123149bd7996be6e918f98ccac1aaec7d401659f750726e901d73a1",
   "files": [
     {
       "path": "README.md",
@@ -7,7 +7,7 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "c279fc891da011c774efc9f06c77fb136d2b3295017bad046848273dff725ccc"
+      "sha256": "2a410131da275e142745775bd035ed9bbe91a7ee0876a86d270652456b382bab"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,7 +15,7 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "64a434c3db354220e714c242281c9ea52c1225c6d76a433d523791a85e4ac43a"
+      "sha256": "5ef8197169906c46d66c4b443a2116e7190c15dedc29ee08b9c09e0c74393858"
     },
     {
       "path": "fixtures/principals.json",
@@ -23,7 +23,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "aa1cfea16ee73ee4e4803454ee583813c2030c899133aad3cbbd19384803bd4a"
+      "sha256": "4a48c5a3252e3cbf248a0a1e5350ffdde5c141977c464a1997c523bc9e623994"
     },
     {
       "path": "runner/run-manual.js",
@@ -39,7 +39,7 @@
     },
     {
       "path": "src/gates.js",
-      "sha256": "1dfd03eb2054aadcdfc32981a491fdf1056966d0220027a08ff6b932527e99d9"
+      "sha256": "79cc862752d623ab8c9458b7b7c062c8a3d85ee8f90e81355cdbc5acd9024018"
     },
     {
       "path": "src/index.js",
@@ -63,11 +63,11 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "e55531b17f4ced83d84b7eca602a1c3baab98b1c7db4e465d1aa7c543781a746"
+      "sha256": "c7b2ee35d924e13f0418875ef83d99ab1127d56e13893d9d1736a64abda55a46"
     },
     {
       "path": "tests/ar-regressions.test.js",
-      "sha256": "a3c681e0e8ee7dec5248b7a82cbb99325c29d2bf1ca979d23655487542cec68d"
+      "sha256": "8da383f24a24fc1ecac9bd84663d420dacb0dcc111e8723aa474f7ac76424680"
     },
     {
       "path": "tests/battery.test.js",

@@ -12,10 +12,14 @@
  * real calendar dates, no missing-field defaults).
  *
  * The gate accepts an authenticated designated-ChatGPT GO plus a Muse
- * agreement record, both bound to the same repo/resource/scope/source/
- * result head/current round, with validity/revocation and the standing
- * agreement checks. A newer-round verdict for the same target supersedes
- * an older GO (stale evidence). authorization_granted is always false:
+ * agreement record, both bound to the same repo/resource/scope/complete
+ * source identity/result head/current round, with validity/revocation
+ * and the standing agreement checks. Verdict and agreement source_refs
+ * are each compared against the policy's complete SourceRef
+ * (repo/path/commit/blob/algorithm/revision); an exact verdict_ref on
+ * the agreement does not excuse a contradictory source_ref. A
+ * newer-round verdict for the same target supersedes an older GO
+ * (stale evidence). authorization_granted is always false:
  * advisory output is never an execution token.
  */
 
@@ -77,6 +81,23 @@ function sameTarget(a, b) {
   const sa = [...(a.scope_ids ?? [])].sort();
   const sb = [...(b.scope_ids ?? [])].sort();
   return sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+}
+
+/**
+ * AR-001 round 3: complete source identity comparison. Every field of
+ * the validated SourceRef (repo/path/commit/blob/algorithm/revision)
+ * must match — same-repo evidence for a different source revision is
+ * evidence for another target.
+ */
+function sameSourceRef(a, b) {
+  return (
+    a.repo === b.repo &&
+    a.path === b.path &&
+    a.commit === b.commit &&
+    a.blob === b.blob &&
+    a.algorithm === b.algorithm &&
+    a.revision === b.revision
+  );
 }
 
 function windowValidMs(validFrom, expiresAt, clock) {
@@ -222,16 +243,18 @@ export function evaluateGate(task, context, budget) {
     targetOk ? "repo/resource/scope match the gated target" : "repo/resource/scope do not match the gated target"
   );
 
-  // 7. AR-001: the verdict's source must match the policy's source
-  //    identity. source_ref is required by schema; a verdict whose
-  //    source names another repo is evidence for another target.
-  const sourceOk = verdict.source_ref.repo === policy.source.repo;
+  // 7. AR-001 (round 3): the verdict's source must match the policy's
+  //    COMPLETE source identity — repo/path/commit/blob/algorithm/
+  //    revision under declared revision semantics. A verdict that names
+  //    the right repo but a different source path/commit/blob/revision
+  //    is evidence for another target and cannot gate.
+  const sourceOk = sameSourceRef(verdict.source_ref, policy.source);
   record(
     "source-match",
     sourceOk,
     sourceOk
-      ? `verdict source repo '${verdict.source_ref.repo}' matches the policy source identity`
-      : `verdict source repo '${verdict.source_ref.repo}' does not match the policy source identity '${policy.source.repo}'`
+      ? "verdict source_ref matches the policy's complete source identity (repo/path/commit/blob/algorithm/revision)"
+      : `verdict source_ref '${JSON.stringify(verdict.source_ref)}' does not match the policy's complete source identity '${JSON.stringify(policy.source)}'`
   );
 
   // 8. AR-001: the verdict's heads must equal the POLICY's current
@@ -296,17 +319,19 @@ export function evaluateGate(task, context, budget) {
         : `agreement verdict_ref '${agreement.verdict_ref}' does not resolve to the gated verdict record '${verdict.record_id}'`
     );
 
-    // 11. AR-001: the agreement must bind the independently current
-    //     target from the host policy — same source, same current head,
-    //     same current round — not merely the verdict's own fields.
-    //     A target change voids the agreement.
-    const agreementSourceOk = agreement.source_ref.repo === policy.source.repo;
+    // 11. AR-001 (round 3): the agreement's source must match the
+    //     policy's COMPLETE source identity — compared against the
+    //     policy, not merely against the verdict. Agreement's exact
+    //     verdict_ref does not excuse a contradictory source_ref: a
+    //     verdict and agreement that refer to different, unrelated
+    //     source revisions can never satisfy the same-source rule.
+    const agreementSourceOk = sameSourceRef(agreement.source_ref, policy.source);
     record(
       "agreement-source-match",
       agreementSourceOk,
       agreementSourceOk
-        ? `agreement source repo '${agreement.source_ref.repo}' matches the policy source identity`
-        : `agreement source repo '${agreement.source_ref.repo}' does not match the policy source identity '${policy.source.repo}'`
+        ? "agreement source_ref matches the policy's complete source identity (repo/path/commit/blob/algorithm/revision)"
+        : `agreement source_ref '${JSON.stringify(agreement.source_ref)}' does not match the policy's complete source identity '${JSON.stringify(policy.source)}'`
     );
     const agreementHeadOk = agreement.result_head === policy.result_head;
     record(

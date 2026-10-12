@@ -131,6 +131,9 @@ test("injection scanner flags both seeded families", () => {
 });
 
 const GATE_H = hex40("h");
+// AR-001 round 3: the complete source identity shared by the valid
+// verdict, agreement, and policy fixtures.
+const FULL_SRC = { repo: "r", path: "designs/reg.md", commit: hex40("gd"), blob: hex40("gb"), algorithm: "git-sha1", revision: "fixture-rev-1" };
 function gateCtx(verdictMut = {}, agreementMut = {}, extra = {}) {
   const verdict = {
     record_id: "verdict-1", reviewer: "chatgpt", round: "round-2", verdict: "GO",
@@ -156,7 +159,7 @@ function gateCtx(verdictMut = {}, agreementMut = {}, extra = {}) {
     context: {
       clock: CLOCK, designs: {},
       principals: [{ principal_id: "muse", registered_by: "jason", revoked: false, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z" }],
-      gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [], result_head: GATE_H, source: { repo: "r" } },
+      gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [], result_head: GATE_H, source: { ...FULL_SRC } },
       verdicts: [verdict],
       agreements: [agreement],
       ...extra,
@@ -297,7 +300,7 @@ test("AR-001: gate rejects internally matching stale heads the policy does not n
   const { task, context } = gateCtx(
     { result_head: zeros, reviewed_head: zeros },
     { result_head: zeros },
-    { gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [], result_head: ones, source: { repo: "r" } } }
+    { gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [], result_head: ones, source: { ...FULL_SRC } } }
   );
   const r = run(task, context);
   assert.equal(r.gate.sufficient, false);
@@ -321,6 +324,92 @@ test("AR-001: gate rejects an agreement whose source names another repo", () => 
   const r = run(task, context);
   assert.equal(r.gate.sufficient, false);
   assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && !c.sufficient));
+});
+
+// AR-001 round 3: same-repo wrong-source probes. Repo alone does not bind
+// a record to a source revision — path/commit/blob/revision must match
+// the policy's complete SourceRef too.
+test("AR-001: gate rejects a verdict with the same repo but a wrong source path", () => {
+  const { task, context } = gateCtx({
+    source_ref: { ...FULL_SRC, path: "designs/other.md" },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects a verdict with the same repo but a wrong source commit", () => {
+  const { task, context } = gateCtx({
+    source_ref: { ...FULL_SRC, commit: hex40("other-commit") },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects a verdict with the same repo but a wrong source blob/revision", () => {
+  const { task, context } = gateCtx({
+    source_ref: { ...FULL_SRC, blob: hex40("other-blob"), revision: "fixture-rev-2" },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects an agreement with the same repo but a wrong source path", () => {
+  const { task, context } = gateCtx({}, {
+    source_ref: { ...FULL_SRC, path: "designs/third.md" },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects an agreement with the same repo but a wrong source commit", () => {
+  const { task, context } = gateCtx({}, {
+    source_ref: { ...FULL_SRC, commit: hex40("other-commit") },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects an agreement with the same repo but a wrong source blob/revision", () => {
+  const { task, context } = gateCtx({}, {
+    source_ref: { ...FULL_SRC, blob: hex40("other-blob"), revision: "fixture-rev-2" },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects a valid verdict paired with an agreement on a different source path", () => {
+  // Round-3 probe shape: verdict source is valid; the agreement binds the
+  // exact verdict record but names a different source path. An exact
+  // verdict_ref does not excuse a contradictory source_ref.
+  const { task, context } = gateCtx({}, {
+    source_ref: { ...FULL_SRC, path: "designs/third.md", blob: hex40("other-blob") },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && !c.sufficient));
+  assert.ok(r.gate.checks.some((c) => c.name === "source-match" && c.sufficient));
+});
+
+test("AR-001: gate accepts verdict and agreement with matching complete SourceRefs", () => {
+  const { task, context } = gateCtx();
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, true);
+  assert.ok(r.gate.checks.some((c) => c.name === "source-match" && c.sufficient));
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && c.sufficient));
+});
+
+test("AR-001: gate rejects a host policy whose source is not a complete SourceRef", () => {
+  const { task, context } = gateCtx();
+  context.gatePolicy.source = { repo: "r" };
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "gate-policy" && !c.sufficient));
 });
 
 test("AR-001: gate rejects a malformed host gate policy", () => {
@@ -348,7 +437,7 @@ test("AR-004: gate policy payload boundary is exact: at-limit passes, +1 refuses
   const LIMIT = 262144;
   const { task } = gateCtx();
   const taskBytes = Buffer.byteLength(canonicalJson(task), "utf8");
-  const mkPolicy = (n) => ({ required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: ["z".repeat(n)], result_head: GATE_H, source: { repo: "r" } });
+  const mkPolicy = (n) => ({ required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: ["z".repeat(n)], result_head: GATE_H, source: { ...FULL_SRC } });
   let lo = 0, hi = LIMIT;
   while (lo < hi) {
     const mid = Math.floor((lo + hi) / 2);

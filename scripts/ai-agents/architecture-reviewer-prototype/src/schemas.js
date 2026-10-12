@@ -205,10 +205,13 @@ export function validatePrincipalRecord(rec, where) {
 /**
  * Strict host gate-policy schema (AR-001). The policy is the
  * independently current target binding: it carries the EXACT current
- * result head and the source identity the gate is evaluating against.
+ * result head and the COMPLETE source identity (SourceRef:
+ * repo/path/commit/blob/algorithm/revision) the gate evaluates against.
  * A verdict/agreement whose heads merely match each other but not the
  * policy's current head is stale — the policy's actual target head is
- * never ignored.
+ * never ignored. A verdict/agreement that names only the right repo but
+ * a different source path/commit/blob/revision is evidence for another
+ * target (round-3 finding).
  */
 export function validateGatePolicy(policy, where) {
   if (!isPlainObject(policy)) throw new SchemaError(`${where} must be an object`);
@@ -223,10 +226,10 @@ export function validateGatePolicy(policy, where) {
   optScopeIds(policy, where);
   const rh = reqString(policy, "result_head", where);
   if (!HEX40.test(rh)) throw new SchemaError(`${where}: 'result_head' must be a full lowercase 40-hex Git object ID`);
-  const source = policy.source;
-  if (!isPlainObject(source)) throw new SchemaError(`${where}: 'source' must be an object`);
-  checkOnlyKeys(source, new Set(["repo"]), `${where}.source`);
-  reqString(source, "repo", `${where}.source`);
+  // AR-001 round 3: the policy's source identity must be a COMPLETE
+  // validated SourceRef (repo/path/commit/blob/algorithm/revision) —
+  // a repo name alone cannot bind a verdict/agreement to a source revision.
+  validateSourceRef(policy.source, `${where}.source`);
   return policy;
 }
 
