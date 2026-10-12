@@ -118,6 +118,11 @@ function optScopeIds(obj, where) {
  * `revoked` is required and must be a boolean; dates must be real
  * calendar dates. Duplicate record IDs with conflicting content are
  * rejected by validateRecordStore.
+ *
+ * AR-001: source_ref is REQUIRED. A verdict record without a bound
+ * source cannot gate — the gate must match the verdict's source
+ * against the host policy's source identity, not merely compare two
+ * fields inside the same verdict.
  */
 export function validateReviewerVerdictRecord(rec, where) {
   if (!isPlainObject(rec)) throw new SchemaError(`${where}: verdict record must be an object`);
@@ -138,7 +143,8 @@ export function validateReviewerVerdictRecord(rec, where) {
   if (!HEX40.test(rh)) throw new SchemaError(`${where}: 'result_head' must be a full lowercase 40-hex Git object ID`);
   const vh = reqString(rec, "reviewed_head", where);
   if (!HEX40.test(vh)) throw new SchemaError(`${where}: 'reviewed_head' must be a full lowercase 40-hex Git object ID`);
-  if (rec.source_ref !== undefined) validateSourceRef(rec.source_ref, `${where}.source_ref`);
+  if (rec.source_ref === undefined) throw new SchemaError(`${where}: 'source_ref' is required`);
+  validateSourceRef(rec.source_ref, `${where}.source_ref`);
   validateIsoDate(rec.valid_from, `${where}.valid_from`);
   validateIsoDate(rec.expires_at, `${where}.expires_at`);
   reqBoolean(rec, "revoked", where);
@@ -149,12 +155,19 @@ export function validateReviewerVerdictRecord(rec, where) {
 /**
  * Strict agreement record schema: a Muse agreement must be an explicit
  * record binding a principal to the same target, not mere registration.
+ *
+ * AR-001: the agreement carries a validated reference to the EXACT
+ * verdict record it agrees with (verdict_ref), plus its own source_ref.
+ * Agreement is with this verdict and this source — never a generic
+ * agreed:true. Standing agreement checks (explicit agreement, target
+ * binding, validity, principal) are represented by these trusted record
+ * fields, not inferred from registration alone.
  */
 export function validateAgreementRecord(rec, where) {
   if (!isPlainObject(rec)) throw new SchemaError(`${where}: agreement record must be an object`);
   checkOnlyKeys(
     rec,
-    new Set(["record_id", "principal_id", "repo", "resource", "scope_ids", "result_head", "round", "agreed", "valid_from", "expires_at", "revoked"]),
+    new Set(["record_id", "principal_id", "repo", "resource", "scope_ids", "result_head", "round", "agreed", "verdict_ref", "source_ref", "valid_from", "expires_at", "revoked"]),
     where
   );
   reqString(rec, "record_id", where);
@@ -166,6 +179,9 @@ export function validateAgreementRecord(rec, where) {
   if (!HEX40.test(rh)) throw new SchemaError(`${where}: 'result_head' must be a full lowercase 40-hex Git object ID`);
   reqString(rec, "round", where);
   reqBoolean(rec, "agreed", where);
+  reqString(rec, "verdict_ref", where);
+  if (rec.source_ref === undefined) throw new SchemaError(`${where}: 'source_ref' is required`);
+  validateSourceRef(rec.source_ref, `${where}.source_ref`);
   validateIsoDate(rec.valid_from, `${where}.valid_from`);
   validateIsoDate(rec.expires_at, `${where}.expires_at`);
   reqBoolean(rec, "revoked", where);
@@ -184,6 +200,34 @@ export function validatePrincipalRecord(rec, where) {
   validateIsoDate(rec.expires_at, `${where}.expires_at`);
   reqBoolean(rec, "revoked", where);
   return rec;
+}
+
+/**
+ * Strict host gate-policy schema (AR-001). The policy is the
+ * independently current target binding: it carries the EXACT current
+ * result head and the source identity the gate is evaluating against.
+ * A verdict/agreement whose heads merely match each other but not the
+ * policy's current head is stale — the policy's actual target head is
+ * never ignored.
+ */
+export function validateGatePolicy(policy, where) {
+  if (!isPlainObject(policy)) throw new SchemaError(`${where} must be an object`);
+  checkOnlyKeys(
+    policy,
+    new Set(["required_round", "repo", "resource", "scope_ids", "result_head", "source"]),
+    where
+  );
+  reqString(policy, "required_round", where);
+  reqString(policy, "repo", where);
+  reqString(policy, "resource", where);
+  optScopeIds(policy, where);
+  const rh = reqString(policy, "result_head", where);
+  if (!HEX40.test(rh)) throw new SchemaError(`${where}: 'result_head' must be a full lowercase 40-hex Git object ID`);
+  const source = policy.source;
+  if (!isPlainObject(source)) throw new SchemaError(`${where}: 'source' must be an object`);
+  checkOnlyKeys(source, new Set(["repo"]), `${where}.source`);
+  reqString(source, "repo", `${where}.source`);
+  return policy;
 }
 
 /**

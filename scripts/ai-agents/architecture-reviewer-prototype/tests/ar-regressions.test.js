@@ -145,6 +145,8 @@ function gateCtx(verdictMut = {}, agreementMut = {}, extra = {}) {
     record_id: "agree-1", principal_id: "muse",
     repo: "r", resource: "designs/reg.md", scope_ids: [],
     result_head: GATE_H, round: "round-2", agreed: true,
+    verdict_ref: "verdict-1",
+    source_ref: { repo: "r", path: "designs/reg.md", commit: hex40("gd"), blob: hex40("gb"), algorithm: "git-sha1", revision: "fixture-rev-1" },
     valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
     revoked: false,
     ...agreementMut,
@@ -154,7 +156,7 @@ function gateCtx(verdictMut = {}, agreementMut = {}, extra = {}) {
     context: {
       clock: CLOCK, designs: {},
       principals: [{ principal_id: "muse", registered_by: "jason", revoked: false, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z" }],
-      gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [] },
+      gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [], result_head: GATE_H, source: { repo: "r" } },
       verdicts: [verdict],
       agreements: [agreement],
       ...extra,
@@ -271,6 +273,137 @@ test("gate rejects a revoked principal", () => {
   const r = run(task, context);
   assert.equal(r.gate.sufficient, false);
   assert.ok(r.gate.checks.some((c) => c.name === "muse-principal" && !c.sufficient));
+});
+
+test("AR-001: gate rejects a verdict whose source names another repo", () => {
+  const { task, context } = gateCtx({
+    source_ref: { repo: "other-repo", path: "designs/reg.md", commit: hex40("gd"), blob: hex40("gb"), algorithm: "git-sha1", revision: "fixture-rev-1" },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects a verdict with the required source_ref deleted", () => {
+  const { task, context } = gateCtx({ source_ref: undefined });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "trust-store" && !c.sufficient));
+});
+
+test("AR-001: gate rejects internally matching stale heads the policy does not name", () => {
+  const zeros = "0".repeat(40);
+  const ones = "1".repeat(40);
+  const { task, context } = gateCtx(
+    { result_head: zeros, reviewed_head: zeros },
+    { result_head: zeros },
+    { gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [], result_head: ones, source: { repo: "r" } } }
+  );
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "current-head" && !c.sufficient));
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-current-head" && !c.sufficient));
+});
+
+test("AR-001: gate rejects an agreement that references a different verdict record", () => {
+  const { task, context } = gateCtx({}, { verdict_ref: "verdict-2" });
+  const v2 = { ...context.verdicts[0], record_id: "verdict-2" };
+  context.verdicts = [context.verdicts[0], v2];
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-verdict-bind" && !c.sufficient));
+});
+
+test("AR-001: gate rejects an agreement whose source names another repo", () => {
+  const { task, context } = gateCtx({}, {
+    source_ref: { repo: "other-repo", path: "designs/reg.md", commit: hex40("gd"), blob: hex40("gb"), algorithm: "git-sha1", revision: "fixture-rev-1" },
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-source-match" && !c.sufficient));
+});
+
+test("AR-001: gate rejects a malformed host gate policy", () => {
+  const { task, context } = gateCtx();
+  delete context.gatePolicy.result_head;
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "gate-policy" && !c.sufficient));
+});
+
+test("AR-004: gate trust-store budget exhaustion is not swallowed as a complete review", () => {
+  // The round-2 probe: a 400,000-char verdict record_id must yield the
+  // named INPUT_LIMIT envelope with complete:false — never an ordinary
+  // REVIEWED/complete:true gate result.
+  const { task, context } = gateCtx({ record_id: "x".repeat(400000) });
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "INPUT_LIMIT"));
+  assert.equal(r.complete, false);
+  assert.equal(r.verdict_proposal, null);
+  assert.equal(r.authorization_granted, false);
+});
+
+test("AR-004: gate policy payload boundary is exact: at-limit passes, +1 refuses", () => {
+  const LIMIT = 262144;
+  const { task } = gateCtx();
+  const taskBytes = Buffer.byteLength(canonicalJson(task), "utf8");
+  const mkPolicy = (n) => ({ required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: ["z".repeat(n)], result_head: GATE_H, source: { repo: "r" } });
+  let lo = 0, hi = LIMIT;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (taskBytes + Buffer.byteLength(canonicalJson(mkPolicy(mid)), "utf8") < LIMIT) lo = mid + 1;
+    else hi = mid;
+  }
+  assert.equal(taskBytes + Buffer.byteLength(canonicalJson(mkPolicy(lo)), "utf8"), LIMIT);
+  // Counter boundary: at-limit the policy charge passes; +1 throws INPUT_LIMIT.
+  const b1 = makeBudget();
+  b1.countPayload(canonicalJson(task), "task payload");
+  b1.countObject();
+  b1.countPayload(canonicalJson(mkPolicy(lo)), "gate policy");
+  const b2 = makeBudget();
+  b2.countPayload(canonicalJson(task), "task payload");
+  b2.countObject();
+  assert.throws(() => b2.countPayload(canonicalJson(mkPolicy(lo + 1)), "gate policy"), (e) => e.code === "INPUT_LIMIT");
+  // Integration: +1 through the full run fails closed with the named envelope.
+  const c2 = gateCtx();
+  c2.context.gatePolicy = mkPolicy(lo + 1);
+  const rOver = run(c2.task, c2.context);
+  assert.equal(rOver.status, "REFUSED");
+  assert.ok(rOver.diagnostics.some((d) => d.code === "INPUT_LIMIT"));
+  assert.equal(rOver.complete, false);
+});
+
+test("AR-004: gate object exhaustion across trust stores fails closed", () => {
+  const { task, context } = gateCtx();
+  const fill = (i) => ({
+    record_id: `v-fill-${i}`, reviewer: "chatgpt", round: "round-2", verdict: "GO",
+    repo: "r", resource: "designs/reg.md", scope_ids: [],
+    result_head: GATE_H, reviewed_head: GATE_H,
+    source_ref: { repo: "r", path: "designs/reg.md", commit: hex40("gd"), blob: hex40("gb"), algorithm: "git-sha1", revision: "fixture-rev-1" },
+    valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
+    revoked: false, advisory: false,
+  });
+  context.verdicts = [...Array.from({ length: 69 }, (_, i) => fill(i)), context.verdicts[0]];
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
+  assert.equal(r.complete, false);
+});
+
+test("AR-002: dedupe keeps a clean clause and a corrupted same-key clause distinct", () => {
+  const text = [
+    "[check:retry-bounds] max_retries: 3",
+    "[check:retry-bounds] max_retries: 3; max_retries: unbounded",
+  ].join("\n");
+  const clauses = dedupeClauses(extractClauses(text));
+  assert.equal(clauses.length, 2);
+  assert.equal(clauses.filter((c) => c.duplicates.length > 0).length, 1);
+});
+
+test("AR-002: dedupe still collapses identical valid clauses", () => {
+  const text = ["[check:retry-bounds] max_retries: 3", "[check:retry-bounds] max_retries: 3"].join("\n");
+  assert.equal(dedupeClauses(extractClauses(text)).length, 1);
 });
 
 test("markdown preview labels every verdict ADVISORY", async () => {

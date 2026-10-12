@@ -8,8 +8,8 @@
  * get real Git blob SHA-1 pins computed here; the reviewer recomputes
  * them independently at runtime.
  *
- * Categories: clean (10), structural-fail (10), contradiction (10),
- * evidence-gap (10), injection (10), prohibited (5), gate (10), misc (7).
+ * Categories: clean (10), structural-fail (10), contradiction (13),
+ * evidence-gap (10), injection (10), prohibited (5), gate (16), misc (7).
  */
 
 import { createHash } from "node:crypto";
@@ -174,7 +174,7 @@ failSpecs.forEach((s) => {
   });
 });
 
-// ---------------- contradiction (10) ----------------
+// ---------------- contradiction (13) ----------------
 function contraCase(n, name, extraLines, contraCheck, pairCount) {
   const id = `ar-contra-${n}`;
   const text = L(`# DESIGN: ${name}`, ...extraLines);
@@ -283,6 +283,64 @@ contraCase("09", "contra-unbounded", [
   const t = task(id, "designs/contra-ws.md", text);
   add({ case_id: id, category: "contradiction", task: t, fixture: fixtureFor(text),
     expected: exp("REVIEWED", "GO", [], { required: ALL6, verified: ALL6 }) });
+}
+// AR-002: a valid earlier clause must not hide a later corrupted clause.
+// Clean clause followed by a same-line conflicting duplicate -> contradiction.
+{
+  const id = "ar-contra-11";
+  const text = L(
+    `# DESIGN: contra-dupshadow`,
+    `[check:component-io] inputs: a; outputs: b`,
+    `[check:migration-pre-post] precondition: p; postcondition: q`,
+    `[check:read-write-boundary] reads: r; writes: w`,
+    `[check:retry-bounds] max_retries: 3`,
+    `[check:retry-bounds] max_retries: 3; max_retries: unbounded`,
+    `[check:rollback] rollback: reverse on failure`,
+    `[check:failure-handling] on_failure: queue`
+  );
+  const t = task(id, "designs/contra-dupshadow.md", text);
+  add({ case_id: id, category: "contradiction", task: t, fixture: fixtureFor(text),
+    expected: exp("REVIEWED", "NEEDS CHANGES", [F("retry-bounds", "MAJOR")], { required: ALL6, verified: ALL6.filter((c) => c !== "retry-bounds") },
+      { contradiction_count: 1, contradiction_checks: ["retry-bounds"] }) });
+}
+// AR-002: reverse order — corrupted clause first, clean clause second.
+// Neither order may hide the contradiction.
+{
+  const id = "ar-contra-12";
+  const text = L(
+    `# DESIGN: contra-dupshadow-rev`,
+    `[check:component-io] inputs: a; outputs: b`,
+    `[check:migration-pre-post] precondition: p; postcondition: q`,
+    `[check:read-write-boundary] reads: r; writes: w`,
+    `[check:retry-bounds] max_retries: 3; max_retries: unbounded`,
+    `[check:retry-bounds] max_retries: 3`,
+    `[check:rollback] rollback: reverse on failure`,
+    `[check:failure-handling] on_failure: queue`
+  );
+  const t = task(id, "designs/contra-dupshadow-rev.md", text);
+  add({ case_id: id, category: "contradiction", task: t, fixture: fixtureFor(text),
+    expected: exp("REVIEWED", "NEEDS CHANGES", [F("retry-bounds", "MAJOR")], { required: ALL6, verified: ALL6.filter((c) => c !== "retry-bounds") },
+      { contradiction_count: 1, contradiction_checks: ["retry-bounds"] }) });
+}
+// AR-002: malformed duplicate shadow — a clean clause must not hide a
+// later clause with a malformed fragment. Unsupported structure is
+// unverifiable, never silently dropped.
+{
+  const id = "ar-contra-13";
+  const text = L(
+    `# DESIGN: contra-malfshadow`,
+    `[check:component-io] inputs: a; outputs: b`,
+    `[check:migration-pre-post] precondition: p; postcondition: q`,
+    `[check:read-write-boundary] reads: r; writes: w`,
+    `[check:retry-bounds] max_retries: 3`,
+    `[check:retry-bounds] max_retries: 3; not a field at all`,
+    `[check:rollback] rollback: reverse on failure`,
+    `[check:failure-handling] on_failure: queue`
+  );
+  const t = task(id, "designs/contra-malfshadow.md", text);
+  add({ case_id: id, category: "contradiction", task: t, fixture: fixtureFor(text),
+    expected: exp("REVIEWED", "NEEDS CHANGES", [F("retry-bounds", "MAJOR")],
+      { required: ALL6, verified: ALL6.filter((c) => c !== "retry-bounds"), unverifiable: ["retry-bounds"] }) });
 }
 
 // ---------------- evidence-gap (10) ----------------
@@ -436,12 +494,16 @@ for (const [n, act] of [["01", "merge"], ["02", "deploy"], ["03", "execute"], ["
     expected: exp("REFUSED", null, [], { required: [], verified: [] }, { diag_codes: ["ACTION_DENIED"], complete: false }) });
 }
 
-// ---------------- gate (10) ----------------
+// ---------------- gate (16) ----------------
 // AR-001: the payload supplies REFERENCES ONLY into the separately
 // injected authenticated fixture stores (verdicts, agreements, principals).
-// Request-minted labels/booleans/hashes are never trusted.
-const GATE_POLICY = { required_round: "round-2", repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"] };
+// Request-minted labels/booleans/hashes are never trusted. The host gate
+// policy is the independently current target binding: exact current head
+// plus source identity. Verdict and agreement records carry required
+// source_ref; the agreement references the exact gated verdict record.
+const GATE_POLICY = { required_round: "round-2", repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"], result_head: null /* set below */, source: { repo: REPO } };
 const GATE_HEAD = headFor("gate-reviewed-head");
+GATE_POLICY.result_head = GATE_HEAD;
 const MUSE_PRINCIPAL = { principal_id: "muse", registered_by: "jason", revoked: false, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z" };
 function gateVerdict(id, mut = {}) {
   return {
@@ -459,23 +521,25 @@ function gateAgreement(id, mut = {}) {
     record_id: id, principal_id: "muse",
     repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"],
     result_head: GATE_HEAD, round: "round-2", agreed: true,
+    verdict_ref: "verdict-1",
+    source_ref: { repo: REPO, path: "designs/escrow.md", commit: commitFor("gate-design"), blob: gitBlob("gate-design-bytes"), algorithm: "git-sha1", revision: FIXTURE_REV },
     valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
     revoked: false,
     ...mut,
   };
 }
-function gateCase(n, { verdictMut = {}, agreementMut = {}, principals = [MUSE_PRINCIPAL], verdicts = null, agreements = null, sufficient }) {
+function gateCase(n, { verdictMut = {}, agreementMut = {}, policyMut = {}, principals = [MUSE_PRINCIPAL], verdicts = null, agreements = null, sufficient, expOverride = null }) {
   const id = `ar-gate-${n}`;
   const t = { requested_action: "check-gate", gate_evidence: { verdict_ref: "verdict-1", agreement_ref: "agree-1" } };
   add({ case_id: id, category: "gate", task: t,
     fixture: {
       design: null, clock: CLOCK,
       principals,
-      gatePolicy: { ...GATE_POLICY },
+      gatePolicy: { ...GATE_POLICY, ...policyMut },
       verdicts: verdicts ?? [gateVerdict("verdict-1", verdictMut)],
       agreements: agreements ?? [gateAgreement("agree-1", agreementMut)],
     },
-    expected: exp("REVIEWED", null, [], { required: [], verified: [] }, { gate_sufficient: sufficient }) });
+    expected: expOverride ?? exp("REVIEWED", null, [], { required: [], verified: [] }, { gate_sufficient: sufficient }) });
 }
 gateCase("01", { sufficient: true }); // valid exact-target positive
 gateCase("02", { verdictMut: { reviewer: "self" }, sufficient: false }); // self-issued reviewer
@@ -489,6 +553,34 @@ gateCase("09", { verdictMut: { revoked: true }, sufficient: false }); // revoked
 gateCase("10", { // newer-round negative supersedes the old GO
   verdicts: [gateVerdict("verdict-1"), gateVerdict("verdict-2", { round: "round-3", verdict: "NEEDS CHANGES" })],
   sufficient: false,
+});
+gateCase("11", { // AR-001: verdict source names another repo -> rejected
+  verdictMut: { source_ref: { repo: "other-repo", path: "designs/escrow.md", commit: commitFor("gate-design"), blob: gitBlob("gate-design-bytes"), algorithm: "git-sha1", revision: FIXTURE_REV } },
+  sufficient: false,
+});
+gateCase("12", { // AR-001: verdict source_ref deleted -> required source missing
+  verdictMut: { source_ref: undefined },
+  sufficient: false,
+});
+gateCase("13", { // AR-001: verdict+agreement heads are 40 zeroes, policy head is 40 ones -> stale heads rejected
+  verdictMut: { result_head: "0".repeat(40), reviewed_head: "0".repeat(40) },
+  agreementMut: { result_head: "0".repeat(40) },
+  policyMut: { result_head: "1".repeat(40) },
+  sufficient: false,
+});
+gateCase("14", { // AR-001: agreement source names another repo -> rejected
+  agreementMut: { source_ref: { repo: "other-repo", path: "designs/escrow.md", commit: commitFor("gate-design"), blob: gitBlob("gate-design-bytes"), algorithm: "git-sha1", revision: FIXTURE_REV } },
+  sufficient: false,
+});
+gateCase("15", { // AR-001: agreement references a different verdict record -> rejected
+  agreementMut: { verdict_ref: "verdict-2" },
+  verdicts: [gateVerdict("verdict-1"), gateVerdict("verdict-2", { round: "round-2" })],
+  sufficient: false,
+});
+gateCase("16", { // AR-004: 400,000-char verdict record_id -> named INPUT_LIMIT envelope, complete:false
+  verdicts: [gateVerdict("verdict-1", { record_id: "x".repeat(400000) })],
+  sufficient: false,
+  expOverride: exp("REFUSED", null, [], { required: [], verified: [] }, { gate_sufficient: null, diag_codes: ["INPUT_LIMIT"], complete: false }),
 });
 
 // ---------------- misc (7) ----------------

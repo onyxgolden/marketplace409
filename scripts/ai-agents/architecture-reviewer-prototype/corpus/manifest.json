@@ -1,13 +1,13 @@
 {
-  "corpus_digest": "4c929020972c0d5397436fd5bca57c79a543d4bb341f04706c88134ddcb66ba0",
+  "corpus_digest": "0c311ff3297dbff0abb6ec20dfce5c3ec0541863650b6514a3c4d05a509c14aa",
   "files": [
     {
       "path": "README.md",
-      "sha256": "3746fe31c887a6fb267127a2ef3dc35e3d94bf8e810968bf72339884d01e419f"
+      "sha256": "445617279061d2d216d711b6df6158768efd0f030f7de49a5baaafb7544bb716"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "04ba22911d2ebf10cfc04e9d62cd315a5e7604da19b3cce981096c8132829f70"
+      "sha256": "c279fc891da011c774efc9f06c77fb136d2b3295017bad046848273dff725ccc"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,7 +15,7 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "cca712ea4c473b39f2cee3282076b5bd593d4b0b7f5127a35421ded8db6b4673"
+      "sha256": "64a434c3db354220e714c242281c9ea52c1225c6d76a433d523791a85e4ac43a"
     },
     {
       "path": "fixtures/principals.json",
@@ -23,7 +23,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "3e6e723f04ed479acf91ba5ee25660383f6352c2821e171b108c8ee4db4d321b"
+      "sha256": "aa1cfea16ee73ee4e4803454ee583813c2030c899133aad3cbbd19384803bd4a"
     },
     {
       "path": "runner/run-manual.js",
@@ -39,7 +39,7 @@
     },
     {
       "path": "src/gates.js",
-      "sha256": "4f50093fdd2332e90583034795fe5e67813802c5468c64fdc538007904778b53"
+      "sha256": "1dfd03eb2054aadcdfc32981a491fdf1056966d0220027a08ff6b932527e99d9"
     },
     {
       "path": "src/index.js",
@@ -59,15 +59,15 @@
     },
     {
       "path": "src/reviewer.js",
-      "sha256": "797706bde33df60012b465a1cabe7d381adc60cda43db521a0d6b58fae1020e1"
+      "sha256": "7d1aec5029d73549e06d079c4717f70cb2e7f25c0df594dc1e5acf3f31ac58b2"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "3e48decf1e973c6edfd36a9455c1a94bdbfede4fefb86f6d57027f7eea187262"
+      "sha256": "e55531b17f4ced83d84b7eca602a1c3baab98b1c7db4e465d1aa7c543781a746"
     },
     {
       "path": "tests/ar-regressions.test.js",
-      "sha256": "419acbbe4c362552e0b5247e6d9832d4ce7f40b0e94161e3a603e45881212a37"
+      "sha256": "a3c681e0e8ee7dec5248b7a82cbb99325c29d2bf1ca979d23655487542cec68d"
     },
     {
       "path": "tests/battery.test.js",

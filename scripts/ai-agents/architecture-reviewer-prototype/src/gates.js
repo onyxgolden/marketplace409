@@ -20,11 +20,13 @@
  */
 
 import { canonicalJson } from "./canonical.js";
+import { BudgetError } from "./resolver.js";
 import {
   SchemaError,
   validateReviewerVerdictRecord,
   validateAgreementRecord,
   validatePrincipalRecord,
+  validateGatePolicy,
   validateRecordStore,
   validateIsoDate,
 } from "./schemas.js";
@@ -91,7 +93,6 @@ function windowValidMs(validFrom, expiresAt, clock) {
  */
 export function evaluateGate(task, context, budget) {
   const ge = task.gate_evidence;
-  const policy = (context && context.gatePolicy) || {};
   const clock = context && context.clock;
   const checks = [];
 
@@ -100,12 +101,36 @@ export function evaluateGate(task, context, budget) {
     return ok;
   };
 
+  // AR-001/AR-004: the host gate policy is the independently current
+  // target binding (exact current head + source identity). It is
+  // validated AND charged before anything consults it. A malformed
+  // policy is gate insufficiency; budget exhaustion is an interrupted
+  // evaluation and is rethrown to the public handler, never converted
+  // into an ordinary complete review.
+  let policy;
+  try {
+    const rawPolicy = (context && context.gatePolicy) || {};
+    budget.countObject();
+    budget.countPayload(canonicalJson(rawPolicy), "gate policy");
+    policy = validateGatePolicy(rawPolicy, "context.gatePolicy");
+  } catch (e) {
+    if (e instanceof BudgetError) throw e;
+    const reason = e instanceof SchemaError ? e.message : String((e && e.message) || e);
+    record("gate-policy", false, `host gate policy failed strict validation: ${reason}`);
+    return gateResult(task, checks, false, null, null);
+  }
+
   let verdicts, agreements, principals;
   try {
     verdicts = chargeStore(context, "verdicts", budget, validateReviewerVerdictRecord, "verdicts");
     agreements = chargeStore(context, "agreements", budget, validateAgreementRecord, "agreements");
     principals = chargeStore(context, "principals", budget, validatePrincipalRecord, "principals");
   } catch (e) {
+    // AR-004: budget exhaustion is an interrupted evaluation, not
+    // insufficiency. Rethrow so the public handler returns the named
+    // INPUT_LIMIT/BUDGET_EXCEEDED envelope with complete:false.
+    // Malformed trust records stay ordinary insufficiency (complete:true).
+    if (e instanceof BudgetError) throw e;
     const reason = e instanceof SchemaError ? e.message : String((e && e.message) || e);
     record("trust-store", false, `injected trust store failed strict validation: ${reason}`);
     return gateResult(task, checks, false, null, null);
@@ -197,6 +222,30 @@ export function evaluateGate(task, context, budget) {
     targetOk ? "repo/resource/scope match the gated target" : "repo/resource/scope do not match the gated target"
   );
 
+  // 7. AR-001: the verdict's source must match the policy's source
+  //    identity. source_ref is required by schema; a verdict whose
+  //    source names another repo is evidence for another target.
+  const sourceOk = verdict.source_ref.repo === policy.source.repo;
+  record(
+    "source-match",
+    sourceOk,
+    sourceOk
+      ? `verdict source repo '${verdict.source_ref.repo}' matches the policy source identity`
+      : `verdict source repo '${verdict.source_ref.repo}' does not match the policy source identity '${policy.source.repo}'`
+  );
+
+  // 8. AR-001: the verdict's heads must equal the POLICY's current
+  //    head — the independently current target — not merely match each
+  //    other. Internally consistent stale heads are rejected.
+  const currentHeadOk = verdict.result_head === policy.result_head && verdict.reviewed_head === policy.result_head;
+  record(
+    "current-head",
+    currentHeadOk,
+    currentHeadOk
+      ? "verdict result/reviewed heads equal the policy's current target head"
+      : "verdict heads do not equal the policy's current target head; stale or foreign heads rejected"
+  );
+
   // 7. Validity window and revocation on the verdict record.
   let verdictValid = false;
   let verdictValidDetail = "verdict validity window check";
@@ -232,8 +281,52 @@ export function evaluateGate(task, context, budget) {
   let agreementBindOk = false;
   let principalOk = false;
   if (agreementOk) {
-    // 9. The agreement must bind the SAME target as the verdict record:
-    //    repo/resource/scope/result head/round. A target change voids it.
+    // 10. AR-001: the agreement must reference the EXACT gated verdict
+    //     record. Agreement is with this verdict — a validated reference
+    //     to it — not a generic agreed:true that could attach to any
+    //     verdict in the store.
+    const boundVerdict = findRecord(verdicts, (r) => r.record_id === agreement.verdict_ref, budget);
+    const verdictBindOk =
+      boundVerdict !== undefined && boundVerdict.record_id === verdict.record_id;
+    record(
+      "agreement-verdict-bind",
+      verdictBindOk,
+      verdictBindOk
+        ? `agreement references the exact gated verdict record '${verdict.record_id}'`
+        : `agreement verdict_ref '${agreement.verdict_ref}' does not resolve to the gated verdict record '${verdict.record_id}'`
+    );
+
+    // 11. AR-001: the agreement must bind the independently current
+    //     target from the host policy — same source, same current head,
+    //     same current round — not merely the verdict's own fields.
+    //     A target change voids the agreement.
+    const agreementSourceOk = agreement.source_ref.repo === policy.source.repo;
+    record(
+      "agreement-source-match",
+      agreementSourceOk,
+      agreementSourceOk
+        ? `agreement source repo '${agreement.source_ref.repo}' matches the policy source identity`
+        : `agreement source repo '${agreement.source_ref.repo}' does not match the policy source identity '${policy.source.repo}'`
+    );
+    const agreementHeadOk = agreement.result_head === policy.result_head;
+    record(
+      "agreement-current-head",
+      agreementHeadOk,
+      agreementHeadOk
+        ? "agreement result head equals the policy's current target head"
+        : "agreement result head does not equal the policy's current target head"
+    );
+    const agreementRoundOk = agreement.round === policy.required_round;
+    record(
+      "agreement-round-current",
+      agreementRoundOk,
+      agreementRoundOk
+        ? `agreement round '${agreement.round}' matches the required round`
+        : `agreement round '${agreement.round}' does not match required round '${policy.required_round}'`
+    );
+
+    // 12. The agreement must bind the SAME target as the verdict record:
+    //     repo/resource/scope/result head/round. A target change voids it.
     agreementBindOk =
       agreement.repo === verdict.repo &&
       agreement.resource === verdict.resource &&
@@ -247,6 +340,7 @@ export function evaluateGate(task, context, budget) {
         ? "agreement binds the same repo/resource/scope/result head/round as the verdict record"
         : "agreement target does not match the verdict record target"
     );
+    // 13. Agreement validity window and revocation.
     let agreementValid = false;
     try {
       const from = validateIsoDate(agreement.valid_from, "agreement.valid_from");
@@ -261,7 +355,7 @@ export function evaluateGate(task, context, budget) {
       agreementValid ? "agreement record is unrevoked and valid at the task clock" : "agreement record is revoked, expired or invalid"
     );
 
-    // 10. The agreement's principal must be the Jason-registered Muse
+    // 14. The agreement's principal must be the Jason-registered Muse
     //     principal: registered by jason, unrevoked, valid at the clock.
     //     This preserves the existing Jason/Muse channel; it adds no new
     //     Jason approval gate.

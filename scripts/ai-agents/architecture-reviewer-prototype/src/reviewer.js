@@ -91,12 +91,27 @@ export function extractClauses(text, budget) {
   return clauses;
 }
 
-/** Deduplicate identical clauses (same check + same canonical fields). */
+/**
+ * Deduplicate clauses. AR-002: the dedupe identity includes the full
+ * parsed state — check_id, canonical first-value fields, ALL duplicate
+ * occurrences, malformed fragments and unknown fields. A valid earlier
+ * clause must never hide a later corrupted clause: only genuinely
+ * equivalent valid clauses collapse. A clause carrying conflicting
+ * duplicates, malformed fragments or unknown fields always survives to
+ * contradiction/unverifiable classification.
+ */
 export function dedupeClauses(clauses) {
   const seen = new Set();
   const out = [];
   for (const c of clauses) {
-    const key = `${c.check_id}\0${JSON.stringify(Object.entries(c.fields).sort())}`;
+    const dupKey = canonicalJson(
+      [...c.duplicates]
+        .map((d) => ({ key: d.key, values: [...d.values] }))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    );
+    const key =
+      `${c.check_id}\0${JSON.stringify(Object.entries(c.fields).sort())}\0` +
+      `${dupKey}\0${JSON.stringify([...c.malformed].sort())}\0${JSON.stringify([...c.unknownFields].sort())}`;
     if (!seen.has(key)) {
       seen.add(key);
       out.push(c);
