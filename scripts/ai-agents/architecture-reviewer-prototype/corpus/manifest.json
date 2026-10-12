@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "b276f0ce0d29e5201fca385d87477a0d52b4cb5e53ddb11e3f1915bf3705d06b",
+  "corpus_digest": "4c929020972c0d5397436fd5bca57c79a543d4bb341f04706c88134ddcb66ba0",
   "files": [
     {
       "path": "README.md",
@@ -7,15 +7,15 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "d8886cfe77f11bf93f7942359b4b652f9a3801d8fa01c58c8a58eae2659c8807"
+      "sha256": "04ba22911d2ebf10cfc04e9d62cd315a5e7604da19b3cce981096c8132829f70"
     },
     {
       "path": "corpus/freeze-corpus.js",
-      "sha256": "3940b35ee466a9d7bd07e46da777cc0e24d04ecf496ab56fd172b8c27423cb82"
+      "sha256": "dc2427221658e411355ac6662276e9a22e150fb7e7f6b9fd1cb15737f69ccf42"
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "9fd431b615a446a004f3b9a97d368f9cea735a22ebdc7c6ab84d6066aa6e38d0"
+      "sha256": "cca712ea4c473b39f2cee3282076b5bd593d4b0b7f5127a35421ded8db6b4673"
     },
     {
       "path": "fixtures/principals.json",
@@ -23,11 +23,11 @@
     },
     {
       "path": "package.json",
-      "sha256": "7d9f8602573589cece223055bb502af6b024587c8cfa6d3e577a5ae71150dee4"
+      "sha256": "3e6e723f04ed479acf91ba5ee25660383f6352c2821e171b108c8ee4db4d321b"
     },
     {
       "path": "runner/run-manual.js",
-      "sha256": "98adff6516f45f62f5b7cb8898937fad32236ae94fc649de8b65f723ed544125"
+      "sha256": "b285da76841b6db6c229b09b806f50fba8b26e16850f41b6a2f992cff38977b3"
     },
     {
       "path": "src/canonical.js",
@@ -39,11 +39,11 @@
     },
     {
       "path": "src/gates.js",
-      "sha256": "6f2c409d8a7a10614c10e77d62ce5c386aee0336b6219981f00149f8a9ec9669"
+      "sha256": "4f50093fdd2332e90583034795fe5e67813802c5468c64fdc538007904778b53"
     },
     {
       "path": "src/index.js",
-      "sha256": "55b0f92e279ba71acc12b812b8cfa1b4e1aa01d7126223f549ca29801898ff90"
+      "sha256": "b5484f55e491d2dbca5e2f211e871fa53f2f6074acc40f44c54930347b418b74"
     },
     {
       "path": "src/injection.js",
@@ -55,19 +55,19 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "5ae246e914c6a19ce18261556a123376d67564191accb6d4ec46fc961fe5f90e"
+      "sha256": "c3aafac99b28cd92eb249ea0338f91ec878a048b177e64d005701588189fc7c8"
     },
     {
       "path": "src/reviewer.js",
-      "sha256": "1430f068beaa44cd2d04b08bfc409e93443e33e46371bd35dde428f69d9fe394"
+      "sha256": "797706bde33df60012b465a1cabe7d381adc60cda43db521a0d6b58fae1020e1"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "a11b2e975035ebfa57cacee0b48bd30849edd741272c4d85b53464e29265025d"
+      "sha256": "3e48decf1e973c6edfd36a9455c1a94bdbfede4fefb86f6d57027f7eea187262"
     },
     {
       "path": "tests/ar-regressions.test.js",
-      "sha256": "43bb9649a55d43ba41c2286de231c3e4ba42d98bac7baf515ae369b7257495fe"
+      "sha256": "419acbbe4c362552e0b5247e6d9832d4ce7f40b0e94161e3a603e45881212a37"
     },
     {
       "path": "tests/battery.test.js",
@@ -83,19 +83,23 @@
     },
     {
       "path": "tests/harness.js",
-      "sha256": "3ec9fd36151793b0abaf4265285f0cb7866914ad1555df402491983b3769e3d5"
+      "sha256": "9d7545ced5148ab14d3ca2c699c838184337dcce8cc4b45e0b63f01436ff50bc"
     },
     {
       "path": "tests/mutation.test.js",
-      "sha256": "45a86e89090dd97259d64e962cd1cbc64a10ef2f2b2b1becb241b90df9717799"
+      "sha256": "0db0da6f67416ed6948d47a359475ebbb52b4b9e98506d40ae2c7f7f9bda3913"
     },
     {
       "path": "tests/run-battery.js",
       "sha256": "cae271f2068fe7daf1803639582d80a64e5f21e9e0f66da5bc654fd07f4dd28c"
     },
     {
+      "path": "tests/run-tests.js",
+      "sha256": "0c50181b04f2048e3b881b7adef5a62128063df310ef5493e46bc0406a1008f3"
+    },
+    {
       "path": "tests/schemas.test.js",
-      "sha256": "275dcc5185aa3d4d0999c1aed89319e7d6b18fa9620ad6807d6778811c958966"
+      "sha256": "20134bf2ba5e1d88378302cb574569391062d250674a498e2f3c6ad95b5beb08"
     },
     {
       "path": "tests/watchdog.js",
@@ -107,7 +111,7 @@
     },
     {
       "path": "tests/zerotools.test.js",
-      "sha256": "e7bd023c9b76723343603e5c77847513e38ccf7e2260cfb19407fa3165eaaab8"
+      "sha256": "62aa595d48735047f5b597bf8dc60f0bb976ea35700a2649faa943856ace9a59"
     }
   ]
 }

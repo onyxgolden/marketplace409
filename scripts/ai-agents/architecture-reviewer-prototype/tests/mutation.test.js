@@ -10,6 +10,7 @@ import { cpSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { runBattery, verifyManifest, acceptanceMetrics, ManifestError } from "./harness.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -94,6 +95,92 @@ test("unlisted new file is rejected", async () => {
   try {
     writeFileSync(join(dir, "src", "evil.js"), "export const x = 1;\n");
     await assert.rejects(() => verifyManifest(dir), ManifestError);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------- AR-005: pre-import launcher attacks ----------------
+// The launcher (tests/run-tests.js) authenticates the independently
+// supplied approved root against the full pinned corpus with node builtins
+// ONLY, before any scored test/helper is imported. Attack tests keep the
+// ORIGINAL host-fixed root fixed — they never switch to the candidate's
+// newly edited npm root.
+
+/** The separately trusted approved root, fixed by the npm test script. */
+function fixedApprovedRoot() {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const m = /AR_APPROVED_ROOT=([0-9a-f]{64})/.exec(pkg.scripts?.test ?? "");
+  assert.ok(m, "npm test must pin a separately trusted AR_APPROVED_ROOT");
+  return m[1];
+}
+
+/** Spawn the launcher against a scratch tree with the ORIGINAL root fixed. */
+function runLauncher(dir, root) {
+  try {
+    const out = execFileSync(process.execPath, [join(dir, "tests", "run-tests.js")], {
+      env: { ...process.env, AR_APPROVED_ROOT: root },
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    return { status: 0, output: String(out) };
+  } catch (e) {
+    return { status: e.status ?? -1, output: String(e.stdout ?? "") + String(e.stderr ?? "") };
+  }
+}
+
+/** Re-pin the scratch tree's manifest exactly like the authoring step does. */
+function repinManifest(dir) {
+  execFileSync(process.execPath, [join(dir, "corpus", "freeze-corpus.js")], {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 60000,
+  });
+}
+
+test("AR-005: canary in a scored helper never executes — launcher refuses first", () => {
+  const root = fixedApprovedRoot();
+  const dir = scratchCopy();
+  try {
+    // Independent probe: a canary at the top of tests/harness.js. Under
+    // the old entrypoint it executed before the hash-mismatch failure.
+    const p = join(dir, "tests", "harness.js");
+    writeFileSync(p, 'console.error("AR_CANARY_EXECUTED");\n' + readFileSync(p, "utf8"));
+    const r = runLauncher(dir, root);
+    assert.equal(r.status, 3, `launcher must refuse before imports (got ${r.status})`);
+    assert.ok(!r.output.includes("AR_CANARY_EXECUTED"), "canary must not execute");
+    assert.ok(r.output.includes("trust failure"), "refusal must name the trust failure");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("AR-005: tampered source with rehashed manifest fails before scorer execution", () => {
+  const root = fixedApprovedRoot();
+  const dir = scratchCopy();
+  try {
+    writeFileSync(join(dir, "src", "reviewer.js"), readFileSync(join(dir, "src", "reviewer.js"), "utf8") + "\n// tampered\n");
+    repinManifest(dir); // candidate manifest is internally consistent again
+    const r = runLauncher(dir, root); // but the ORIGINAL root is still fixed
+    assert.equal(r.status, 3, `launcher must refuse before imports (got ${r.status})`);
+    assert.ok(r.output.includes("trust failure"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("AR-005: tampered expectations with rehashed manifest fail before oracle execution", () => {
+  const root = fixedApprovedRoot();
+  const dir = scratchCopy();
+  try {
+    const p = join(dir, "corpus", "battery.json");
+    const battery = JSON.parse(readFileSync(p, "utf8"));
+    battery[0].expected.verdict = battery[0].expected.verdict === "GO" ? "NO-GO" : "GO";
+    writeFileSync(p, JSON.stringify(battery, null, 2));
+    repinManifest(dir);
+    const r = runLauncher(dir, root);
+    assert.equal(r.status, 3, `launcher must refuse before imports (got ${r.status})`);
+    assert.ok(r.output.includes("trust failure"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

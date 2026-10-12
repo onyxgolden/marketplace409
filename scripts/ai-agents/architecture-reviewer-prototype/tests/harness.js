@@ -132,6 +132,8 @@ export async function runBattery(root, { timeoutMs = 5000 } = {}) {
       designs,
       principals: c.fixture.principals ?? [],
       gatePolicy: c.fixture.gatePolicy ?? {},
+      verdicts: c.fixture.verdicts ?? [],
+      agreements: c.fixture.agreements ?? [],
     };
     const t0 = Date.now();
     const outcome = await runCaseWithWatchdog(root, c.task, context, { timeoutMs });

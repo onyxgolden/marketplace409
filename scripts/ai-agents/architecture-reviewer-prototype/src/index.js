@@ -109,6 +109,18 @@ export function run(task, context) {
     throw e;
   }
 
+  // AR-004: the task's own UTF-8 payload is charged before anything
+  // consults it. An oversized request fails closed with INPUT_LIMIT and
+  // no partial success — the final output gate is not a substitute.
+  let budget;
+  try {
+    budget = makeBudget();
+    budget.countPayload(canonicalJson(task), "task payload");
+  } catch (e) {
+    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", e.message, null);
+    throw e;
+  }
+
   if (kind === "prohibited") {
     return {
       ...baseDenial(task, "REFUSED", "ACTION_DENIED", "critical", `prohibited action '${task.requested_action}': this agent performs advisory reviews only`, task.design_ref ?? null),
@@ -119,7 +131,6 @@ export function run(task, context) {
 
   if (kind === "check-gate") {
     try {
-      const budget = makeBudget();
       const payload = evaluateGate(task, context, budget);
       const result = envelope(task, payload);
       if (!finalEnvelopeWithinBudget(result)) return smallOutputLimitRefusal(task);
@@ -133,7 +144,6 @@ export function run(task, context) {
 
   // kind === "review"
   try {
-    const budget = makeBudget();
     const requiredCheckIds = (task.required_check_ids ?? []).length > 0 ? task.required_check_ids : CHECK_IDS;
 
     // 1. Resolve and bind the design source.
@@ -149,12 +159,22 @@ export function run(task, context) {
       return r;
     }
 
-    // 3. Evaluate.
-    const payload = evaluateReview(task, task.design_ref, bytes, requiredCheckIds, injection, budget, context);
-
-    // 4. Verify caller-supplied evidence refs against resolved bytes.
+    // 3. AR-003: verify caller-supplied evidence refs BEFORE any success
+    //    verdict. Wrong source/quote/bounds or unreachable evidence is an
+    //    inability to review: BLOCKED, explicit NO-GO, complete:false.
+    //    No GO is ever supported by failed evidence.
     const evDiags = verifyEvidenceRefs(task, bytes, budget);
-    payload.diagnostics = evDiags;
+    if (evDiags.length > 0) {
+      const r = baseDenial(task, "BLOCKED", evDiags[0].code, "error", `submitted evidence failed verification: ${evDiags[0].reason}`, task.design_ref);
+      r.diagnostics = evDiags;
+      r.verdict_proposal = { value: "NO-GO", advisory: true, reason: "inability to review: submitted required evidence failed verification" };
+      r.authorization_granted = false;
+      return r;
+    }
+
+    // 4. Evaluate.
+    const payload = evaluateReview(task, task.design_ref, bytes, requiredCheckIds, injection, budget, context);
+    payload.diagnostics = [];
 
     // 5. Quarantined sources: none for a clean review path (spoof is
     //    neutralized, not quarantined). complete reflects coverage.

@@ -9,6 +9,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { run } from "../src/index.js";
+import { canonicalJson } from "../src/canonical.js";
+import { makeBudget } from "../src/resolver.js";
 import { extractClauses, dedupeClauses } from "../src/reviewer.js";
 import { detectContradictions, evaluateCheck } from "../src/checks.js";
 import { scanInjection } from "../src/injection.js";
@@ -21,9 +23,9 @@ const blobOf = (text) => {
 };
 function ctxFor(id, text, extra = {}) {
   const commit = hex40(id);
-  const design_ref = { repo: "r", path: "d.md", commit, blob: blobOf(text), algorithm: "git-sha1" };
+  const design_ref = { repo: "r", path: "designs/reg.md", commit, blob: blobOf(text), algorithm: "git-sha1", revision: "fixture-rev-1" };
   const task = { design_ref, base_pin: { repo: "r", commit }, requested_action: "review", ...extra.task };
-  const context = { clock: CLOCK, designs: { [`r\0d.md\0${commit}`]: text }, principals: [], gatePolicy: {}, ...extra.context };
+  const context = { clock: CLOCK, designs: { [`r\0designs/reg.md\0${commit}`]: text }, principals: [], gatePolicy: {}, verdicts: [], agreements: [], ...extra.context };
   return { task, context };
 }
 const FULL = [
@@ -128,27 +130,147 @@ test("injection scanner flags both seeded families", () => {
   assert.equal(s.authoritySpoof.length, 1);
 });
 
-test("gate rejects self-issued evidence even with a GO verdict", () => {
-  const H = hex40("h");
-  const r = run(
-    {
-      requested_action: "check-gate",
-      gate_evidence: {
-        reviewer: "architecture-reviewer", round: "round-2", verdict: "GO",
-        repo: "r", resource: "d.md", scope_ids: [], result_head: H, reviewed_head: H,
-        muse_agreed: true, muse_record_id: "muse",
-      },
-    },
-    {
-      clock: CLOCK,
-      designs: {},
+const GATE_H = hex40("h");
+function gateCtx(verdictMut = {}, agreementMut = {}, extra = {}) {
+  const verdict = {
+    record_id: "verdict-1", reviewer: "chatgpt", round: "round-2", verdict: "GO",
+    repo: "r", resource: "designs/reg.md", scope_ids: [],
+    result_head: GATE_H, reviewed_head: GATE_H,
+    source_ref: { repo: "r", path: "designs/reg.md", commit: hex40("gd"), blob: hex40("gb"), algorithm: "git-sha1", revision: "fixture-rev-1" },
+    valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
+    revoked: false, advisory: false,
+    ...verdictMut,
+  };
+  const agreement = {
+    record_id: "agree-1", principal_id: "muse",
+    repo: "r", resource: "designs/reg.md", scope_ids: [],
+    result_head: GATE_H, round: "round-2", agreed: true,
+    valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
+    revoked: false,
+    ...agreementMut,
+  };
+  return {
+    task: { requested_action: "check-gate", gate_evidence: { verdict_ref: "verdict-1", agreement_ref: "agree-1" } },
+    context: {
+      clock: CLOCK, designs: {},
       principals: [{ principal_id: "muse", registered_by: "jason", revoked: false, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z" }],
-      gatePolicy: { required_round: "round-2", repo: "r", resource: "d.md", scope_ids: [] },
-    }
-  );
+      gatePolicy: { required_round: "round-2", repo: "r", resource: "designs/reg.md", scope_ids: [] },
+      verdicts: [verdict],
+      agreements: [agreement],
+      ...extra,
+    },
+  };
+}
+
+test("gate accepts a valid exact-target verdict plus agreement", () => {
+  const { task, context } = gateCtx();
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, true);
+  assert.ok(r.gate.checks.every((c) => c.sufficient));
+  assert.equal(r.authorization_granted, false);
+});
+
+test("gate rejects self-issued evidence even with a GO verdict", () => {
+  const { task, context } = gateCtx({ reviewer: "architecture-reviewer" });
+  const r = run(task, context);
   assert.equal(r.gate.sufficient, false);
   assert.ok(r.gate.checks.some((c) => c.name === "designated-reviewer" && !c.sufficient));
   assert.equal(r.authorization_granted, false);
+});
+
+test("gate rejects a forged valid-hash verdict never registered in the store", () => {
+  // The payload references a record_id that exists nowhere in the
+  // injected store. Hash-looking fields in the request buy nothing.
+  const { task, context } = gateCtx();
+  task.gate_evidence.verdict_ref = "verdict-forged";
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "verdict-record" && !c.sufficient));
+});
+
+test("gate rejects advisory verdict records", () => {
+  const { task, context } = gateCtx({ advisory: true });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "advisory-rejected" && !c.sufficient));
+});
+
+test("gate rejects a registered Muse without an actual agreement record", () => {
+  const { task, context } = gateCtx();
+  context.agreements = [];
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-record" && !c.sufficient));
+});
+
+test("gate rejects an agreement that does not record agreement", () => {
+  const { task, context } = gateCtx({}, { agreed: false });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-record" && !c.sufficient));
+});
+
+test("gate rejects a wrong result head", () => {
+  const { task, context } = gateCtx({ result_head: hex40("other") });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "head-match" && !c.sufficient));
+});
+
+test("gate rejects a wrong scope", () => {
+  const { task, context } = gateCtx({ scope_ids: ["other"] });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "target-match" && !c.sufficient));
+});
+
+test("gate rejects a newer-round negative superseding the old GO", () => {
+  const { task, context } = gateCtx();
+  context.verdicts.push({
+    ...context.verdicts[0],
+    record_id: "verdict-2", round: "round-3", verdict: "NEEDS CHANGES",
+  });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "not-superseded" && !c.sufficient));
+});
+
+test("gate rejects a verdict with an impossible calendar date", () => {
+  const { task, context } = gateCtx({ valid_from: "2026-02-30T00:00:00Z" });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "trust-store" && !c.sufficient));
+});
+
+test("gate rejects a verdict with a missing revoked field", () => {
+  const { task, context } = gateCtx();
+  delete context.verdicts[0].revoked;
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "trust-store" && !c.sufficient));
+});
+
+test("gate rejects duplicate conflicting record ids", () => {
+  const { task, context } = gateCtx();
+  context.verdicts.push({ ...context.verdicts[0], verdict: "NO-GO" });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "trust-store" && !c.sufficient));
+});
+
+test("gate rejects an agreement bound to a changed target", () => {
+  const { task, context } = gateCtx({}, { scope_ids: ["changed"] });
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "agreement-target-bind" && !c.sufficient));
+});
+
+test("gate rejects a revoked principal", () => {
+  const { task, context } = gateCtx();
+  context.principals[0].revoked = true;
+  const r = run(task, context);
+  assert.equal(r.gate.sufficient, false);
+  assert.ok(r.gate.checks.some((c) => c.name === "muse-principal" && !c.sufficient));
 });
 
 test("markdown preview labels every verdict ADVISORY", async () => {
@@ -157,4 +279,205 @@ test("markdown preview labels every verdict ADVISORY", async () => {
   const md = reviewToMarkdown(r);
   assert.ok(md.includes("ADVISORY"));
   assert.ok(!md.toLowerCase().includes("chatgpt"));
+});
+
+// ---------------- AR-002: duplicate keys, unknown fields, malformed fragments ----------------
+
+test("AR-002: same-line conflicting duplicate keys are never last-wins repaired", () => {
+  const text = FULL.replace(
+    "[check:retry-bounds] max_retries: 3",
+    "[check:retry-bounds] max_retries: unbounded; max_retries: 3"
+  );
+  const { task, context } = ctxFor("ar2a", text);
+  const r = run(task, context);
+  assert.equal(r.verdict_proposal.value, "NEEDS CHANGES");
+  assert.ok(r.contradictions.some((c) => c.check_id === "retry-bounds" && c.field === "max_retries"));
+  assert.ok(
+    r.findings.some((f) => f.check_id === "retry-bounds" && f.severity === "MAJOR" && f.uncertainty_flags.includes("UNRESOLVED_CONTRADICTION"))
+  );
+  // The forbidden value must not disappear: both occurrences are preserved.
+  const contra = r.contradictions.find((c) => c.check_id === "retry-bounds");
+  assert.ok(new Set([contra.value_a, contra.value_b]).has("unbounded"));
+});
+
+test("AR-002: duplicate order reversal classifies the same way", () => {
+  const text = FULL.replace(
+    "[check:retry-bounds] max_retries: 3",
+    "[check:retry-bounds] max_retries: 3; max_retries: unbounded"
+  );
+  const { task, context } = ctxFor("ar2b", text);
+  const r = run(task, context);
+  assert.equal(r.verdict_proposal.value, "NEEDS CHANGES");
+  assert.ok(r.contradictions.some((c) => c.check_id === "retry-bounds" && c.field === "max_retries"));
+});
+
+test("AR-002: same-line identical duplicate keys collapse silently", () => {
+  const text = FULL.replace(
+    "[check:retry-bounds] max_retries: 3",
+    "[check:retry-bounds] max_retries: 3; max_retries: 3"
+  );
+  const { task, context } = ctxFor("ar2c", text);
+  const r = run(task, context);
+  assert.equal(r.verdict_proposal.value, "GO");
+  assert.equal(r.contradictions.length, 0);
+});
+
+test("AR-002: unknown control field makes the check unverifiable", () => {
+  const text = FULL.replace(
+    "[check:retry-bounds] max_retries: 3",
+    "[check:retry-bounds] max_retries: 3; owner: claude"
+  );
+  const { task, context } = ctxFor("ar2d", text);
+  const r = run(task, context);
+  assert.equal(r.verdict_proposal.value, "NEEDS CHANGES");
+  assert.ok(r.coverage.unverifiable.includes("retry-bounds"));
+  assert.ok(!r.coverage.verified.includes("retry-bounds"));
+  assert.ok(r.findings.some((f) => f.check_id === "retry-bounds" && f.severity === "MAJOR" && f.uncertainty_flags.includes("UNVERIFIABLE_CLAUSE")));
+});
+
+test("AR-002: malformed clause fragment makes the check unverifiable", () => {
+  const text = FULL.replace(
+    "[check:retry-bounds] max_retries: 3",
+    "[check:retry-bounds] max_retries 3"
+  );
+  const { task, context } = ctxFor("ar2e", text);
+  const r = run(task, context);
+  assert.equal(r.verdict_proposal.value, "NEEDS CHANGES");
+  assert.ok(r.coverage.unverifiable.includes("retry-bounds"));
+});
+
+// ---------------- AR-003: evidence verified before success ----------------
+
+function spanOfText(text, sub) {
+  const i = text.indexOf(sub);
+  const b = Buffer.byteLength(sub, "utf8");
+  return { start_byte: i, end_byte: i + b, quoted_text: sub };
+}
+
+test("AR-003: forged quoted_text evidence blocks with explicit NO-GO", () => {
+  const { task, context } = ctxFor("ar3a", FULL);
+  const s = spanOfText(FULL, "[check:retry-bounds] max_retries: 3");
+  task.evidence_refs = [{ design_ref: { ...task.design_ref }, span: { ...s, quoted_text: "WRONG" } }];
+  const r = run(task, context);
+  assert.equal(r.status, "BLOCKED");
+  assert.equal(r.verdict_proposal.value, "NO-GO");
+  assert.equal(r.complete, false);
+  assert.ok(r.diagnostics.some((d) => d.code === "SPAN_MISMATCH"));
+});
+
+test("AR-003: valid grounded evidence lets the review succeed", () => {
+  const { task, context } = ctxFor("ar3b", FULL);
+  const s = spanOfText(FULL, "[check:retry-bounds] max_retries: 3");
+  task.evidence_refs = [{ design_ref: { ...task.design_ref }, span: s }];
+  const r = run(task, context);
+  assert.equal(r.status, "REVIEWED");
+  assert.equal(r.verdict_proposal.value, "GO");
+  assert.equal(r.complete, true);
+});
+
+test("AR-003: evidence span splitting a multi-byte char fails closed", () => {
+  const text = FULL.replace("max_retries: 3", "max_retries: 3 # caf\u00e9");
+  const { task, context } = ctxFor("ar3c", text);
+  // The \u00e9 is two UTF-8 bytes; start the span at its second byte.
+  const ePos = Buffer.byteLength(text.split("\u00e9")[0], "utf8");
+  task.evidence_refs = [{
+    design_ref: { ...task.design_ref },
+    span: { start_byte: ePos + 1, end_byte: ePos + 2, quoted_text: "\u00e9" },
+  }];
+  const r = run(task, context);
+  assert.equal(r.status, "BLOCKED");
+  assert.equal(r.verdict_proposal.value, "NO-GO");
+  assert.equal(r.complete, false);
+  assert.ok(r.diagnostics.some((d) => d.code === "SPAN_MISMATCH"));
+});
+
+test("AR-003: non-confined design path is refused at the schema", () => {
+  const { task, context } = ctxFor("ar3d", FULL);
+  task.design_ref.path = "../evil.md";
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "INVALID_INPUT"));
+});
+
+test("AR-003: generated citations carry the full provenance schema", () => {
+  const { task, context } = ctxFor("ar3e", FULL);
+  const r = run(task, context);
+  assert.equal(r.verdict_proposal.value, "GO");
+  // Missing-check citation on a failing design exercises whole-doc citations.
+  const text2 = FULL.replace("[check:rollback] rollback: reverse on failure\n", "");
+  const t2 = ctxFor("ar3f", text2);
+  const r2 = run(t2.task, t2.context);
+  for (const f of r2.findings) {
+    for (const e of f.evidence) {
+      assert.equal(e.algorithm, "git-sha1");
+      assert.equal(e.revision, "fixture-rev-1");
+      assert.equal(e.verification, "VERIFIED");
+      assert.equal(e.quoted_span, e.span.quoted_text);
+    }
+  }
+});
+
+// ---------------- AR-004: budget model ----------------
+
+test("AR-004: oversized task payload fails closed with INPUT_LIMIT", () => {
+  const { task, context } = ctxFor("ar4a", FULL);
+  task.scope_ids = ["x".repeat(400000)];
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "INPUT_LIMIT"));
+  assert.equal(r.complete, false);
+  assert.equal(r.verdict_proposal, null);
+});
+
+test("AR-004: task payload boundary is exact: at-limit passes, +1 refuses", () => {
+  const { task } = ctxFor("ar4b", FULL);
+  const LIMIT = 262144;
+  // Canonical bytes grow linearly with the ASCII pad; binary-search the
+  // pad length that lands the task exactly on the limit.
+  let lo = 0, hi = LIMIT;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    task.scope_ids = ["y".repeat(mid)];
+    if (Buffer.byteLength(canonicalJson(task), "utf8") < LIMIT) lo = mid + 1;
+    else hi = mid;
+  }
+  task.scope_ids = ["y".repeat(lo)];
+  assert.equal(Buffer.byteLength(canonicalJson(task), "utf8"), LIMIT);
+  // Counter boundary: exactly at the limit the task charge passes.
+  const b1 = makeBudget();
+  b1.countPayload(canonicalJson(task));
+  // One byte over: the charge throws INPUT_LIMIT.
+  task.scope_ids = ["y".repeat(lo + 1)];
+  assert.equal(Buffer.byteLength(canonicalJson(task), "utf8"), LIMIT + 1);
+  const b2 = makeBudget();
+  assert.throws(() => b2.countPayload(canonicalJson(task)), (e) => e.code === "INPUT_LIMIT");
+  // Integration: +1 through the full run fails closed on the task charge.
+  const t2 = ctxFor("ar4b2", FULL);
+  t2.task.scope_ids = ["y".repeat(lo + 1)];
+  const rOver = run(t2.task, t2.context);
+  assert.equal(rOver.status, "REFUSED");
+  assert.ok(rOver.diagnostics.some((d) => d.code === "INPUT_LIMIT" && d.reason.includes("task payload")));
+  assert.equal(rOver.complete, false);
+});
+
+test("AR-004: too many evidence refs exhaust the object budget", () => {
+  const { task, context } = ctxFor("ar4c", FULL);
+  const s = spanOfText(FULL, "[check:retry-bounds] max_retries: 3");
+  task.evidence_refs = Array.from({ length: 70 }, () => ({ design_ref: { ...task.design_ref }, span: { ...s } }));
+  const r = run(task, context);
+  assert.equal(r.status, "BLOCKED");
+  assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
+  assert.equal(r.complete, false);
+});
+
+test("AR-004: oversized final envelope is refused with OUTPUT_LIMIT", () => {
+  // A ~200 KiB design with every check missing: each missing-check
+  // finding cites the whole document, so the final public envelope
+  // exceeds the 256 KiB output cap.
+  const text = "# DESIGN: big\n" + "padding line\n".repeat(16000);
+  const { task, context } = ctxFor("ar4d", text);
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "OUTPUT_LIMIT"));
+  assert.equal(r.complete, false);
 });

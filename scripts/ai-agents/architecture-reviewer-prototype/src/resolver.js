@@ -48,10 +48,10 @@ export function makeBudget() {
       b.objects += 1;
       if (b.objects > BUDGET_LIMITS.maxObjects) throw new BudgetError("BUDGET_EXCEEDED", `object resolutions exceed ${BUDGET_LIMITS.maxObjects}`);
     },
-    countPayload(bytes) {
+    countPayload(bytes, label = "consulted UTF-8 payload") {
       const n = typeof bytes === "number" ? bytes : Buffer.byteLength(bytes, "utf8");
       b.dataBytes += n;
-      if (b.dataBytes > BUDGET_LIMITS.maxTotalDataBytes) throw new BudgetError("INPUT_LIMIT", `consulted UTF-8 payload exceeds ${BUDGET_LIMITS.maxTotalDataBytes} bytes`);
+      if (b.dataBytes > BUDGET_LIMITS.maxTotalDataBytes) throw new BudgetError("INPUT_LIMIT", `${label} exceeds ${BUDGET_LIMITS.maxTotalDataBytes} bytes`);
     },
     countSpan() {
       b.spans += 1;
@@ -103,13 +103,20 @@ export function resolveDesign(designRef, basePin, context, budget) {
 
 /**
  * Verify an evidence span against resolved design bytes: the exact UTF-8
- * slice must equal quoted_text. Charges one span check.
+ * slice must equal quoted_text. Fatal UTF-8 decoding — no replacement
+ * characters. Charges one span check.
  */
 export function verifySpan(bytes, span, budget) {
   budget.countSpan();
   const buf = Buffer.from(bytes, "utf8");
-  if (span.end_byte > buf.length) return { ok: false, code: "SPAN_MISMATCH", reason: "span end_byte beyond design bytes" };
-  const slice = buf.subarray(span.start_byte, span.end_byte).toString("utf8");
+  if (!Number.isInteger(span.start_byte) || !Number.isInteger(span.end_byte) || span.start_byte < 0 || span.end_byte < span.start_byte || span.end_byte > buf.length)
+    return { ok: false, code: "SPAN_MISMATCH", reason: "span bounds are out of range" };
+  let slice;
+  try {
+    slice = new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(span.start_byte, span.end_byte));
+  } catch {
+    return { ok: false, code: "SPAN_MISMATCH", reason: "span is not valid UTF-8 at its byte boundaries" };
+  }
   if (slice !== span.quoted_text) return { ok: false, code: "SPAN_MISMATCH", reason: "span quoted_text does not equal the exact UTF-8 slice" };
   return { ok: true };
 }

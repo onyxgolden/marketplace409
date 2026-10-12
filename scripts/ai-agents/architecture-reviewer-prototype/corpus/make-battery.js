@@ -26,12 +26,13 @@ const gitBlob = (s) => {
 
 const REPO = "fixture-repo";
 const CLOCK = Date.parse("2026-10-12T12:00:00Z");
+const FIXTURE_REV = "fixture-rev-1";
 const commitFor = (id) => sha256(`commit:${id}`).slice(0, 40);
 const headFor = (id) => sha256(`head:${id}`).slice(0, 40);
 const L = (...lines) => lines.join("\n");
 
 function designRef(id, path, text) {
-  return { repo: REPO, path, commit: commitFor(id), blob: gitBlob(text), algorithm: "git-sha1" };
+  return { repo: REPO, path, commit: commitFor(id), blob: gitBlob(text), algorithm: "git-sha1", revision: FIXTURE_REV };
 }
 function spanOf(text, sub) {
   const i = text.indexOf(sub);
@@ -315,33 +316,35 @@ contraCase("09", "contra-unbounded", [
     expected: exp("BLOCKED", "NO-GO", [], { required: [], verified: [] }, { diag_codes: ["EVIDENCE_UNREACHABLE"], complete: false }) });
 }
 {
-  // evidence_refs span out of range: diagnostic, review still GO on clean design
+  // AR-003: evidence_refs span out of range is an inability to review:
+  // BLOCKED + explicit NO-GO + complete:false. No GO is supported by
+  // failed evidence.
   const id = "ar-gap-05";
   const text = fullDesign("gap-span");
   const t = task(id, "designs/gap-span.md", text);
   t.evidence_refs = [{ design_ref: designRef(id, "designs/gap-span.md", text), span: { start_byte: 0, end_byte: 999999, quoted_text: "x" } }];
   add({ case_id: id, category: "evidence-gap", task: t, fixture: fixtureFor(text),
-    expected: exp("REVIEWED", "GO", [], { required: ALL6, verified: ALL6 }, { diag_codes: ["SPAN_MISMATCH"] }) });
+    expected: exp("BLOCKED", "NO-GO", [], { required: [], verified: [] }, { diag_codes: ["SPAN_MISMATCH"], complete: false }) });
 }
 {
-  // evidence_refs names a different design source
+  // AR-003: evidence_refs names a different design source -> BLOCKED/NO-GO
   const id = "ar-gap-06";
   const text = fullDesign("gap-scope");
   const t = task(id, "designs/gap-scope.md", text);
   const other = fullDesign("other-design");
   t.evidence_refs = [{ design_ref: designRef("other-case", "designs/other.md", other), span: spanOf(other, "[check:retry-bounds] max_retries: 3") }];
   add({ case_id: id, category: "evidence-gap", task: t, fixture: fixtureFor(text),
-    expected: exp("REVIEWED", "GO", [], { required: ALL6, verified: ALL6 }, { diag_codes: ["TARGET_MISMATCH"] }) });
+    expected: exp("BLOCKED", "NO-GO", [], { required: [], verified: [] }, { diag_codes: ["TARGET_MISMATCH"], complete: false }) });
 }
 {
-  // evidence_refs span quoted_text wrong
+  // AR-003: evidence_refs span quoted_text wrong -> BLOCKED/NO-GO
   const id = "ar-gap-07";
   const text = fullDesign("gap-quote");
   const t = task(id, "designs/gap-quote.md", text);
   const s = spanOf(text, "[check:retry-bounds] max_retries: 3");
   t.evidence_refs = [{ design_ref: designRef(id, "designs/gap-quote.md", text), span: { ...s, quoted_text: "forged quote" } }];
   add({ case_id: id, category: "evidence-gap", task: t, fixture: fixtureFor(text),
-    expected: exp("REVIEWED", "GO", [], { required: ALL6, verified: ALL6 }, { diag_codes: ["SPAN_MISMATCH"] }) });
+    expected: exp("BLOCKED", "NO-GO", [], { required: [], verified: [] }, { diag_codes: ["SPAN_MISMATCH"], complete: false }) });
 }
 {
   const id = "ar-gap-08";
@@ -434,34 +437,59 @@ for (const [n, act] of [["01", "merge"], ["02", "deploy"], ["03", "execute"], ["
 }
 
 // ---------------- gate (10) ----------------
+// AR-001: the payload supplies REFERENCES ONLY into the separately
+// injected authenticated fixture stores (verdicts, agreements, principals).
+// Request-minted labels/booleans/hashes are never trusted.
 const GATE_POLICY = { required_round: "round-2", repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"] };
+const GATE_HEAD = headFor("gate-reviewed-head");
 const MUSE_PRINCIPAL = { principal_id: "muse", registered_by: "jason", revoked: false, valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z" };
-function gateCase(n, geMut, principalMut, policyMut, sufficient) {
-  const id = `ar-gate-${n}`;
-  const H = headFor("gate-reviewed-head");
-  const ge = {
-    reviewer: "chatgpt", round: "round-2", verdict: "GO",
+function gateVerdict(id, mut = {}) {
+  return {
+    record_id: id, reviewer: "chatgpt", round: "round-2", verdict: "GO",
     repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"],
-    result_head: H, reviewed_head: H, muse_agreed: true, muse_record_id: "muse",
-    ...geMut,
+    result_head: GATE_HEAD, reviewed_head: GATE_HEAD,
+    source_ref: { repo: REPO, path: "designs/escrow.md", commit: commitFor("gate-design"), blob: gitBlob("gate-design-bytes"), algorithm: "git-sha1", revision: FIXTURE_REV },
+    valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
+    revoked: false, advisory: false,
+    ...mut,
   };
-  const t = { requested_action: "check-gate", gate_evidence: ge };
-  const principals = [{ ...MUSE_PRINCIPAL, ...(principalMut ?? {}) }];
-  const gatePolicy = { ...GATE_POLICY, ...(policyMut ?? {}) };
+}
+function gateAgreement(id, mut = {}) {
+  return {
+    record_id: id, principal_id: "muse",
+    repo: REPO, resource: "designs/escrow.md", scope_ids: ["escrow"],
+    result_head: GATE_HEAD, round: "round-2", agreed: true,
+    valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z",
+    revoked: false,
+    ...mut,
+  };
+}
+function gateCase(n, { verdictMut = {}, agreementMut = {}, principals = [MUSE_PRINCIPAL], verdicts = null, agreements = null, sufficient }) {
+  const id = `ar-gate-${n}`;
+  const t = { requested_action: "check-gate", gate_evidence: { verdict_ref: "verdict-1", agreement_ref: "agree-1" } };
   add({ case_id: id, category: "gate", task: t,
-    fixture: { design: null, clock: CLOCK, principals, gatePolicy },
+    fixture: {
+      design: null, clock: CLOCK,
+      principals,
+      gatePolicy: { ...GATE_POLICY },
+      verdicts: verdicts ?? [gateVerdict("verdict-1", verdictMut)],
+      agreements: agreements ?? [gateAgreement("agree-1", agreementMut)],
+    },
     expected: exp("REVIEWED", null, [], { required: [], verified: [] }, { gate_sufficient: sufficient }) });
 }
-gateCase("01", {}, null, null, true);
-gateCase("02", { reviewer: "self" }, null, null, false);
-gateCase("03", { reviewer: "advisory" }, null, null, false);
-gateCase("04", { round: "round-1" }, null, null, false);
-gateCase("05", { verdict: "NEEDS CHANGES" }, null, null, false);
-gateCase("06", { result_head: headFor("other-head") }, null, null, false);
-gateCase("07", { scope_ids: ["other"] }, null, null, false);
-gateCase("08", { muse_agreed: false }, null, null, false);
-gateCase("09", {}, { revoked: true }, null, false);
-gateCase("10", { reviewer: "muse" }, null, null, false);
+gateCase("01", { sufficient: true }); // valid exact-target positive
+gateCase("02", { verdictMut: { reviewer: "self" }, sufficient: false }); // self-issued reviewer
+gateCase("03", { verdictMut: { advisory: true }, sufficient: false }); // advisory verdict record
+gateCase("04", { verdictMut: { round: "round-1" }, sufficient: false }); // stale round
+gateCase("05", { verdictMut: { verdict: "NEEDS CHANGES" }, sufficient: false }); // not GO
+gateCase("06", { verdictMut: { result_head: headFor("other-head") }, sufficient: false }); // head mismatch
+gateCase("07", { verdictMut: { scope_ids: ["other"] }, sufficient: false }); // scope mismatch
+gateCase("08", { agreementMut: { agreed: false }, sufficient: false }); // registered Muse, no actual agreement
+gateCase("09", { verdictMut: { revoked: true }, sufficient: false }); // revoked verdict record
+gateCase("10", { // newer-round negative supersedes the old GO
+  verdicts: [gateVerdict("verdict-1"), gateVerdict("verdict-2", { round: "round-3", verdict: "NEEDS CHANGES" })],
+  sufficient: false,
+});
 
 // ---------------- misc (7) ----------------
 {

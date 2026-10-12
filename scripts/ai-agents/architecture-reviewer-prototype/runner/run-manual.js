@@ -36,6 +36,8 @@ const context = {
   designs,
   principals: c.fixture.principals ?? [],
   gatePolicy: c.fixture.gatePolicy ?? {},
+  verdicts: c.fixture.verdicts ?? [],
+  agreements: c.fixture.agreements ?? [],
 };
 const result = run(c.task, context);
 console.log(process.argv.includes("--markdown") ? reviewToMarkdown(result) : canonicalJson(result));

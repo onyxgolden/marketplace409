@@ -69,10 +69,10 @@ test("a full review run creates no files in the module", () => {
   const b = Buffer.from(text, "utf8");
   const blob = createHash("sha1").update(Buffer.from(`blob ${b.length}\0`, "utf8")).update(b).digest("hex");
   const commit = createHash("sha256").update("zero", "utf8").digest("hex").slice(0, 40);
-  const design_ref = { repo: "r", path: "d.md", commit, blob, algorithm: "git-sha1" };
+  const design_ref = { repo: "r", path: "designs/zero.md", commit, blob, algorithm: "git-sha1", revision: "fixture-rev-1" };
   const r = run(
     { design_ref, base_pin: { repo: "r", commit }, requested_action: "review" },
-    { clock: 1, designs: { [`r\0d.md\0${commit}`]: text }, principals: [], gatePolicy: {} }
+    { clock: 1, designs: { [`r\0designs/zero.md\0${commit}`]: text }, principals: [], gatePolicy: {} }
   );
   assert.equal(r.status, "REVIEWED");
   assert.deepEqual(snapshot(ROOT), before, "module tree changed during run");

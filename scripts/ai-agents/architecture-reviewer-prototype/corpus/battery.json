@@ -8,7 +8,8 @@
         "path": "designs/escrow-holds-service.md",
         "commit": "6aa4c5726d663472405978f239bd956fa7dc7490",
         "blob": "3c96fdf20d19556c579c114e274f069f5b5185ec",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -68,7 +69,8 @@
         "path": "designs/ledger-posting-service.md",
         "commit": "07346938485ec46142c5cdc5ae3ffd1b1d972e3a",
         "blob": "244d28a89ec725c746a15ed87de1a238e2810e14",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -128,7 +130,8 @@
         "path": "designs/payout-queue-worker.md",
         "commit": "17be09bb8400ff2d12926a08aab7c39f94d7ca37",
         "blob": "296fbceb225af8b7346a4c39b8cdba49cad334d8",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -188,7 +191,8 @@
         "path": "designs/tenant-onboarding-flow.md",
         "commit": "6035e5e63bd9d2c61f55502560897a6e4c5a982a",
         "blob": "ba6d473c3be8375af4f909bbde670c5c14759a3b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -248,7 +252,8 @@
         "path": "designs/rent-charge-scheduler.md",
         "commit": "0fc21bbf30152c95df32810e8f8cf814f8b3f5c2",
         "blob": "771d60fcaa195ef49f0f78768c8e7d670b1809c3",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -308,7 +313,8 @@
         "path": "designs/invoice-render-service.md",
         "commit": "43327c69a41732ed7374b36a63e79afa6d11e5e9",
         "blob": "5640c93dc06805e03b39e00dab4eb492a0d3d18b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -368,7 +374,8 @@
         "path": "designs/webhook-dispatch-service.md",
         "commit": "8863f25096b992c164f8fa1dc985713a26adce32",
         "blob": "a21f5bfeb204dafc81d45d0d85a2a694249f4593",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -428,7 +435,8 @@
         "path": "designs/receipt-email-service.md",
         "commit": "36ca856cacf4254785fed20b3b131721a0751a08",
         "blob": "07e04d6d4ee087764b0e65834291f7d6b79a788c",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -488,7 +496,8 @@
         "path": "designs/balance-snapshot-job.md",
         "commit": "bfc4578d00eb432598c36db6f985d302fa719438",
         "blob": "5163da5fc016ad7135b3279e10ba7b36e292110b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -558,7 +567,8 @@
         "path": "designs/kyc-document-intake.md",
         "commit": "b1e8a93b1be5589e9f024fe934237d4f32b85157",
         "blob": "2defd213b17160e43d1e43644ec96c36322c8ce9",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -613,7 +623,8 @@
         "path": "designs/defect-service-01.md",
         "commit": "5c5276429496dfc88b339af23c7f0ab5381651f8",
         "blob": "619f7d3fde042f0ab8cc5ea09a71a6021070816c",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -680,7 +691,8 @@
         "path": "designs/defect-service-02.md",
         "commit": "d94c2edc2c66faa7d3a5f7f12e2a4bd0b917065c",
         "blob": "9dac27633a574fafe3e20080cc170d51b570c731",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -747,7 +759,8 @@
         "path": "designs/defect-service-03.md",
         "commit": "e4afd03e0c4ac78dd6903436301a20f54a20f54c",
         "blob": "808664caf6db9fa9b9b5f61489432ca3e440da11",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -814,7 +827,8 @@
         "path": "designs/defect-service-04.md",
         "commit": "f7022e808e25d8890f546648f7b9267ae38d3d16",
         "blob": "7f0bed661ac9916bc6189792e61088f903276f2f",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -879,7 +893,8 @@
         "path": "designs/defect-service-05.md",
         "commit": "8952e88df81bccc68db1d0df2c8b0c5b6baee199",
         "blob": "2975912bfa3889c507d3ae753c09f6b18ffa7878",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -944,7 +959,8 @@
         "path": "designs/defect-service-06.md",
         "commit": "b61e344dcc97ed100ebc4dfecbe80f6e2e53e455",
         "blob": "137a38696ca8fc11fb25faa5736d7546164a9b8d",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1009,7 +1025,8 @@
         "path": "designs/defect-service-07.md",
         "commit": "76379c964c86bdd3038f3fbf2575b77fdba6e520",
         "blob": "6d0704f8d0807bb792403602cd43f63d98c492f5",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1074,7 +1091,8 @@
         "path": "designs/defect-service-08.md",
         "commit": "283188d010e2b19d0971cb2067de7aa04b1f2864",
         "blob": "0a7dc20ee4de8ee05626ae0bd320570a70ac636f",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1146,7 +1164,8 @@
         "path": "designs/defect-service-09.md",
         "commit": "1f786f7d19d7faa75f2a5191c7b40dbcc980d303",
         "blob": "be2f8f25b6f1d7f9b41f00a1421c1f79ecb6ef16",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1211,7 +1230,8 @@
         "path": "designs/defect-service-10.md",
         "commit": "55832ca81665976a59a87e034741b071dff8838c",
         "blob": "e544c6bed229712e42f3f545723af6969e19bf4b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1287,7 +1307,8 @@
         "path": "designs/contra-retry.md",
         "commit": "d026bffddb04205e33b7387f48d046f0de3ba309",
         "blob": "c68f09dc59c2c4fadd821f85ba98c27b0b15d5b7",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1354,7 +1375,8 @@
         "path": "designs/contra-io.md",
         "commit": "88dd4b79fad08dd6609d8455e10b6ba6dd8164cf",
         "blob": "eae6fd569556a8fd9163095f5d614571d7602d31",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1421,7 +1443,8 @@
         "path": "designs/contra-rollback.md",
         "commit": "134dd7e3de7a346bd72a695c83f75a5e9ee55db9",
         "blob": "19957aa5d64a6d3f4278af09e967a8ac10222b0b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1488,7 +1511,8 @@
         "path": "designs/contra-mig.md",
         "commit": "6ba7f59ded67044f17e6b2c3e90b352ba196452e",
         "blob": "d321c1a9dc478c9c01dbc4c1a4a0941332854fcf",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1555,7 +1579,8 @@
         "path": "designs/contra-rw.md",
         "commit": "f2d41670781bf75c66f2296cb522fd1fe7ebc696",
         "blob": "1b0cd2a10490ec7b180e64454bd720ca6803e496",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1622,7 +1647,8 @@
         "path": "designs/contra-fail.md",
         "commit": "c9fadd41db8faff1b429b961051b18a7748a0572",
         "blob": "5e21734a1ef02362721d75408f2d986a2d9f447d",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1689,7 +1715,8 @@
         "path": "designs/contra-triple.md",
         "commit": "5828d4d0985098bbf21bbd48228a1ea5a85e3161",
         "blob": "361c424750c03e6632ffc820103485463e3e8417",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1756,7 +1783,8 @@
         "path": "designs/contra-mixed.md",
         "commit": "6d6d739a2c64f422a2554c73014ae0808cfd23e3",
         "blob": "a308ee67d16f8a8ad08cbf50b9e3e44df651b242",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1823,7 +1851,8 @@
         "path": "designs/contra-unbounded.md",
         "commit": "3b90fa54de3988d104389cc4f013feb1669222b3",
         "blob": "077ba79a83edfb648645ac9cc3f9e5cad5ac5324",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1890,7 +1919,8 @@
         "path": "designs/contra-ws.md",
         "commit": "53d3a49319346d31399ea4ef66d3a8698e811adf",
         "blob": "1280237458c7373d3dc26a42189afd41ba283c40",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1950,7 +1980,8 @@
         "path": "designs/gap-denied.md",
         "commit": "86c456edb311774c0c958491f102bd23c69f971f",
         "blob": "9dc086ff701df376d846214cf622c64e5cd093ea",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -1999,7 +2030,8 @@
         "path": "designs/gap-hash.md",
         "commit": "a3aa7293610481c5a54ecb1f5e33832def894fab",
         "blob": "d29b15469666dd95cb9a9740f38ffaca619a8178",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2047,7 +2079,8 @@
         "path": "designs/gap-base.md",
         "commit": "533dde32c937b9b6cea719449eb65e90d2660b77",
         "blob": "1b00e49e11f0ab852edf8f0f3cb88c97b16e8b4a",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2095,7 +2128,8 @@
         "path": "designs/gap-missing.md",
         "commit": "65d7a8c608476436634a2c999f54d5c5e39005d5",
         "blob": "2d682e6d2439eddcc8f1164fccb6a7350bc0e20e",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2143,7 +2177,8 @@
         "path": "designs/gap-span.md",
         "commit": "276a88f880e62d7090978290564e88059b5d965d",
         "blob": "7b3370e063d2c8b8d5e234b42adeb0f1665b84b5",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2158,7 +2193,8 @@
             "path": "designs/gap-span.md",
             "commit": "276a88f880e62d7090978290564e88059b5d965d",
             "blob": "7b3370e063d2c8b8d5e234b42adeb0f1665b84b5",
-            "algorithm": "git-sha1"
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
           },
           "span": {
             "start_byte": 0,
@@ -2174,8 +2210,8 @@
       "clock": 1791806400000
     },
     "expected": {
-      "status": "REVIEWED",
-      "verdict": "GO",
+      "status": "BLOCKED",
+      "verdict": "NO-GO",
       "advisory": true,
       "authorization_granted": false,
       "finding_count": 0,
@@ -2183,22 +2219,8 @@
       "contradiction_count": 0,
       "contradiction_checks": [],
       "coverage": {
-        "required": [
-          "component-io",
-          "failure-handling",
-          "migration-pre-post",
-          "read-write-boundary",
-          "retry-bounds",
-          "rollback"
-        ],
-        "verified": [
-          "component-io",
-          "failure-handling",
-          "migration-pre-post",
-          "read-write-boundary",
-          "retry-bounds",
-          "rollback"
-        ],
+        "required": [],
+        "verified": [],
         "missing": [],
         "unverifiable": []
       },
@@ -2206,7 +2228,7 @@
         "SPAN_MISMATCH"
       ],
       "quarantined": 0,
-      "complete": true,
+      "complete": false,
       "gate_sufficient": null,
       "routing_flags": []
     }
@@ -2220,7 +2242,8 @@
         "path": "designs/gap-scope.md",
         "commit": "fb9a257e4edf7f4fc8bf1d00b327a9ca9517d17d",
         "blob": "d9be04d409b2293722adb10864bb5e82ed990f66",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2235,7 +2258,8 @@
             "path": "designs/other.md",
             "commit": "bcf7c4b9467b937bf7bcdcb4e41e611acd623145",
             "blob": "b4ff4314bfa2f3e9a6f9546473ca838d88b235d2",
-            "algorithm": "git-sha1"
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
           },
           "span": {
             "start_byte": 266,
@@ -2251,8 +2275,8 @@
       "clock": 1791806400000
     },
     "expected": {
-      "status": "REVIEWED",
-      "verdict": "GO",
+      "status": "BLOCKED",
+      "verdict": "NO-GO",
       "advisory": true,
       "authorization_granted": false,
       "finding_count": 0,
@@ -2260,22 +2284,8 @@
       "contradiction_count": 0,
       "contradiction_checks": [],
       "coverage": {
-        "required": [
-          "component-io",
-          "failure-handling",
-          "migration-pre-post",
-          "read-write-boundary",
-          "retry-bounds",
-          "rollback"
-        ],
-        "verified": [
-          "component-io",
-          "failure-handling",
-          "migration-pre-post",
-          "read-write-boundary",
-          "retry-bounds",
-          "rollback"
-        ],
+        "required": [],
+        "verified": [],
         "missing": [],
         "unverifiable": []
       },
@@ -2283,7 +2293,7 @@
         "TARGET_MISMATCH"
       ],
       "quarantined": 0,
-      "complete": true,
+      "complete": false,
       "gate_sufficient": null,
       "routing_flags": []
     }
@@ -2297,7 +2307,8 @@
         "path": "designs/gap-quote.md",
         "commit": "b893fcfeb54bb83e4cc9c123b40a7a3676b2d351",
         "blob": "90f8f47a91a6955efe51b3f6a4f5d4917d3d8478",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2312,7 +2323,8 @@
             "path": "designs/gap-quote.md",
             "commit": "b893fcfeb54bb83e4cc9c123b40a7a3676b2d351",
             "blob": "90f8f47a91a6955efe51b3f6a4f5d4917d3d8478",
-            "algorithm": "git-sha1"
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
           },
           "span": {
             "start_byte": 263,
@@ -2328,8 +2340,8 @@
       "clock": 1791806400000
     },
     "expected": {
-      "status": "REVIEWED",
-      "verdict": "GO",
+      "status": "BLOCKED",
+      "verdict": "NO-GO",
       "advisory": true,
       "authorization_granted": false,
       "finding_count": 0,
@@ -2337,22 +2349,8 @@
       "contradiction_count": 0,
       "contradiction_checks": [],
       "coverage": {
-        "required": [
-          "component-io",
-          "failure-handling",
-          "migration-pre-post",
-          "read-write-boundary",
-          "retry-bounds",
-          "rollback"
-        ],
-        "verified": [
-          "component-io",
-          "failure-handling",
-          "migration-pre-post",
-          "read-write-boundary",
-          "retry-bounds",
-          "rollback"
-        ],
+        "required": [],
+        "verified": [],
         "missing": [],
         "unverifiable": []
       },
@@ -2360,7 +2358,7 @@
         "SPAN_MISMATCH"
       ],
       "quarantined": 0,
-      "complete": true,
+      "complete": false,
       "gate_sufficient": null,
       "routing_flags": []
     }
@@ -2374,7 +2372,8 @@
         "path": "designs/gap-repo.md",
         "commit": "4f76af387d6296e1e9a88d7a6e86d305f70fdd87",
         "blob": "2d67852ab37a29e3c7a8176dd3db0137b7def5db",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "other-repo",
@@ -2422,7 +2421,8 @@
         "path": "designs/gap-clean.md",
         "commit": "3a4b0ba678ddc501eae5d7f5ab17f9372fa0250c",
         "blob": "91315deb458c99d3ca167ab38d1b1d1d557fa3be",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2482,7 +2482,8 @@
         "path": "designs/gap-path.md",
         "commit": "3c878d146604b89e7837542f5889fc4bc77b63be",
         "blob": "390b6124b7d66d969479285513976e1a9ba85c9b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2530,7 +2531,8 @@
         "path": "designs/spoof-01.md",
         "commit": "37a96e219e3dfb79d469686e6cda7bf352170b5c",
         "blob": "769c97c3c483fa0d4d7f5b6da7a1b77081419a8d",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2598,7 +2600,8 @@
         "path": "designs/spoof-02.md",
         "commit": "1772e0c0e2bcd6443ae22828df31dc9e02ce6a27",
         "blob": "4c883c2312138e00884a0804b9378f386426b2de",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2666,7 +2669,8 @@
         "path": "designs/spoof-03.md",
         "commit": "ae1fd18e919f3189bb774b2804526d5093d73ce3",
         "blob": "3774c169be1d1b275e14858203be3c3cd2a377ff",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2734,7 +2738,8 @@
         "path": "designs/spoof-04.md",
         "commit": "2945a66ff845be8d9212a445ada17489d61c1051",
         "blob": "10ba092ed1c13825ae7db3f44df098100009ac2e",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2802,7 +2807,8 @@
         "path": "designs/spoof-05.md",
         "commit": "b66afbab003c9645c3a6deb0463761b9c5827ca9",
         "blob": "d433acb2d2cacce345a7372b363c5e9df37ab382",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2870,7 +2876,8 @@
         "path": "designs/injected-06.md",
         "commit": "4dd32b9b66f86115d93d1ee9d3b25e6d7eedd147",
         "blob": "8d05951f3bd0c37451be79788294860dca25272b",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2918,7 +2925,8 @@
         "path": "designs/injected-07.md",
         "commit": "96720bb4f93d3446429ea7def826b742fe9f390b",
         "blob": "f9a2da219f9382597544536facd7765b78aa1d65",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -2966,7 +2974,8 @@
         "path": "designs/injected-08.md",
         "commit": "ba5e4ee9b0a948664fbf1cc4019da1b05c12d7d5",
         "blob": "218fe693663ba8c4e8b6934af923f938f75a1f50",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -3014,7 +3023,8 @@
         "path": "designs/injected-09.md",
         "commit": "558c62df0ce1022986e5a00f6bd4fe67449fdbba",
         "blob": "f05c97a4d2bd0e5bf012b1d95ceb9d6e108fd858",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -3062,7 +3072,8 @@
         "path": "designs/injected-10.md",
         "commit": "f99abb328031e28868fb3af968d23e07890a72e1",
         "blob": "ef4d3957efdffa4ab395225ae3bd14ca62874833",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -3292,18 +3303,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3325,7 +3326,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3355,18 +3400,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "self",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3388,7 +3423,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "self",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3418,18 +3497,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "advisory",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3451,7 +3520,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": true
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3481,18 +3594,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-1",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3514,7 +3617,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-1",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3544,18 +3691,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-2",
-        "verdict": "NEEDS CHANGES",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3577,7 +3714,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "NEEDS CHANGES",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3607,18 +3788,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "f19cb703a5e8d27ff2660591ef232b9baf4f2fde",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3640,7 +3811,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "f19cb703a5e8d27ff2660591ef232b9baf4f2fde",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3670,18 +3885,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "other"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3703,7 +3908,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "other"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3733,18 +3982,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": false,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3766,7 +4005,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": false,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3796,18 +4079,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "chatgpt",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3817,7 +4090,7 @@
         {
           "principal_id": "muse",
           "registered_by": "jason",
-          "revoked": true,
+          "revoked": false,
           "valid_from": "2026-01-01T00:00:00Z",
           "expires_at": "2027-01-01T00:00:00Z"
         }
@@ -3829,7 +4102,51 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": true,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3859,18 +4176,8 @@
     "task": {
       "requested_action": "check-gate",
       "gate_evidence": {
-        "reviewer": "muse",
-        "round": "round-2",
-        "verdict": "GO",
-        "repo": "fixture-repo",
-        "resource": "designs/escrow.md",
-        "scope_ids": [
-          "escrow"
-        ],
-        "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
-        "muse_agreed": true,
-        "muse_record_id": "muse"
+        "verdict_ref": "verdict-1",
+        "agreement_ref": "agree-1"
       }
     },
     "fixture": {
@@ -3892,7 +4199,76 @@
         "scope_ids": [
           "escrow"
         ]
-      }
+      },
+      "verdicts": [
+        {
+          "record_id": "verdict-1",
+          "reviewer": "chatgpt",
+          "round": "round-2",
+          "verdict": "GO",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        },
+        {
+          "record_id": "verdict-2",
+          "reviewer": "chatgpt",
+          "round": "round-3",
+          "verdict": "NEEDS CHANGES",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "reviewed_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "source_ref": {
+            "repo": "fixture-repo",
+            "path": "designs/escrow.md",
+            "commit": "f4bdec290d9b7ad0c9ae8c605c3f4909cec7d185",
+            "blob": "04821d9eb0cc7f0a1355a6bc77c61a59af2eda39",
+            "algorithm": "git-sha1",
+            "revision": "fixture-rev-1"
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false,
+          "advisory": false
+        }
+      ],
+      "agreements": [
+        {
+          "record_id": "agree-1",
+          "principal_id": "muse",
+          "repo": "fixture-repo",
+          "resource": "designs/escrow.md",
+          "scope_ids": [
+            "escrow"
+          ],
+          "result_head": "3f82258f209b6fa0fcea539fbcfdcdc78c1a4d06",
+          "round": "round-2",
+          "agreed": true,
+          "valid_from": "2026-01-01T00:00:00Z",
+          "expires_at": "2027-01-01T00:00:00Z",
+          "revoked": false
+        }
+      ]
     },
     "expected": {
       "status": "REVIEWED",
@@ -3925,7 +4301,8 @@
         "path": "designs/misc-01.md",
         "commit": "7b3e1ac1cb50dc1611bbb6c73bd4169ffb22d5e9",
         "blob": "abc123",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -3973,7 +4350,8 @@
         "path": "designs/misc-02.md",
         "commit": "1418494728fd4e3589d215f7d8cc900aa42f0b54",
         "blob": "eb73af299ed129a70a9977eca61a941182b599a4",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -4022,7 +4400,8 @@
         "path": "designs/misc-03.md",
         "commit": "e6cb5289f7181d2600f6c89dabef2d2a6fe09950",
         "blob": "23e52860191a330636a9e6ef57f11918aa6ca1f1",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -4070,7 +4449,8 @@
         "path": "designs/misc-04.md",
         "commit": "6d51b26a15cbe6199fa9058c376490ef1b246bd0",
         "blob": "b81aa6ff4e67e36feebed47ad1c8022ae569b6e8",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -4117,7 +4497,8 @@
         "path": "designs/misc-05.md",
         "commit": "a09659b6cf38d23e204e2169b4831c2fc0b35d06",
         "blob": "44b9abf0ad7a3e11d3ec547bf63c70025ff74b96",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -4165,7 +4546,8 @@
         "path": "designs/misc-06.md",
         "commit": "d0b3f85669d576f0d79a740037f1f75af86c7b2c",
         "blob": "82f62a646c9d78d583cc00696278223bce0e72e9",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",
@@ -4241,7 +4623,8 @@
         "path": "designs/empty.md",
         "commit": "1db0f4b3855b622715626969d5f0c60a18c8e066",
         "blob": "b9118be1ee214e35ae53afbbe77c286822ad8d9f",
-        "algorithm": "git-sha1"
+        "algorithm": "git-sha1",
+        "revision": "fixture-rev-1"
       },
       "base_pin": {
         "repo": "fixture-repo",

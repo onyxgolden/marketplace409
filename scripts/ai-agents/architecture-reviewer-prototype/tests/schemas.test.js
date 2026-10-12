@@ -26,7 +26,7 @@ function validReviewTask() {
   const b = Buffer.from(text, "utf8");
   const blob = createHash("sha1").update(Buffer.from(`blob ${b.length}\0`, "utf8")).update(b).digest("hex");
   const commit = hex40(id);
-  const design_ref = { repo: "r", path: "d.md", commit, blob, algorithm: "git-sha1" };
+  const design_ref = { repo: "r", path: "designs/schema-ok.md", commit, blob, algorithm: "git-sha1", revision: "fixture-rev-1" };
   return {
     task: {
       design_ref,
@@ -36,7 +36,7 @@ function validReviewTask() {
       evidence_refs: [],
       requested_action: "review",
     },
-    context: { clock: CLOCK, designs: { [`r\0d.md\0${commit}`]: text }, principals: [], gatePolicy: {} },
+    context: { clock: CLOCK, designs: { [`r\0designs/schema-ok.md\0${commit}`]: text }, principals: [], gatePolicy: {} },
   };
 }
 

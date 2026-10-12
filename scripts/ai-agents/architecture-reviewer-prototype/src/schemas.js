@@ -8,8 +8,12 @@
  */
 
 const HEX40 = /^[0-9a-f]{40}$/;
+const HEX64 = /^[0-9a-f]{64}$/;
 const KNOWN_ACTIONS = new Set(["review", "check-gate"]);
 const PROHIBITED_ACTIONS = new Set(["merge", "deploy", "execute", "approve", "publish", "activate", "run", "apply"]);
+// Canonical confined fixture paths for this prototype's design store:
+// repo-relative, inside the designs/ namespace, no traversal, no absolute.
+const CONFINED_PATH = /^designs\/[a-z0-9][a-z0-9._-]*\.md$/;
 
 export class SchemaError extends Error {
   constructor(reason) {
@@ -51,15 +55,16 @@ export function validateSourceRef(ref, where) {
   if (!isPlainObject(ref)) throw new SchemaError(`${where}: SourceRef must be an object`);
   checkOnlyKeys(ref, new Set(["repo", "path", "commit", "blob", "algorithm", "revision"]), where);
   reqString(ref, "repo", where);
-  reqString(ref, "path", where);
+  const path = reqString(ref, "path", where);
+  if (!CONFINED_PATH.test(path))
+    throw new SchemaError(`${where}: 'path' must be a canonical confined fixture path (designs/<name>.md)`);
   const commit = reqString(ref, "commit", where);
   if (!HEX40.test(commit)) throw new SchemaError(`${where}: 'commit' must be a full lowercase 40-hex Git object ID`);
   const blob = reqString(ref, "blob", where);
   if (!HEX40.test(blob)) throw new SchemaError(`${where}: 'blob' must be a full lowercase 40-hex Git object ID`);
-  if (ref.algorithm !== undefined && ref.algorithm !== "git-sha1")
-    throw new SchemaError(`${where}: 'algorithm' must be "git-sha1" when present`);
-  if (ref.revision !== undefined && (typeof ref.revision !== "string" || ref.revision.length === 0))
-    throw new SchemaError(`${where}: 'revision' must be a non-empty string when present`);
+  if (ref.algorithm !== "git-sha1")
+    throw new SchemaError(`${where}: 'algorithm' must be "git-sha1"`);
+  reqString(ref, "revision", where);
   return ref;
 }
 
@@ -74,6 +79,138 @@ export function validateSpan(span, where) {
   return span;
 }
 
+/**
+ * Strict calendar date validation: ISO-8601 UTC "YYYY-MM-DDTHH:mm:ssZ"
+ * with real calendar validity (2026-02-30 is rejected). Date.parse is
+ * never used for validation — it accepts calendar rollover.
+ */
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
+export function validateIsoDate(value, where) {
+  if (typeof value !== "string") throw new SchemaError(`${where} must be an ISO-8601 UTC date string`);
+  const m = value.match(ISO_DATE);
+  if (!m) throw new SchemaError(`${where} must match YYYY-MM-DDTHH:mm:ssZ`);
+  const [, Y, Mo, D, h, mi, s] = m.map(Number);
+  if (Mo < 1 || Mo > 12) throw new SchemaError(`${where} has an invalid month`);
+  const leap = Y % 4 === 0 && (Y % 100 !== 0 || Y % 400 === 0);
+  const dim = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][Mo - 1];
+  if (D < 1 || D > dim) throw new SchemaError(`${where} is not a real calendar date`);
+  if (h > 23 || mi > 59 || s > 59) throw new SchemaError(`${where} has an invalid time`);
+  return Date.parse(value);
+}
+
+function reqBoolean(obj, key, where) {
+  if (typeof obj[key] !== "boolean") throw new SchemaError(`${where}: '${key}' must be a boolean`);
+  return obj[key];
+}
+
+function optScopeIds(obj, where) {
+  const v = obj.scope_ids;
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw new SchemaError(`${where}: 'scope_ids' must be an array`);
+  for (const s of v) {
+    if (typeof s !== "string" || s.length === 0) throw new SchemaError(`${where}: 'scope_ids' entries must be non-empty strings`);
+  }
+  return v;
+}
+
+/**
+ * Strict reviewer-verdict record schema. No missing-field defaults:
+ * `revoked` is required and must be a boolean; dates must be real
+ * calendar dates. Duplicate record IDs with conflicting content are
+ * rejected by validateRecordStore.
+ */
+export function validateReviewerVerdictRecord(rec, where) {
+  if (!isPlainObject(rec)) throw new SchemaError(`${where}: verdict record must be an object`);
+  checkOnlyKeys(
+    rec,
+    new Set(["record_id", "reviewer", "round", "verdict", "repo", "resource", "scope_ids", "result_head", "reviewed_head", "source_ref", "valid_from", "expires_at", "revoked", "advisory"]),
+    where
+  );
+  reqString(rec, "record_id", where);
+  reqString(rec, "reviewer", where);
+  reqString(rec, "round", where);
+  if (!["GO", "NEEDS CHANGES", "NO-GO"].includes(rec.verdict))
+    throw new SchemaError(`${where}: 'verdict' must be GO, NEEDS CHANGES or NO-GO`);
+  reqString(rec, "repo", where);
+  reqString(rec, "resource", where);
+  optScopeIds(rec, where);
+  const rh = reqString(rec, "result_head", where);
+  if (!HEX40.test(rh)) throw new SchemaError(`${where}: 'result_head' must be a full lowercase 40-hex Git object ID`);
+  const vh = reqString(rec, "reviewed_head", where);
+  if (!HEX40.test(vh)) throw new SchemaError(`${where}: 'reviewed_head' must be a full lowercase 40-hex Git object ID`);
+  if (rec.source_ref !== undefined) validateSourceRef(rec.source_ref, `${where}.source_ref`);
+  validateIsoDate(rec.valid_from, `${where}.valid_from`);
+  validateIsoDate(rec.expires_at, `${where}.expires_at`);
+  reqBoolean(rec, "revoked", where);
+  reqBoolean(rec, "advisory", where);
+  return rec;
+}
+
+/**
+ * Strict agreement record schema: a Muse agreement must be an explicit
+ * record binding a principal to the same target, not mere registration.
+ */
+export function validateAgreementRecord(rec, where) {
+  if (!isPlainObject(rec)) throw new SchemaError(`${where}: agreement record must be an object`);
+  checkOnlyKeys(
+    rec,
+    new Set(["record_id", "principal_id", "repo", "resource", "scope_ids", "result_head", "round", "agreed", "valid_from", "expires_at", "revoked"]),
+    where
+  );
+  reqString(rec, "record_id", where);
+  reqString(rec, "principal_id", where);
+  reqString(rec, "repo", where);
+  reqString(rec, "resource", where);
+  optScopeIds(rec, where);
+  const rh = reqString(rec, "result_head", where);
+  if (!HEX40.test(rh)) throw new SchemaError(`${where}: 'result_head' must be a full lowercase 40-hex Git object ID`);
+  reqString(rec, "round", where);
+  reqBoolean(rec, "agreed", where);
+  validateIsoDate(rec.valid_from, `${where}.valid_from`);
+  validateIsoDate(rec.expires_at, `${where}.expires_at`);
+  reqBoolean(rec, "revoked", where);
+  return rec;
+}
+
+/**
+ * Strict principal record schema for the injected principal registry.
+ */
+export function validatePrincipalRecord(rec, where) {
+  if (!isPlainObject(rec)) throw new SchemaError(`${where}: principal record must be an object`);
+  checkOnlyKeys(rec, new Set(["principal_id", "registered_by", "valid_from", "expires_at", "revoked"]), where);
+  reqString(rec, "principal_id", where);
+  reqString(rec, "registered_by", where);
+  validateIsoDate(rec.valid_from, `${where}.valid_from`);
+  validateIsoDate(rec.expires_at, `${where}.expires_at`);
+  reqBoolean(rec, "revoked", where);
+  return rec;
+}
+
+/**
+ * Validate a record store: every record passes its schema, and duplicate
+ * record_ids are allowed only when canonically identical — conflicting
+ * duplicates are rejected.
+ */
+export function validateRecordStore(records, validator, where) {
+  if (records === undefined) return [];
+  if (!Array.isArray(records)) throw new SchemaError(`${where} must be an array`);
+  const byId = new Map();
+  for (let i = 0; i < records.length; i++) {
+    const rec = validator(records[i], `${where}[${i}]`);
+    const prior = byId.get(rec.record_id);
+    const canon = JSON.stringify(rec, Object.keys(rec).sort());
+    if (prior !== undefined && prior !== canon)
+      throw new SchemaError(`${where}: duplicate conflicting record_id '${rec.record_id}'`);
+    byId.set(rec.record_id, canon);
+  }
+  return records;
+}
+
+/**
+ * Validate a Citation against the contract's single provenance schema:
+ * full SourceRef (including algorithm and revision) plus quoted_span,
+ * span and verification.
+ */
 export function validateCitation(c, where) {
   if (!isPlainObject(c)) throw new SchemaError(`${where}: Citation must be an object`);
   checkOnlyKeys(c, new Set(["repo", "path", "commit", "blob", "algorithm", "revision", "quoted_span", "span", "verification"]), where);
@@ -136,28 +273,14 @@ export function validateTask(task) {
     return { action, kind: "review" };
   }
 
-  // check-gate
+  // check-gate: the payload supplies REFERENCES ONLY into the separately
+  // injected authenticated fixture stores (context.verdicts,
+  // context.agreements, context.principals). Request-minted verdict labels,
+  // booleans and matching hashes are never trusted.
   const ge = task.gate_evidence;
   if (!isPlainObject(ge)) throw new SchemaError("task.gate_evidence is required for check-gate");
-  checkOnlyKeys(
-    ge,
-    new Set(["reviewer", "round", "verdict", "repo", "resource", "scope_ids", "result_head", "reviewed_head", "muse_agreed", "muse_record_id"]),
-    "task.gate_evidence"
-  );
-  reqString(ge, "reviewer", "task.gate_evidence");
-  reqString(ge, "round", "task.gate_evidence");
-  if (!["GO", "NEEDS CHANGES", "NO-GO"].includes(ge.verdict))
-    throw new SchemaError("task.gate_evidence.verdict must be GO, NEEDS CHANGES or NO-GO");
-  reqString(ge, "repo", "task.gate_evidence");
-  reqString(ge, "resource", "task.gate_evidence");
-  optStringArray(ge, "scope_ids", "task.gate_evidence");
-  const rh = reqString(ge, "result_head", "task.gate_evidence");
-  if (!HEX40.test(rh)) throw new SchemaError("task.gate_evidence.result_head must be a full lowercase 40-hex Git object ID");
-  if (typeof ge.muse_agreed !== "boolean") throw new SchemaError("task.gate_evidence.muse_agreed must be a boolean");
-  if (ge.muse_record_id !== undefined && (typeof ge.muse_record_id !== "string" || ge.muse_record_id.length === 0))
-    throw new SchemaError("task.gate_evidence.muse_record_id must be a non-empty string when present");
-  if (ge.reviewed_head !== undefined) {
-    if (!HEX40.test(ge.reviewed_head)) throw new SchemaError("task.gate_evidence.reviewed_head must be a full lowercase 40-hex Git object ID");
-  }
+  checkOnlyKeys(ge, new Set(["verdict_ref", "agreement_ref"]), "task.gate_evidence");
+  reqString(ge, "verdict_ref", "task.gate_evidence");
+  reqString(ge, "agreement_ref", "task.gate_evidence");
   return { action, kind: "check-gate" };
 }

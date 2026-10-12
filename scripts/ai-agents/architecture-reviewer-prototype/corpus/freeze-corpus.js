@@ -37,21 +37,30 @@ for (const dir of ["corpus", "src", "runner", "fixtures", "tests"]) {
 }
 files.sort();
 
-const entries = files.map((p) => ({ path: p, sha256: sha(readFileSync(join(ROOT, p))) }));
-const canonical = JSON.stringify(entries.filter((e) => e.path !== "package.json"));
+// The digest covers every pinned file EXCEPT package.json (it carries the
+// separately trusted root in its npm scripts — self-carry circularity).
+// Compute the digest first, record it in package.json's scripts, and only
+// then hash package.json for its manifest pin, so the pin matches the
+// file the verifier will read.
+const preEntries = files
+  .filter((p) => p !== "package.json")
+  .map((p) => ({ path: p, sha256: sha(readFileSync(join(ROOT, p))) }));
+const canonical = JSON.stringify(preEntries);
 const digest = sha(Buffer.from(canonical, "utf8"));
 
-writeFileSync(join(ROOT, "corpus", "manifest.json"), JSON.stringify({ corpus_digest: digest, files: entries }, null, 2) + "\n");
-writeFileSync(join(ROOT, "corpus", "corpus_digest.txt"), digest + "\n");
-
-// Record the digest as the separately trusted root in package.json scripts
-// (package.json itself is excluded from the digest, so this is stable).
+// Record the digest as the separately trusted root in package.json scripts.
 const pkgPath = join(ROOT, "package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
 for (const k of Object.keys(pkg.scripts ?? {})) {
   pkg.scripts[k] = pkg.scripts[k].replace(/AR_APPROVED_ROOT=[0-9a-f]{64}|AR_APPROVED_ROOT=__DIGEST__/, `AR_APPROVED_ROOT=${digest}`);
 }
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+const entries = [...preEntries, { path: "package.json", sha256: sha(readFileSync(pkgPath)) }];
+entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+
+writeFileSync(join(ROOT, "corpus", "manifest.json"), JSON.stringify({ corpus_digest: digest, files: entries }, null, 2) + "\n");
+writeFileSync(join(ROOT, "corpus", "corpus_digest.txt"), digest + "\n");
 
 console.log(`corpus digest: ${digest}`);
 console.log(`files pinned: ${entries.length}`);
