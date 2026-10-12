@@ -1,0 +1,73 @@
+[
+  {
+    "evidence_id": "ev-demo-1",
+    "control_id": "status-filter",
+    "assertion_id": "a1",
+    "modality": "automated",
+    "build_id": "build-alpha",
+    "repo": "onyxgolden/marketplace409",
+    "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
+    "environment": "synthetic-ci",
+    "run_id": "run-demo-1",
+    "artifact_ref": {
+      "fixture_id": "shot-demo-1",
+      "sha256": "4ea36ca64d97beaae07819e55999643ec9d9a5aa0e70ef4e33fcf8d77d317afe",
+      "media_type": "image/png",
+      "byte_length": 39
+    },
+    "timestamp": "2026-10-11T12:00:00Z",
+    "expected": {
+      "options": [
+        "all",
+        "vacant",
+        "occupied"
+      ],
+      "applied": "vacant",
+      "rows": 3
+    },
+    "observed": {
+      "options": [
+        "all",
+        "vacant",
+        "occupied"
+      ],
+      "applied": "vacant",
+      "rows": 3
+    },
+    "outcome": "pass",
+    "fixture_observer_id": "fixture-observer-demo"
+  },
+  {
+    "evidence_id": "ev-demo-2",
+    "control_id": "status-filter",
+    "assertion_id": "a1",
+    "modality": "manual",
+    "build_id": "build-alpha",
+    "repo": "onyxgolden/marketplace409",
+    "commit": "3f7fc991d570e281f1da190befcd7a49cc6af9e4",
+    "environment": "synthetic-ci",
+    "run_id": null,
+    "artifact_ref": null,
+    "timestamp": "2026-10-11T13:00:00Z",
+    "expected": {
+      "options": [
+        "all",
+        "vacant",
+        "occupied"
+      ],
+      "applied": "vacant",
+      "rows": 3
+    },
+    "observed": {
+      "options": [
+        "all",
+        "vacant",
+        "occupied"
+      ],
+      "applied": "vacant",
+      "rows": 3
+    },
+    "outcome": "pass",
+    "fixture_observer_id": "fixture-observer-demo"
+  }
+]

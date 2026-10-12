@@ -1,0 +1,12 @@
+{
+  "shot-demo-1": {
+    "fixture_id": "shot-demo-1",
+    "bytes_b64": "cWEtZml4dHVyZS1zY3JlZW5zaG90LWJ5dGVzOnNob3QtZGVtby0x",
+    "sha256": "4ea36ca64d97beaae07819e55999643ec9d9a5aa0e70ef4e33fcf8d77d317afe",
+    "media_type": "image/png",
+    "byte_length": 39,
+    "control_id": "status-filter",
+    "assertion_id": "a1",
+    "modality": "automated"
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "corpus_digest": "b3bf34c5eeb11ffd778127e69d09a9199aa20bdd33e1734b2fc9d7e9ee93f7fa",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "d21b8a226bfccee81149e147c362ec42ef140a5806f30295f8ef302383d9b33c"
+    },
+    {
+      "path": "corpus/battery.json",
+      "sha256": "2a4a354749eb974ef325c5fca567e7ccd1b7bcd31966cc96b3c1d6841c7a7bb3"
+    },
+    {
+      "path": "corpus/freeze-corpus.js",
+      "sha256": "d19f0abb72db9b4ca8b5e3d122943b5746d5c2aeb4bf17c6e749fdec2b3d07e4"
+    },
+    {
+      "path": "corpus/make-battery.js",
+      "sha256": "24d8b4fc38fe75d1732005270bbbd8e1c663e6aea4c69665f7258202aee938aa"
+    },
+    {
+      "path": "fixtures/artifacts.json",
+      "sha256": "b55b81da683d6f5141d338e5a7133bff2c2b86d5a0ff4ed2f1697df2f753d52d"
+    },
+    {
+      "path": "fixtures/build-registry.json",
+      "sha256": "cf2a3e0e30c74ea7fc241600e7767b3f7edd5bd030095e9b94468da0f98de9e4"
+    },
+    {
+      "path": "fixtures/evidence.json",
+      "sha256": "b7f6ae277d52e8506722fecbad04dfabb2331d93dd06d3c3328f0c393435f322"
+    },
+    {
+      "path": "fixtures/grants.json",
+      "sha256": "fb57b1c1e956921842743688c1d59d8d50028ab579d63771681b9b632db709f4"
+    },
+    {
+      "path": "fixtures/observers.json",
+      "sha256": "d50d97b155d3b954e8b77f735b0fa77d8d1a726a5ebc35a91b4b603466e3067b"
+    },
+    {
+      "path": "fixtures/runs.json",
+      "sha256": "fb041a454532c20d2a4b5ffe644f691838832755edb45d1286b466a472633835"
+    },
+    {
+      "path": "package.json",
+      "sha256": "65535c61f8f1c05c37a54dc8d184caa20f72bdc864166b6582c56ffdf577c42f"
+    },
+    {
+      "path": "runner/run-manual.js",
+      "sha256": "959509afae8e37b9f7889d716f9f8dfffb9842d77cf44630cc3528df607a7929"
+    },
+    {
+      "path": "src/classify.js",
+      "sha256": "8c2b8833e34ade200c61801343090e2238440e6b6712c401e32e481da7bebaeb"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "be6ae5f18a4d46dea480b8f8a69d876e4e9a2476f24bdfc844750b68d423cf3a"
+    },
+    {
+      "path": "src/injection.js",
+      "sha256": "0f8ce3b3af215327d2576dd314834f61982feb60c5c658fac8e0d0556dc86506"
+    },
+    {
+      "path": "src/ledger.js",
+      "sha256": "2a64f244448ba3d9f3fd0ffaff6a75a2350ff5fae43905e1d2889880cae62499"
+    },
+    {
+      "path": "src/markdown.js",
+      "sha256": "1a5e77856ea1a62c22b61126e91a8af9322330cb874dfbd00ef2c4b619cda9ec"
+    },
+    {
+      "path": "src/resolver.js",
+      "sha256": "648fe64bf894a4d4e9cdab42275714a8503def133f77e6d84acbd7fec2eb2cf7"
+    },
+    {
+      "path": "src/schemas.js",
+      "sha256": "d5b7bf8b716587cc48cb94b194e434870a745a216d8586a3c616e22176d0436a"
+    },
+    {
+      "path": "tests/battery.test.js",
+      "sha256": "98c3fbb82cc5faf5ce8b374cdd60c5023a78fbb6e3f90a2c808161dde088e5e6"
+    },
+    {
+      "path": "tests/case-worker.js",
+      "sha256": "ccaac5c3cd86ce4d97efd62194c10d035fe07ed473770f1bd4b07a8b545c7228"
+    },
+    {
+      "path": "tests/determinism.test.js",
+      "sha256": "489dbd32fd7df8b10f4dc06990a8e7a527f335cf1d1ce0aae7b5e6996465af20"
+    },
+    {
+      "path": "tests/hang-worker.js",
+      "sha256": "e37bedddcbfc18a3c40b47983101ca1471e5656b541256e41737f763e8d39059"
+    },
+    {
+      "path": "tests/harness.js",
+      "sha256": "220f4b7c51957729b7158ba3e4e958ec727b19fa6970e5fb62407f550d02b32b"
+    },
+    {
+      "path": "tests/mutation.test.js",
+      "sha256": "5938cc1da71a64471b5d3098cf0db1ca28ace1d780715be4c7380bda40b1ec1c"
+    },
+    {
+      "path": "tests/qai-regressions.test.js",
+      "sha256": "97156ad9f99bd1ed200f25fb176bee915f4195c082dcff362c9eecb219f61f0f"
+    },
+    {
+      "path": "tests/run-battery.js",
+      "sha256": "f687bafc385abdbff5aa5d71214c27104a048ecec29e7332a256d140d0d542af"
+    },
+    {
+      "path": "tests/schemas.test.js",
+      "sha256": "2a4762a7e6092bb34c23075bbc2635dc7394667f345af2a1849c8504ef15d069"
+    },
+    {
+      "path": "tests/trust-bootstrap.js",
+      "sha256": "9416e430d1a16f2887961a9411d485927d2fd5b69ef061df5876ca4bc6bd939e"
+    },
+    {
+      "path": "tests/watchdog.test.js",
+      "sha256": "c9f6b03c85da554990c6519c14d04b81c674684021e4cad0d84dbb5f41ab890d"
+    },
+    {
+      "path": "tests/zerotools.test.js",
+      "sha256": "7d1c659df317cdd7748d7c4edb668b2e738b2c1644ffdb3a212cfea43c47a722"
+    }
+  ]
+}

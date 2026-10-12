@@ -1,0 +1,10 @@
+{
+  "ev-demo-1": {
+    "allowed": true,
+    "reason": "fixture: demo grant"
+  },
+  "ev-demo-2": {
+    "allowed": true,
+    "reason": "fixture: demo grant"
+  }
+}
