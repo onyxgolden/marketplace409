@@ -1,0 +1,1 @@
+{"description":"Fixture owner registry for the engineering-manager prototype. owner_proposal values must appear here (and in the task's owner_allowlist when non-empty) or the node is blocked with INVALID_OWNER.","owners":["muse","claude","chatgpt","jason"]}
