@@ -35,35 +35,46 @@
 --     new evidence (different outcome, different run, or a retry's new
 --     outcome) always mints a fresh ordinal.
 --
+-- RDL-004A.3: the backfill below runs ONLY on initial installation,
+-- inside the same "constraint does not exist" guard as the constraint
+-- creation. A replay of this migration must leave existing attempt rows
+-- byte-for-byte unchanged: re-ranking by attempted_at,id would overwrite
+-- authoritative ordinals allocated under the ledger-row lock and could
+-- flip which outcome authoritativeLatestAttempts treats as latest (or
+-- raise a uniqueness violation mid-replay). Never re-rank
+-- already-authoritative nonzero ordinals.
+--
 -- DEPLOY NOTE: migration file only. Applying to production Supabase is a
 -- separate, explicit Jason authorization (not granted by the proposal or
 -- by this PR).
 
--- Backfill: give every pre-existing attempt row a distinct per-delivery
--- ordinal (ordered by attempted_at, then id) so the uniqueness constraint
--- below applies cleanly to rows recorded before atomic recording
--- existed. attempt_ordinal was advisory-only before this change; nothing
--- depends on the old all-zero values.
-with ranked as (
-  select id,
-         row_number() over (
-           partition by ledger_id, delivery_id
-           order by attempted_at, id
-         ) as rn
-    from scheduled_send_attempts
-)
-update scheduled_send_attempts a
-   set attempt_ordinal = ranked.rn
-  from ranked
- where a.id = ranked.id;
-
--- Re-runnable: only add the constraint when it is not there yet.
+-- Initial-install backfill + constraint, guarded as one unit: on first
+-- application, give every pre-existing attempt row a distinct
+-- per-delivery ordinal (ordered by attempted_at, then id) so the
+-- uniqueness constraint applies cleanly to rows recorded before atomic
+-- recording existed. attempt_ordinal was advisory-only before this
+-- change; nothing depends on the old all-zero values. On any later
+-- application the constraint already exists and this whole block is a
+-- no-op -- existing rows are never touched.
 do $$
 begin
   if not exists (
     select 1 from pg_constraint
      where conname = 'scheduled_send_attempts_ordinal_unique'
   ) then
+    with ranked as (
+      select id,
+             row_number() over (
+               partition by ledger_id, delivery_id
+               order by attempted_at, id
+             ) as rn
+        from scheduled_send_attempts
+    )
+    update scheduled_send_attempts a
+       set attempt_ordinal = ranked.rn
+      from ranked
+     where a.id = ranked.id;
+
     alter table scheduled_send_attempts
       add constraint scheduled_send_attempts_ordinal_unique
       unique (ledger_id, delivery_id, attempt_ordinal);

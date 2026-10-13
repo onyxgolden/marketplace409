@@ -4,8 +4,9 @@
 // migration, the RDL-002A/B + 004A/B follow-up, and the atomic-attempt
 // migration, then exercises the real record_rental_send_attempt function:
 // token fencing, atomic ordinal allocation under concurrency, legacy
-// null-token semantics, idempotent re-records, and the uniqueness
-// backstop. No linked/remote database touched.
+// null-token semantics, idempotent re-records, the uniqueness backstop,
+// and RDL-004A.3 replay safety (a second application never rewrites
+// authoritative ordinals). No linked/remote database touched.
 //
 // The migration is PREPARED for review only; applying it to production
 // Supabase is Jason's separate explicit authorization.
@@ -14,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
+import { authoritativeLatestAttempts } from "../../../src/application/notifications/scheduledSendLedger.js";
 
 const BASE_SQL = readFileSync(
   new URL("../20261012000000_scheduled_send_ledger.sql", import.meta.url),
@@ -244,5 +246,114 @@ describe("atomic attempt migration", () => {
     expect(grants.get("service_role")).toBe("EXECUTE");
     expect(grants.has("anon")).toBe(false);
     expect(grants.has("authenticated")).toBe(false);
+  });
+
+  it("RDL-004A.3: replaying the migration leaves authoritative rows byte-for-byte unchanged", async () => {
+    const ledger = await seedLedgerRow();
+    // Seed two attempts whose ORDINAL order deliberately differs from
+    // attempted_at,id order: the authoritative latest (ordinal 2) is the
+    // FAILED row even though it looks "older" by wall clock and id.
+    // (The PGlite gen_random_uuid stub is constant, so ids are explicit.)
+    const firstId = randomUUID();
+    const secondId = randomUUID();
+    await db.query(
+      `insert into scheduled_send_attempts
+         (id, ledger_id, delivery_id, state, provider_message_id, run_id,
+          claim_token, attempt_ordinal, attempted_at)
+       values
+         ($1::uuid, $3::uuid, 'del_1', 'provider_accepted', 'msg_1', 'run_1',
+          'tok_A', 1, '2026-10-13T12:00:00Z'),
+         ($2::uuid, $3::uuid, 'del_1', 'provider_failed', null, 'run_2',
+          'tok_A', 2, '2026-10-13T11:00:00Z')`,
+      [firstId, secondId, ledger.id],
+    );
+    const snapshot = async () => {
+      const { rows } = await db.query(
+        `select id, ledger_id, delivery_id, state, attempt_ordinal
+           from scheduled_send_attempts
+          where ledger_id = $1::uuid
+          order by id`,
+        [ledger.id],
+      );
+      return rows;
+    };
+    const derivedLatestId = (rows) => {
+      const latest = [...authoritativeLatestAttempts(rows).values()];
+      expect(latest).toHaveLength(1);
+      return latest[0].id;
+    };
+    const before = await snapshot();
+    expect(derivedLatestId(before)).toBe(secondId);
+
+    // Replay the migration: must succeed and change nothing.
+    await db.exec(MIGRATION_SQL);
+
+    const after = await snapshot();
+    expect(after).toEqual(before);
+    expect(derivedLatestId(after)).toBe(secondId);
+  });
+});
+
+describe("atomic attempt migration: initial install backfill (RDL-004A.3)", () => {
+  let installDb;
+
+  beforeAll(async () => {
+    installDb = new PGlite();
+    await installDb.exec(
+      `create or replace function gen_random_uuid() returns uuid language sql as
+       $$ select '00000000-0000-0000-0000-000000000000'::uuid $$;`,
+    );
+    await installDb.exec(BASE_SQL);
+    await installDb.exec(FOLLOWUP_SQL);
+    await installDb.exec(
+      `do $$
+       begin
+         if not exists (select 1 from pg_roles where rolname = 'anon') then
+           create role anon nologin;
+         end if;
+         if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+           create role authenticated nologin;
+         end if;
+         if not exists (select 1 from pg_roles where rolname = 'service_role') then
+           create role service_role nologin;
+         end if;
+       end $$;`,
+    );
+    // Legacy pre-atomic rows: duplicate zero ordinals within del_1.
+    const ledgerId = randomUUID();
+    await installDb.query(
+      `insert into scheduled_send_ledger
+         (id, schedule_name, scheduled_slot, recipient_allowlist_id, state)
+       values ($1::uuid, 'tenant_invite', '2026-10-13', 'legacy_r1', 'claimed')`,
+      [ledgerId],
+    );
+    await installDb.query(
+      `insert into scheduled_send_attempts
+         (id, ledger_id, delivery_id, state, attempt_ordinal, attempted_at)
+       values
+         ($1::uuid, $4::uuid, 'del_1', 'provider_failed', 0, '2026-10-12T10:00:00Z'),
+         ($2::uuid, $4::uuid, 'del_1', 'provider_accepted', 0, '2026-10-12T11:00:00Z'),
+         ($3::uuid, $4::uuid, 'del_2', 'provider_failed', 0, '2026-10-12T10:30:00Z')`,
+      [randomUUID(), randomUUID(), randomUUID(), ledgerId],
+    );
+    await installDb.exec(MIGRATION_SQL);
+  });
+
+  it("backfills distinct per-delivery ordinals for legacy zero-ordinal rows", async () => {
+    const { rows } = await installDb.query(
+      `select delivery_id, attempt_ordinal
+         from scheduled_send_attempts
+         order by delivery_id, attempt_ordinal`,
+    );
+    expect(rows).toEqual([
+      { delivery_id: "del_1", attempt_ordinal: 1 },
+      { delivery_id: "del_1", attempt_ordinal: 2 },
+      { delivery_id: "del_2", attempt_ordinal: 1 },
+    ]);
+    const { rows: cons } = await installDb.query(
+      `select conname from pg_constraint
+        where conname = 'scheduled_send_attempts_ordinal_unique'`,
+    );
+    expect(cons).toHaveLength(1);
   });
 });
