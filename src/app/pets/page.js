@@ -6,6 +6,12 @@ import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = {
+  title: "Pets & Shelters | 409 Marketplace",
+  description:
+    "Adoptable pets and local shelters across Southeast Texas — meet the Pet of the Week and find your new best friend.",
+};
+
 export default async function PetsPage() {
   const { data: pets, error } = await supabase
     .from("pets")
@@ -24,7 +30,7 @@ export default async function PetsPage() {
       <Header />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <h1 className="text-5xl font-extrabold mb-4">Pets & Shelters</h1>
+        <h1 className="text-4xl sm:text-5xl font-extrabold mb-4">Pets & Shelters</h1>
 
         <p className="text-xl text-gray-600 mb-8">
           Adoptable pets, lost and found animals, and local Pet of the Week.

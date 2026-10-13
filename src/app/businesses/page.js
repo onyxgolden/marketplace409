@@ -5,6 +5,12 @@ import { BusinessRepository } from "@/domains/business";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = {
+  title: "Local Business Directory | 409 Marketplace",
+  description:
+    "Discover and support local Southeast Texas businesses — shop local, hire local, grow local.",
+};
+
 export default async function BusinessesPage() {
   let businesses = [];
 let error = null;
@@ -20,7 +26,7 @@ try {
       <Header />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <h1 className="text-5xl font-extrabold mb-4">
+        <h1 className="text-4xl sm:text-5xl font-extrabold mb-4">
           Local Business Directory
         </h1>
 

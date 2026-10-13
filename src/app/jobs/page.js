@@ -5,6 +5,12 @@ import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = {
+  title: "409 Jobs | 409 Marketplace",
+  description:
+    "Find local jobs across Southeast Texas — browse openings or post a job for your business.",
+};
+
 export default async function JobsPage() {
   const { data: jobs, error } = await supabase
     .from("jobs")
@@ -16,7 +22,7 @@ export default async function JobsPage() {
       <Header />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <h1 className="text-5xl font-extrabold mb-4">409 Jobs</h1>
+        <h1 className="text-4xl sm:text-5xl font-extrabold mb-4">409 Jobs</h1>
 
         <p className="text-xl text-gray-600 mb-8">
           Local hiring board for Southeast Texas jobs, side work, trades, and

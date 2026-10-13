@@ -34,7 +34,7 @@ export const metadata = {
     title: "409 Marketplace | Buy Local. Sell Local.",
     description:
       "A local Southeast Texas marketplace for listings, services, rentals, pets, community resources, and American-made products.",
-    images: [{ url: "/brand/og-image.png", width: 1200, height: 630 }],
+    images: [{ url: "/brand/og-image.jpg", width: 1200, height: 630 }],
   },
 };
 
