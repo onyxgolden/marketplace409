@@ -44,12 +44,51 @@ describe("scheduled_send_ledger migration", () => {
       "state",
       "provider_message_id",
       "failure_reason",
+      "send_attempts",
       "claimed_at",
       "updated_at",
       "created_at",
     ]) {
       expect(names).toContain(col);
     }
+  });
+
+  it("creates the scheduled_send_attempts child table (RDL-004)", async () => {
+    const { rows } = await db.query(
+      `select column_name from information_schema.columns
+       where table_name = 'scheduled_send_attempts' order by column_name`,
+    );
+    const names = rows.map((r) => r.column_name);
+    for (const col of [
+      "id",
+      "ledger_id",
+      "delivery_id",
+      "state",
+      "provider_message_id",
+      "failure_reason",
+      "run_id",
+      "attempted_at",
+    ]) {
+      expect(names).toContain(col);
+    }
+    // Attempt states are provider outcomes only.
+    await expect(
+      db.query(
+        `insert into scheduled_send_attempts (ledger_id, delivery_id, state)
+         values ('00000000-0000-0000-0000-000000000000', 'del_1', 'claimed')`,
+      ),
+    ).rejects.toThrow(/check constraint|violates/i);
+    // FK to the ledger row.
+    await expect(
+      db.query(
+        `insert into scheduled_send_attempts (ledger_id, delivery_id, state)
+         values ('11111111-1111-1111-1111-111111111111', 'del_1', 'provider_accepted')`,
+      ),
+    ).rejects.toThrow(/foreign key|violates/i);
+    const { rows: rel } = await db.query(
+      `select relrowsecurity from pg_class where relname = 'scheduled_send_attempts'`,
+    );
+    expect(rel[0].relrowsecurity).toBe(true);
   });
 
   it("enforces one row per (schedule_name, scheduled_slot, recipient_allowlist_id)", async () => {

@@ -6,10 +6,13 @@ import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintStr
 import {
   claimLedgerRow,
   recordLedgerOutcome,
+  takeoverLedgerRow,
   chicagoSlotFor,
   SCHEDULE_NAMES,
   LEDGER_STATES,
-  isTerminalLedgerState,
+  isPositiveSendEvidence,
+  CLAIM_TAKEOVER_STALE_MINUTES,
+  MAX_LEDGER_SEND_ATTEMPTS,
 } from "@/application/notifications/scheduledSendLedger";
 
 export const runtime = "nodejs";
@@ -146,24 +149,85 @@ export async function GET(request) {
       });
     }
 
-    // Durable pre-send claim (confirmation ledger): the claim row is written
-    // BEFORE the provider call. A refire that finds a terminal ledger row for
-    // (schedule, slot, recipient) reconciles -- it skips the send. A stuck
-    // 'claimed' row from a crashed run is taken over by the refire.
+    // Durable FENCED pre-send claim (confirmation ledger), RDL-001/RDL-002:
+    // the claim row is written BEFORE the provider call, and only the run
+    // that owns the claim (fresh winner, or atomic takeover of a
+    // stale/failed row) may send.
+    //   * provider_accepted/delivered are POSITIVE send evidence ->
+    //     reconcile: stamp invited_at if the local stamp was lost
+    //     (provider-accepted-before-local-stamp), enable billing, report
+    //     already_sent. provider_failed is NEVER positive evidence and
+    //     never enables billing.
+    //   * fresh claimed row held by another run -> defer (409), never send.
+    //   * stale claimed / failed-with-attempts-left -> atomic takeover,
+    //     then send under the stable identity.
+    //   * failed with attempts exhausted -> explicit blocked failure, no
+    //     billing, no send.
+    //   * missing row after a lost claim -> fail closed, never send.
     let claimedRow = null;
     if (!dryRun) {
       const claim = await claimLedgerRow(db, ledgerArgs(runId));
-      claimedRow = claim.row ?? claim.existing ?? null;
-      if (!claim.claimed && claim.existing && isTerminalLedgerState(claim.existing.state)) {
-        await ensureBillingEnabled(db);
-        return NextResponse.json({
-          success: true,
-          action: "already_sent",
-          tenantId: TENANT_ID,
-          billingEnabled: true,
-          reconciled: true,
-          ledgerState: claim.existing.state,
+      if (claim.claimed) {
+        claimedRow = claim.row;
+      } else if (claim.existing) {
+        const existingState = claim.existing.state;
+        if (isPositiveSendEvidence(existingState)) {
+          const timestamp = new Date().toISOString();
+          if (!tenant.invited_at || new Date(tenant.invited_at).toISOString() < GO_LIVE_CUTOFF) {
+            const { error: stampError } = await db.from("rental_tenants")
+              .update({ invited_at: timestamp, updated_at: timestamp })
+              .eq("owner_id", OWNER_ID).eq("id", TENANT_ID);
+            if (stampError) throw stampError;
+          }
+          await ensureBillingEnabled(db);
+          return NextResponse.json({
+            success: true,
+            action: "already_sent",
+            tenantId: TENANT_ID,
+            billingEnabled: true,
+            reconciled: true,
+            ledgerState: existingState,
+          });
+        }
+        const takeover = await takeoverLedgerRow(db, {
+          ...ledgerArgs(runId),
+          staleMinutes: CLAIM_TAKEOVER_STALE_MINUTES,
+          maxAttempts: MAX_LEDGER_SEND_ATTEMPTS,
         });
+        if (takeover.taken) {
+          claimedRow = takeover.row;
+        } else {
+          const current = takeover.existing;
+          if (current && current.state === LEDGER_STATES.CLAIMED) {
+            return NextResponse.json(
+              { success: false, action: "deferred_claim_held", tenantId: TENANT_ID, billingEnabled: false },
+              { status: 409 },
+            );
+          }
+          if (current && current.state === LEDGER_STATES.PROVIDER_FAILED) {
+            return NextResponse.json(
+              {
+                success: false,
+                action: "blocked_provider_failed",
+                tenantId: TENANT_ID,
+                billingEnabled: false,
+                ledgerState: current.state,
+                sendAttempts: current.send_attempts ?? null,
+                failureReason: current.failure_reason ?? null,
+              },
+              { status: 500 },
+            );
+          }
+          return NextResponse.json(
+            { success: false, action: "blocked_ledger", tenantId: TENANT_ID, billingEnabled: false },
+            { status: 500 },
+          );
+        }
+      } else {
+        return NextResponse.json(
+          { success: false, action: "blocked_ledger", tenantId: TENANT_ID, billingEnabled: false },
+          { status: 500 },
+        );
       }
     }
 

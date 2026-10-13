@@ -48,6 +48,11 @@ create table if not exists scheduled_send_ledger (
     check (state in ('claimed', 'provider_accepted', 'provider_failed', 'delivered', 'no_op')),
   provider_message_id text,
   failure_reason text,
+  -- Bounded send attempts per (schedule, slot, recipient): the first provider
+  -- call goes out under the fresh claim (send_attempts = 1); each fenced
+  -- takeover/retry increments it. Refires past MAX attempts fail closed
+  -- instead of retrying forever. RDL-001/RDL-002.
+  send_attempts integer not null default 0,
   claimed_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
@@ -61,6 +66,32 @@ create index if not exists scheduled_send_ledger_schedule_slot_idx
 create index if not exists scheduled_send_ledger_state_idx
   on scheduled_send_ledger (state)
   where state in ('claimed', 'provider_failed');
+
+-- Per-delivery attempt evidence (RDL-004). The ledger row above stays the
+-- agreed (schedule, slot, recipient) summary key, but a recipient can have
+-- MULTIPLE distinct deliveries in one slot (e.g. two PF receipts). Each
+-- provider attempt is recorded here as an insert-only row linked to the
+-- delivery-table row id, so a failed individual delivery can never be
+-- masked by a later success to the same recipient. The summary row's state
+-- is derived from the latest attempt per delivery_id: any outstanding
+-- provider_failed keeps the summary failed; a failure clears only when
+-- THAT delivery_id is retried to provider_accepted.
+create table if not exists scheduled_send_attempts (
+  id uuid primary key default gen_random_uuid(),
+  ledger_id uuid not null references scheduled_send_ledger(id) on delete cascade,
+  delivery_id text not null,
+  state text not null check (state in ('provider_accepted', 'provider_failed')),
+  provider_message_id text,
+  failure_reason text,
+  run_id text,
+  attempted_at timestamptz not null default now()
+);
+
+create index if not exists scheduled_send_attempts_ledger_idx
+  on scheduled_send_attempts (ledger_id, attempted_at desc);
+
+alter table scheduled_send_attempts enable row level security;
+-- Intentionally no policies: service-role only.
 
 alter table scheduled_send_ledger enable row level security;
 -- Intentionally no policies: service-role only.

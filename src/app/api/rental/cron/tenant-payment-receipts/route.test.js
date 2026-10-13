@@ -55,21 +55,45 @@ function ledgerNode(store) {
     }),
     update: vi.fn((patch) => {
       const updFilters = [];
+      const apply = (resolve) => {
+        const idx = store.rows.findIndex((r) => updFilters.every(([c, v]) => r[c] === v));
+        if (idx === -1) return resolve({ data: [], error: null });
+        store.rows[idx] = { ...store.rows[idx], ...patch };
+        resolve({ data: [store.rows[idx]], error: null });
+      };
       const upd = {
         eq: vi.fn((col, val) => {
           updFilters.push([col, val]);
           return upd;
         }),
-        select: vi.fn(() => ({
-          then: (resolve) => {
-            const idx = store.rows.findIndex((r) => updFilters.every(([c, v]) => r[c] === v));
-            if (idx === -1) return resolve({ data: [], error: null });
-            store.rows[idx] = { ...store.rows[idx], ...patch };
-            resolve({ data: [store.rows[idx]], error: null });
-          },
-        })),
+        // supabase-js executes the update when awaited, with or without .select().
+        then: apply,
+        select: vi.fn(() => ({ then: apply })),
       };
       return upd;
+    }),
+    then: (resolve) =>
+      resolve({
+        data: store.rows.filter((r) => node._filters.every(([c, v]) => r[c] === v)),
+        error: null,
+      }),
+  };
+  node._filters = [];
+  return node;
+}
+
+// In-memory scheduled_send_attempts mock: insert-only rows; select/eq read.
+function attemptsNode(store) {
+  const node = {
+    select: vi.fn(() => node),
+    eq: vi.fn((col, val) => {
+      node._filters.push([col, val]);
+      return node;
+    }),
+    insert: vi.fn((row) => {
+      const inserted = { id: `attempt_${store.rows.length + 1}`, ...row };
+      store.rows.push(inserted);
+      return { then: (resolve) => resolve({ data: [inserted], error: null }) };
     }),
     then: (resolve) =>
       resolve({
@@ -88,10 +112,13 @@ function ledgerNode(store) {
 function sequenceDb(tableSequences) {
   const counters = {};
   const ledgerStore = { rows: [] };
+  const attemptsStore = { rows: [] };
   const db = {
     _ledgerRows: ledgerStore.rows,
+    _attemptRows: attemptsStore.rows,
     from: vi.fn((table) => {
       if (table === "scheduled_send_ledger") return ledgerNode(ledgerStore);
+      if (table === "scheduled_send_attempts") return attemptsNode(attemptsStore);
       const seq = tableSequences[table];
       if (!seq) throw new Error(`unexpected from(${table}) call`);
       const i = counters[table] || 0;

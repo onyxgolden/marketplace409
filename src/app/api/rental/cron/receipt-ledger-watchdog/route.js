@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import {
   readLedgerForSlot,
+  readAttemptsForSlot,
   chicagoSlotFor,
   SCHEDULE_NAMES,
   SCHEDULE_RUN_TIMES,
   LEDGER_STATES,
+  SWEEP_RECIPIENT_ID,
 } from "@/application/notifications/scheduledSendLedger";
 
 export const runtime = "nodejs";
@@ -33,22 +35,40 @@ export const runtime = "nodejs";
 //   * unrecorded_attempt -- a delivery-table row in sent/failed attempted
 //     during the slot whose recipient has no ledger row: the sweep sent
 //     without writing confirmation evidence.
+//   * delivery_evidence_mismatch -- a delivery-table attempt whose
+//     per-delivery ledger attempt evidence is missing or disagrees
+//     (RDL-004): a failed individual delivery must not be hidden behind
+//     another delivery's success to the same recipient.
+// Run markers ('_sweep'): a healthy no_op marker is legitimate run
+// evidence and stays silent; a claimed marker older than the stuck cutoff
+// alerts stuck_claim (RDL-005) — missing/partial run evidence is not proof
+// the sweep completed.
 //
 // Query params: ?dryRun is not supported -- this endpoint never writes.
 // Env: LEDGER_WATCHDOG_GRACE_MINUTES (default 90).
 const DEFAULT_GRACE_MINUTES = 90;
 const STUCK_CLAIM_GRACE_MULTIPLE = 2;
 
-// Delivery-table cross-check config per schedule: the watchdog's
-// "expected" set is the recipients with actual provider attempts
-// (sent/failed) during the slot; the "observed" set is the ledger rows.
-const DELIVERY_TABLES = {
+// Delivery-table cross-check config per schedule. RDL-003: each table gets
+// its OWN projection — the columns below are verified against the actual
+// migration schemas (see the schema-backed test):
+//   * private_financing_payment_receipt_deliveries has borrower_id and
+//     recipient_type, but NO tenant_id;
+//   * rental_tenant_receipt_deliveries has tenant_id, but NO borrower_id
+//     and NO recipient_type.
+// Selecting a nonexistent column is a 42703 that used to 500 the whole
+// endpoint past grace; the per-table projection fixes it.
+export const DELIVERY_TABLES = {
   [SCHEDULE_NAMES.PF_PAYMENT_RECEIPTS]: {
     table: "private_financing_payment_receipt_deliveries",
+    columns:
+      "id,payment_id,owner_id,borrower_id,recipient_type,status,provider_message_id,failure_reason,last_attempted_at",
     recipientOf: (row) => (row.recipient_type === "owner" ? row.owner_id : row.borrower_id),
   },
   [SCHEDULE_NAMES.TENANT_PAYMENT_RECEIPTS]: {
     table: "rental_tenant_receipt_deliveries",
+    columns:
+      "id,payment_id,owner_id,tenant_id,status,provider_message_id,failure_reason,last_attempted_at",
     recipientOf: (row) => row.tenant_id,
   },
 };
@@ -106,7 +126,14 @@ async function evaluateSchedule(db, scheduleName, slot, now, graceMinutes) {
 
   const stuckCutoff = now.getTime() - STUCK_CLAIM_GRACE_MULTIPLE * graceMinutes * 60000;
   for (const row of rows) {
-    if (row.recipient_allowlist_id === "_sweep") continue;
+    const isSweepMarker = row.recipient_allowlist_id === SWEEP_RECIPIENT_ID;
+    // RDL-005: run markers are NOT skipped unconditionally. A healthy
+    // no_op sweep marker is legitimate run evidence and stays silent; a
+    // claimed marker older than the stuck cutoff means the sweep crashed
+    // between the marker claim and its outcome write (the old code skipped
+    // it, hiding the crash). provider_failed on a marker is impossible in
+    // the current routes — alert loudly if it ever appears.
+    if (isSweepMarker && row.state === LEDGER_STATES.NO_OP) continue;
     if (row.state === LEDGER_STATES.PROVIDER_FAILED) {
       alerts.push({
         schedule: scheduleName,
@@ -124,34 +151,71 @@ async function evaluateSchedule(db, scheduleName, slot, now, graceMinutes) {
         slot,
         recipient: row.recipient_allowlist_id,
         state: "stuck_claim",
-        reason: `Ledger claim for ${row.recipient_allowlist_id} never reached an outcome (claimed at ${row.claimed_at}); the sweep likely crashed between claim and provider call.`,
+        reason: isSweepMarker
+          ? `Run-marker claim for ${scheduleName} never reached an outcome (claimed at ${row.claimed_at}); the sweep likely crashed between the marker claim and its outcome write — run completion is unknown, not proven.`
+          : `Ledger claim for ${row.recipient_allowlist_id} never reached an outcome (claimed at ${row.claimed_at}); the sweep likely crashed between claim and provider call.`,
       });
     }
   }
 
-  // Expected-vs-observed: recipients with actual provider attempts in the
-  // delivery table during this slot must have a ledger row.
+  // Expected-vs-observed, per DELIVERY (RDL-004): every delivery-table row
+  // with a provider attempt during this slot must have matching
+  // per-delivery attempt evidence in the ledger. Comparing only recipient
+  // presence let a later success to the same recipient hide an earlier
+  // failed delivery — now each delivery id is checked individually.
   const delivery = DELIVERY_TABLES[scheduleName];
   if (delivery) {
     const slotStartUTC = chicagoTimeToUTC(slot, 0, 0).toISOString();
     const { data, error } = await db
       .from(delivery.table)
-      .select("owner_id,borrower_id,tenant_id,recipient_type,last_attempted_at")
+      .select(delivery.columns)
       .in("status", ["sent", "failed"])
       .gte("last_attempted_at", slotStartUTC);
     if (error) throw error;
-    const attemptedRecipients = new Set(
-      (data || []).map(delivery.recipientOf).filter(Boolean),
-    );
-    const recordedRecipients = new Set(rows.map((r) => r.recipient_allowlist_id));
-    for (const recipient of attemptedRecipients) {
-      if (!recordedRecipients.has(recipient)) {
+    const attempts = await readAttemptsForSlot(db, { scheduleName, scheduledSlot: slot });
+    const attemptsByLedger = new Map();
+    for (const a of attempts) {
+      if (!attemptsByLedger.has(a.ledger_id)) attemptsByLedger.set(a.ledger_id, []);
+      attemptsByLedger.get(a.ledger_id).push(a);
+    }
+    const latestAttemptFor = (ledgerId, deliveryId) => {
+      const list = (attemptsByLedger.get(ledgerId) || []).filter((a) => a.delivery_id === deliveryId);
+      if (list.length === 0) return null;
+      return list.sort((x, y) =>
+        x.attempted_at < y.attempted_at ? 1 : x.attempted_at > y.attempted_at ? -1 : 0,
+      )[0];
+    };
+    const ledgerByRecipient = new Map(rows.map((r) => [r.recipient_allowlist_id, r]));
+    for (const attemptRow of data || []) {
+      const recipient = delivery.recipientOf(attemptRow);
+      if (!recipient) continue;
+      const ledgerRow = ledgerByRecipient.get(recipient);
+      if (!ledgerRow) {
         alerts.push({
           schedule: scheduleName,
           slot,
           recipient,
+          deliveryId: attemptRow.id,
           state: "unrecorded_attempt",
-          reason: `Delivery table shows provider attempts for ${recipient} during ${slot} but no ledger row exists: confirmation evidence is missing.`,
+          reason: `Delivery table shows a ${attemptRow.status} provider attempt for delivery ${attemptRow.id} (${recipient}) during ${slot} but no ledger row exists: confirmation evidence is missing.`,
+        });
+        continue;
+      }
+      const evidence = latestAttemptFor(ledgerRow.id, attemptRow.id);
+      const expectedLedgerState =
+        attemptRow.status === "sent" ? LEDGER_STATES.PROVIDER_ACCEPTED : LEDGER_STATES.PROVIDER_FAILED;
+      if (!evidence || evidence.state !== expectedLedgerState) {
+        alerts.push({
+          schedule: scheduleName,
+          slot,
+          recipient,
+          deliveryId: attemptRow.id,
+          state: "delivery_evidence_mismatch",
+          reason:
+            `Delivery ${attemptRow.id} (${recipient}) is ${attemptRow.status} in the delivery table ` +
+            `but the ledger's latest attempt evidence is ` +
+            `${evidence ? evidence.state : "missing"} — a failed individual delivery must not be ` +
+            `hidden behind another delivery's success.`,
         });
       }
     }

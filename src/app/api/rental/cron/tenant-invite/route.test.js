@@ -280,6 +280,140 @@ describe("tenant-invite cron route", () => {
     expect(rows[0].state).toBe("no_op");
   });
 
+  it("refire with a provider_failed ledger row retries under the stable identity", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_failed",
+        failure_reason: "Resend rejected email delivery (500).",
+        send_attempts: 1,
+        claimed_at: "2026-10-12T15:00:00.000Z",
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    // RDL-001: a failed row is retried, NOT reconciled as sent.
+    expect(body).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+    expect(body.reconciled).toBeUndefined();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    // Stable provider idempotency: same key the failed run used.
+    const payload = mocks.send.mock.calls[0][0];
+    expect(payload.id).toMatch(/^tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
+    const row = DB.scheduled_send_ledger[0];
+    expect(row.state).toBe("provider_accepted");
+    expect(row.send_attempts).toBe(2);
+    expect(row.run_id).not.toBe("earlier_run");
+    // Billing order preserved: invite sent and stamped before billing.
+    expect(eventLog).toEqual(["invite-sent", "invited_at-stamped", "billing-enabled"]);
+  });
+
+  it("refire with exhausted send attempts fails closed without billing or send", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_failed",
+        failure_reason: "Resend rejected email delivery (500).",
+        send_attempts: 3,
+        claimed_at: "2026-10-12T15:00:00.000Z",
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // RDL-001: explicit blocked failure; billing stays off.
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ success: false, action: "blocked_provider_failed", billingEnabled: false });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+
+  it("refire with provider_accepted but a lost invited_at stamp reconciles and stamps", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_accepted",
+        provider_message_id: "resend_msg_0",
+        send_attempts: 1,
+        claimed_at: "2026-10-12T15:00:00.000Z",
+      },
+    ];
+    // Provider accepted, but the local stamp never landed (pre-cutoff).
+    DB.rental_tenants[0].invited_at = "2026-09-01T00:33:55.808Z";
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, action: "already_sent", reconciled: true, billingEnabled: true });
+    expect(mocks.send).not.toHaveBeenCalled();
+    // The lost stamp is repaired idempotently; billing still goes last.
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe("rental_tenants");
+    expect(updateCalls[0].patch.invited_at).toBeTruthy();
+    expect(eventLog).toEqual(["invited_at-stamped", "billing-enabled"]);
+  });
+
+  it("a fresh claim held by another run defers with 409 and never sends", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "other_live_run",
+        state: "claimed",
+        send_attempts: 1,
+        claimed_at: new Date().toISOString(),
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // RDL-002: the loser defers; it must not send on a claim it did not win.
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({ success: false, action: "deferred_claim_held", billingEnabled: false });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+    expect(DB.scheduled_send_ledger[0].run_id).toBe("other_live_run");
+  });
+
+  it("a stale claimed row is taken over and sent", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "crashed_run",
+        state: "claimed",
+        send_attempts: 1,
+        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    const row = DB.scheduled_send_ledger[0];
+    expect(row.run_id).not.toBe("crashed_run");
+    expect(row.state).toBe("provider_accepted");
+  });
+
   it("dry run writes no ledger rows", async () => {
     await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"));
     expect(DB.scheduled_send_ledger ?? []).toEqual([]);

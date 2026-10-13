@@ -60,21 +60,45 @@ function ledgerNode(store) {
     }),
     update: vi.fn((patch) => {
       const updFilters = [];
+      const apply = (resolve) => {
+        const idx = store.rows.findIndex((r) => updFilters.every(([c, v]) => r[c] === v));
+        if (idx === -1) return resolve({ data: [], error: null });
+        store.rows[idx] = { ...store.rows[idx], ...patch };
+        resolve({ data: [store.rows[idx]], error: null });
+      };
       const upd = {
         eq: vi.fn((col, val) => {
           updFilters.push([col, val]);
           return upd;
         }),
-        select: vi.fn(() => ({
-          then: (resolve) => {
-            const idx = store.rows.findIndex((r) => updFilters.every(([c, v]) => r[c] === v));
-            if (idx === -1) return resolve({ data: [], error: null });
-            store.rows[idx] = { ...store.rows[idx], ...patch };
-            resolve({ data: [store.rows[idx]], error: null });
-          },
-        })),
+        // supabase-js executes the update when awaited, with or without .select().
+        then: apply,
+        select: vi.fn(() => ({ then: apply })),
       };
       return upd;
+    }),
+    then: (resolve) =>
+      resolve({
+        data: store.rows.filter((r) => node._filters.every(([c, v]) => r[c] === v)),
+        error: null,
+      }),
+  };
+  node._filters = [];
+  return node;
+}
+
+// In-memory scheduled_send_attempts mock: insert-only rows; select/eq read.
+function attemptsNode(store) {
+  const node = {
+    select: vi.fn(() => node),
+    eq: vi.fn((col, val) => {
+      node._filters.push([col, val]);
+      return node;
+    }),
+    insert: vi.fn((row) => {
+      const inserted = { id: `attempt_${store.rows.length + 1}`, ...row };
+      store.rows.push(inserted);
+      return { then: (resolve) => resolve({ data: [inserted], error: null }) };
     }),
     then: (resolve) =>
       resolve({
@@ -93,10 +117,13 @@ function ledgerNode(store) {
 function sequenceDb(tableSequences) {
   const counters = {};
   const ledgerStore = { rows: [] };
+  const attemptsStore = { rows: [] };
   const db = {
     _ledgerRows: ledgerStore.rows,
+    _attemptRows: attemptsStore.rows,
     from: vi.fn((table) => {
       if (table === "scheduled_send_ledger") return ledgerNode(ledgerStore);
+      if (table === "scheduled_send_attempts") return attemptsNode(attemptsStore);
       const seq = tableSequences[table];
       if (!seq) throw new Error(`unexpected from(${table}) call`);
       const i = counters[table] || 0;
@@ -377,5 +404,96 @@ describe("payment receipt notifications cron", () => {
       recipient_allowlist_id: "_sweep",
       state: "no_op",
     });
+  });
+
+  it("two deliveries to one recipient record two attempts; both evidenced (RDL-004)", async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: "re_123" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const row1 = { ...queuedBorrowerRow(), id: "prrd_row_1", payment_id: "pay_1" };
+    const row2 = { ...queuedBorrowerRow(), id: "prrd_row_2", payment_id: "pay_2" };
+    const db = sequenceDb({
+      private_financing_online_payments: [
+        qb({ data: [], error: null }), // reconciler: nothing to heal
+        qb({ data: { amount_cents: 50000, succeeded_at: "2026-09-26T18:00:00Z" }, error: null }),
+        qb({ data: { amount_cents: 75000, succeeded_at: "2026-09-26T19:00:00Z" }, error: null }),
+      ],
+      private_financing_borrowers: [
+        qb({ data: { full_name: "Test Borrower", email: "borrower@example.com" }, error: null }),
+        qb({ data: { full_name: "Test Borrower", email: "borrower@example.com" }, error: null }),
+      ],
+      private_financing_accounts: [
+        qb({ data: { product: "Personal Loan" }, error: null }),
+        qb({ data: { product: "Personal Loan" }, error: null }),
+      ],
+      private_financing_autopay_attempts: [qb({ data: null, error: null }), qb({ data: null, error: null })],
+      private_financing_payment_receipt_deliveries: [
+        qb({ data: [row1, row2], error: null }), // delivery candidates
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row1 claim: won
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row1 outcome: recorded
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row2 claim: won
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row2 outcome: recorded
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.sent).toBe(2);
+    expect(send).toHaveBeenCalledTimes(2);
+    // Both deliveries have individual attempt evidence — the second send is
+    // not swallowed by an accepted->accepted summary transition.
+    expect(db._attemptRows).toHaveLength(2);
+    expect(db._attemptRows.map((a) => a.delivery_id).sort()).toEqual(["prrd_row_1", "prrd_row_2"]);
+    expect(db._attemptRows.every((a) => a.state === "provider_accepted")).toBe(true);
+    expect(db._ledgerRows[0]).toMatchObject({ state: "provider_accepted" });
+    expect(body.ledgerErrors).toBe(0);
+  });
+
+  it("a failed delivery is not masked by a later success to the same recipient (RDL-004)", async () => {
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Resend rejected email delivery (500)."))
+      .mockResolvedValue({ messageId: "re_124" });
+    createResendRentalEmailProvider.mockReturnValue({ send });
+    const row1 = { ...queuedBorrowerRow(), id: "prrd_row_1", payment_id: "pay_1" };
+    const row2 = { ...queuedBorrowerRow(), id: "prrd_row_2", payment_id: "pay_2" };
+    const db = sequenceDb({
+      private_financing_online_payments: [
+        qb({ data: [], error: null }), // reconciler: nothing to heal
+        qb({ data: { amount_cents: 50000, succeeded_at: "2026-09-26T18:00:00Z" }, error: null }),
+        qb({ data: { amount_cents: 75000, succeeded_at: "2026-09-26T19:00:00Z" }, error: null }),
+      ],
+      private_financing_borrowers: [
+        qb({ data: { full_name: "Test Borrower", email: "borrower@example.com" }, error: null }),
+        qb({ data: { full_name: "Test Borrower", email: "borrower@example.com" }, error: null }),
+      ],
+      private_financing_accounts: [
+        qb({ data: { product: "Personal Loan" }, error: null }),
+        qb({ data: { product: "Personal Loan" }, error: null }),
+      ],
+      private_financing_autopay_attempts: [qb({ data: null, error: null }), qb({ data: null, error: null })],
+      private_financing_payment_receipt_deliveries: [
+        qb({ data: [row1, row2], error: null }), // delivery candidates
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row1 claim: won
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row1 outcome: recorded
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row2 claim: won
+        qb({ data: [{ id: "row_fixture" }], error: null }), // row2 outcome: recorded
+      ],
+    });
+    createRentalWebhookClient.mockReturnValue(db);
+
+    const response = await GET(authedRequest());
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.sent).toBe(1);
+    expect(body.failed).toBe(1);
+    const attempts = db._attemptRows;
+    expect(attempts).toHaveLength(2);
+    expect(attempts.find((a) => a.delivery_id === "prrd_row_1").state).toBe("provider_failed");
+    expect(attempts.find((a) => a.delivery_id === "prrd_row_2").state).toBe("provider_accepted");
+    // The summary keeps the failure: the later success did not clear it.
+    expect(db._ledgerRows[0]).toMatchObject({ state: "provider_failed" });
+    expect(db._ledgerRows[0].failure_reason).toContain("500");
   });
 });
