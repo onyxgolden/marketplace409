@@ -104,6 +104,31 @@ describe("Rental Manager operation dispatch table", () => {
   });
 });
 
+describe("operation dispatch is prototype-safe", () => {
+  beforeEach(() => { vi.clearAllMocks(); mockRole.value = null; });
+
+  // RD-001: inherited Object.prototype names must not dispatch — they must hit
+  // the unknown-operation 400 exactly as the pre-split switch did, never a
+  // non-Response return or a 500.
+  it.each(["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"])(
+    "rejects inherited operation %s with the exact contract message",
+    async (operation) => {
+      const response = await POST(request({ operation }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: UNKNOWN_OP_MESSAGE });
+    },
+  );
+
+  it.each([123, null, true, ["save-unit"], { name: "save-unit" }])(
+    "rejects non-string operation %j with the exact contract message",
+    async (operation) => {
+      const response = await POST(request({ operation }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: UNKNOWN_OP_MESSAGE });
+    },
+  );
+});
+
 describe("save-late-fee-auto-settings contract", () => {
   beforeEach(() => { vi.clearAllMocks(); mockRole.value = null; });
 

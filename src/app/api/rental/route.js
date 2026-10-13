@@ -30,7 +30,9 @@ import {
 // Operation dispatch table: each action module owns its logic; this route only
 // authenticates, parses the body, and dispatches. Behavior is identical to the
 // pre-split switch — same operation names, same handlers, same error mapping.
-const OPERATION_HANDLERS = {
+// Null-prototype on purpose: inherited Object.prototype keys ("constructor",
+// "toString", "__proto__", "hasOwnProperty") must never dispatch to a handler.
+const OPERATION_HANDLERS = Object.assign(Object.create(null), {
   "save-unit": saveUnit,
   "archive-unit": archiveUnit,
   "delete-archived-unit": deleteArchivedUnit,
@@ -78,7 +80,7 @@ const OPERATION_HANDLERS = {
   "update-maintenance-work-order": updateMaintenanceWorkOrder,
   "save-lease-preparation-version": saveLeasePreparationVersion,
   "approve-lease-preparation-version": approveLeasePreparationVersion,
-};
+});
 
 async function withPhotoUrls(supabaseClient, records) {
   return Promise.all(records.map(async (record) => {
@@ -219,7 +221,14 @@ export async function POST(request) {
     const body = await request.json();
     const { application, user, effectiveOwnerId } = authenticated;
     const timestamp = now();
-    const handler = OPERATION_HANDLERS[body?.operation];
+    // Strict own-key dispatch: only a string operation that is a registered
+    // table key reaches a handler. Inherited/prototype names ("constructor",
+    // "toString", "__proto__", "hasOwnProperty") and non-string operations
+    // fall through to the unknown-operation 400, as the pre-split switch did.
+    const operation = body?.operation;
+    const handler = typeof operation === "string" && Object.hasOwn(OPERATION_HANDLERS, operation)
+      ? OPERATION_HANDLERS[operation]
+      : undefined;
     if (!handler) return badRequest("A supported Rental Manager operation is required.");
     return await handler({ authenticated, body, application, user, effectiveOwnerId, timestamp });
   } catch (error) {
