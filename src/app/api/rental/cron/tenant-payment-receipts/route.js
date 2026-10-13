@@ -11,6 +11,13 @@ import {
   buildTenantReceiptDeliveryRow,
   queueTenantPaymentReceiptForWebhookEvent,
 } from "@/application/rental/queueTenantPaymentReceipt";
+import {
+  claimLedgerRow,
+  recordLedgerOutcome,
+  chicagoSlotFor,
+  SCHEDULE_NAMES,
+  LEDGER_STATES,
+} from "@/application/notifications/scheduledSendLedger";
 import { resolvePropertyLabel } from "@/application/rental/queueOwnerPaymentNotification";
 import {
   isOwnerNotificationAllowed,
@@ -290,6 +297,9 @@ export async function GET(request) {
 
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
   const config = resolveRentalNotificationConfig();
+  // Confirmation-ledger slot (America/Chicago date) and run provenance.
+  const slot = chicagoSlotFor();
+  const runId = `tenant_payment_receipts_${randomUUID()}`;
 
   try {
     const db = createRentalWebhookClient();
@@ -301,6 +311,7 @@ export async function GET(request) {
     let deferredQuietHours = 0;
     let skippedDisabled = 0;
     let skippedNotAllowlisted = 0;
+    let ledgerClaims = 0;
     const wouldSend = [];
 
     const inQuietHours = quietHoursNow(config);
@@ -374,6 +385,21 @@ export async function GET(request) {
           wouldSend.push({ to: recipient, subject: email.subject });
           continue;
         }
+
+        // Confirmation ledger: durable pre-send claim per
+        // (schedule, slot, recipient), written BEFORE the provider call.
+        // The delivery table remains the per-payment idempotency authority
+        // (dedup key + claim token + provider idempotency key); the ledger
+        // is the watchdog's schedule-slot evidence, with sticky-worst state
+        // per recipient per slot.
+        const ledgerKey = {
+          scheduleName: SCHEDULE_NAMES.TENANT_PAYMENT_RECEIPTS,
+          scheduledSlot: slot,
+          recipientAllowlistId: row.tenant_id,
+          runId,
+        };
+        await claimLedgerRow(db, ledgerKey);
+        ledgerClaims += 1;
         try {
           const result = await emailProvider.send({
             id: row.idempotency_key || buildTenantReceiptProviderIdempotencyKey(row.id),
@@ -383,12 +409,22 @@ export async function GET(request) {
             subject: email.subject,
             bodyText: email.bodyText,
           });
+          await recordLedgerOutcome(db, {
+            ...ledgerKey,
+            state: LEDGER_STATES.PROVIDER_ACCEPTED,
+            providerMessageId: result?.messageId ?? result?.id ?? null,
+          });
           if (await recordOutcome(db, row, { status: "sent", providerMessageId: result.messageId }, claimToken))
             sent += 1;
         } catch (deliveryError) {
           console.error("Tenant payment receipt delivery failed", {
             deliveryId: row.id,
             code: deliveryError?.name || "unknown",
+          });
+          await recordLedgerOutcome(db, {
+            ...ledgerKey,
+            state: LEDGER_STATES.PROVIDER_FAILED,
+            failureReason: deliveryError?.message?.slice(0, 500) || "unknown",
           });
           if (
             await recordOutcome(
@@ -401,6 +437,26 @@ export async function GET(request) {
             failed += 1;
         }
       }
+    }
+
+    // Run-level evidence: if the sweep wrote no per-recipient ledger rows
+    // (nothing to send, or the whole run deferred), record a synthetic
+    // '_sweep' no_op row so the watchdog can distinguish "ran, nothing to
+    // do" from "never ran". Past the grace window, zero rows for
+    // (schedule, slot) unambiguously means the sweep did not run.
+    if (!dryRun && ledgerClaims === 0) {
+      const sweepKey = {
+        scheduleName: SCHEDULE_NAMES.TENANT_PAYMENT_RECEIPTS,
+        scheduledSlot: slot,
+        recipientAllowlistId: "_sweep",
+        runId,
+      };
+      await claimLedgerRow(db, sweepKey);
+      await recordLedgerOutcome(db, {
+        ...sweepKey,
+        state: LEDGER_STATES.NO_OP,
+        failureReason: inQuietHours ? "whole_run_deferred_quiet_hours" : "no_recipients_to_send",
+      });
     }
 
     return NextResponse.json({

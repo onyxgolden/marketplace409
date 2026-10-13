@@ -10,9 +10,71 @@ vi.mock("@/infrastructure/notifications/ResendRentalEmailProvider", () => ({
 let DB;
 let upsertCalls;
 let updateCalls;
+let ledgerCalls;
 let eventLog;
 
+function ledgerChainable() {
+  if (!DB.scheduled_send_ledger) DB.scheduled_send_ledger = [];
+  const rows = DB.scheduled_send_ledger;
+  const keyOf = (r) => `${r.schedule_name}|${r.scheduled_slot}|${r.recipient_allowlist_id}`;
+  const matches = (filters) => (r) => filters.every(([c, v]) => r[c] === v);
+  const obj = {
+    select() {
+      return obj;
+    },
+    eq(col, val) {
+      obj._filters.push([col, val]);
+      return obj;
+    },
+    order() {
+      return obj;
+    },
+    async maybeSingle() {
+      return { data: rows.find(matches(obj._filters)) ?? null, error: null };
+    },
+    upsert(row, options) {
+      ledgerCalls.push({ op: "upsert", row, options });
+      const exists = rows.some((r) => keyOf(r) === keyOf(row));
+      return {
+        select: () => ({
+          then: (resolve) => {
+            if (exists && options?.ignoreDuplicates) return resolve({ data: [], error: null });
+            const inserted = { id: `ledger_${rows.length + 1}`, ...row };
+            rows.push(inserted);
+            resolve({ data: [inserted], error: null });
+          },
+        }),
+      };
+    },
+    update(patch) {
+      ledgerCalls.push({ op: "update", patch });
+      const updFilters = [];
+      const upd = {
+        eq(col, val) {
+          updFilters.push([col, val]);
+          return upd;
+        },
+        select: () => ({
+          then: (resolve) => {
+            const idx = rows.findIndex(matches(updFilters));
+            if (idx === -1) return resolve({ data: [], error: null });
+            rows[idx] = { ...rows[idx], ...patch };
+            resolve({ data: [rows[idx]], error: null });
+          },
+        }),
+      };
+      return upd;
+    },
+    then(resolve) {
+      resolve({ data: rows.filter(matches(obj._filters)), error: null });
+    },
+  };
+  obj._filters = [];
+  return obj;
+}
+
 function chainable(table) {
+  if (table === "scheduled_send_ledger") return ledgerChainable();
   const rows = DB[table] ?? [];
   const obj = {
     select: () => obj,
@@ -71,6 +133,7 @@ beforeEach(() => {
   });
   upsertCalls = [];
   updateCalls = [];
+  ledgerCalls = [];
   eventLog = [];
   seedDefaultDb();
 });
@@ -157,5 +220,68 @@ describe("tenant-invite cron route", () => {
     expect(res.status).toBe(422);
     expect(mocks.send).not.toHaveBeenCalled();
     expect(upsertCalls).toEqual([]);
+  });
+
+  it("live run writes a claimed-then-provider_accepted ledger row before/after the send", async () => {
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    const rows = DB.scheduled_send_ledger;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      schedule_name: "tenant_invite",
+      recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+      state: "provider_accepted",
+      provider_message_id: "resend_msg_1",
+    });
+    expect(rows[0].scheduled_slot).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Claim happened before the send: the upsert op precedes the send call.
+    const ops = ledgerCalls.map((c) => c.op);
+    expect(ops[0]).toBe("upsert");
+    expect(ops).toContain("update");
+  });
+
+  it("provider failure records provider_failed in the ledger and returns 500", async () => {
+    mocks.send.mockRejectedValueOnce(new Error("Resend rejected email delivery (500)."));
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(500);
+    const rows = DB.scheduled_send_ledger;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].state).toBe("provider_failed");
+    expect(rows[0].failure_reason).toContain("500");
+  });
+
+  it("refire with a terminal ledger row reconciles instead of re-sending", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_accepted",
+        provider_message_id: "resend_msg_0",
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, action: "already_sent", reconciled: true });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(DB.scheduled_send_ledger).toHaveLength(1);
+  });
+
+  it("already_claimed records a no_op ledger row", async () => {
+    DB.rental_tenants[0].auth_user_id = "75f6fe34-0000-4000-8000-000000000000";
+    const res = await GET(authedRequest());
+    expect((await res.json()).action).toBe("already_claimed");
+    const rows = DB.scheduled_send_ledger;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].state).toBe("no_op");
+  });
+
+  it("dry run writes no ledger rows", async () => {
+    await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"));
+    expect(DB.scheduled_send_ledger ?? []).toEqual([]);
   });
 });

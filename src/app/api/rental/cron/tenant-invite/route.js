@@ -1,7 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
+import {
+  claimLedgerRow,
+  recordLedgerOutcome,
+  chicagoSlotFor,
+  SCHEDULE_NAMES,
+  LEDGER_STATES,
+  isTerminalLedgerState,
+} from "@/application/notifications/scheduledSendLedger";
 
 export const runtime = "nodejs";
 
@@ -29,6 +38,24 @@ function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Ledger helpers (receipt-delivery confirmation ledger). Every write is
+// gated on !dryRun by the callers. A refire that finds a terminal ledger row
+// for (schedule, slot, recipient) reconciles -- it skips the send instead of
+// duplicating it.
+function ledgerArgs(runId) {
+  return {
+    scheduleName: SCHEDULE_NAMES.TENANT_INVITE,
+    scheduledSlot: chicagoSlotFor(),
+    recipientAllowlistId: TENANT_ID,
+    runId,
+  };
+}
+
+async function recordNoOp(db, runId) {
+  await claimLedgerRow(db, ledgerArgs(runId));
+  await recordLedgerOutcome(db, { ...ledgerArgs(runId), state: LEDGER_STATES.NO_OP });
+}
+
 async function ensureBillingEnabled(db) {
   const { error } = await db.from("rental_billing_settings").upsert(
     { owner_id: OWNER_ID, billing_enabled: true, updated_at: new Date().toISOString() },
@@ -43,6 +70,7 @@ export async function GET(request) {
 
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
   const asOfDate = todayISODate();
+  const runId = `tenant_invite_${randomUUID()}`;
 
   try {
     const db = createRentalWebhookClient();
@@ -56,7 +84,10 @@ export async function GET(request) {
     // Already claimed the portal: nothing to send. Billing is still ensured so
     // the "live" invariant holds either way.
     if (tenant.auth_user_id) {
-      if (!dryRun) await ensureBillingEnabled(db);
+      if (!dryRun) {
+        await ensureBillingEnabled(db);
+        await recordNoOp(db, runId);
+      }
       return NextResponse.json({ success: true, action: "already_claimed", tenantId: TENANT_ID, billingEnabled: true, dryRun });
     }
 
@@ -67,7 +98,10 @@ export async function GET(request) {
     // One-shot gate: an invite recorded after the go-live cutoff means this run
     // (or a manual send) already delivered it — never send twice.
     if (tenant.invited_at && new Date(tenant.invited_at).toISOString() >= GO_LIVE_CUTOFF) {
-      if (!dryRun) await ensureBillingEnabled(db);
+      if (!dryRun) {
+        await ensureBillingEnabled(db);
+        await recordNoOp(db, runId);
+      }
       return NextResponse.json({ success: true, action: "already_sent", tenantId: TENANT_ID, billingEnabled: true, dryRun });
     }
 
@@ -112,14 +146,58 @@ export async function GET(request) {
       });
     }
 
-    await createResendRentalEmailProvider().send({
-      id: idempotencyKey,
-      senderName: "FORGE Rental Manager",
-      senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
-      recipient: email,
-      subject: rendered.subject,
-      bodyText: rendered.bodyText,
-    });
+    // Durable pre-send claim (confirmation ledger): the claim row is written
+    // BEFORE the provider call. A refire that finds a terminal ledger row for
+    // (schedule, slot, recipient) reconciles -- it skips the send. A stuck
+    // 'claimed' row from a crashed run is taken over by the refire.
+    let claimedRow = null;
+    if (!dryRun) {
+      const claim = await claimLedgerRow(db, ledgerArgs(runId));
+      claimedRow = claim.row ?? claim.existing ?? null;
+      if (!claim.claimed && claim.existing && isTerminalLedgerState(claim.existing.state)) {
+        await ensureBillingEnabled(db);
+        return NextResponse.json({
+          success: true,
+          action: "already_sent",
+          tenantId: TENANT_ID,
+          billingEnabled: true,
+          reconciled: true,
+          ledgerState: claim.existing.state,
+        });
+      }
+    }
+
+    let providerMessageId = null;
+    try {
+      const result = await createResendRentalEmailProvider().send({
+        id: idempotencyKey,
+        senderName: "FORGE Rental Manager",
+        senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
+        recipient: email,
+        subject: rendered.subject,
+        bodyText: rendered.bodyText,
+      });
+      providerMessageId = result?.messageId ?? result?.id ?? null;
+    } catch (sendError) {
+      if (!dryRun && claimedRow) {
+        await recordLedgerOutcome(db, {
+          ...ledgerArgs(runId),
+          state: LEDGER_STATES.PROVIDER_FAILED,
+          failureReason: sendError?.message?.slice(0, 500) || "unknown",
+        });
+      }
+      throw sendError;
+    }
+
+    // Provider accepted the send (message id returned -- acceptance, not
+    // proof of delivery; 'delivered' is reserved for delivery confirmation).
+    if (!dryRun && claimedRow) {
+      await recordLedgerOutcome(db, {
+        ...ledgerArgs(runId),
+        state: LEDGER_STATES.PROVIDER_ACCEPTED,
+        providerMessageId,
+      });
+    }
 
     const timestamp = new Date().toISOString();
     const { error: updateError } = await db.from("rental_tenants")
