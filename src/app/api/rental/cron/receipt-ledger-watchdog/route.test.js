@@ -323,8 +323,116 @@ describe("receipt-ledger watchdog", () => {
     expect(body.alerts).toEqual([]);
   });
 
-  it("alerts stuck_claim for a crashed _sweep run marker (RDL-005)", async () => {
+  it("flags delivery_failed from attempt evidence despite a stale healthy summary, with no further writes (RDL-004B)", async () => {
     vi.setSystemTime(new Date("2026-10-12T20:00:00.000Z"));
+    const ledgerId = "ledger_tenant_9";
+    DB.scheduled_send_ledger = [
+      ledgerRow({ schedule_name: "tenant_invite" }),
+      ledgerRow({ schedule_name: "pf_payment_receipts", recipient_allowlist_id: "borrower_1" }),
+      // Stale healthy summary: a reversed-write interleaving left
+      // provider_accepted here while del_A's current attempt failed.
+      ledgerRow({
+        id: ledgerId,
+        schedule_name: "tenant_payment_receipts",
+        recipient_allowlist_id: "tenant_9",
+        state: "provider_accepted",
+        provider_message_id: "msg_new",
+      }),
+    ];
+    DB.scheduled_send_attempts = [
+      {
+        id: "attempt_1",
+        ledger_id: ledgerId,
+        delivery_id: "del_A",
+        state: "provider_accepted",
+        provider_message_id: "msg_A",
+        // Older ordinal, but a NEWER wall-clock time: ordinal is authoritative.
+        attempted_at: "2026-10-12T18:05:00.000Z",
+        attempt_ordinal: 1,
+      },
+      {
+        id: "attempt_2",
+        ledger_id: ledgerId,
+        delivery_id: "del_A",
+        state: "provider_failed",
+        failure_reason: "Resend rejected (500).",
+        attempted_at: "2026-10-12T18:01:00.000Z",
+        attempt_ordinal: 2,
+      },
+    ];
+    DB.rental_tenant_receipt_deliveries = [
+      {
+        id: "del_A",
+        owner_id: "owner_1",
+        tenant_id: "tenant_9",
+        status: "failed",
+        failure_reason: "Resend rejected (500).",
+        last_attempted_at: "2026-10-12T18:01:00.000Z",
+      },
+    ];
+    const before = JSON.stringify(DB);
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // The watchdog is read-only: this probe performs no further writes.
+    expect(JSON.stringify(DB)).toBe(before);
+    // The delivery table agrees with the attempt evidence (no mismatch),
+    // and the summary says accepted (no send_failed) — yet the outstanding
+    // failed delivery must still alert.
+    expect(body.alerts.some((a) => a.state === "delivery_evidence_mismatch")).toBe(false);
+    expect(body.alerts.some((a) => a.state === "send_failed")).toBe(false);
+    const failed = body.alerts.filter((a) => a.state === "delivery_failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({
+      schedule: "tenant_payment_receipts",
+      recipient: "tenant_9",
+      deliveryId: "del_A",
+    });
+    expect(failed[0].reason).toContain("500");
+    expect(body.failed).toBe(1);
+  });
+
+  it("does not double-alert when the summary already reports the failure", async () => {
+    vi.setSystemTime(new Date("2026-10-12T20:00:00.000Z"));
+    const ledgerId = "ledger_tenant_9";
+    DB.scheduled_send_ledger = [
+      ledgerRow({ schedule_name: "tenant_invite" }),
+      ledgerRow({ schedule_name: "pf_payment_receipts", recipient_allowlist_id: "borrower_1" }),
+      ledgerRow({
+        id: ledgerId,
+        schedule_name: "tenant_payment_receipts",
+        recipient_allowlist_id: "tenant_9",
+        state: "provider_failed",
+        failure_reason: "Resend rejected (500).",
+      }),
+    ];
+    DB.scheduled_send_attempts = [
+      {
+        id: "attempt_1",
+        ledger_id: ledgerId,
+        delivery_id: "del_A",
+        state: "provider_failed",
+        failure_reason: "Resend rejected (500).",
+        attempted_at: "2026-10-12T18:01:00.000Z",
+        attempt_ordinal: 1,
+      },
+    ];
+    DB.rental_tenant_receipt_deliveries = [
+      {
+        id: "del_A",
+        owner_id: "owner_1",
+        tenant_id: "tenant_9",
+        status: "failed",
+        last_attempted_at: "2026-10-12T18:01:00.000Z",
+      },
+    ];
+    const body = await (await GET(authedRequest())).json();
+    // One send_failed from the summary; no duplicate delivery_failed.
+    expect(body.alerts.filter((a) => a.state === "send_failed")).toHaveLength(1);
+    expect(body.alerts.filter((a) => a.state === "delivery_failed")).toHaveLength(0);
+    expect(body.failed).toBe(1);
+  });
+
+  it("alerts stuck_claim for a crashed _sweep run marker (RDL-005)", async () => {    vi.setSystemTime(new Date("2026-10-12T20:00:00.000Z"));
     DB.scheduled_send_ledger = [
       ledgerRow({ schedule_name: "tenant_invite" }),
       ledgerRow({ schedule_name: "pf_payment_receipts", recipient_allowlist_id: "borrower_1" }),
@@ -429,5 +537,55 @@ describe("watchdog delivery-table projections (RDL-003, schema-backed)", () => {
          from rental_tenant_receipt_deliveries where false`,
       ),
     ).rejects.toThrow(/42703|does not exist/i);
+  });
+
+  it("the RDL-002A/002B/004A/004B follow-up migration applies and exposes the new columns", async () => {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const { readFileSync } = await import("node:fs");
+
+    const db = new PGlite();
+    await db.exec(
+      `create or replace function gen_random_uuid() returns uuid language sql as
+       $$ select '00000000-0000-0000-0000-000000000000'::uuid $$;`,
+    );
+    await db.exec(
+      readFileSync("supabase/migrations/20261012000000_scheduled_send_ledger.sql", "utf8"),
+    );
+    await db.exec(
+      readFileSync(
+        "supabase/migrations/20261012000100_scheduled_send_ledger_rdl2_followup.sql",
+        "utf8",
+      ),
+    );
+
+    // RDL-002B: pinned provider key + payload digest on the claim row.
+    // RDL-004A: claim token + attempt ordinal on attempt rows.
+    // RDL-004B: summary version CAS guard on the summary row.
+    const { rows: ledgerCols } = await db.query(
+      `select column_name from information_schema.columns
+       where table_name = 'scheduled_send_ledger'`,
+    );
+    const ledgerNames = ledgerCols.map((r) => r.column_name);
+    for (const col of [
+      "provider_request_key",
+      "payload_digest",
+      "claim_token",
+      "summary_version",
+    ]) {
+      expect(ledgerNames).toContain(col);
+    }
+    const { rows: attemptCols } = await db.query(
+      `select column_name from information_schema.columns
+       where table_name = 'scheduled_send_attempts'`,
+    );
+    const attemptNames = attemptCols.map((r) => r.column_name);
+    expect(attemptNames).toContain("claim_token");
+    expect(attemptNames).toContain("attempt_ordinal");
+
+    // The watchdog's evidence select runs against the migrated schema.
+    const { readAttemptsForSlot } = await import(
+      "@/application/notifications/scheduledSendLedger.js"
+    );
+    expect(typeof readAttemptsForSlot).toBe("function");
   });
 });

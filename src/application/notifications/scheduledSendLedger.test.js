@@ -15,6 +15,9 @@ import {
   takeoverLedgerRow,
   recordLedgerOutcome,
   recordDeliveryAttempt,
+  insertDeliveryAttempt,
+  refreshDeliverySummary,
+  authoritativeLatestAttempts,
   readLedgerForSlot,
   readAttemptsForSlot,
   isTerminalLedgerState,
@@ -346,17 +349,18 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
   async function claimedDb() {
     const db = makeDb();
     const { row } = await claimLedgerRow(db, ARGS);
-    return { db, ledgerId: row.id };
+    return { db, ledgerId: row.id, token: row.claim_token };
   }
 
   it("records two successful deliveries to one recipient without clobbering", async () => {
-    const { db, ledgerId } = await claimedDb();
+    const { db, ledgerId, token } = await claimedDb();
     await recordDeliveryAttempt(db, {
       ledgerId,
       deliveryId: "del_1",
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_1",
       runId: "run_1",
+      claimToken: token,
     });
     const second = await recordDeliveryAttempt(db, {
       ledgerId,
@@ -364,6 +368,7 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_2",
       runId: "run_1",
+      claimToken: token,
     });
     expect(second.recorded).toBe(true);
     expect(second.summaryState).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
@@ -373,13 +378,14 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
   });
 
   it("a failed delivery keeps the summary failed despite a later success to the same recipient", async () => {
-    const { db, ledgerId } = await claimedDb();
+    const { db, ledgerId, token } = await claimedDb();
     await recordDeliveryAttempt(db, {
       ledgerId,
       deliveryId: "del_1",
       state: LEDGER_STATES.PROVIDER_FAILED,
       failureReason: "Resend 500",
       runId: "run_1",
+      claimToken: token,
     });
     const second = await recordDeliveryAttempt(db, {
       ledgerId,
@@ -387,19 +393,21 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_2",
       runId: "run_1",
+      claimToken: token,
     });
     // Failure first, success second: summary stays failed.
     expect(second.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
     expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
     expect(db._tables.scheduled_send_ledger[0].failure_reason).toContain("500");
     // Success first, failure second: same result (order-independent).
-    const { db: db2, ledgerId: ledger2 } = await claimedDb();
+    const { db: db2, ledgerId: ledger2, token: token2 } = await claimedDb();
     await recordDeliveryAttempt(db2, {
       ledgerId: ledger2,
       deliveryId: "del_1",
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_1",
       runId: "run_1",
+      claimToken: token2,
     });
     const r = await recordDeliveryAttempt(db2, {
       ledgerId: ledger2,
@@ -407,18 +415,20 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
       state: LEDGER_STATES.PROVIDER_FAILED,
       failureReason: "timeout",
       runId: "run_1",
+      claimToken: token2,
     });
     expect(r.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
   });
 
   it("a failure clears only when THAT delivery is retried to accepted", async () => {
-    const { db, ledgerId } = await claimedDb();
+    const { db, ledgerId, token } = await claimedDb();
     await recordDeliveryAttempt(db, {
       ledgerId,
       deliveryId: "del_1",
       state: LEDGER_STATES.PROVIDER_FAILED,
       failureReason: "Resend 500",
       runId: "run_1",
+      claimToken: token,
     });
     await recordDeliveryAttempt(db, {
       ledgerId,
@@ -426,6 +436,7 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_2",
       runId: "run_1",
+      claimToken: token,
     });
     expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
     // A later run retries del_1 successfully: now the summary flips.
@@ -435,6 +446,7 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_1_retry",
       runId: "run_2",
+      claimToken: token,
     });
     expect(recovered.summaryState).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
     expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
@@ -443,13 +455,14 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
   });
 
   it("a stale worker's older attempt does not clobber a newer one", async () => {
-    const { db, ledgerId } = await claimedDb();
+    const { db, ledgerId, token } = await claimedDb();
     await recordDeliveryAttempt(db, {
       ledgerId,
       deliveryId: "del_1",
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_new",
       runId: "run_2",
+      claimToken: token,
     });
     // Simulate the stale worker's late write landing with an older timestamp.
     const attempts = db._tables.scheduled_send_attempts;
@@ -469,15 +482,315 @@ describe("recordDeliveryAttempt (RDL-004)", () => {
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       providerMessageId: "msg_2",
       runId: "run_2",
+      claimToken: token,
     });
     expect(r.summaryState).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
   });
 
   it("rejects invalid attempt states", async () => {
-    const { db, ledgerId } = await claimedDb();
+    const { db, ledgerId, token } = await claimedDb();
     await expect(
       recordDeliveryAttempt(db, { ledgerId, deliveryId: "del_1", state: "claimed", runId: "run_1" }),
     ).rejects.toThrow(/invalid attempt state/);
+  });
+});
+
+describe("takeoverLedgerRow attempt bound on stale claims (RDL-002A)", () => {
+  async function staleClaimedDb(attempts) {
+    const db = makeDb();
+    await claimLedgerRow(db, ARGS);
+    const row = db._tables.scheduled_send_ledger[0];
+    row.claimed_at = new Date(Date.now() - (CLAIM_TAKEOVER_STALE_MINUTES + 5) * 60000).toISOString();
+    row.send_attempts = attempts;
+    return db;
+  }
+
+  it("stale claimed at max-1 is taken; history increments, never resets", async () => {
+    const attempts = MAX_LEDGER_SEND_ATTEMPTS - 1;
+    const db = await staleClaimedDb(attempts);
+    const before = db._tables.scheduled_send_ledger[0];
+    const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+    expect(take.taken).toBe(true);
+    expect(take.row.send_attempts).toBe(attempts + 1);
+    expect(take.row.run_id).toBe("run_2");
+    // Claim generation rotates on takeover.
+    expect(take.row.claim_token).toBeTruthy();
+    expect(take.row.claim_token).not.toBe(before.claim_token);
+  });
+
+  it.each([MAX_LEDGER_SEND_ATTEMPTS, MAX_LEDGER_SEND_ATTEMPTS + 1])(
+    "stale claimed at max / max+1 is refused as attempts_exhausted, not taken as unlimited",
+    async (attempts) => {
+      const db = await staleClaimedDb(attempts);
+      const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+      expect(take.taken).toBe(false);
+      expect(take.reason).toBe("attempts_exhausted");
+      expect(take.existing.state).toBe(LEDGER_STATES.CLAIMED);
+      // Attempt history is untouched by the refusal.
+      expect(db._tables.scheduled_send_ledger[0].send_attempts).toBe(attempts);
+      expect(db._tables.scheduled_send_ledger[0].run_id).toBe("run_1");
+    },
+  );
+
+  it.each([
+    [MAX_LEDGER_SEND_ATTEMPTS - 1, true],
+    [MAX_LEDGER_SEND_ATTEMPTS, false],
+    [MAX_LEDGER_SEND_ATTEMPTS + 1, false],
+  ])(
+    "provider_failed at max-1 is taken; at max / max+1 is attempts_exhausted",
+    async (attempts, expectedTaken) => {
+      const db = makeDb();
+      await claimLedgerRow(db, ARGS);
+      await recordLedgerOutcome(db, { ...ARGS, state: LEDGER_STATES.PROVIDER_FAILED });
+      db._tables.scheduled_send_ledger[0].send_attempts = attempts;
+      const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+      expect(take.taken).toBe(expectedTaken);
+      if (expectedTaken) {
+        expect(take.row.send_attempts).toBe(attempts + 1);
+      } else {
+        expect(take.reason).toBe("attempts_exhausted");
+        expect(db._tables.scheduled_send_ledger[0].send_attempts).toBe(attempts);
+      }
+    },
+  );
+
+  it("a fresh claimed row held by a live run returns claim_held", async () => {
+    const db = makeDb();
+    await claimLedgerRow(db, ARGS);
+    db._tables.scheduled_send_ledger[0].claimed_at = new Date().toISOString();
+    const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+    expect(take.taken).toBe(false);
+    expect(take.reason).toBe("claim_held");
+  });
+
+  it("terminal positive evidence returns terminal_state", async () => {
+    const db = makeDb();
+    await claimLedgerRow(db, ARGS);
+    await recordLedgerOutcome(db, { ...ARGS, state: LEDGER_STATES.PROVIDER_ACCEPTED });
+    const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+    expect(take.taken).toBe(false);
+    expect(take.reason).toBe("terminal_state");
+  });
+
+  it("a missing row returns no_ledger_row", async () => {
+    const db = makeDb();
+    const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+    expect(take.taken).toBe(false);
+    expect(take.reason).toBe("no_ledger_row");
+    expect(take.existing).toBeNull();
+  });
+});
+
+describe("recordDeliveryAttempt claim-generation fencing (RDL-004A)", () => {
+  async function claimedWithToken() {
+    const db = makeDb();
+    const { row } = await claimLedgerRow(db, ARGS);
+    db._tables.scheduled_send_ledger[0].claimed_at = new Date().toISOString();
+    return { db, ledgerId: row.id, token: row.claim_token };
+  }
+
+  async function staleTakeover(db, newRunId) {
+    db._tables.scheduled_send_ledger[0].claimed_at = new Date(
+      Date.now() - (CLAIM_TAKEOVER_STALE_MINUTES + 5) * 60000,
+    ).toISOString();
+    const take = await takeoverLedgerRow(db, { ...ARGS, runId: newRunId });
+    expect(take.taken).toBe(true);
+    return take.row.claim_token;
+  }
+
+  it("late old failure after new success is refused via the actual recording function", async () => {
+    const { db, ledgerId, token: token1 } = await claimedWithToken();
+    // run_1 crashes between claim and provider call (never records).
+    const token2 = await staleTakeover(db, "run_2");
+    expect(token2).not.toBe(token1);
+
+    // New generation sends and records success.
+    const first = await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      providerMessageId: "msg_new",
+      runId: "run_2",
+      claimToken: token2,
+    });
+    expect(first.recorded).toBe(true);
+    expect(first.summaryState).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
+
+    // The old worker's late timeout report is refused: nothing appended,
+    // summary still reflects the legitimate success.
+    const stale = await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "late timeout from crashed run",
+      runId: "run_1",
+      claimToken: token1,
+    });
+    expect(stale.recorded).toBe(false);
+    expect(stale.reason).toBe("stale_claim_token");
+    expect(db._tables.scheduled_send_attempts).toHaveLength(1);
+    const summary = await refreshDeliverySummary(db, { ledgerId });
+    expect(summary.summaryState).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
+    expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_ACCEPTED);
+  });
+
+  it("late old success after new failure is refused via the actual recording function", async () => {
+    const { db, ledgerId, token: token1 } = await claimedWithToken();
+    // run_1 crashes between claim and provider call (never records).
+    const token2 = await staleTakeover(db, "run_2");
+    // New generation's provider call fails and is recorded.
+    await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "Resend 500",
+      runId: "run_2",
+      claimToken: token2,
+    });
+
+    // The old worker's late "success" must not resurrect or alter state.
+    const stale = await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      providerMessageId: "msg_stale",
+      runId: "run_1",
+      claimToken: token1,
+    });
+    expect(stale.recorded).toBe(false);
+    expect(stale.reason).toBe("stale_claim_token");
+    expect(db._tables.scheduled_send_attempts).toHaveLength(1);
+    expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    expect(db._tables.scheduled_send_ledger[0].failure_reason).toBe("Resend 500");
+  });
+
+  it("derivation orders by attempt ordinal, never wall-clock time", async () => {
+    const { db, ledgerId, token } = await claimedWithToken();
+    await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      providerMessageId: "msg_1",
+      runId: "run_1",
+      claimToken: token,
+    });
+    // Make the accepted attempt LOOK newer by wall clock...
+    db._tables.scheduled_send_attempts[0].attempted_at = "2030-01-01T00:00:00.000Z";
+    await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "late duplicate",
+      runId: "run_1",
+      claimToken: token,
+    });
+    // ...and the failed attempt look older by wall clock.
+    db._tables.scheduled_send_attempts[1].attempted_at = "2020-01-01T00:00:00.000Z";
+    const ordinals = db._tables.scheduled_send_attempts.map((a) => a.attempt_ordinal);
+    expect(ordinals).toEqual([1, 2]);
+    const summary = await refreshDeliverySummary(db, { ledgerId });
+    // Ordinal 2 (failed) is authoritative despite the older timestamp.
+    expect(summary.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
+  });
+
+  it("refuses a write with no token against a tokened row, and a missing row", async () => {
+    const { db, ledgerId } = await claimedWithToken();
+    const noToken = await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      runId: "run_1",
+      claimToken: null,
+    });
+    expect(noToken.recorded).toBe(false);
+    expect(noToken.reason).toBe("stale_claim_token");
+
+    const missing = await recordDeliveryAttempt(db, {
+      ledgerId: "nope",
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      runId: "run_1",
+      claimToken: "whatever",
+    });
+    expect(missing.recorded).toBe(false);
+    expect(missing.reason).toBe("no_ledger_row");
+  });
+});
+
+describe("refreshDeliverySummary CAS convergence (RDL-004B)", () => {
+  async function claimedWithToken() {
+    const db = makeDb();
+    const { row } = await claimLedgerRow(db, ARGS);
+    db._tables.scheduled_send_ledger[0].claimed_at = new Date().toISOString();
+    return { db, ledgerId: row.id, token: row.claim_token };
+  }
+
+  it("reversed-write interleaving: a stale snapshot loses the CAS, retry converges to failed", async () => {
+    const { db, ledgerId, token } = await claimedWithToken();
+    // Worker A inserts an accepted delivery and reads version v0, then
+    // pauses before its summary write.
+    const insA = await insertDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      providerMessageId: "msg_A",
+      runId: "run_A",
+      claimToken: token,
+    });
+    expect(insA.recorded).toBe(true);
+    const v0 = db._tables.scheduled_send_ledger[0].summary_version ?? 0;
+
+    // Worker B inserts a FAILED delivery and refreshes: summary failed,
+    // version moves to v0+1.
+    const recB = await recordDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_2",
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "boom",
+      runId: "run_B",
+      claimToken: token,
+    });
+    expect(recB.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    expect(db._tables.scheduled_send_ledger[0].summary_version).toBe(v0 + 1);
+
+    // Worker A resumes and writes its stale accepted-only summary: the
+    // CAS on summary_version rejects it (0 rows) — no clobber.
+    const staleWrite = await db
+      .from("scheduled_send_ledger")
+      .update({ state: LEDGER_STATES.PROVIDER_ACCEPTED, summary_version: v0 + 1 })
+      .eq("id", ledgerId)
+      .eq("summary_version", v0)
+      .select("id");
+    expect(staleWrite.data).toHaveLength(0);
+    expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
+
+    // A's proper retry re-reads the full attempt set and converges.
+    const retry = await refreshDeliverySummary(db, { ledgerId });
+    expect(retry.refreshed).toBe(true);
+    expect(retry.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    const row = db._tables.scheduled_send_ledger[0];
+    expect(row.state).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    expect(row.summary_version).toBe(v0 + 2);
+  });
+
+  it("sequential concurrent derivations converge on the failed summary", async () => {
+    const { db, ledgerId, token } = await claimedWithToken();
+    await insertDeliveryAttempt(db, {
+      ledgerId, deliveryId: "del_1", state: LEDGER_STATES.PROVIDER_ACCEPTED, runId: "run_A", claimToken: token,
+    });
+    await insertDeliveryAttempt(db, {
+      ledgerId, deliveryId: "del_2", state: LEDGER_STATES.PROVIDER_FAILED, failureReason: "x", runId: "run_B", claimToken: token,
+    });
+    // Two derivations racing on the same version: one wins, the other
+    // retries and converges — never a stale accepted final state.
+    const [r1, r2] = await Promise.all([
+      refreshDeliverySummary(db, { ledgerId }),
+      refreshDeliverySummary(db, { ledgerId }),
+    ]);
+    expect(r1.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    expect(r2.summaryState).toBe(LEDGER_STATES.PROVIDER_FAILED);
+    expect(db._tables.scheduled_send_ledger[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
   });
 });
 
@@ -490,6 +803,7 @@ describe("readAttemptsForSlot", () => {
       deliveryId: "del_1",
       state: LEDGER_STATES.PROVIDER_ACCEPTED,
       runId: "run_1",
+      claimToken: row.claim_token,
     });
     const attempts = await readAttemptsForSlot(db, {
       scheduleName: ARGS.scheduleName,

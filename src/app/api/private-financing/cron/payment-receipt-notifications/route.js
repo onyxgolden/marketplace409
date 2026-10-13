@@ -445,6 +445,9 @@ export async function GET(request) {
               providerMessageId: providerMessageId ?? null,
               failureReason: failureReason ?? null,
               runId,
+              // RDL-004A: bind the attempt to the ledger row's claim
+              // generation; a stale generation's write is refused.
+              claimToken: ledgerRow.claim_token ?? null,
             });
             if (!attempt.recorded) {
               console.error("PF receipt ledger attempt refused", {

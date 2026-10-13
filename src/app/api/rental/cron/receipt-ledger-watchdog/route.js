@@ -3,6 +3,7 @@ import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookCli
 import {
   readLedgerForSlot,
   readAttemptsForSlot,
+  authoritativeLatestAttempts,
   chicagoSlotFor,
   SCHEDULE_NAMES,
   SCHEDULE_RUN_TIMES,
@@ -158,6 +159,33 @@ async function evaluateSchedule(db, scheduleName, slot, now, graceMinutes) {
     }
   }
 
+  // RDL-004B: flag individual current failed outcomes from authoritative
+  // attempt evidence, INDEPENDENTLY of the (cached) summary row. A stale
+  // healthy summary must not hide an outstanding failed delivery — the
+  // summary is a cache, and the watchdog never repairs it (read-only).
+  // Rows already in provider_failed alert via send_failed above, so this
+  // fires only when the summary disagrees with the evidence.
+  const attempts = await readAttemptsForSlot(db, { scheduleName, scheduledSlot: slot });
+  const latestByAttemptKey = authoritativeLatestAttempts(attempts);
+  const ledgerById = new Map(rows.map((r) => [r.id, r]));
+  for (const [, attempt] of latestByAttemptKey) {
+    if (attempt.state !== LEDGER_STATES.PROVIDER_FAILED) continue;
+    const parent = ledgerById.get(attempt.ledger_id);
+    if (!parent || parent.state === LEDGER_STATES.PROVIDER_FAILED) continue;
+    alerts.push({
+      schedule: scheduleName,
+      slot,
+      recipient: parent.recipient_allowlist_id,
+      deliveryId: attempt.delivery_id,
+      state: "delivery_failed",
+      reason:
+        `Delivery ${attempt.delivery_id} (${parent.recipient_allowlist_id}) has a current failed ` +
+        `attempt in the ledger evidence (${attempt.failure_reason || "no reason recorded"}) while ` +
+        `the summary row reads ${parent.state} — the summary is stale; the failed delivery is ` +
+        `still outstanding.`,
+    });
+  }
+
   // Expected-vs-observed, per DELIVERY (RDL-004): every delivery-table row
   // with a provider attempt during this slot must have matching
   // per-delivery attempt evidence in the ledger. Comparing only recipient
@@ -172,19 +200,13 @@ async function evaluateSchedule(db, scheduleName, slot, now, graceMinutes) {
       .in("status", ["sent", "failed"])
       .gte("last_attempted_at", slotStartUTC);
     if (error) throw error;
-    const attempts = await readAttemptsForSlot(db, { scheduleName, scheduledSlot: slot });
     const attemptsByLedger = new Map();
     for (const a of attempts) {
       if (!attemptsByLedger.has(a.ledger_id)) attemptsByLedger.set(a.ledger_id, []);
       attemptsByLedger.get(a.ledger_id).push(a);
     }
-    const latestAttemptFor = (ledgerId, deliveryId) => {
-      const list = (attemptsByLedger.get(ledgerId) || []).filter((a) => a.delivery_id === deliveryId);
-      if (list.length === 0) return null;
-      return list.sort((x, y) =>
-        x.attempted_at < y.attempted_at ? 1 : x.attempted_at > y.attempted_at ? -1 : 0,
-      )[0];
-    };
+    const latestAttemptFor = (ledgerId, deliveryId) =>
+      latestByAttemptKey.get(`${ledgerId}|${deliveryId}`) ?? null;
     const ledgerByRecipient = new Map(rows.map((r) => [r.recipient_allowlist_id, r]));
     for (const attemptRow of data || []) {
       const recipient = delivery.recipientOf(attemptRow);

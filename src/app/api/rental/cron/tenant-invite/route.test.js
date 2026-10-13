@@ -330,9 +330,9 @@ describe("tenant-invite cron route", () => {
     ];
     const res = await GET(authedRequest());
     const body = await res.json();
-    // RDL-001: explicit blocked failure; billing stays off.
+    // RDL-001/RDL-002A: explicit exhausted failure; billing stays off.
     expect(res.status).toBe(500);
-    expect(body).toMatchObject({ success: false, action: "blocked_provider_failed", billingEnabled: false });
+    expect(body).toMatchObject({ success: false, action: "blocked_attempts_exhausted", billingEnabled: false });
     expect(mocks.send).not.toHaveBeenCalled();
     expect(upsertCalls).toEqual([]);
   });
@@ -417,5 +417,159 @@ describe("tenant-invite cron route", () => {
   it("dry run writes no ledger rows", async () => {
     await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"));
     expect(DB.scheduled_send_ledger ?? []).toEqual([]);
+  });
+
+  it("refire with exhausted attempts on a STALE claimed row is blocked_attempts_exhausted (RDL-002A)", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "crashed_run",
+        state: "claimed",
+        send_attempts: 3,
+        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // RDL-002A: stale is not unlimited — explicit exhausted, no send, no billing.
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ success: false, action: "blocked_attempts_exhausted", billingEnabled: false });
+    expect(body.sendAttempts).toBe(3);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+});
+
+describe("tenant-invite provider key pinning (RDL-002B)", () => {
+  async function currentFingerprint() {
+    const { buildTenantInviteEmail, fingerprintString } = await import(
+      "@/domains/rental-tenant/tenantInviteEmail.js"
+    );
+    const rendered = buildTenantInviteEmail({
+      tenantName: "Eric Carrillo",
+      tenantEmail: "eric.carillo5@yahoo.com",
+      leaseSummary: { unitLabel: "308 PAULA", monthlyRentCents: 160000, startDate: "2026-08-29" },
+      portalUrl: "https://marketplace409.vercel.app/forge/rental/portal",
+    });
+    return fingerprintString(`${rendered.subject}\n${rendered.bodyText}`);
+  }
+
+  async function seedStaleClaimedRow(overrides = {}) {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "crashed_run",
+        state: "claimed",
+        send_attempts: 1,
+        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
+        ...overrides,
+      },
+    ];
+  }
+
+  it("an ambiguous transport failure retries under the SAME stored provider key", async () => {
+    // First run: claim persists key+digest, then the provider call throws
+    // an ambiguous transport timeout (outcome unknown).
+    mocks.send.mockRejectedValueOnce(new Error("socket timeout reading response"));
+    const r1 = await GET(authedRequest());
+    expect(r1.status).toBe(500);
+    const stored = DB.scheduled_send_ledger[0];
+    expect(stored.state).toBe("provider_failed");
+    expect(stored.provider_request_key).toMatch(/^tenant-invite-/);
+    expect(stored.payload_digest).toMatch(/^[0-9a-f]{8}$/);
+
+    // Refire with the identical payload: takeover, then the provider call
+    // reuses the STORED key — one logical send, one idempotency key.
+    const r2 = await GET(authedRequest());
+    const body2 = await r2.json();
+    expect(r2.status).toBe(200);
+    expect(body2).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.send.mock.calls[1][0].id).toBe(stored.provider_request_key);
+    expect(DB.scheduled_send_ledger[0].send_attempts).toBe(2);
+    expect(DB.scheduled_send_ledger[0].state).toBe("provider_accepted");
+  });
+
+  it("a refire uses the pinned key even when recomputation would differ", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({
+      provider_request_key: "pinned-key-from-first-run",
+      payload_digest: fp,
+    });
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.send.mock.calls[0][0].id).toBe("pinned-key-from-first-run");
+  });
+
+  it("a UTC date rollover between claim and refire does not rotate the provider key", async () => {
+    const fp = await currentFingerprint();
+    const yesterdayKey = `tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-2026-10-11-${fp}`;
+    await seedStaleClaimedRow({ provider_request_key: yesterdayKey, payload_digest: fp });
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    // The stale slot's key is honored; today's recomputed key is not used.
+    expect(mocks.send.mock.calls[0][0].id).toBe(yesterdayKey);
+  });
+
+  it("a changed payload under an ambiguous send fails closed as blocked_payload_changed", async () => {
+    await seedStaleClaimedRow({
+      provider_request_key: "pinned-key-from-first-run",
+      payload_digest: "deadbeef",
+    });
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ success: false, action: "blocked_payload_changed", billingEnabled: false });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+
+  it("a changed recipient email after the claim fails closed (mutable boundary)", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
+    DB.rental_tenants[0].email = "eric.newaddress@yahoo.com";
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body.action).toBe("blocked_payload_changed");
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+
+  it("a changed unit label after the claim fails closed (mutable boundary)", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
+    DB.rental_units[0].label = "308 PAULA RENAMED";
+    const res = await GET(authedRequest());
+    expect((await res.json()).action).toBe("blocked_payload_changed");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a changed site URL after the claim fails closed (mutable boundary)", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
+    process.env.NEXT_PUBLIC_SITE_URL = "https://409marketplace.online";
+    const res = await GET(authedRequest());
+    expect((await res.json()).action).toBe("blocked_payload_changed");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a fresh claim persists the provider key, digest, and claim token", async () => {
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    const row = DB.scheduled_send_ledger[0];
+    expect(row.provider_request_key).toBe(mocks.send.mock.calls[0][0].id);
+    expect(row.payload_digest).toMatch(/^[0-9a-f]{8}$/);
+    expect(row.claim_token).toBeTruthy();
+    expect(row.summary_version).toBe(0);
   });
 });
