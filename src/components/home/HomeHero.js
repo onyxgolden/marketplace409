@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { PawPrint, Search, Shield, Home as HomeIcon, Wheat } from "lucide-react";
 
 export default function HomeHero() {
@@ -6,15 +7,18 @@ export default function HomeHero() {
       <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800"></div>
 
       <div className="relative max-w-5xl mx-auto text-center text-white">
-        <div className="mb-10 rounded-3xl overflow-hidden shadow-2xl border border-white/20">
-          <img
+        <div className="relative mb-10 h-[350px] rounded-3xl overflow-hidden shadow-2xl border border-white/20">
+          <Image
             src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=1600&auto=format&fit=crop"
             alt="Local Marketplace Community"
-            className="w-full h-[350px] object-cover"
+            fill
+            sizes="(max-width: 768px) 100vw, 1024px"
+            className="object-cover"
+            priority
           />
         </div>
 
-        <h2 className="text-6xl font-extrabold mb-6 leading-tight">
+        <h2 className="text-4xl sm:text-5xl md:text-6xl font-extrabold mb-6 leading-tight">
           Southeast Texas Marketplace
         </h2>
 

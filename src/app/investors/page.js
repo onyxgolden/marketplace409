@@ -3,6 +3,12 @@ import RealEstateWorkspaceNavigation from "@/components/forge/RealEstateWorkspac
 
 export const dynamic = "force-dynamic";
 
+export const metadata = {
+  title: "Real Estate Investors | 409 Marketplace",
+  description:
+    "Deals, cash buyers, wholesalers, rehab tools, contractors, and free investor documents for Southeast Texas.",
+};
+
 export default function InvestorsPage() {
   const investorTools = [
     {
@@ -79,7 +85,7 @@ export default function InvestorsPage() {
 
       <section className="bg-green-900 text-white py-16 px-6">
         <div className="max-w-6xl mx-auto">
-          <h1 className="text-5xl font-extrabold mb-4">
+          <h1 className="text-4xl sm:text-5xl font-extrabold mb-4">
             🏘 409 Real Estate Investors
           </h1>
 

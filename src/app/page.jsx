@@ -9,6 +9,12 @@ import { WORKSPACES } from "@/lib/workspaces";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = {
+  title: "409 Marketplace | Your Workspaces",
+  description:
+    "Pick your 409 Marketplace workspace — local listings, rentals, FORGE tools, and community, all in one place.",
+};
+
 async function loadWorkspaceHub() {
   const supabaseServer = await createClient();
   const {
