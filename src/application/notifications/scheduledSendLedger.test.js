@@ -113,7 +113,59 @@ function makeDb() {
     };
     return obj;
   }
-  return { _tables: tables, from: chainable };
+  // Faithful test double of the record_rental_send_attempt database
+  // function: single-threaded JS executes the whole check + allocate +
+  // insert without interleaving, exactly the atomicity the real function
+  // guarantees via its ledger-row lock.
+  function rpc(name, params) {
+    if (name !== "record_rental_send_attempt") throw new Error(`unexpected rpc ${name}`);
+    const ledger = tables.scheduled_send_ledger.find((r) => r.id === params.p_ledger_id);
+    if (!ledger) return { data: { recorded: false, reason: "no_ledger_row" }, error: null };
+    if (ledger.claim_token != null && params.p_claim_token !== ledger.claim_token) {
+      return { data: { recorded: false, reason: "stale_claim_token" }, error: null };
+    }
+    const sameAttempt = (a) =>
+      a.ledger_id === params.p_ledger_id &&
+      a.delivery_id === params.p_delivery_id &&
+      (a.run_id ?? null) === (params.p_run_id ?? null) &&
+      a.state === params.p_state &&
+      (a.provider_message_id ?? null) === (params.p_provider_message_id ?? null) &&
+      (a.failure_reason ?? null) === (params.p_failure_reason ?? null);
+    const duplicate = tables.scheduled_send_attempts.find(sameAttempt);
+    if (duplicate) {
+      return {
+        data: {
+          recorded: true,
+          duplicate: true,
+          attempt_ordinal: duplicate.attempt_ordinal,
+          attempt: duplicate,
+        },
+        error: null,
+      };
+    }
+    const prior = tables.scheduled_send_attempts.filter(
+      (a) => a.ledger_id === params.p_ledger_id && a.delivery_id === params.p_delivery_id,
+    );
+    const ordinal = Math.max(0, ...prior.map((a) => a.attempt_ordinal ?? 0)) + 1;
+    const inserted = {
+      id: `scheduled_send_attempts_${++seq}`,
+      ledger_id: params.p_ledger_id,
+      delivery_id: params.p_delivery_id,
+      state: params.p_state,
+      provider_message_id: params.p_provider_message_id,
+      failure_reason: params.p_failure_reason,
+      run_id: params.p_run_id,
+      claim_token: ledger.claim_token,
+      attempt_ordinal: ordinal,
+      attempted_at: new Date().toISOString(),
+    };
+    tables.scheduled_send_attempts.push(inserted);
+    return {
+      data: { recorded: true, duplicate: false, attempt_ordinal: ordinal, attempt: inserted },
+      error: null,
+    };
+  }
+  return { _tables: tables, from: chainable, rpc };
 }
 
 const ARGS = {
@@ -715,6 +767,156 @@ describe("recordDeliveryAttempt claim-generation fencing (RDL-004A)", () => {
     });
     expect(missing.recorded).toBe(false);
     expect(missing.reason).toBe("no_ledger_row");
+  });
+});
+
+describe("atomic attempt recording (RDL-004A.1 / RDL-004A.2)", () => {
+  async function claimedWithToken() {
+    const db = makeDb();
+    const { row } = await claimLedgerRow(db, ARGS);
+    return { db, ledgerId: row.id, token: row.claim_token };
+  }
+
+  it("concurrent recordings get distinct ordinals 1..N, never a shared max+1", async () => {
+    const { db, ledgerId, token } = await claimedWithToken();
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((i) =>
+        insertDeliveryAttempt(db, {
+          ledgerId,
+          deliveryId: "del_1",
+          state: LEDGER_STATES.PROVIDER_FAILED,
+          failureReason: `boom-${i}`,
+          runId: `run_${i}`,
+          claimToken: token,
+        }),
+      ),
+    );
+    for (const r of results) expect(r.recorded).toBe(true);
+    const ordinals = results.map((r) => r.attemptOrdinal).sort((a, b) => a - b);
+    expect(ordinals).toEqual([1, 2, 3, 4, 5]);
+    // Per-delivery ordinals are independent across deliveries.
+    const other = await insertDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_2",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      runId: "run_1",
+      claimToken: token,
+    });
+    expect(other.attemptOrdinal).toBe(1);
+  });
+
+  it("a token rotation between any two recordings refuses the stale one with zero appends", async () => {
+    const { db, ledgerId, token: token1 } = await claimedWithToken();
+    const first = await insertDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "x",
+      runId: "run_1",
+      claimToken: token1,
+    });
+    expect(first.recorded).toBe(true);
+    expect(first.attemptOrdinal).toBe(1);
+    // Takeover rotates the token; the stale worker's recording -- however
+    // late -- is refused, because the atomic function verifies the CURRENT
+    // token inside the same locked operation as the insert.
+    db._tables.scheduled_send_ledger[0].claimed_at = new Date(
+      Date.now() - (CLAIM_TAKEOVER_STALE_MINUTES + 5) * 60000,
+    ).toISOString();
+    const take = await takeoverLedgerRow(db, { ...ARGS, runId: "run_2" });
+    expect(take.taken).toBe(true);
+    const stale = await insertDeliveryAttempt(db, {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      providerMessageId: "msg_stale",
+      runId: "run_1",
+      claimToken: token1,
+    });
+    expect(stale.recorded).toBe(false);
+    expect(stale.reason).toBe("stale_claim_token");
+    expect(db._tables.scheduled_send_attempts).toHaveLength(1);
+  });
+
+  it("legacy null-token rows are explicitly accepted and still get unique ordinals", async () => {
+    const db = makeDb();
+    const { row } = await claimLedgerRow(db, ARGS);
+    // Simulate a pre-token row.
+    db._tables.scheduled_send_ledger[0].claim_token = null;
+    const a = await insertDeliveryAttempt(db, {
+      ledgerId: row.id,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      runId: "run_1",
+      claimToken: "anything",
+    });
+    expect(a.recorded).toBe(true);
+    expect(a.attemptOrdinal).toBe(1);
+    expect(a.attempt.claim_token).toBeNull();
+    const b = await insertDeliveryAttempt(db, {
+      ledgerId: row.id,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "x",
+      runId: "run_2",
+      claimToken: null,
+    });
+    expect(b.recorded).toBe(true);
+    expect(b.attemptOrdinal).toBe(2);
+  });
+
+  it("an identical re-record returns the existing attempt as duplicate, appending nothing", async () => {
+    const { db, ledgerId, token } = await claimedWithToken();
+    const args = {
+      ledgerId,
+      deliveryId: "del_1",
+      state: LEDGER_STATES.PROVIDER_ACCEPTED,
+      providerMessageId: "msg_1",
+      runId: "run_1",
+      claimToken: token,
+    };
+    const first = await insertDeliveryAttempt(db, args);
+    expect(first.recorded).toBe(true);
+    expect(first.duplicate).toBe(false);
+    const retry = await insertDeliveryAttempt(db, args);
+    expect(retry.recorded).toBe(true);
+    expect(retry.duplicate).toBe(true);
+    expect(retry.attempt.id).toBe(first.attempt.id);
+    expect(retry.attemptOrdinal).toBe(1);
+    expect(db._tables.scheduled_send_attempts).toHaveLength(1);
+    // Genuine new evidence (different outcome) still mints a fresh ordinal.
+    const next = await insertDeliveryAttempt(db, {
+      ...args,
+      state: LEDGER_STATES.PROVIDER_FAILED,
+      failureReason: "late failure",
+    });
+    expect(next.recorded).toBe(true);
+    expect(next.duplicate).toBe(false);
+    expect(next.attemptOrdinal).toBe(2);
+  });
+
+  it("invalid attempt states throw before any database call", async () => {
+    const { db, ledgerId, token } = await claimedWithToken();
+    await expect(
+      insertDeliveryAttempt(db, {
+        ledgerId,
+        deliveryId: "del_1",
+        state: "claimed",
+        runId: "run_1",
+        claimToken: token,
+      }),
+    ).rejects.toThrow("invalid attempt state");
+    expect(db._tables.scheduled_send_attempts).toHaveLength(0);
+  });
+
+  it("equal ordinals resolve fail-closed: a tied failure beats a tied success", async () => {
+    const tie = [
+      { ledger_id: "l1", delivery_id: "d1", state: LEDGER_STATES.PROVIDER_ACCEPTED, attempt_ordinal: 1 },
+      { ledger_id: "l1", delivery_id: "d1", state: LEDGER_STATES.PROVIDER_FAILED, attempt_ordinal: 1 },
+    ];
+    const latest = [...authoritativeLatestAttempts(tie).values()];
+    expect(latest).toHaveLength(1);
+    expect(latest[0].state).toBe(LEDGER_STATES.PROVIDER_FAILED);
   });
 });
 

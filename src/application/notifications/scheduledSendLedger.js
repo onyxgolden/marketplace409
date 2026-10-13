@@ -41,10 +41,14 @@
 //     is retried to provider_accepted.
 //     RDL-004A: each attempt row is bound to its claim generation
 //     (unguessable claim_token, rotated on every claim/takeover) and a
-//     monotonic attempt_ordinal per delivery. Recording verifies the
-//     token; derivation orders by ordinal, never by wall-clock time or
-//     UUID ordering — a late stale worker can neither append nor
-//     supersede newer legitimate evidence.
+//     monotonic attempt_ordinal per delivery. Recording is ATOMIC: the
+//     database function record_rental_send_attempt holds a row lock on
+//     the ledger row while it verifies the token, allocates the ordinal,
+//     and inserts — there is no check-then-insert gap for a takeover to
+//     slip through, and concurrent recorders can never share an ordinal
+//     (UNIQUE backstop on top). Derivation orders by ordinal, never by
+//     wall-clock time or UUID ordering — a late stale worker can neither
+//     append nor supersede newer legitimate evidence.
 //     RDL-004B: the summary derive/update runs under a summary_version
 //     compare-and-swap with retry, so concurrent derivations converge
 //     instead of clobbering each other. The watchdog additionally derives
@@ -231,6 +235,14 @@ export async function claimLedgerRow(
 // "attempts_exhausted" | "claim_held" | "terminal_state" | "no_ledger_row".
 // The CAS guards the race: if another run moved the row between our read
 // and our write, the update hits 0 rows and we re-read.
+//
+// RDL-004A fencing participation: this UPDATE takes a row lock on the
+// ledger row -- the same lock the atomic attempt recorder
+// (record_rental_send_attempt) holds for its whole check+allocate+insert.
+// Takeovers and attempt recordings therefore serialize at the database:
+// a stale worker's token check can never land after a token rotation,
+// because the rotation's lock and the check's lock are mutually
+// exclusive.
 export async function takeoverLedgerRow(
   db,
   {
@@ -366,16 +378,28 @@ export async function recordLedgerOutcome(
 
 // RDL-004A: authoritative per-delivery attempt ordering. Each attempt row
 // carries a monotonic attempt_ordinal per (ledger_id, delivery_id),
-// assigned at insert time. "Latest" is the highest ordinal — never the
-// wall-clock attempted_at (outcome-record time, not attempt-start time)
-// and never UUID ordering. A late stale worker's row, even if it somehow
-// landed, can never supersede a newer legitimate attempt.
+// assigned at insert time inside the atomic recording function. "Latest"
+// is the highest ordinal — never the wall-clock attempted_at
+// (outcome-record time, not attempt-start time) and never UUID ordering.
+// A late stale worker's row, even if it somehow landed, can never
+// supersede a newer legitimate attempt.
+// Fail-closed tie-break: equal ordinals are impossible for
+// function-recorded rows (atomic allocation + UNIQUE constraint), but if
+// they ever occur in older data, a provider_failed outcome wins over a
+// simultaneous provider_accepted — a failure must never be hidden by a
+// tie.
 export function authoritativeLatestAttempts(attempts) {
   const latest = new Map();
+  const ordinalOf = (a) => a.attempt_ordinal ?? 0;
+  const failureRankOf = (a) => (a.state === LEDGER_STATES.PROVIDER_FAILED ? 1 : 0);
   for (const a of attempts || []) {
     const key = `${a.ledger_id}|${a.delivery_id}`;
     const cur = latest.get(key);
-    if (!cur || (a.attempt_ordinal ?? 0) > (cur.attempt_ordinal ?? 0)) {
+    if (
+      !cur ||
+      ordinalOf(a) > ordinalOf(cur) ||
+      (ordinalOf(a) === ordinalOf(cur) && failureRankOf(a) > failureRankOf(cur))
+    ) {
       latest.set(key, a);
     }
   }
@@ -421,15 +445,32 @@ const ATTEMPT_ROW_COLUMNS =
   "id,ledger_id,delivery_id,state,provider_message_id,failure_reason,run_id,attempted_at,claim_token,attempt_ordinal";
 
 // RDL-004A: insert one provider-attempt evidence row, fenced on the
-// ledger row's claim generation. The claim_token is an unguessable secret
-// minted at claim time and rotated on every takeover; a writer must
-// present the row's CURRENT token. A stale worker from a superseded
-// generation presents an old token and its write is REFUSED
-// ({ recorded: false, reason: "stale_claim_token" }) — it can neither
-// append late evidence nor supersede the newer generation. Rows for
-// legacy (pre-token) ledger rows, whose claim_token is null, skip the
-// check. The attempt gets the next monotonic attempt_ordinal for its
-// delivery, which is the authoritative order — not attempted_at.
+// ledger row's claim generation. ATOMIC: the token verification, ordinal
+// allocation, and insert all happen inside the database function
+// record_rental_send_attempt (see
+// supabase/migrations/20261013000000_scheduled_send_ledger_atomic_attempt.sql),
+// which holds a SELECT ... FOR UPDATE row lock on the ledger row for the
+// whole operation. Consequences:
+//   * a takeover rotating the claim_token can never slip between a token
+//     check and the append -- the check and the append are inseparable;
+//     a stale generation's write is REFUSED
+//     ({ recorded: false, reason: "stale_claim_token" });
+//   * two concurrent recorders queue on the same row lock and allocate
+//     distinct ordinals -- duplicate (ledger_id, delivery_id,
+//     attempt_ordinal) values are impossible, with a UNIQUE constraint as
+//     the backstop;
+//   * takeoverLedgerRow participates in the same fencing: its UPDATE
+//     takes the identical row lock, so takeovers and recordings always
+//     serialize at the database.
+// The claim_token is an unguessable secret minted at claim time and
+// rotated on every takeover; a writer must present the row's CURRENT
+// token. Legacy (pre-token) ledger rows, whose claim_token is null, are
+// explicitly accepted without generation fencing (backfill semantics)
+// but are still serialized by the row lock, so their ordinals stay
+// unique. An identical outcome recorded twice for the same attempt
+// identity (same delivery, run, and outcome payload) is a re-record, not
+// a new attempt: the function returns the existing row with
+// duplicate: true and appends nothing.
 export async function insertDeliveryAttempt(
   db,
   { ledgerId, deliveryId, state, providerMessageId = null, failureReason = null, runId = null, claimToken = null },
@@ -437,36 +478,26 @@ export async function insertDeliveryAttempt(
   if (state !== LEDGER_STATES.PROVIDER_ACCEPTED && state !== LEDGER_STATES.PROVIDER_FAILED) {
     throw new Error(`insertDeliveryAttempt: invalid attempt state ${state}`);
   }
-  const { data: ledgerRow, error: rowError } = await db
-    .from("scheduled_send_ledger")
-    .select("id,claim_token")
-    .eq("id", ledgerId)
-    .maybeSingle();
-  if (rowError) throw rowError;
-  if (!ledgerRow) return { recorded: false, reason: "no_ledger_row" };
-  if (ledgerRow.claim_token != null && claimToken !== ledgerRow.claim_token) {
-    return { recorded: false, reason: "stale_claim_token" };
-  }
-  const { data: prior, error: priorError } = await db
-    .from("scheduled_send_attempts")
-    .select("attempt_ordinal")
-    .eq("ledger_id", ledgerId)
-    .eq("delivery_id", deliveryId);
-  if (priorError) throw priorError;
-  const ordinal = Math.max(0, ...(prior || []).map((a) => a.attempt_ordinal ?? 0)) + 1;
-  const { data, error: insertError } = await db.from("scheduled_send_attempts").insert({
-    ledger_id: ledgerId,
-    delivery_id: deliveryId,
-    state,
-    provider_message_id: providerMessageId,
-    failure_reason: failureReason,
-    run_id: runId,
-    claim_token: ledgerRow.claim_token,
-    attempt_ordinal: ordinal,
-    attempted_at: new Date().toISOString(),
+  const { data, error } = await db.rpc("record_rental_send_attempt", {
+    p_ledger_id: ledgerId,
+    p_delivery_id: deliveryId,
+    p_state: state,
+    p_provider_message_id: providerMessageId,
+    p_failure_reason: failureReason,
+    p_run_id: runId,
+    p_claim_token: claimToken,
   });
-  if (insertError) throw insertError;
-  return { recorded: true, attempt: (data || [])[0] ?? null };
+  if (error) throw error;
+  const result = data ?? {};
+  if (!result.recorded) {
+    return { recorded: false, reason: result.reason ?? "unknown" };
+  }
+  return {
+    recorded: true,
+    attempt: result.attempt ?? null,
+    attemptOrdinal: result.attempt_ordinal ?? null,
+    duplicate: result.duplicate === true,
+  };
 }
 
 // RDL-004B: recompute the summary row from authoritative attempt evidence

@@ -131,6 +131,58 @@ function sequenceDb(tableSequences) {
       if (i >= seq.length) throw new Error(`too many from(${table}) calls`);
       return seq[i];
     }),
+    // Faithful test double of the record_rental_send_attempt database
+    // function (RDL-004A): token check + ordinal allocation + insert are
+    // one atomic step in the mock, exactly the atomicity the real
+    // function guarantees via its ledger-row lock.
+    rpc: vi.fn(async (name, params) => {
+      if (name !== "record_rental_send_attempt") throw new Error(`unexpected rpc ${name}`);
+      const ledger = ledgerStore.rows.find((r) => r.id === params.p_ledger_id);
+      if (!ledger) return { data: { recorded: false, reason: "no_ledger_row" }, error: null };
+      if (ledger.claim_token != null && params.p_claim_token !== ledger.claim_token) {
+        return { data: { recorded: false, reason: "stale_claim_token" }, error: null };
+      }
+      const sameAttempt = (a) =>
+        a.ledger_id === params.p_ledger_id &&
+        a.delivery_id === params.p_delivery_id &&
+        (a.run_id ?? null) === (params.p_run_id ?? null) &&
+        a.state === params.p_state &&
+        (a.provider_message_id ?? null) === (params.p_provider_message_id ?? null) &&
+        (a.failure_reason ?? null) === (params.p_failure_reason ?? null);
+      const duplicate = attemptsStore.rows.find(sameAttempt);
+      if (duplicate) {
+        return {
+          data: {
+            recorded: true,
+            duplicate: true,
+            attempt_ordinal: duplicate.attempt_ordinal,
+            attempt: duplicate,
+          },
+          error: null,
+        };
+      }
+      const prior = attemptsStore.rows.filter(
+        (a) => a.ledger_id === params.p_ledger_id && a.delivery_id === params.p_delivery_id,
+      );
+      const ordinal = Math.max(0, ...prior.map((a) => a.attempt_ordinal ?? 0)) + 1;
+      const inserted = {
+        id: `attempt_${attemptsStore.rows.length + 1}`,
+        ledger_id: params.p_ledger_id,
+        delivery_id: params.p_delivery_id,
+        state: params.p_state,
+        provider_message_id: params.p_provider_message_id,
+        failure_reason: params.p_failure_reason,
+        run_id: params.p_run_id,
+        claim_token: ledger.claim_token,
+        attempt_ordinal: ordinal,
+        attempted_at: new Date().toISOString(),
+      };
+      attemptsStore.rows.push(inserted);
+      return {
+        data: { recorded: true, duplicate: false, attempt_ordinal: ordinal, attempt: inserted },
+        error: null,
+      };
+    }),
   };
   return db;
 }
