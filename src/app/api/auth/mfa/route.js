@@ -55,7 +55,9 @@ import {
 import { generateRecoveryCodes, storeRecoveryGeneration } from "@/lib/auth/recoveryCodes.js";
 import { accountKey, recordAttemptOutcome } from "@/lib/auth/authRateLimit.js";
 import {
+  freshFirstFactorAt,
   requireSecurityAssurance,
+  verifiedAal2,
   verifiedSessionClaims,
 } from "@/lib/auth/requireSecurityAssurance.js";
 import {
@@ -63,6 +65,8 @@ import {
   ACTIVATION_CONFIG,
   MESSAGE_INVALID_REQUEST,
   MESSAGE_MFA_FAILED,
+  MESSAGE_UNAVAILABLE,
+  claimExecution,
   createUserScopedAuthClient,
   extractOperationId,
   gateAdmission,
@@ -90,6 +94,10 @@ const MFA_ACTIONS = new Set([
   ISSUE_CODES_ACTION,
   STATUS_ACTION,
 ]);
+
+// L2-004: recovery-code issuance binds to a RECENT enrollment ceremony —
+// the AAL2 session claims and the factor creation must both be this fresh.
+const RECOVERY_ISSUE_MAX_AGE_SECONDS = 600;
 
 export async function POST(request) {
   const body = await readJsonBody(request);
@@ -134,10 +142,15 @@ export async function POST(request) {
     return response;
   };
 
-  // Phase 1 admission: IP-keyed only (the user is not yet verified).
+  // Phase 1 admission: L2-008 pre-verification abuse reservation. The user
+  // is not yet verified, so this debits ONLY a small separate IP namespace
+  // (mfa_{challenge,verify}_pre) — deliberately NOT the full verified
+  // budget, so one MFA operation does not double-charge the IP budget
+  // across its two admission phases. The full budget (account + ip +
+  // session) is debited exactly once, in phase 2.
   const gate = await gateAdmission({
     supabaseAdmin,
-    action: action === VERIFY_ACTION ? AUTH_ACTIONS.MFA_VERIFY : AUTH_ACTIONS.MFA_CHALLENGE,
+    action: action === VERIFY_ACTION ? AUTH_ACTIONS.MFA_VERIFY_PRE : AUTH_ACTIONS.MFA_CHALLENGE_PRE,
     accountId: null,
     ip,
     operationId,
@@ -225,8 +238,12 @@ export async function POST(request) {
   }
 
   // Issue one-time recovery codes after a newly enrolled factor is verified.
-  // The factor must exist, belong to this user, and be in verified status;
-  // codes are shown ONCE in this response and only digests are stored.
+  // L2-004: issuance requires VERIFIED RECENT AAL2/ENROLLMENT AUTHORITY —
+  // an AAL1 session for an existing verified factor is NOT enough (it
+  // would let first-factor-only credentials mint recovery authority).
+  // The session must prove AAL2 on fresh claims AND the factor must have
+  // been created in the recent enrollment ceremony. The generation
+  // replacement itself is one atomic transaction (mfa_replace_recovery_generation).
   if (action === ISSUE_CODES_ACTION) {
     const { data: factorsData, error: factorsError } =
       await supabaseAdmin.auth.admin._listFactors({ userId });
@@ -236,6 +253,29 @@ export async function POST(request) {
     if (factorsError || !factor || factor.status !== "verified") {
       return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 403 });
     }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    let issueClaims = null;
+    try {
+      issueClaims = await verifiedSessionClaims(supabaseAdmin, accessToken, userId);
+    } catch {
+      issueClaims = null;
+    }
+    const claimsFresh =
+      issueClaims &&
+      verifiedAal2(issueClaims) &&
+      Number.isFinite(Number(issueClaims.iat)) &&
+      nowSeconds - Number(issueClaims.iat) <= RECOVERY_ISSUE_MAX_AGE_SECONDS;
+    const factorCreatedAt = factor.created_at ? Date.parse(factor.created_at) / 1000 : NaN;
+    const factorFresh =
+      Number.isFinite(factorCreatedAt) &&
+      nowSeconds - factorCreatedAt <= RECOVERY_ISSUE_MAX_AGE_SECONDS &&
+      nowSeconds - factorCreatedAt >= 0;
+    if (!claimsFresh || !factorFresh) {
+      // Generic: no oracle distinguishing "not AAL2" from "stale ceremony".
+      return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 403 });
+    }
+
     const { codes } = generateRecoveryCodes();
     try {
       await storeRecoveryGeneration(supabaseAdmin, userId, codes, { env });
@@ -254,16 +294,43 @@ export async function POST(request) {
     return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 500 });
   }
 
+  // L2-007: claim the execution lease BEFORE any provider MFA call. The
+  // lease is bound to the phase-2 (verified) operation id; a duplicate
+  // in-flight request defers without executing a second provider attempt.
+  // Read-only actions (status, list_factors) and code issuance (atomic via
+  // its own generation RPC) do not take the lease.
+  if (action === ENROLL_ACTION || action === CHALLENGE_ACTION || action === VERIFY_ACTION) {
+    const claim = await claimExecution({
+      supabaseAdmin,
+      operationId: verifiedOperationId,
+      ownerToken: randomUUID(),
+      context: { intent: `mfa_${action}`, factor_id: factorId },
+    });
+    if (!claim.granted) return claim.response;
+  }
+
   if (action === ENROLL_ACTION) {
     const friendlyName =
       typeof body?.friendly_name === "string" && body.friendly_name.trim() !== ""
         ? body.friendly_name.trim().slice(0, 64)
         : "Authenticator app";
-    const { data, error } = await userClient.auth.mfa.enroll({
-      factorType: "totp",
-      friendlyName,
-    });
-    if (error || !data?.id || !data?.totp?.qr_code || !data?.totp?.secret) {
+    let enrollData;
+    let enrollError;
+    try {
+      ({ data: enrollData, error: enrollError } = await userClient.auth.mfa.enroll({
+        factorType: "totp",
+        friendlyName,
+      }));
+    } catch {
+      await recordAttemptOutcome({
+        supabaseAdmin,
+        operationId: verifiedOperationId,
+        outcome: "uncertain",
+        accountKey: accountKeyHex,
+      });
+      return NextResponse.json({ error: MESSAGE_UNAVAILABLE }, { status: 503 });
+    }
+    if (enrollError || !enrollData?.id || !enrollData?.totp?.qr_code || !enrollData?.totp?.secret) {
       // Never log the secret/QR: generic message only.
       return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 500 });
     }
@@ -271,34 +338,63 @@ export async function POST(request) {
     // in this response, once, to the authenticated user.
     return finalize({
       status: "ok",
-      factor_id: data.id,
-      qr_code: data.totp.qr_code,
-      manual_key: data.totp.secret,
+      factor_id: enrollData.id,
+      qr_code: enrollData.totp.qr_code,
+      manual_key: enrollData.totp.secret,
     });
   }
 
   if (action === CHALLENGE_ACTION) {
-    const { data, error } = await userClient.auth.mfa.challenge({ factorId });
-    if (error || !data?.id) {
+    let challengeData;
+    let challengeError;
+    try {
+      ({ data: challengeData, error: challengeError } = await userClient.auth.mfa.challenge({ factorId }));
+    } catch {
+      await recordAttemptOutcome({
+        supabaseAdmin,
+        operationId: verifiedOperationId,
+        outcome: "uncertain",
+        accountKey: accountKeyHex,
+      });
+      return NextResponse.json({ error: MESSAGE_UNAVAILABLE }, { status: 503 });
+    }
+    if (challengeError || !challengeData?.id) {
       return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 400 });
     }
-    return finalize({ status: "ok", challenge_id: data.id });
+    return finalize({ status: "ok", challenge_id: challengeData.id });
   }
 
   // VERIFY_ACTION
-  const { data, error } = await userClient.auth.mfa.verify({
-    factorId,
-    challengeId,
-    code,
-  });
-  if (error || !data) {
-    // Same generic response for wrong code, expired challenge, or bad factor.
-    // The failure ladder is driven by phase-2 admission accounting; no
-    // explicit failure outcome is recorded here because a wrong TOTP code
-    // is not a credential failure against the account buckets (the account
-    // already proved its first factor to reach this step).
+  let verifyData;
+  let verifyError;
+  try {
+    ({ data: verifyData, error: verifyError } = await userClient.auth.mfa.verify({
+      factorId,
+      challengeId,
+      code,
+    }));
+  } catch {
+    // Ambiguous provider outcome: reconcile before any refire.
+    await recordAttemptOutcome({
+      supabaseAdmin,
+      operationId: verifiedOperationId,
+      outcome: "uncertain",
+      accountKey: accountKeyHex,
+    });
+    return NextResponse.json({ error: MESSAGE_UNAVAILABLE }, { status: 503 });
+  }
+  if (verifyError || !verifyData) {
+    // L2-007/L2-008: wrong/expired codes ARE recorded — they drive the MFA
+    // failure/backoff ladder. Same generic 401 to the caller (no oracle).
+    await recordAttemptOutcome({
+      supabaseAdmin,
+      operationId: verifiedOperationId,
+      outcome: "mfa_failed",
+      accountKey: accountKeyHex,
+    });
     return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 401 });
   }
+  const data = verifyData;
 
   // Successful MFA clears applicable failure backoff (never refunds IP budgets).
   await recordAttemptOutcome({
@@ -309,10 +405,13 @@ export async function POST(request) {
   });
 
   // L2-006: when the user holds a recovery latch, a successful verify of a
-  // real new TOTP factor COMPLETES the recovery: delete the lost factors,
-  // invalidate all recovery generations, clear the latch, and mark the
-  // recovery operation completed. The latch is never cleared merely because
-  // a provider call failed — only this verified ceremony clears it.
+  // NEW TOTP factor COMPLETES the recovery through the phased, resumable
+  // completion workflow (begin -> mark_factors_removed -> finalize). The
+  // first-factor clock is the AMR ceremony timestamp bound to this
+  // session, never claims.iat. Partial failure is NEVER reported as ok:
+  // the response carries the completion disposition and the latch still
+  // denies privileged access until the completion commits.
+  let recoveryCompletion = null;
   try {
     const { data: latch } = await supabaseAdmin
       .from("mfa_security_latch")
@@ -320,57 +419,197 @@ export async function POST(request) {
       .eq("user_id", userId)
       .maybeSingle();
     if (latch) {
-      await completeRecoveryAfterVerify(supabaseAdmin, userId, factorId);
+      let verifyClaims = null;
+      try {
+        verifyClaims = await verifiedSessionClaims(supabaseAdmin, accessToken, userId);
+      } catch {
+        verifyClaims = null;
+      }
+      const firstFactorAt = verifyClaims ? freshFirstFactorAt(verifyClaims) : null;
+      recoveryCompletion = await completeRecoveryAfterVerify(supabaseAdmin, {
+        userId,
+        newFactorId: factorId,
+        firstFactorAtMs: firstFactorAt === null ? NaN : firstFactorAt * 1000,
+      });
     }
-  } catch {
-    // Recovery completion is best-effort after the verify succeeded: the
-    // latch still denies privileged access, and the user can retry the
-    // ceremony. Never fail the verify response itself here.
+  } catch (err) {
+    // Infrastructure failure during completion: the operation stays
+    // resumable. Report it; never claim a completed recovery.
+    recoveryCompletion = { completed: false, reason: "completion infrastructure failure" };
+  }
+
+  // L2-003: the locked SDK's mfa.verify returns the session tokens at
+  // data's TOP LEVEL (access_token, refresh_token, expires_in, user) —
+  // there is NO data.session. Adapt the REAL shape into the gateway
+  // session contract; a response without an access_token is a failed
+  // verify even when the SDK reports no error.
+  const session =
+    data && typeof data.access_token === "string" && data.access_token !== ""
+      ? {
+          access_token: data.access_token,
+          refresh_token: typeof data.refresh_token === "string" ? data.refresh_token : null,
+          expires_in: typeof data.expires_in === "number" ? data.expires_in : null,
+          expires_at: typeof data.expires_at === "number" ? data.expires_at : null,
+          token_type: typeof data.token_type === "string" ? data.token_type : "bearer",
+          user: data.user ?? null,
+        }
+      : null;
+  if (!session) {
+    await recordAttemptOutcome({
+      supabaseAdmin,
+      operationId: verifiedOperationId,
+      outcome: "mfa_failed",
+      accountKey: accountKeyHex,
+    });
+    return NextResponse.json({ error: MESSAGE_MFA_FAILED }, { status: 401 });
   }
 
   // The provider issues the AAL2 session on a successful verify. Workspace
   // access still requires requireSecurityAssurance downstream; this response
-  // grants no privileged access by itself.
-  return finalize({ status: "ok", session: data.session ?? null });
+  // grants no privileged access by itself. When a recovery latch was
+  // present, the recovery disposition is included — a failed completion is
+  // resumable via another verify ceremony, and the latch still denies
+  // privileged access until it commits.
+  return finalize({
+    status: "ok",
+    session,
+    ...(recoveryCompletion ? { recovery: recoveryCompletion } : {}),
+  });
 }
 
 /**
- * Complete a latched recovery after the user verified a real new TOTP
- * factor: remove every OTHER verified factor (the lost ones), invalidate
- * all recovery generations, clear the latch, and mark latched recovery
- * operations completed. Audited under a fresh audit id.
+ * Complete a latched recovery after the user verified a NEW TOTP factor.
+ * L2-006 boundaries:
+ *  (a) fresh first-factor event: firstFactorAtMs is the AMR-derived ceremony
+ *      timestamp bound to this session (never claims.iat); missing/future/
+ *      stale timestamps refuse.
+ *  (b) NEW factor binding: newFactorId must be a verified TOTP factor OWNED
+ *      by the user and CREATED AFTER the recovery operation started.
+ *      Verifying the OLD lost factor does NOT complete the recovery.
+ *  (c) terminal replay: completed/failed operations replay their
+ *      disposition — never re-latched, never re-deleted.
+ *  (d) durable phased transitions via mfa_recovery_{begin_completion,
+ *      mark_factors_removed, finalize}: provider factor deletion is
+ *      idempotent on retry (the new factor is never deleted); a crash
+ *      resumes from the last committed phase. NEVER returns
+ *      { completed: true } after a partial failure.
+ *
+ * Returns { completed: true, operationId } or
+ * { completed: false, reason, operationId? }.
  */
-async function completeRecoveryAfterVerify(supabaseAdmin, userId, newFactorId) {
-  const auditId = randomUUID();
-  const adapter = adminRecoveryAdapter(supabaseAdmin);
+async function completeRecoveryAfterVerify(supabaseAdmin, { userId, newFactorId, firstFactorAtMs }) {
+  const nowMs = Date.now();
+  if (!Number.isFinite(firstFactorAtMs) || firstFactorAtMs > nowMs + 60000) {
+    return { completed: false, reason: "first-factor event missing or in the future" };
+  }
+  if (nowMs - firstFactorAtMs > FRESH_FIRST_FACTOR_MAX_AGE_MS) {
+    return { completed: false, reason: "first-factor event is stale" };
+  }
 
+  // Resolve the user's latest recovery operation (terminal replays
+  // short-circuit below). The latch row itself proves RECOVERY_PENDING.
+  const { data: latch, error: latchError } = await supabaseAdmin
+    .from("mfa_security_latch")
+    .select("user_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (latchError) throw latchError;
+  if (!latch) return { completed: false, reason: "no recovery latch" };
+
+  const { data: opRow, error: opError } = await supabaseAdmin
+    .from("mfa_recovery_operations")
+    .select("id, status")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (opError) throw opError;
+
+  // (c) Terminal replay: completed/failed operations replay their
+  // disposition — never re-latch, never delete, never report a fresh ok.
+  if (opRow && (opRow.status === "completed" || opRow.status === "failed")) {
+    return { completed: opRow.status === "completed", operationId: opRow.id, replayed: true };
+  }
+  const operationId =
+    opRow && opRow.status !== "completed" && opRow.status !== "failed"
+      ? opRow.id
+      : `recovery_${randomUUID()}`;
+
+  const auditId = randomUUID();
+  const { data: beginRows, error: beginError } = await supabaseAdmin.rpc(
+    "mfa_recovery_begin_completion",
+    { p_user_id: userId, p_operation_id: operationId, p_audit_id: auditId }
+  );
+  if (beginError) throw beginError;
+  const beginRow = Array.isArray(beginRows) ? beginRows[0] : beginRows;
+  if (!beginRow) throw new Error("mfa_recovery_begin_completion returned no row.");
+  if (beginRow.terminal) {
+    return {
+      completed: beginRow.status === "completed",
+      operationId,
+      replayed: true,
+    };
+  }
+  const operationStartedAtMs = beginRow.operation_created_at
+    ? Date.parse(beginRow.operation_created_at)
+    : NaN;
+
+  // (b) NEW factor binding: verified TOTP, owned by the user, created AFTER
+  // the recovery operation started. The old lost factor fails this binding.
   const { data: factorsData, error: factorsError } =
     await supabaseAdmin.auth.admin._listFactors({ userId });
   if (factorsError) throw factorsError;
   const factors = Array.isArray(factorsData?.factors) ? factorsData.factors : [];
+  const newFactor = factors.find((f) => f?.id === newFactorId);
+  const newFactorCreatedAtMs = newFactor?.created_at ? Date.parse(newFactor.created_at) : NaN;
+  const newFactorType = String(newFactor?.factor_type ?? newFactor?.type ?? "").toLowerCase();
+  if (
+    !newFactor ||
+    newFactor.status !== "verified" ||
+    newFactorType !== "totp" ||
+    !Number.isFinite(newFactorCreatedAtMs) ||
+    !Number.isFinite(operationStartedAtMs) ||
+    newFactorCreatedAtMs <= operationStartedAtMs
+  ) {
+    return { completed: false, reason: "new-factor binding failed", operationId };
+  }
+
+  // Idempotent provider step: delete every OTHER verified factor. On retry
+  // the already-deleted ones are gone; the new factor is never deleted.
+  const adapter = adminRecoveryAdapter(supabaseAdmin);
   for (const factor of factors) {
-    if (factor?.id && factor.id !== newFactorId && factor.status === "verified") {
+    if (!factor?.id || factor.id === newFactorId) continue;
+    if (factor.status !== "verified") continue;
+    try {
       await adapter.deleteFactor(userId, factor.id, auditId);
+    } catch {
+      // (d) Partial failure: NEVER report ok. The operation stays resumable
+      // in its current phase; the caller surfaces the incomplete state.
+      return { completed: false, reason: "factor deletion failed", operationId };
     }
   }
 
-  const { error: genError } = await supabaseAdmin
-    .from("mfa_recovery_generations")
-    .update({ invalidated_at: new Date().toISOString() })
-    .eq("user_id", userId)
-    .is("invalidated_at", null);
-  if (genError) throw genError;
+  const { data: markOk, error: markError } = await supabaseAdmin.rpc(
+    "mfa_recovery_mark_factors_removed",
+    { p_user_id: userId, p_operation_id: operationId, p_audit_id: auditId }
+  );
+  if (markError) throw markError;
+  if (markOk !== true) {
+    return { completed: false, reason: "mark_factors_removed refused", operationId };
+  }
 
-  const { error: opError } = await supabaseAdmin
-    .from("mfa_recovery_operations")
-    .update({ status: "completed", updated_at: new Date().toISOString() })
-    .eq("user_id", userId)
-    .eq("status", "latched");
-  if (opError) throw opError;
+  // Finalize: invalidate generations + completed + latch deletion in ONE
+  // transaction. Strict phase order enforced by the RPC.
+  const { data: finalizeOk, error: finalizeError } = await supabaseAdmin.rpc(
+    "mfa_recovery_finalize",
+    { p_user_id: userId, p_operation_id: operationId, p_audit_id: auditId }
+  );
+  if (finalizeError) throw finalizeError;
+  if (finalizeOk !== true) {
+    return { completed: false, reason: "finalize refused", operationId };
+  }
 
-  const { error: latchError } = await supabaseAdmin
-    .from("mfa_security_latch")
-    .delete()
-    .eq("user_id", userId);
-  if (latchError) throw latchError;
+  return { completed: true, operationId };
 }
+
+const FRESH_FIRST_FACTOR_MAX_AGE_MS = 600 * 1000;

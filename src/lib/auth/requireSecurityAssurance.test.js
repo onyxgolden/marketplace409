@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { requireSecurityAssurance, verifiedSessionClaims } from "./requireSecurityAssurance.js";
+import {
+  freshFirstFactorAt,
+  requireSecurityAssurance,
+  verifiedSessionClaims,
+} from "./requireSecurityAssurance.js";
 
 const ENABLED = { enabled: true };
 const USER = { id: "user-1" };
@@ -65,19 +69,36 @@ function session() {
 }
 
 // Cohort resolution is exercised through the real resolveActorEligibility
-// with the ACTUAL deployed schema columns (member_user_id / auth_user_id).
-function adminForCohort({ memberships = [], tenants = [], borrowers = [], ...rest } = {}) {
+// with the ACTUAL deployed schema columns (member_user_id / owner_id /
+// auth_user_id). The two workspace_members queries are distinguished by
+// their eq() column.
+function adminForCohort({ memberships = [], ownedWorkspaces = [], tenants = [], borrowers = [], ...rest } = {}) {
   const admin = mockAdmin(rest);
   const origFrom = admin.from;
   admin.from = vi.fn((table) => {
     if (table === "workspace_members" || table === "rental_tenants" || table === "private_financing_borrowers") {
-      const data =
-        table === "workspace_members" ? memberships : table === "rental_tenants" ? tenants : borrowers;
-      const p = Promise.resolve({ data, error: null });
+      const state = { col: null };
+      const p = Promise.resolve().then(() => {
+        const data =
+          table === "workspace_members"
+            ? state.col === "owner_id"
+              ? ownedWorkspaces
+              : memberships
+            : table === "rental_tenants"
+              ? tenants
+              : borrowers;
+        return { data, error: null };
+      });
       p.maybeSingle = () => Promise.resolve({ data: null, error: null });
-      p.eq = () => p;
       p.limit = () => p;
-      return { select: vi.fn(() => ({ eq: vi.fn(() => p) })) };
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn((col) => {
+            if (state.col === null) state.col = col;
+            return p;
+          }),
+        })),
+      };
     }
     return origFrom(table);
   });
@@ -140,8 +161,18 @@ describe("requireSecurityAssurance", () => {
     expect(result).toMatchObject({ authorized: true, cohort: "optional", reason: "optional-cohort" });
   });
 
-  it("treats a user with no membership and no tenant/borrower link as required (primary owner)", async () => {
-    const admin = adminForCohort({ memberships: [], tenants: [], borrowers: [] });
+  it("L2-001: denies an unlinked consumer (no membership, no ownership, no link) as UNKNOWN — never classified by absence", async () => {
+    const admin = adminForCohort({ memberships: [], ownedWorkspaces: [], tenants: [], borrowers: [] });
+    const result = await requireSecurityAssurance({
+      supabaseAdmin: admin, user: USER, session: session(), config: ENABLED,
+    });
+    expect(result.cohort).toBe("unknown");
+    expect(result.authorized).toBe(false);
+    expect(result.reason).toBe("unknown-cohort");
+  });
+
+  it("L2-001: a canonical owner with no membership row is REQUIRED via ownership evidence", async () => {
+    const admin = adminForCohort({ memberships: [], ownedWorkspaces: [{ id: "wm-9" }], tenants: [], borrowers: [] });
     const result = await requireSecurityAssurance({
       supabaseAdmin: admin, user: USER, session: session(), config: ENABLED,
     });
@@ -351,5 +382,55 @@ describe("verifiedSessionClaims", () => {
   it("returns null when the provider reports an error", async () => {
     const admin = mockAdmin({ claimsResult: { data: null, error: new Error("bad") } });
     expect(await verifiedSessionClaims(admin, "token-abc", "user-1")).toBeNull();
+  });
+});
+
+describe("L2-006 freshFirstFactorAt (AMR ceremony clock, never iat)", () => {
+  const NOW = 1_790_000_000;
+  it("returns the latest permitted first-factor method timestamp", () => {
+    expect(
+      freshFirstFactorAt({
+        iat: NOW,
+        amr: [
+          { method: "password", timestamp: NOW - 3600 },
+          { method: "oauth", timestamp: NOW - 60 },
+        ],
+      })
+    ).toBe(NOW - 60);
+  });
+
+  it("ignores second-factor methods (they are not the first-factor ceremony)", () => {
+    expect(
+      freshFirstFactorAt({
+        iat: NOW,
+        amr: [
+          { method: "password", timestamp: NOW - 3600 },
+          { method: "totp", timestamp: NOW - 10 },
+        ],
+      })
+    ).toBe(NOW - 3600);
+  });
+
+  it("returns null when AMR is missing, empty, or has no first-factor method", () => {
+    expect(freshFirstFactorAt({ iat: NOW })).toBeNull();
+    expect(freshFirstFactorAt({ iat: NOW, amr: [] })).toBeNull();
+    expect(freshFirstFactorAt({ iat: NOW, amr: [{ method: "totp", timestamp: NOW }] })).toBeNull();
+  });
+
+  it("returns null when a present first-factor method lacks a timestamp (refuse, never fall back to iat)", () => {
+    // The verdict's probe: current iat + day-old password AMR must NOT
+    // consume. A method without a timestamp is not ceremony evidence.
+    expect(
+      freshFirstFactorAt({ iat: NOW, amr: [{ method: "password" }] })
+    ).toBeNull();
+    expect(
+      freshFirstFactorAt({ iat: NOW, amr: [{ method: "password", timestamp: "not-a-number" }] })
+    ).toBeNull();
+  });
+
+  it("never returns iat: a fresh iat with a stale AMR yields the stale AMR time", () => {
+    expect(
+      freshFirstFactorAt({ iat: NOW, amr: [{ method: "password", timestamp: NOW - 86400 }] })
+    ).toBe(NOW - 86400);
   });
 });

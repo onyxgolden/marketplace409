@@ -408,3 +408,164 @@ describe("mfa recovery and latch migration", () => {
     expect(rows[0].n).toBe(2);
   });
 });
+
+describe("L2-004 mfa_replace_recovery_generation (atomic replacement)", () => {
+  const USER_ID = "11111111-1111-1111-1111-111111111111";
+  const GEN_1 = "22222222-2222-2222-2222-222222222222";
+  const GEN_2 = "33333333-3333-3333-3333-333333333333";
+  const digests = (n, tag) => Array.from({ length: n }, (_, i) => `${tag}-digest-${i}`.padEnd(64, "0").slice(0, 64));
+
+  async function replaceGen(userId, genId, keyVersion, codeDigests) {
+    const { rows } = await db.query(
+      `select public.mfa_replace_recovery_generation($1, $2, $3, $4) as gen_id`,
+      [userId, genId, keyVersion, codeDigests]
+    );
+    return rows[0].gen_id;
+  }
+
+  async function activeGeneration(userId) {
+    const { rows } = await db.query(
+      `select id from public.mfa_recovery_generations where user_id = $1 and invalidated_at is null`,
+      [userId]
+    );
+    return rows;
+  }
+
+  it("inserts the generation and codes in one call, invalidating the old generation", async () => {
+    const genId = await replaceGen(USER_ID, GEN_1, 1, digests(10, "a"));
+    expect(genId).toBe(GEN_1);
+    const active = await activeGeneration(USER_ID);
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe(GEN_1);
+    const { rows: codes } = await db.query(
+      `select count(*) as n from public.mfa_recovery_codes where generation_id = $1`,
+      [GEN_1]
+    );
+    expect(Number(codes[0].n)).toBe(10);
+  });
+
+  it("a second replacement invalidates the first (exactly one active generation)", async () => {
+    await replaceGen(USER_ID, GEN_2, 1, digests(10, "b"));
+    const active = await activeGeneration(USER_ID);
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe(GEN_2);
+    // The old generation is invalidated, not deleted.
+    const { rows } = await db.query(
+      `select invalidated_at from public.mfa_recovery_generations where id = $1`,
+      [GEN_1]
+    );
+    expect(rows[0].invalidated_at).not.toBeNull();
+  });
+
+  it("L2-004 probe: a failed replacement preserves the previously valid generation", async () => {
+    // An empty digest array is rejected by the RPC: the whole transaction
+    // rolls back, and the previously valid generation (GEN_2) survives.
+    await expect(replaceGen(USER_ID, "44444444-4444-4444-4444-444444444444", 1, [])).rejects.toThrow();
+    const active = await activeGeneration(USER_ID);
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe(GEN_2);
+  });
+
+  it("rejects invalid arguments without touching state", async () => {
+    await expect(replaceGen(null, GEN_1, 1, digests(10, "c"))).rejects.toThrow();
+    const active = await activeGeneration(USER_ID);
+    expect(active).toHaveLength(1);
+    expect(active[0].id).toBe(GEN_2);
+  });
+
+  it("the replacement RPC is service-role only", async () => {
+    const { rows } = await db.query(`
+      select has_function_privilege('anon', 'public.mfa_replace_recovery_generation(uuid,uuid,integer,text[])', 'execute') as anon_can,
+             has_function_privilege('service_role', 'public.mfa_replace_recovery_generation(uuid,uuid,integer,text[])', 'execute') as svc_can
+    `);
+    expect(rows[0].anon_can).toBe(false);
+    expect(rows[0].svc_can).toBe(true);
+  });
+});
+
+describe("L2-006 terminal latch replay + phased completion", () => {
+  const USER_ID = "55555555-5555-5555-5555-555555555555";
+  const OP_ID = "op-l2-006-1";
+  const AUDIT_ID = "audit-l2-006-1";
+
+  async function latchState() {
+    const { rows } = await db.query(`select reason from public.mfa_security_latch where user_id = $1`, [USER_ID]);
+    return rows;
+  }
+
+  it("L2-006 probe: a completed operation replays without re-latching", async () => {
+    // Set up a real latched operation row (as mfa_consume_recovery_code would).
+    await db.query(
+      `insert into public.mfa_recovery_operations (id, user_id, status) values ($1, $2, 'latched')`,
+      [OP_ID, USER_ID]
+    );
+    await db.query(`select public.mfa_assert_recovery_latch($1, $2, $3)`, [USER_ID, OP_ID, AUDIT_ID]);
+    expect(await latchState()).toHaveLength(1);
+    // Simulate completion: mark completed, delete latch.
+    await db.query(`update public.mfa_recovery_operations set status = 'completed' where id = $1`, [OP_ID]);
+    await db.query(`delete from public.mfa_security_latch where user_id = $1`, [USER_ID]);
+    expect(await latchState()).toHaveLength(0);
+
+    // Replay the latch assertion for the completed operation: must NOT
+    // recreate the latch.
+    await db.query(`select public.mfa_assert_recovery_latch($1, $2, $3)`, [USER_ID, OP_ID, "audit-replay"]);
+    expect(await latchState()).toHaveLength(0);
+    // The operation is still completed (not re-latched).
+    const { rows } = await db.query(`select status from public.mfa_recovery_operations where id = $1`, [OP_ID]);
+    expect(rows[0].status).toBe("completed");
+  });
+
+  it("phased completion advances latched -> factor_removed -> completed", async () => {
+    const OP2 = "op-l2-006-2";
+    const { rows: beginRows } = await db.query(
+      `select * from public.mfa_recovery_begin_completion($1, $2, $3)`,
+      [USER_ID, OP2, "audit-begin"]
+    );
+    expect(beginRows[0].terminal).toBe(false);
+    expect(beginRows[0].status).toBe("latched");
+    expect(beginRows[0].operation_created_at).not.toBeNull();
+
+    // Strict phase order: finalize from 'latched' is refused.
+    const early = await db.query(`select public.mfa_recovery_finalize($1, $2, $3) as ok`, [USER_ID, OP2, "audit-x"]);
+    expect(early.rows[0].ok).toBe(false);
+
+    const marked = await db.query(`select public.mfa_recovery_mark_factors_removed($1, $2, $3) as ok`, [USER_ID, OP2, "audit-mark"]);
+    expect(marked.rows[0].ok).toBe(true);
+
+    const done = await db.query(`select public.mfa_recovery_finalize($1, $2, $3) as ok`, [USER_ID, OP2, "audit-final"]);
+    expect(done.rows[0].ok).toBe(true);
+
+    const { rows: opRows } = await db.query(`select status from public.mfa_recovery_operations where id = $1`, [OP2]);
+    expect(opRows[0].status).toBe("completed");
+  });
+
+  it("terminal completion replays without side effects", async () => {
+    const OP3 = "op-l2-006-3";
+    await db.query(`select public.mfa_recovery_begin_completion($1, $2, $3)`, [USER_ID, OP3, "audit-b"]);
+    await db.query(`select public.mfa_recovery_mark_factors_removed($1, $2, $3)`, [USER_ID, OP3, "audit-m"]);
+    await db.query(`select public.mfa_recovery_finalize($1, $2, $3)`, [USER_ID, OP3, "audit-f"]);
+    // Replay all three: terminal dispositions, no side effects.
+    const r1 = await db.query(`select * from public.mfa_recovery_begin_completion($1, $2, $3)`, [USER_ID, OP3, "audit-r"]);
+    expect(r1.rows[0].terminal).toBe(true);
+    expect(r1.rows[0].status).toBe("completed");
+    const r2 = await db.query(`select public.mfa_recovery_mark_factors_removed($1, $2, $3) as ok`, [USER_ID, OP3, "audit-r"]);
+    expect(r2.rows[0].ok).toBe(true);
+    const r3 = await db.query(`select public.mfa_recovery_finalize($1, $2, $3) as ok`, [USER_ID, OP3, "audit-r"]);
+    expect(r3.rows[0].ok).toBe(true);
+  });
+
+  it("the completion RPCs are service-role only", async () => {
+    for (const sig of [
+      "public.mfa_recovery_begin_completion(uuid,text,text)",
+      "public.mfa_recovery_mark_factors_removed(uuid,text,text)",
+      "public.mfa_recovery_finalize(uuid,text,text)",
+    ]) {
+      const { rows } = await db.query(
+        `select has_function_privilege('anon', '${sig}', 'execute') as anon_can,
+                has_function_privilege('service_role', '${sig}', 'execute') as svc_can`
+      );
+      expect(rows[0].anon_can).toBe(false);
+      expect(rows[0].svc_can).toBe(true);
+    }
+  });
+});

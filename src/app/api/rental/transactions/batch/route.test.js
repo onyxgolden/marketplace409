@@ -4,6 +4,7 @@ vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
 }));
 vi.mock("@/lib/rental/teamAuthorization", () => ({
   requireRentalPermission: vi.fn(),
+  buildSecurityContext: vi.fn(async () => null),
 }));
 vi.mock("@/application/rental/chartOfAccounts", () => ({
   resolvePostingCategories: vi.fn(),

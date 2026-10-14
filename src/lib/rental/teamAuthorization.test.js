@@ -9,9 +9,8 @@ import {
 import { RENTAL_PERMISSION_KEYS } from "./permissions.js";
 
 // Controllable mock for the Layer 2 guard (dynamically imported by
-// teamAuthorization.js only when a security context is supplied AND
-// activation is on). Default: authorize. vi.hoisted so the hoisted vi.mock
-// factory can reference it.
+// teamAuthorization.js only when activation is on). Default: authorize.
+// vi.hoisted so the hoisted vi.mock factory can reference it.
 const { mockRequireSecurityAssurance } = vi.hoisted(() => ({
   mockRequireSecurityAssurance: vi.fn(async () => ({
     authorized: true, state: "AUTHORIZED", cohort: "required", reason: "aal2",
@@ -20,6 +19,15 @@ const { mockRequireSecurityAssurance } = vi.hoisted(() => ({
 vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
   requireSecurityAssurance: (...args) => mockRequireSecurityAssurance(...args),
   verifiedSessionClaims: vi.fn(async () => null),
+}));
+
+// L2-002: activation is TRUSTED server-side module state — never a
+// caller-supplied override. Tests control it here instead of passing
+// `config` inside the security context (that override no longer exists).
+const { mockActivation } = vi.hoisted(() => ({ mockActivation: { enabled: false } }));
+vi.mock("@/lib/auth/securityPolicy.js", () => ({
+  ACTIVATION_CONFIG: { enabled: false },
+  isMfaLayer2Activated: () => mockActivation.enabled,
 }));
 
 // Builds a supabase-client stub that answers the two workspace_members queries the
@@ -366,7 +374,8 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
     expect(Object.isFrozen(SECURITY_ASSURANCE_HOOK)).toBe(true);
   });
 
-  it("L2-002 probe: behaves EXACTLY as before when no security context is supplied (inert)", async () => {
+  it("L2-002 probe: behaves EXACTLY as before when no security context is supplied and activation is off (inert)", async () => {
+    mockActivation.enabled = false;
     mockRequireSecurityAssurance.mockClear();
     const result = await requireRentalPermission({
       authenticated: authenticated(stubClient({ membership: null })),
@@ -379,7 +388,30 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
   });
 
   it("L2-002 probe: behaves EXACTLY as before when activation is off, even with a security context", async () => {
+    mockActivation.enabled = false;
     mockRequireSecurityAssurance.mockClear();
+    const result = await requireRentalPermission({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      permission: "tenants.manage",
+      security: {
+        supabaseAdmin: { kind: "fake-admin" },
+        session: { access_token: "atk" },
+      },
+    });
+    expect(result.response).toBeNull();
+    expect(result.authorization.isPrimaryOwner).toBe(true);
+    expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+  });
+
+  it("L2-002 probe: a caller-supplied config can NEVER opt out — activation is trusted server state", async () => {
+    // Even if a caller smuggles config:{enabled:false} into the context,
+    // the trusted module activation (on) still enforces.
+    mockActivation.enabled = true;
+    mockRequireSecurityAssurance.mockClear();
+    mockRequireSecurityAssurance.mockResolvedValueOnce({
+      authorized: true, state: "AUTHORIZED", cohort: "required", reason: "aal2",
+    });
     const result = await requireRentalPermission({
       authenticated: authenticated(stubClient({ membership: null })),
       request: noPreview,
@@ -390,12 +422,28 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
         config: { enabled: false },
       },
     });
+    expect(mockRequireSecurityAssurance).toHaveBeenCalled();
     expect(result.response).toBeNull();
-    expect(result.authorization.isPrimaryOwner).toBe(true);
+    mockActivation.enabled = false;
+  });
+
+  it("L2-002 probe: missing security context UNDER ACTIVATION fails closed (the verdict's probe)", async () => {
+    mockActivation.enabled = true;
+    mockRequireSecurityAssurance.mockClear();
+    const result = await requireTeamManager({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      // No security context: the route was never wired. Must deny, not skip.
+    });
+    expect(result.response).not.toBeNull();
+    expect(result.response.status).toBe(403);
+    expect(result.authorization).toBeNull();
     expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+    mockActivation.enabled = false;
   });
 
   it("L2-002 probe: ANDs the MFA guard when activated — guard deny becomes 403", async () => {
+    mockActivation.enabled = true;
     mockRequireSecurityAssurance.mockResolvedValueOnce({
       authorized: false, state: "CHALLENGE_REQUIRED", cohort: "required", reason: "aal1-with-factor",
     });
@@ -406,7 +454,6 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
       security: {
         supabaseAdmin: { kind: "fake-admin" },
         session: { access_token: "atk" },
-        config: { enabled: true },
       },
     });
     expect(mockRequireSecurityAssurance).toHaveBeenCalledWith(
@@ -415,9 +462,11 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
     expect(result.response).not.toBeNull();
     expect(result.response.status).toBe(403);
     expect(result.authorization).toBeNull();
+    mockActivation.enabled = false;
   });
 
   it("L2-002 probe: AND allows when both the guard and the rental checks pass", async () => {
+    mockActivation.enabled = true;
     mockRequireSecurityAssurance.mockResolvedValueOnce({
       authorized: true, state: "AUTHORIZED", cohort: "required", reason: "aal2",
     });
@@ -427,14 +476,15 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
       security: {
         supabaseAdmin: { kind: "fake-admin" },
         session: { access_token: "atk" },
-        config: { enabled: true },
       },
     });
     expect(result.response).toBeNull();
     expect(result.authorization.isPrimaryOwner).toBe(true);
+    mockActivation.enabled = false;
   });
 
   it("L2-002 probe: rental deny still wins even when the guard would authorize", async () => {
+    mockActivation.enabled = true;
     mockRequireSecurityAssurance.mockClear();
     const result = await requireRentalPermission({
       authenticated: authenticated(stubClient({ membership: member({ role: "bookkeeper" }) }), "staff_user"),
@@ -443,23 +493,65 @@ describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
       security: {
         supabaseAdmin: { kind: "fake-admin" },
         session: { access_token: "atk" },
-        config: { enabled: true },
       },
     });
     // Rental permission check fails first: the guard is never consulted.
     expect(result.response).not.toBeNull();
     expect(result.response.status).toBe(403);
     expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+    mockActivation.enabled = false;
   });
 
   it("L2-002 probe: fail-closed on a misconfigured security context under activation", async () => {
+    mockActivation.enabled = true;
     const result = await requireTeamManager({
       authenticated: authenticated(stubClient({ membership: null })),
       request: noPreview,
-      security: { supabaseAdmin: { kind: "fake" }, session: null, config: { enabled: true } },
+      security: { supabaseAdmin: { kind: "fake" }, session: null },
     });
     expect(result.response).not.toBeNull();
     expect(result.response.status).toBe(403);
     expect(result.authorization).toBeNull();
+    mockActivation.enabled = false;
+  });
+
+  it("L2-002: buildSecurityContext returns null while disabled (inert path does zero extra work)", async () => {
+    mockActivation.enabled = false;
+    const { buildSecurityContext } = await import("./teamAuthorization.js");
+    const ctx = await buildSecurityContext({ supabaseClient: null, user: { id: "u1" } });
+    expect(ctx).toBeNull();
+  });
+
+  it("L2-002: buildSecurityContext builds { supabaseAdmin, session } from the cookie session when activated", async () => {
+    mockActivation.enabled = true;
+    const { buildSecurityContext } = await import("./teamAuthorization.js");
+    const fakeClient = {
+      auth: { getSession: async () => ({ data: { session: { access_token: "cookie-atk" } }, error: null }) },
+    };
+    const ctx = await buildSecurityContext({ supabaseClient: fakeClient, user: { id: "u1" } });
+    expect(ctx).not.toBeNull();
+    expect(ctx.session).toEqual({ access_token: "cookie-atk" });
+    // No service-role env in test: admin is null and the guard fails closed on it.
+    expect(ctx.supabaseAdmin).toBeNull();
+    mockActivation.enabled = false;
+  });
+
+  it("L2-002: buildSecurityContext with no cookie session yields a context the guard denies", async () => {
+    mockActivation.enabled = true;
+    mockRequireSecurityAssurance.mockClear();
+    const { buildSecurityContext } = await import("./teamAuthorization.js");
+    const fakeClient = {
+      auth: { getSession: async () => ({ data: { session: null }, error: null }) },
+    };
+    const ctx = await buildSecurityContext({ supabaseClient: fakeClient, user: { id: "u1" } });
+    const result = await requireTeamManager({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      security: ctx,
+    });
+    expect(result.response).not.toBeNull();
+    expect(result.response.status).toBe(403);
+    expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+    mockActivation.enabled = false;
   });
 });

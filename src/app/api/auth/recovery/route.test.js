@@ -25,11 +25,15 @@ vi.mock("../_lib/gatewaySupport.js", async (importOriginal) => {
   return { ...actual, isActivationEnabled: (...args) => mockIsActivationEnabled(...args) };
 });
 vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
+  // L2-006: the fresh-ceremony clock is the AMR first-factor method
+  // timestamps, not iat. The mock returns a fresh password ceremony.
+  freshFirstFactorAt: vi.fn(() => Math.floor(Date.now() / 1000) - 60),
   verifiedSessionClaims: vi.fn(() =>
     Promise.resolve({
       sub: "user-synthetic-1",
       session_id: "sess-synthetic-1",
-      iat: Math.floor(Date.now() / 1000) - 60, // fresh ceremony: 60s ago
+      iat: Math.floor(Date.now() / 1000) - 60,
+      amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) - 60 }],
     })
   ),
 }));
@@ -42,6 +46,14 @@ const USER = { id: "user-synthetic-1", email: "owner@example.com" };
 function fakeAdmin({ getUserResult, latchInsertResult } = {}) {
   const calls = [];
   return {
+    rpc: async (fn, params) => {
+      // L2-007: the execution lease. Tests grant by default; specific
+      // deny-path tests override via mockImplementationOnce.
+      if (fn === "auth_claim_execution") {
+        return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    },
     calls,
     auth: {
       getUser: async () => {
@@ -217,14 +229,12 @@ describe("complete", () => {
     expect((await res.json()).status).toBe("recovery_pending");
   });
 
-  it("L2-006 probe: rejects a stale first-factor ceremony (refreshed token, old iat)", async () => {
+  it("L2-006 probe: rejects a stale first-factor ceremony (day-old password AMR, current iat)", async () => {
     mockIsActivationEnabled.mockReturnValue(true);
-    const { verifiedSessionClaims } = await import("@/lib/auth/requireSecurityAssurance.js");
-    vi.mocked(verifiedSessionClaims).mockResolvedValueOnce({
-      sub: "user-synthetic-1",
-      session_id: "sess-synthetic-1",
-      iat: Math.floor(Date.now() / 1000) - 3600, // 1h old: NOT fresh
-    });
+    // The verdict's probe: current iat + day-old password AMR must NOT
+    // consume. The ceremony clock is the AMR timestamp, not iat.
+    const { freshFirstFactorAt } = await import("@/lib/auth/requireSecurityAssurance.js");
+    vi.mocked(freshFirstFactorAt).mockReturnValueOnce(null); // stale/missing AMR ceremony
     const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
     const res = await POST(
@@ -233,5 +243,19 @@ describe("complete", () => {
     expect(res.status).toBe(401);
     expect(mockConsumeRecoveryCode).not.toHaveBeenCalled();
     expect(mockRevokeSessions).not.toHaveBeenCalled();
+  });
+
+  it("L2-006 probe: refuses a first-factor timestamp in the future", async () => {
+    mockIsActivationEnabled.mockReturnValue(true);
+    const { freshFirstFactorAt } = await import("@/lib/auth/requireSecurityAssurance.js");
+    // A future timestamp is not evidence of a fresh ceremony — refuse.
+    vi.mocked(freshFirstFactorAt).mockReturnValueOnce(Math.floor(Date.now() / 1000) + 3600);
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(
+      post({ action: "complete", access_token: "atk", recovery_code: "KQ7M-SYNTHETIC", operationId: OP_ID })
+    );
+    expect(res.status).toBe(401);
+    expect(mockConsumeRecoveryCode).not.toHaveBeenCalled();
   });
 });

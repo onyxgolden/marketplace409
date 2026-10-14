@@ -63,6 +63,15 @@ create table if not exists public.auth_rate_limit_buckets (
 -- recorded verdict instead of consuming tokens twice. Also the source of
 -- truth for failure-backoff accounting (outcomes 'denied' and
 -- 'credential_failed').
+--
+-- L2-007 execution lease: admission (allowed:true) is NOT permission to
+-- execute. After admission, the gateway MUST claim an execution lease via
+-- auth_claim_execution(p_operation_id, p_owner_token) BEFORE calling the
+-- provider. Exactly one owner token holds the lease (outcome 'executing');
+-- duplicate in-flight requests with the same operation_id are denied the
+-- lease (disposition 'in_flight') and must defer/replay WITHOUT provider
+-- execution. execution_context carries non-secret request identity
+-- (action intent, factor id) — never plaintext credentials or codes.
 -- ---------------------------------------------------------------------------
 create table if not exists public.auth_operation_log (
   operation_id text primary key,
@@ -71,12 +80,49 @@ create table if not exists public.auth_operation_log (
   outcome text not null
     check (outcome in (
       'evaluating', 'admitted', 'denied',
-      'credential_failed', 'credential_succeeded', 'mfa_succeeded'
+      'executing', 'uncertain',
+      'credential_failed', 'credential_succeeded',
+      'mfa_failed', 'mfa_succeeded'
     )),
   retry_after_seconds integer,
+  execution_owner_token text,
+  execution_claimed_at timestamptz,
+  execution_context jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- L2-007: execution-lease columns for tables created by an earlier
+-- revision of this migration (fresh installs get them from CREATE TABLE).
+alter table public.auth_operation_log
+  add column if not exists execution_owner_token text,
+  add column if not exists execution_claimed_at timestamptz,
+  add column if not exists execution_context jsonb;
+
+-- L2-007: widen the outcome lifecycle on pre-existing tables. Only
+-- replaces the constraint when it lacks the new outcome values.
+do $$
+declare
+  v_def text;
+begin
+  select pg_get_constraintdef(oid) into v_def
+    from pg_constraint
+   where conname = 'auth_operation_log_outcome_check'
+     and conrelid = 'public.auth_operation_log'::regclass;
+
+  if v_def is not null and v_def not like '%mfa_failed%' then
+    alter table public.auth_operation_log drop constraint auth_operation_log_outcome_check;
+    alter table public.auth_operation_log
+      add constraint auth_operation_log_outcome_check
+      check (outcome in (
+        'evaluating', 'admitted', 'denied',
+        'executing', 'uncertain',
+        'credential_failed', 'credential_succeeded',
+        'mfa_failed', 'mfa_succeeded'
+      ));
+  end if;
+end
+$$;
 
 create index if not exists auth_operation_log_action_keys_created_idx
   on public.auth_operation_log (action, created_at);
@@ -375,11 +421,12 @@ begin
      where last_refill < v_now - interval '24 hours';
 
     -- Backoff after repeated failures: 2,4,8,16,32,60 seconds, capped at
-    -- 60. Counts admission denials AND recorded credential failures for
-    -- this action on overlapping keys in the trailing 15 minutes. A
-    -- later success clears the failure history for the account key
-    -- (successful MFA clears backoff); IP token budgets are separate
-    -- bucket rows and are never refunded by success.
+    -- 60. Counts admission denials AND recorded credential/MFA failures for
+    -- this action on overlapping keys in the trailing 15 minutes. L2-007:
+    -- 'mfa_failed' (wrong TOTP) and 'uncertain' (ambiguous provider
+    -- outcome) also drive the ladder. A later success clears the failure
+    -- history for the account key (successful MFA clears backoff); IP token
+    -- budgets are separate bucket rows and are never refunded by success.
     select max(c.cleared_at)
       into v_clear_at
       from public.auth_backoff_clears c
@@ -391,7 +438,7 @@ begin
       from public.auth_operation_log o
      where o.action = p_action
        and o.bucket_keys && p_keys
-       and o.outcome in ('denied', 'credential_failed')
+       and o.outcome in ('denied', 'credential_failed', 'mfa_failed', 'uncertain')
        and o.created_at > v_now - interval '15 minutes'
        and (v_clear_at is null or o.created_at > v_clear_at);
 
@@ -432,13 +479,140 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Atomic execution-claim lease (L2-007). Admission (allowed:true) is NOT
+-- permission to execute: the gateway MUST call this AFTER admission and
+-- BEFORE the provider call, with a per-request owner token.
+--
+-- Exactly one owner token wins the lease (row lock + conditional update);
+-- the winner's outcome becomes 'executing'. Any other claimant gets:
+--   'in_flight'  — another owner holds the lease; defer (429) and replay
+--                   WITHOUT provider execution.
+--   'terminal'   — the operation already executed; replay the recorded
+--                   outcome, never re-execute (409 to the caller).
+--   'uncertain'  — a prior attempt's fate is unknown; reconcile before any
+--                   refire (503 to the caller).
+--   'unknown'    — no such operation (admission never happened); 503.
+--
+-- p_execution_context is non-secret request identity (action intent,
+-- factor id) — NEVER plaintext credentials, codes, or tokens.
+-- ---------------------------------------------------------------------------
+create or replace function public.auth_claim_execution(
+  p_operation_id text,
+  p_owner_token text,
+  p_execution_context jsonb default null
+)
+returns table (
+  granted boolean,
+  disposition text,
+  outcome text
+)
+language plpgsql
+as $$
+declare
+  v_outcome text;
+  v_owner text;
+begin
+  if p_operation_id is null or p_owner_token is null or p_owner_token = '' then
+    granted := false; disposition := 'unknown'; outcome := null;
+    return next;
+    return;
+  end if;
+
+  select o.outcome, o.execution_owner_token
+    into v_outcome, v_owner
+    from public.auth_operation_log o
+   where o.operation_id = p_operation_id
+   for update;
+
+  if not found then
+    granted := false; disposition := 'unknown'; outcome := null;
+    return next;
+    return;
+  end if;
+
+  -- Terminal: already executed. Replay the disposition; never re-execute.
+  if v_outcome in (
+    'denied', 'credential_failed', 'credential_succeeded',
+    'mfa_failed', 'mfa_succeeded'
+  ) then
+    granted := false; disposition := 'terminal'; outcome := v_outcome;
+    return next;
+    return;
+  end if;
+
+  -- Uncertain: a prior attempt may or may not have executed. The caller
+  -- must reconcile (or mint a fresh operation); never grant blind refire.
+  if v_outcome = 'uncertain' then
+    granted := false; disposition := 'uncertain'; outcome := v_outcome;
+    return next;
+    return;
+  end if;
+
+  -- In-flight: the lease is held.
+  if v_outcome = 'executing' then
+    if v_owner is distinct from p_owner_token then
+      granted := false; disposition := 'in_flight'; outcome := v_outcome;
+    else
+      -- Same owner re-entering (retry after a crash before the outcome
+      -- was recorded): the prior attempt's fate is unknown — treat as
+      -- uncertain, do not grant a second execution.
+      granted := false; disposition := 'uncertain'; outcome := v_outcome;
+    end if;
+    return next;
+    return;
+  end if;
+
+  -- 'evaluating' or 'admitted': claim the lease atomically. The conditional
+  -- update is the atomicity: exactly one concurrent claimant wins.
+  -- (Table alias: the OUT param is also named `outcome`.)
+  update public.auth_operation_log o
+     set outcome = 'executing',
+         execution_owner_token = p_owner_token,
+         execution_claimed_at = now(),
+         execution_context = p_execution_context,
+         updated_at = now()
+   where o.operation_id = p_operation_id
+     and o.outcome in ('evaluating', 'admitted');
+
+  if found then
+    granted := true; disposition := 'granted'; outcome := 'executing';
+    return next;
+    return;
+  end if;
+
+  -- Lost a race with another claim: re-read under the lock and report.
+  select o.outcome, o.execution_owner_token
+    into v_outcome, v_owner
+    from public.auth_operation_log o
+   where o.operation_id = p_operation_id
+   for update;
+
+  granted := false;
+  disposition := case
+    when v_outcome in (
+      'denied', 'credential_failed', 'credential_succeeded',
+      'mfa_failed', 'mfa_succeeded'
+    ) then 'terminal'
+    when v_outcome = 'uncertain' then 'uncertain'
+    when v_owner is distinct from p_owner_token then 'in_flight'
+    else 'uncertain'
+  end;
+  outcome := v_outcome;
+  return next;
+  return;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Idempotent attempt-outcome recorder. The gateway calls this after the
 -- provider operation to record credential/MFA outcomes against the
 -- operation_id claimed by auth_admission_check. Transitions are
--- forward-only (evaluating/admitted -> terminal); the first terminal
--- outcome wins and replays are idempotent. A success records an
--- account-key clear marker so failure backoff resets; IP token budgets
--- are never refunded.
+-- forward-only (evaluating/admitted/executing/uncertain -> terminal); the
+-- first terminal outcome wins and replays are idempotent. L2-007: 'mfa_failed'
+-- records wrong-TOTP failures (drives the MFA backoff ladder); 'uncertain'
+-- records an ambiguous provider outcome (reconcile before refire). A
+-- success records an account-key clear marker so failure backoff resets;
+-- IP token budgets are never refunded.
 -- Returns true when the outcome is (now) recorded, false otherwise.
 -- ---------------------------------------------------------------------------
 create or replace function public.auth_record_attempt_outcome(
@@ -455,7 +629,8 @@ declare
   v_recorded boolean := false;
 begin
   if p_outcome not in
-     ('credential_failed', 'credential_succeeded', 'mfa_succeeded') then
+     ('credential_failed', 'credential_succeeded',
+      'mfa_failed', 'mfa_succeeded', 'uncertain') then
     raise exception
       'auth_record_attempt_outcome: invalid outcome %', p_outcome;
   end if;
@@ -464,7 +639,7 @@ begin
      set outcome = p_outcome,
          updated_at = now()
    where operation_id = p_operation_id
-     and outcome in ('evaluating', 'admitted');
+     and outcome in ('evaluating', 'admitted', 'executing', 'uncertain');
 
   if found then
     v_recorded := true;
@@ -517,7 +692,8 @@ declare
 begin
   foreach fn in array array[
     'auth_admission_check(text,text[],jsonb,text,timestamptz)',
-    'auth_record_attempt_outcome(text,text,text)'
+    'auth_record_attempt_outcome(text,text,text)',
+    'auth_claim_execution(text,text,jsonb)'
   ] loop
     execute format('revoke all on function public.%s from public', fn);
     execute format('revoke all on function public.%s from anon', fn);

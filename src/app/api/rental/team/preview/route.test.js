@@ -8,6 +8,7 @@ vi.mock("@/lib/rental/teamAuthorization", () => ({
   PREVIEW_COOKIE_NAME: "forge_rental_preview_as",
   getActorRentalAuthorization: vi.fn(),
   requireTeamManager: vi.fn(),
+  buildSecurityContext: vi.fn(async () => null),
 }));
 
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";

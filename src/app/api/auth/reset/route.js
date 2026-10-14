@@ -13,6 +13,7 @@
 // any TOTP factor. Fresh password alone can never disable mandatory MFA.
 
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import { createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
 import {
@@ -22,6 +23,7 @@ import {
   MESSAGE_RESET_FAILED,
   extractEmail,
   extractOperationId,
+  claimExecution,
   gateAdmission,
   isActivationEnabled,
   markInert,
@@ -65,12 +67,29 @@ export async function POST(request) {
   });
   if (!gate.allowed) return gate.response;
 
+  // L2-007: claim the execution lease BEFORE the provider call. A
+  // duplicate in-flight request with the same operationId defers
+  // without executing a second provider attempt.
+  const claim = await claimExecution({
+    supabaseAdmin,
+    operationId,
+    ownerToken: randomUUID(),
+    context: { intent: "reset_request" },
+  });
+  if (!claim.granted) return claim.response;
+
   // MFA invariant: this call touches only the password credential. It does
   // not read, modify, or clear mfa_* tables, enrolled factors, or the
   // recovery latch.
-  const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
-    redirectTo: resetRedirectTo(env),
-  });
+  let error;
+  try {
+    ({ error } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
+      redirectTo: resetRedirectTo(env),
+    }));
+  } catch {
+    // Ambiguous provider outcome: reconcile before any refire.
+    return NextResponse.json({ error: MESSAGE_RESET_FAILED }, { status: 503 });
+  }
   if (error) {
     return NextResponse.json({ error: MESSAGE_RESET_FAILED }, { status: 500 });
   }

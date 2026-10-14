@@ -80,12 +80,52 @@ async function listVerifiedFactors(supabaseAdmin, userId) {
 // appear in amr alongside password on an AAL1 session.
 const SECOND_FACTOR_METHODS = new Set(["totp", "phone", "webauthn"]);
 
-function verifiedAal2(claims) {
+export function verifiedAal2(claims) {
   if (!claims) return false;
   if (claims.aal === "aal2") return true;
   const amr = claims.amr;
   if (!Array.isArray(amr)) return false;
   return amr.some((m) => SECOND_FACTOR_METHODS.has(String(m?.method ?? m).toLowerCase()));
+}
+
+/**
+ * L2-006: derive the freshest permitted FIRST-factor event from the JWT
+ * claims' AMR method timestamps — the actual auth ceremony clock. Token
+ * issuance (claims.iat) is NOT the ceremony: a refreshed token carries an
+ * old iat and proves nothing about when the user last authenticated.
+ *
+ * Returns the latest first-factor method timestamp in SECONDS, or null when
+ * the AMR is missing/empty, contains no permitted first-factor method, or
+ * any present method lacks a timestamp. Callers must ALSO refuse timestamps
+ * in the future (beyond a small skew allowance).
+ *
+ * Supabase/GoTrue AMR entries are { method, timestamp } with timestamp in
+ * Unix seconds.
+ */
+const FIRST_FACTOR_METHODS = new Set([
+  "password",
+  "oauth",
+  "magiclink",
+  "otp",
+  "email",
+  "sso",
+  "saml",
+]);
+
+export function freshFirstFactorAt(claims) {
+  const amr = claims?.amr;
+  if (!Array.isArray(amr) || amr.length === 0) return null;
+  let latest = null;
+  for (const entry of amr) {
+    const method = String(entry?.method ?? entry ?? "").toLowerCase();
+    if (!FIRST_FACTOR_METHODS.has(method)) continue;
+    const ts = Number(entry?.timestamp);
+    // A present first-factor method WITHOUT a timestamp is not evidence of
+    // a fresh ceremony — refuse rather than fall back to iat.
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    if (latest === null || ts > latest) latest = ts;
+  }
+  return latest;
 }
 
 /**

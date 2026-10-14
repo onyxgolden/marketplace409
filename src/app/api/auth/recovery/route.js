@@ -40,12 +40,13 @@ import { randomUUID } from "node:crypto";
 
 import { adminRecoveryAdapter, createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
 import { consumeRecoveryCode } from "@/lib/auth/recoveryCodes.js";
-import { verifiedSessionClaims } from "@/lib/auth/requireSecurityAssurance.js";
+import { freshFirstFactorAt, verifiedSessionClaims } from "@/lib/auth/requireSecurityAssurance.js";
 import {
   AUTH_ACTIONS,
   ACTIVATION_CONFIG,
   MESSAGE_INVALID_REQUEST,
   MESSAGE_RECOVERY_FAILED,
+  claimExecution,
   extractOperationId,
   gateAdmission,
   isActivationEnabled,
@@ -65,6 +66,9 @@ const COMPLETE_ACTION = "complete";
 // (old iat, rotated by the provider) is NOT evidence of a fresh ceremony —
 // the user must sign in again with their password.
 const FRESH_FIRST_FACTOR_MAX_AGE_SECONDS = 600;
+// Small allowance for clock skew between the token issuer and this server;
+// anything further in the future is refused, not clamped.
+const CLOCK_SKEW_SECONDS = 60;
 
 export async function POST(request) {
   const body = await readJsonBody(request);
@@ -150,18 +154,33 @@ export async function POST(request) {
     return NextResponse.json({ status: "recovery_initiated" });
   }
 
-  // COMPLETE_ACTION: require a FRESH first-factor ceremony. The JWT iat
-  // from the validated claims bounds the ceremony age; a refreshed token
-  // carries an old iat and does not qualify.
-  const issuedAt = Number(claims.iat ?? 0);
+  // COMPLETE_ACTION: require a FRESH first-factor ceremony bound to THIS
+  // session. L2-006: the clock is the AMR first-factor method timestamps
+  // (the actual auth ceremony), NOT claims.iat (token issuance — a
+  // refreshed token carries an old iat and proves nothing). A current iat
+  // with a day-old password AMR does NOT consume. Missing AMR, missing
+  // timestamps, or timestamps in the future are all refused.
+  const firstFactorAt = freshFirstFactorAt(claims);
   const nowSeconds = Math.floor(Date.now() / 1000);
   if (
-    !Number.isFinite(issuedAt) ||
-    issuedAt <= 0 ||
-    nowSeconds - issuedAt > FRESH_FIRST_FACTOR_MAX_AGE_SECONDS
+    firstFactorAt === null ||
+    firstFactorAt > nowSeconds + CLOCK_SKEW_SECONDS ||
+    nowSeconds - firstFactorAt > FRESH_FIRST_FACTOR_MAX_AGE_SECONDS
   ) {
     return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 401 });
   }
+
+  // L2-007: claim the execution lease BEFORE the consume RPC. A duplicate
+  // in-flight request with the same verified operation id defers without
+  // executing a second consume attempt. The consume RPC itself is also
+  // atomic (one concurrent winner), but the lease is the HTTP-level fence.
+  const claim = await claimExecution({
+    supabaseAdmin,
+    operationId: verifiedOperationId,
+    ownerToken: randomUUID(),
+    context: { intent: "recovery_consume" },
+  });
+  if (!claim.granted) return claim.response;
 
   // Atomic consume + RECOVERY_PENDING entry (one transaction, one concurrent
   // winner). There is NO separate latch insert and NO "use a different

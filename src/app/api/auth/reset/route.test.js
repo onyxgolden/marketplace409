@@ -19,6 +19,14 @@ const OP_ID = "123e4567-e89b-12d3-a456-426614174000";
 function fakeAdmin({ resetResult } = {}) {
   const calls = [];
   return {
+    rpc: async (fn, params) => {
+      // L2-007: the execution lease. Tests grant by default; specific
+      // deny-path tests override via mockImplementationOnce.
+      if (fn === "auth_claim_execution") {
+        return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    },
     calls,
     auth: {
       resetPasswordForEmail: async (email, options) => {

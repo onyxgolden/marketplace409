@@ -17,6 +17,7 @@
 // account existence. Secrets (passwords) are never logged.
 
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import { createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
 import { requireSecurityAssurance } from "@/lib/auth/requireSecurityAssurance.js";
@@ -26,6 +27,8 @@ import {
   ACTIVATION_CONFIG,
   MESSAGE_INVALID_REQUEST,
   MESSAGE_SIGNIN_FAILED,
+  MESSAGE_UNAVAILABLE,
+  claimExecution,
   extractEmail,
   extractOperationId,
   extractPassword,
@@ -68,7 +71,27 @@ export async function POST(request) {
   });
   if (!gate.allowed) return gate.response;
 
-  const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
+  // L2-007: claim the execution lease BEFORE the provider call. A duplicate
+  // in-flight request with the same operationId is denied the lease and
+  // defers without executing signInWithPassword a second time.
+  const ownerToken = randomUUID();
+  const claim = await claimExecution({
+    supabaseAdmin,
+    operationId,
+    ownerToken,
+    context: { intent: "password_signin" },
+  });
+  if (!claim.granted) return claim.response;
+
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password }));
+  } catch {
+    // Ambiguous provider outcome: reconcile before any refire.
+    await recordAttemptOutcome({ supabaseAdmin, operationId, outcome: "uncertain", accountKey: null });
+    return NextResponse.json({ error: MESSAGE_UNAVAILABLE }, { status: 503 });
+  }
 
   // Drive the failure ladder / clear backoff. The account key is the
   // HMAC of the normalized email (pre-authentication attribution).

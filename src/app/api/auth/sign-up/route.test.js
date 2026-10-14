@@ -25,6 +25,14 @@ const SIGNUP_SUBMITTED_MESSAGE =
 function fakeAdmin({ signUpResult } = {}) {
   const calls = [];
   return {
+    rpc: async (fn, params) => {
+      // L2-007: the execution lease. Tests grant by default; specific
+      // deny-path tests override via mockImplementationOnce.
+      if (fn === "auth_claim_execution") {
+        return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    },
     calls,
     auth: {
       signUp: async ({ email }) => {

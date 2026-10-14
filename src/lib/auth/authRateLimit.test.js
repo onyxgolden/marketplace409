@@ -238,7 +238,7 @@ describe("L2-008 session attribution", () => {
     return { rpc: vi.fn(rpcImpl) };
   }
 
-  it("keys session-kind buckets on the sessionId, never the account hash", async () => {
+  it("L2-008: keys the per-credential abuse bucket on the credential digest, never the account hash", async () => {
     const admin = mockAdmin(() =>
       Promise.resolve({ data: [{ allowed: true, retry_after_seconds: 0, backoff_seconds: 0 }], error: null })
     );
@@ -246,17 +246,52 @@ describe("L2-008 session attribution", () => {
       supabaseAdmin: admin,
       action: AUTH_ACTIONS.REFRESH,
       accountId: null,
-      sessionId: "sess-abc-123",
+      sessionId: "cred-hmac-abc-123",
       ip: "203.0.113.7",
       operationId: "op-sess-1",
       env: ENV,
     });
     const keys = admin.rpc.mock.calls[0][1].p_keys;
-    expect(keys).toContain("refresh:session:sess-abc-123");
+    // Honest kind name: 'credential', not 'session' — the HMAC of a
+    // presented refresh token identifies a rotating credential.
+    expect(keys).toContain("refresh:credential:cred-hmac-abc-123");
     expect(keys).toContain("refresh:ip:203.0.113.7");
-    // No account bucket without an accountId; the session key is the raw
-    // session id, never derived from an account hash.
+    // No account bucket without an accountId; the credential key is the raw
+    // digest, never derived from an account hash.
     expect(keys.some((k) => k.startsWith("refresh:account"))).toBe(false);
+  });
+
+  it("L2-008: 'session' kind still works for verified stable session ids (mfa/recovery)", async () => {
+    const admin = mockAdmin(() =>
+      Promise.resolve({ data: [{ allowed: true, retry_after_seconds: 0, backoff_seconds: 0 }], error: null })
+    );
+    await checkAdmission({
+      supabaseAdmin: admin,
+      action: AUTH_ACTIONS.MFA_VERIFY,
+      accountId: "user-1",
+      sessionId: "stable-session-id",
+      ip: "203.0.113.7",
+      operationId: "op-sess-2",
+      env: ENV,
+    });
+    const keys = admin.rpc.mock.calls[0][1].p_keys;
+    expect(keys).toContain("mfa_verify:session:stable-session-id");
+  });
+
+  it("L2-008: pre-verification actions debit only the IP abuse-reservation namespace", async () => {
+    const admin = mockAdmin(() =>
+      Promise.resolve({ data: [{ allowed: true, retry_after_seconds: 0, backoff_seconds: 0 }], error: null })
+    );
+    await checkAdmission({
+      supabaseAdmin: admin,
+      action: AUTH_ACTIONS.MFA_VERIFY_PRE,
+      accountId: null,
+      ip: "203.0.113.7",
+      operationId: "op-pre-1",
+      env: ENV,
+    });
+    const keys = admin.rpc.mock.calls[0][1].p_keys;
+    expect(keys).toEqual(["mfa_verify_pre:ip:203.0.113.7"]);
   });
 
   it("skips session buckets when no sessionId is available (account+IP still apply)", async () => {

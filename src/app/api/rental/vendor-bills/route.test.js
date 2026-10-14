@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({ createAuthenticatedRentalManagerApplication: vi.fn() }));
-vi.mock("@/lib/rental/teamAuthorization", () => ({ requireRentalPermission: vi.fn() }));
+vi.mock("@/lib/rental/teamAuthorization", () => ({ requireRentalPermission: vi.fn(), buildSecurityContext: vi.fn(async () => null)}));
 vi.mock("@/application/rental/chartOfAccounts", () => ({
   getChartAccounts: vi.fn(),
   isChartTableMissing: () => false,

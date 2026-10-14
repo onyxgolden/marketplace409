@@ -103,84 +103,56 @@ describe("deriveCodeDigest / verifyRecoveryCodeDigest", () => {
 
 describe("storeRecoveryGeneration", () => {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  function mockAdmin() {
-    const inserted = { codes: [], generations: [] };
+  function mockAdmin({ rpcResult } = {}) {
     const calls = [];
-    const admin = {
-      inserted,
+    return {
       calls,
-      from: vi.fn((table) => {
-        if (table === "mfa_recovery_generations") {
-          return {
-            // L2-004 order: invalidation FIRST (update), then insert.
-            update: vi.fn((row) => {
-              calls.push({ table, op: "update", row });
-              return {
-                eq: vi.fn(() => ({
-                  is: vi.fn(() => Promise.resolve({ error: null })),
-                })),
-              };
-            }),
-            insert: vi.fn((row) => {
-              calls.push({ table, op: "insert", row });
-              inserted.generations.push(row);
-              return Promise.resolve({ error: null });
-            }),
-          };
+      rpc: vi.fn(async (fn, params) => {
+        calls.push({ fn, params });
+        if (fn === "mfa_replace_recovery_generation") {
+          return rpcResult ?? { data: params.p_generation_id, error: null };
         }
-        return {
-          insert: vi.fn((rows) => {
-            inserted.codes.push(...rows);
-            return Promise.resolve({ error: null });
-          }),
-        };
+        throw new Error(`unexpected rpc ${fn}`);
       }),
     };
-    return admin;
   }
 
-  it("L2-004: invalidates the old generation BEFORE inserting (partial-unique safe)", async () => {
-    const admin = mockAdmin();
-    const { codes } = generateRecoveryCodes();
-    await storeRecoveryGeneration(admin, "user-1", codes, { env: ENV });
-    const ops = admin.calls.map((c) => c.op);
-    expect(ops).toEqual(["update", "insert"]);
-    const updateCall = admin.calls[0];
-    expect(updateCall.row.invalidated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-  });
-
-  it("L2-004: supplies explicit UUIDs and only real columns", async () => {
+  it("L2-004: replaces the generation in ONE atomic RPC (no multi-step client writes)", async () => {
     const admin = mockAdmin();
     const { codes } = generateRecoveryCodes();
     const { generationId } = await storeRecoveryGeneration(admin, "user-1", codes, { env: ENV });
     expect(generationId).toMatch(UUID_RE);
-
-    const genRow = admin.inserted.generations[0];
-    expect(genRow.id).toBe(generationId);
-    expect(genRow).toMatchObject({ user_id: "user-1", key_version: 1 });
-    // The generation row carries no invented columns.
-    expect(Object.keys(genRow).sort()).toEqual(["id", "key_version", "user_id"]);
-
-    expect(admin.inserted.codes).toHaveLength(RECOVERY_CODE_COUNT);
-    const codeIds = new Set();
-    for (const row of admin.inserted.codes) {
-      expect(row.id).toMatch(UUID_RE);
-      codeIds.add(row.id);
-      expect(row.generation_id).toBe(generationId);
-      expect(row.code_digest).toMatch(/^[0-9a-f]{64}$/);
-      // Codes table has NO user_id / key_version columns: only real columns.
-      expect(Object.keys(row).sort()).toEqual(["code_digest", "generation_id", "id"]);
-      // Plaintext must never be persisted: no stored field may equal a code.
-      for (const code of codes) {
-        expect(Object.values(row).includes(code)).toBe(false);
-      }
-      // Each stored digest verifies against exactly one presented code.
-      const match = codes.filter((c) => verifyRecoveryCodeDigest(c, row.code_digest, 1, ENV));
-      expect(match).toHaveLength(1);
+    // Exactly ONE database call: the atomic replacement RPC. There is no
+    // separate invalidate/insert/insert sequence that can partially fail.
+    expect(admin.calls).toHaveLength(1);
+    const call = admin.calls[0];
+    expect(call.fn).toBe("mfa_replace_recovery_generation");
+    expect(call.params.p_user_id).toBe("user-1");
+    expect(call.params.p_generation_id).toBe(generationId);
+    expect(call.params.p_key_version).toBe(1);
+    // Only digests cross the boundary — never plaintext codes.
+    expect(call.params.p_code_digests).toHaveLength(RECOVERY_CODE_COUNT);
+    for (const digest of call.params.p_code_digests) {
+      expect(digest).toMatch(/^[0-9a-f]{64}$/);
     }
-    expect(codeIds.size).toBe(RECOVERY_CODE_COUNT);
+    for (const code of codes) {
+      expect(call.params.p_code_digests).not.toContain(code);
+    }
   });
 
+  it("L2-004: a failed replacement throws so the caller never reports new codes", async () => {
+    const admin = mockAdmin({ rpcResult: { data: null, error: new Error("boom") } });
+    const { codes } = generateRecoveryCodes();
+    await expect(storeRecoveryGeneration(admin, "user-1", codes, { env: ENV })).rejects.toThrow();
+  });
+
+  it("L2-004: rejects an unexpected generation id from the RPC", async () => {
+    const admin = mockAdmin({ rpcResult: { data: "some-other-id", error: null } });
+    const { codes } = generateRecoveryCodes();
+    await expect(storeRecoveryGeneration(admin, "user-1", codes, { env: ENV })).rejects.toThrow(
+      /unexpected generation id/
+    );
+  });
   it("requires supabaseAdmin, userId, and codes", async () => {
     const admin = mockAdmin();
     const { codes } = generateRecoveryCodes();

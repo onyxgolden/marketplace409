@@ -391,6 +391,11 @@ $$;
 -- its own transaction. Upserts the mfa_security_latch row, records the
 -- recovery operation row, appends the audit row, and deletes the user's
 -- grandfather-registry rows. Never clears the latch.
+--
+-- L2-006: a COMPLETED or FAILED operation replays its terminal
+-- disposition WITHOUT side effects — asserting the latch again after a
+-- completed recovery would re-latch a recovered user. The terminal check
+-- comes first; only non-terminal operations proceed.
 -- ---------------------------------------------------------------------------
 create or replace function public.mfa_assert_recovery_latch(
   p_user_id uuid,
@@ -400,7 +405,19 @@ create or replace function public.mfa_assert_recovery_latch(
 returns void
 language plpgsql
 as $$
+declare
+  v_status text;
 begin
+  -- Terminal operations replay their disposition: no latch, no audit
+  -- duplication, no grandfather deletion.
+  select o.status into v_status
+    from public.mfa_recovery_operations o
+   where o.id = p_operation_id;
+
+  if found and v_status in ('completed', 'failed') then
+    return;
+  end if;
+
   insert into public.mfa_security_latch (user_id, reason, audit_id)
   values (p_user_id, 'recovery_code_consumed', p_audit_id)
   on conflict (user_id) do update
@@ -432,6 +449,221 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Atomic recovery-generation replacement (L2-004). Regeneration is ONE
+-- transaction: serialize per user (advisory lock), invalidate the old
+-- ACTIVE generation, insert the new generation row, insert all code
+-- digests. ANY failure rolls back the whole transaction, so the
+-- previously valid generation is NEVER left destroyed without a
+-- replacement (no oldActive=false with no new codes). Concurrent
+-- issuers serialize on the advisory lock; the loser replays against the
+-- winner's generation. Consumed codes are never restored — this function
+-- touches generations only.
+--
+-- p_code_digests: array of keyed HMAC digests (gateway-computed; the
+-- database never sees plaintext codes).
+-- Returns the new generation id.
+-- ---------------------------------------------------------------------------
+create or replace function public.mfa_replace_recovery_generation(
+  p_user_id uuid,
+  p_generation_id uuid,
+  p_key_version integer,
+  p_code_digests text[]
+)
+returns uuid
+language plpgsql
+as $$
+declare
+  v_digest text;
+begin
+  if p_user_id is null or p_generation_id is null
+     or p_key_version is null or p_code_digests is null
+     or coalesce(array_length(p_code_digests, 1), 0) = 0 then
+    raise exception 'mfa_replace_recovery_generation: invalid arguments';
+  end if;
+
+  -- Serialize issuers per user for the transaction: concurrent
+  -- replacements cannot interleave invalidate/insert steps.
+  perform pg_advisory_xact_lock(hashtext('mfa_recovery_gen:' || p_user_id::text));
+
+  -- Invalidate the old ACTIVE generation first (partial unique index
+  -- allows exactly one active generation per user).
+  update public.mfa_recovery_generations
+     set invalidated_at = now()
+   where user_id = p_user_id
+     and invalidated_at is null;
+
+  insert into public.mfa_recovery_generations (id, user_id, key_version)
+  values (p_generation_id, p_user_id, p_key_version);
+
+  foreach v_digest in array p_code_digests loop
+    if v_digest is null or v_digest = '' then
+      raise exception 'mfa_replace_recovery_generation: empty code digest';
+    end if;
+    insert into public.mfa_recovery_codes (id, generation_id, code_digest)
+    values (gen_random_uuid(), p_generation_id, v_digest);
+  end loop;
+
+  return p_generation_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Durable phased recovery completion (L2-006). Recovery completion is a
+-- fenced, resumable workflow bound to the recovery operation row — never
+-- best-effort. Phases:
+--   'latched' -> 'factor_removed' -> 'generations_invalidated' -> 'completed'
+-- Each phase commits separately; a crash resumes from the last committed
+-- phase instead of double-executing or silently reporting success after
+-- partial failure. Terminal operations ('completed','failed') replay
+-- their disposition with NO side effects.
+--
+-- The gateway verifies the NEW factor binding BEFORE calling these: the
+-- new factor must be a verified TOTP factor owned by the user and created
+-- AFTER the recovery operation started (prevents completing a recovery by
+-- verifying the old lost factor). Provider factor deletion happens in the
+-- gateway between begin and finalize; it is idempotent on retry (deleted
+-- factors stay deleted, the new factor is never deleted).
+-- ---------------------------------------------------------------------------
+
+-- Begin (or resume) completion: ensure a 'latched' operation row exists and
+-- return its created_at for the new-factor binding check.
+create or replace function public.mfa_recovery_begin_completion(
+  p_user_id uuid,
+  p_operation_id text,
+  p_audit_id text
+)
+returns table (
+  operation_created_at timestamptz,
+  status text,
+  terminal boolean
+)
+language plpgsql
+as $$
+begin
+  if p_user_id is null or p_operation_id is null or p_audit_id is null then
+    raise exception 'mfa_recovery_begin_completion: invalid arguments';
+  end if;
+
+  insert into public.mfa_recovery_operations (id, user_id, status)
+  values (p_operation_id, p_user_id, 'latched')
+  on conflict (id) do nothing;
+
+  select o.created_at, o.status
+    into operation_created_at, status
+    from public.mfa_recovery_operations o
+   where o.id = p_operation_id
+     and o.user_id = p_user_id
+   for update;
+
+  if not found then
+    raise exception 'mfa_recovery_begin_completion: operation not owned by user';
+  end if;
+
+  terminal := status in ('completed', 'failed');
+
+  if not terminal then
+    insert into public.mfa_audit_log (user_id, action, actor, audit_id, metadata)
+    values (p_user_id, 'recovery_completion_began', 'gateway', p_audit_id,
+            jsonb_build_object('operation_id', p_operation_id, 'status', status));
+  end if;
+
+  return next;
+  return;
+end;
+$$;
+
+-- Mark provider factor removal done: 'latched' -> 'factor_removed'.
+create or replace function public.mfa_recovery_mark_factors_removed(
+  p_user_id uuid,
+  p_operation_id text,
+  p_audit_id text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_status text;
+begin
+  select o.status into v_status
+    from public.mfa_recovery_operations o
+   where o.id = p_operation_id
+     and o.user_id = p_user_id
+   for update;
+
+  if not found then
+    return false;
+  end if;
+  if v_status in ('completed', 'failed') then
+    return true; -- terminal replay: disposition stands, no side effects
+  end if;
+  if v_status not in ('latched', 'factor_removed') then
+    return false;
+  end if;
+
+  update public.mfa_recovery_operations
+     set status = 'factor_removed', updated_at = now()
+   where id = p_operation_id;
+
+  insert into public.mfa_audit_log (user_id, action, actor, audit_id, metadata)
+  values (p_user_id, 'recovery_factors_removed', 'gateway', p_audit_id,
+          jsonb_build_object('operation_id', p_operation_id));
+
+  return true;
+end;
+$$;
+
+-- Finalize: invalidate generations + mark completed + delete latch, in ONE
+-- transaction. Only from 'factor_removed' (strict: the provider factor
+-- deletion must have been recorded first). Terminal replay is a no-op.
+create or replace function public.mfa_recovery_finalize(
+  p_user_id uuid,
+  p_operation_id text,
+  p_audit_id text
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_status text;
+begin
+  select o.status into v_status
+    from public.mfa_recovery_operations o
+   where o.id = p_operation_id
+     and o.user_id = p_user_id
+   for update;
+
+  if not found then
+    return false;
+  end if;
+  if v_status in ('completed', 'failed') then
+    return true; -- terminal replay: disposition stands, no side effects
+  end if;
+  if v_status <> 'factor_removed' then
+    -- Strict phase order: factor removal must be recorded first.
+    return false;
+  end if;
+
+  update public.mfa_recovery_generations
+     set invalidated_at = now()
+   where user_id = p_user_id
+     and invalidated_at is null;
+
+  update public.mfa_recovery_operations
+     set status = 'completed', updated_at = now()
+   where id = p_operation_id;
+
+  delete from public.mfa_security_latch
+   where user_id = p_user_id;
+
+  insert into public.mfa_audit_log (user_id, action, actor, audit_id, metadata)
+  values (p_user_id, 'recovery_completed', 'gateway', p_audit_id,
+          jsonb_build_object('operation_id', p_operation_id));
+
+  return true;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Execute grants: service-role only. The gateway calls the consume RPC as
 -- service_role; no client role may call it directly (it would let a
 -- caller brute-force digests outside the gateway's limiter).
@@ -446,6 +678,22 @@ begin
   execute 'revoke all on function public.mfa_assert_recovery_latch(uuid,text,text) from anon';
   execute 'revoke all on function public.mfa_assert_recovery_latch(uuid,text,text) from authenticated';
   execute 'grant execute on function public.mfa_assert_recovery_latch(uuid,text,text) to service_role';
+  execute 'revoke all on function public.mfa_replace_recovery_generation(uuid,uuid,integer,text[]) from public';
+  execute 'revoke all on function public.mfa_replace_recovery_generation(uuid,uuid,integer,text[]) from anon';
+  execute 'revoke all on function public.mfa_replace_recovery_generation(uuid,uuid,integer,text[]) from authenticated';
+  execute 'grant execute on function public.mfa_replace_recovery_generation(uuid,uuid,integer,text[]) to service_role';
+  execute 'revoke all on function public.mfa_recovery_begin_completion(uuid,text,text) from public';
+  execute 'revoke all on function public.mfa_recovery_begin_completion(uuid,text,text) from anon';
+  execute 'revoke all on function public.mfa_recovery_begin_completion(uuid,text,text) from authenticated';
+  execute 'grant execute on function public.mfa_recovery_begin_completion(uuid,text,text) to service_role';
+  execute 'revoke all on function public.mfa_recovery_mark_factors_removed(uuid,text,text) from public';
+  execute 'revoke all on function public.mfa_recovery_mark_factors_removed(uuid,text,text) from anon';
+  execute 'revoke all on function public.mfa_recovery_mark_factors_removed(uuid,text,text) from authenticated';
+  execute 'grant execute on function public.mfa_recovery_mark_factors_removed(uuid,text,text) to service_role';
+  execute 'revoke all on function public.mfa_recovery_finalize(uuid,text,text) from public';
+  execute 'revoke all on function public.mfa_recovery_finalize(uuid,text,text) from anon';
+  execute 'revoke all on function public.mfa_recovery_finalize(uuid,text,text) from authenticated';
+  execute 'grant execute on function public.mfa_recovery_finalize(uuid,text,text) to service_role';
 end
 $$;
 

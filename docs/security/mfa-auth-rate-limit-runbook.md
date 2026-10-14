@@ -451,16 +451,61 @@ regardless.
 
 | Endpoint | FORGE admission | Native provider enforcement | Supported hook | Residual exposure | Status |
 |---|---|---|---|---|---|
-| `POST /api/auth/sign-in` (password) | sign-in namespace: account/IP 5/5 min, account-wide 30/15 min, IP 100/5 min; backoff 2–60s ENFORCED on allowed verdicts; credential_failed/succeeded outcomes recorded | Supabase native auth rate limits apply to direct calls | password-verification hook exists but is sign-in-scoped; reject semantics must be tested — must not sign out legitimate sessions | Direct `signInWithPassword` bypasses FORGE buckets; native limits only | PARTIAL |
-| `POST /api/auth/sign-up` | sign-up namespace: IP 20/10 min, account 3/hour | Native limits | None — the verification hook is not a signup hook | Direct `signUp` bypasses custom buckets | PARTIAL |
-| `POST /api/auth/reset` (request) | reset namespace: account 3/hour, IP 30/hour | Native limits | None | Direct `resetPasswordForEmail` bypasses | PARTIAL |
+| `POST /api/auth/sign-in` (password) | sign-in namespace: account/IP 5/5 min, account-wide 30/15 min, IP 100/5 min; backoff 2–60s ENFORCED on allowed verdicts; credential_failed/succeeded outcomes recorded; **L2-007 execution lease** (`auth_claim_execution`) claimed before the provider call — duplicate in-flight requests defer (429) without a second provider execution; ambiguous provider failures record `uncertain` | Supabase native auth rate limits apply to direct calls | password-verification hook exists but is sign-in-scoped; reject semantics must be tested — must not sign out legitimate sessions | Direct `signInWithPassword` bypasses FORGE buckets; native limits only | PARTIAL |
+| `POST /api/auth/sign-up` | sign-up namespace: IP 20/10 min, account 3/hour; **L2-007 execution lease** before the provider call | Native limits | None — the verification hook is not a signup hook | Direct `signUp` bypasses custom buckets | PARTIAL |
+| `POST /api/auth/reset` (request) | reset namespace: account 3/hour, IP 30/hour; **L2-007 execution lease** before the provider call | Native limits | None | Direct `resetPasswordForEmail` bypasses | PARTIAL |
 | `POST /api/auth/reset` (update) | password-update namespace via gateway | Native limits | None | Direct `updateUser` bypasses | PARTIAL |
-| `POST /api/auth/refresh` | refresh namespace: session 30/5 min (keyed on HMAC(refresh_token) — the session family's bearer credential, never the account hash), account 120/5 min, IP 1000/5 min; missing trusted IP fails closed; single-family coordinated refresh, bounded retries | Native limits | None | SDK silent refresh bypasses unless routed through the gateway (wiring exists, disabled by default via NEXT_PUBLIC_LAYER2_GATEWAY_REFRESH) | PARTIAL |
-| `POST /api/auth/mfa` (enroll/challenge/verify/list_factors/status/issue_recovery_codes) | TWO-PHASE: IP-keyed pre-token-verification, then verified account + authenticated session_id (from JWT claims) post-verification; mfa namespace: session 30/5 min, account 5 failures/5 min, IP 60/5 min; mfa_succeeded clears backoff; verify completes a latched recovery (factor deletion, generation invalidation, latch clearance) | Native limits | None | Direct MFA API calls bypass | PARTIAL |
-| `POST /api/auth/recovery` | TWO-PHASE admission (IP, then verified account+session); recovery namespace: session 30/5 min, account 5/5 min, IP 60/5 min; ATOMIC consume+latch (one transaction: code consume + latch + operation + audit + grandfather deletion); fresh-first-factor ceremony required (JWT iat ≤ 10 min); cross-user replay bound | Native limits | None | Provider admin factor deletion is server-only by construction | PARTIAL |
+| `POST /api/auth/refresh` | refresh namespace: **per-credential abuse bucket** 30/5 min (keyed on HMAC(refresh_token) — a ROTATING credential, not a stable session; honestly labeled), IP 1000/5 min; **account-level refresh budgeting NOT YET IMPLEMENTED** (the account is unknown until the provider validates the token; an unverified token is never decoded for attribution); HMAC-key misconfiguration fails closed (503); missing trusted IP fails closed; **L2-007 execution lease** before the provider call; the browser wrapper preserves gateway 429/503 + Retry-After (retryable) instead of mapping to 401 | Native limits | None | SDK silent refresh bypasses unless routed through the gateway (wiring exists, disabled by default via NEXT_PUBLIC_LAYER2_GATEWAY_REFRESH) | PARTIAL |
+| `POST /api/auth/mfa` (enroll/challenge/verify/list_factors/status/issue_recovery_codes) | **TWO-PHASE, deliberately separated (L2-008)**: phase 1 debits ONLY the pre-verification abuse reservation (`mfa_{challenge,verify}_pre`: IP 60/5 min, separate namespace) — the full verified budget (account 5 failures/5 min, IP 60/5 min, session 30/5 min) is debited exactly once in phase 2, so one MFA op never double-charges IP; **L2-007 execution lease** before enroll/challenge/verify provider calls; wrong-code verify records `mfa_failed` (drives the backoff ladder); **L2-003**: the verify response adapts the REAL SDK top-level token shape (no invented `data.session`); **L2-004**: `issue_recovery_codes` requires verified recent AAL2 + recent enrollment ceremony (403 otherwise) and replaces the generation via the atomic `mfa_replace_recovery_generation` RPC (one transaction; failure preserves the old generation); **L2-006**: verify with a latch completes recovery through phased RPCs (begin → mark_factors_removed → finalize) with new-factor binding (verified TOTP created after the operation started) — partial failure is never reported ok | Native limits | None | Direct MFA API calls bypass | PARTIAL |
+| `POST /api/auth/recovery` | TWO-PHASE admission (IP, then verified account+session); recovery namespace: session 30/5 min, account 5/5 min, IP 60/5 min; ATOMIC consume+latch (one transaction); **L2-006**: the fresh-ceremony clock is the **AMR first-factor method timestamps** (never `claims.iat` — a current iat with a day-old password AMR does NOT consume; missing/future timestamps refused); **L2-007 execution lease** before the consume RPC; **L2-006**: completed/failed operations replay their terminal disposition without re-latching | Native limits | None | Provider admin factor deletion is server-only by construction | PARTIAL |
 | Direct Supabase Auth REST (any path) | None — not routed through the gateway | Native limits only | TBD by staging probe | Full custom-bucket bypass on every direct path | TBD |
 | Alternate auth methods / callbacks (OAuth, magic link, etc.) | TBD by staging probe | Native limits | TBD by staging probe | TBD by staging probe | TBD |
-| Storage / Realtime / RPC data surfaces | Additional restrictive security predicate ANDed with existing authorization (no permissive OR-around-RLS); AAL2 predicate for owner/staff surfaces | Provider RLS | None | TBD by staging probe per surface | TBD |
+| Storage / Realtime / RPC data surfaces | **NOT YET IMPLEMENTED**: no additional restrictive predicate is wired on Storage/Realtime/RPC surfaces today. The rental-route wiring below covers the rental API routes only. Per the brief, unsupported custom coverage blocks full Layer-2 activation — ship reviewed inert code and document the smallest provider/config change needed. | Provider RLS | None | TBD by staging probe per surface | UNSUPPORTED |
+
+
+### 10.1 Rental-route security-assurance wiring (L2-002)
+
+Every `requireRentalPermission` / `requireTeamManager` call site in the
+rental API routes now receives `security: await buildSecurityContext(authenticated)`.
+`buildSecurityContext` is the TRUSTED server-side wiring: it reads the
+activation flag from the module (not from caller input) and builds
+`{ supabaseAdmin, session }` from the SSR client's cookie session.
+
+- **Disabled (default)**: `buildSecurityContext` returns `null`;
+  `enforceSecurityAssurance` is inert — behavior is EXACTLY as before
+  (no guard call, no extra work).
+- **Activated**: a missing/incomplete security context FAILS CLOSED (403)
+  instead of being skipped. A caller-supplied `config` can never opt out —
+  activation is trusted server state.
+
+Wired call sites (12 route files, 15 call sites):
+
+| Route file | Wired calls |
+|---|---|
+| `src/app/api/rental/financial-event/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/manual-financial-event/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/team/audit/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/team/preview/route.js` | `requireTeamManager` |
+| `src/app/api/rental/team/route.js` | `requireRentalPermission` ×3 |
+| `src/app/api/rental/transactions/batch/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/transactions/route.js` | `requireRentalPermission` ×2 |
+| `src/app/api/rental/transfers/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/vendor-bills/[id]/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/vendor-bills/route.js` | `requireRentalPermission` |
+| `src/app/api/rental/vendor-payments/[id]/route.js` | `requireRentalPermission` ×2 |
+| `src/app/api/rental/vendor-payments/route.js` | `requireRentalPermission` |
+
+NOT wired (explicit):
+
+- `src/app/api/rental/team/permissions/route.js` — calls
+  `getActorRentalAuthorization` directly (not a `require*` wire point);
+  it does not take a security context. If the guard must cover it, the
+  route needs an explicit `enforceSecurityAssurance` call — tracked as
+  not-yet-implemented.
+- `src/app/api/tenant-payments/*` — mentions the functions only in
+  comments; no authorization call sites to wire.
+- Storage / Realtime / RPC data surfaces — see the endpoint table above
+  (UNSUPPORTED: no restrictive predicate wired).
 
 **No endpoint is PASS today.** PASS is earned per endpoint by the
 staging provider probes (direct sign-in/signup/reset/refresh, every

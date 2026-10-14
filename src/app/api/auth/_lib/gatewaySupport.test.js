@@ -9,7 +9,7 @@ vi.mock("@/lib/auth/authRateLimit.js", () => ({
   checkAdmission: (...args) => mockCheckAdmission(...args),
 }));
 
-const { gateAdmission } = await import("./gatewaySupport.js");
+const { gateAdmission, claimExecution } = await import("./gatewaySupport.js");
 
 const ENV = { AUTH_LIMITER_HMAC_KEY: "test" };
 
@@ -92,5 +92,68 @@ describe("gateAdmission backoff enforcement (L2-008)", () => {
     expect(mockCheckAdmission).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "sess-123", operationId: "op-5" })
     );
+  });
+});
+
+describe("L2-007 claimExecution (execution lease)", () => {
+  // claimExecution is imported at module top (see above); reference it here.
+  function adminWithClaim(row) {
+    return {
+      rpc: vi.fn(async (fn, params) => {
+        expect(fn).toBe("auth_claim_execution");
+        expect(typeof params.p_owner_token).toBe("string");
+        expect(params.p_owner_token).not.toBe("");
+        return { data: [row], error: null };
+      }),
+    };
+  }
+
+  it("grants the lease when the RPC grants it", async () => {
+    const admin = adminWithClaim({ granted: true, disposition: "granted", outcome: "executing" });
+    const result = await claimExecution({
+      supabaseAdmin: admin,
+      operationId: "op-1",
+      ownerToken: "owner-abc",
+      context: { intent: "password_signin" },
+    });
+    expect(result.granted).toBe(true);
+  });
+
+  it("L2-007 probe: in_flight defers with 429 + Retry-After (no provider execution)", async () => {
+    const admin = adminWithClaim({ granted: false, disposition: "in_flight", outcome: "executing" });
+    const result = await claimExecution({ supabaseAdmin: admin, operationId: "op-1", ownerToken: "owner-def" });
+    expect(result.granted).toBe(false);
+    expect(result.response.status).toBe(429);
+    expect(result.response.headers.get("Retry-After")).toBe("2");
+  });
+
+  it("L2-007 probe: terminal replays as 409 (never re-executes)", async () => {
+    const admin = adminWithClaim({ granted: false, disposition: "terminal", outcome: "credential_succeeded" });
+    const result = await claimExecution({ supabaseAdmin: admin, operationId: "op-1", ownerToken: "owner-def" });
+    expect(result.granted).toBe(false);
+    expect(result.response.status).toBe(409);
+  });
+
+  it("uncertain and unknown dispositions fail closed with 503", async () => {
+    for (const disposition of ["uncertain", "unknown"]) {
+      const admin = adminWithClaim({ granted: false, disposition, outcome: disposition });
+      const result = await claimExecution({ supabaseAdmin: admin, operationId: "op-1", ownerToken: "owner-def" });
+      expect(result.granted).toBe(false);
+      expect(result.response.status).toBe(503);
+    }
+  });
+
+  it("an RPC failure fails closed with 503 (never grants blindly)", async () => {
+    const admin = { rpc: vi.fn(async () => { throw new Error("db down"); }) };
+    const result = await claimExecution({ supabaseAdmin: admin, operationId: "op-1", ownerToken: "owner-def" });
+    expect(result.granted).toBe(false);
+    expect(result.response.status).toBe(503);
+  });
+
+  it("a malformed RPC row fails closed with 503", async () => {
+    const admin = { rpc: vi.fn(async () => ({ data: null, error: null })) };
+    const result = await claimExecution({ supabaseAdmin: admin, operationId: "op-1", ownerToken: "owner-def" });
+    expect(result.granted).toBe(false);
+    expect(result.response.status).toBe(503);
   });
 });

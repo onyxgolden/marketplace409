@@ -48,6 +48,12 @@ export const AUTH_ACTIONS = Object.freeze({
   REFRESH: "refresh",
   MFA_CHALLENGE: "mfa_challenge",
   MFA_VERIFY: "mfa_verify",
+  // L2-008: pre-verification abuse reservations. Phase 1 of an MFA
+  // challenge/verify debits a SMALL separate namespace (abuse reservation)
+  // instead of the full verified budget, so one MFA operation does not
+  // double-charge the IP budget across its two admission phases.
+  MFA_CHALLENGE_PRE: "mfa_challenge_pre",
+  MFA_VERIFY_PRE: "mfa_verify_pre",
   RECOVERY: "recovery",
 });
 
@@ -74,12 +80,23 @@ export const DEFAULT_LIMITS = Object.freeze({
     ip: "100 admissions / 5 minutes",
   }),
   refresh: Object.freeze({
-    session: "30 / 5 minutes",
-    account: "120 / 5 minutes",
+    // L2-008: the per-CREDENTIAL abuse bucket (HMAC of the presented
+    // refresh token). A refresh token is a ROTATING credential, not a
+    // stable session — the bucket bounds abuse per presented credential,
+    // not per session family. Account-level refresh budgeting is
+    // NOT YET IMPLEMENTED (the account is unknown until the provider
+    // validates the token, and an unverified token is never decoded for
+    // attribution); see the runbook inventory.
+    credential: "30 / 5 minutes",
     ip: "1000 / 5 minutes",
   }),
   mfa_challenge: Object.freeze({ account: "5 failures / 5 minutes", ip: "60 / 5 minutes" }),
   mfa_verify: Object.freeze({ account: "5 failures / 5 minutes", ip: "60 / 5 minutes" }),
+  // L2-008: pre-verification abuse reservations — small, separate
+  // namespaces so the two admission phases of one MFA op do not
+  // double-charge the IP budget.
+  mfa_challenge_pre: Object.freeze({ ip: "60 / 5 minutes (abuse reservation)" }),
+  mfa_verify_pre: Object.freeze({ ip: "60 / 5 minutes (abuse reservation)" }),
   recovery: Object.freeze({ account: "5 failures / 5 minutes", ip: "60 / 5 minutes" }),
 });
 
@@ -91,9 +108,14 @@ export const BACKOFF_LADDER_SECONDS = Object.freeze([2, 4, 8, 16, 32, 60]);
 /**
  * Machine-readable bucket config per action, aligned with the
  * `auth_admission_check(p_action, p_keys, p_limits, p_operation_id, p_now)`
- * migration. Each entry: { kinds: ['account_ip'|'account'|'ip'|'session'],
- * capacity, windowSeconds }. Keys are built as
+ * migration. Each entry: { kinds: ['account_ip'|'account'|'ip'|'session'|
+ * 'credential'], capacity, windowSeconds }. Keys are built as
  * `${action}:${kind}:${accountKeyHex}:${ip}` (components omitted when null).
+ *
+ * L2-008: the 'credential' kind is the honest name for the refresh bucket
+ * keyed on HMAC(refresh_token) — a per-credential abuse bucket, not a
+ * session bucket. The 'session' kind remains for actions whose sessionId
+ * is a verified stable session id (claims session_id).
  */
 export const ACTION_BUCKETS = Object.freeze({
   password_signin: Object.freeze([
@@ -114,8 +136,9 @@ export const ACTION_BUCKETS = Object.freeze({
     Object.freeze({ kinds: ["ip"], capacity: 100, windowSeconds: 300 }),
   ]),
   refresh: Object.freeze([
-    Object.freeze({ kinds: ["session"], capacity: 30, windowSeconds: 300 }),
-    Object.freeze({ kinds: ["account"], capacity: 120, windowSeconds: 300 }),
+    // L2-008: per-credential abuse bucket (HMAC of the presented refresh
+    // token). NOT a session bucket: the credential rotates.
+    Object.freeze({ kinds: ["credential"], capacity: 30, windowSeconds: 300 }),
     Object.freeze({ kinds: ["ip"], capacity: 1000, windowSeconds: 300 }),
   ]),
   mfa_challenge: Object.freeze([
@@ -126,6 +149,15 @@ export const ACTION_BUCKETS = Object.freeze({
   mfa_verify: Object.freeze([
     Object.freeze({ kinds: ["session"], capacity: 30, windowSeconds: 300 }),
     Object.freeze({ kinds: ["account"], capacity: 5, windowSeconds: 300 }),
+    Object.freeze({ kinds: ["ip"], capacity: 60, windowSeconds: 300 }),
+  ]),
+  // L2-008: pre-verification abuse reservations. Phase 1 of an MFA op
+  // debits ONLY this small separate IP namespace; the full verified
+  // budget (account + ip + session) is debited once in phase 2.
+  mfa_challenge_pre: Object.freeze([
+    Object.freeze({ kinds: ["ip"], capacity: 60, windowSeconds: 300 }),
+  ]),
+  mfa_verify_pre: Object.freeze([
     Object.freeze({ kinds: ["ip"], capacity: 60, windowSeconds: 300 }),
   ]),
   recovery: Object.freeze([
@@ -273,7 +305,10 @@ export async function checkAdmission({
     const pLimits = [];
     for (const bucket of buckets) {
       const needsAccount = bucket.kinds.some((k) => k === "account" || k === "account_ip");
-      const needsSession = bucket.kinds.some((k) => k === "session");
+      // L2-008: 'credential' is the honest kind for per-credential abuse
+      // buckets (HMAC of a presented rotating credential); it consumes the
+      // sessionId slot (the caller passes the opaque credential digest).
+      const needsSession = bucket.kinds.some((k) => k === "session" || k === "credential");
       const needsIp = bucket.kinds.some((k) => k === "ip" || k === "account_ip");
       if (needsAccount && !accountKeyHex) continue;
       if (needsSession && !sessionId) continue;

@@ -19,16 +19,12 @@
 // Layer 2 (MFA/rate-limit) server-guard hook — WIRED, activation-gated:
 //
 // requireRentalPermission and requireTeamManager accept an optional
-// `security` context ({ supabaseAdmin, session, config }). When supplied AND
-// Layer 2 is activated, the server-side requireSecurityAssurance() result is
-// ANDed with the rental authorization computed below:
-//
-//   allow ONLY when assurance.authorized AND the existing rental
-//   permission/preview checks pass. A deny from EITHER side is a 403.
-//
-// When activation is off (the shipped default) or no security context is
-// supplied, the gates behave EXACTLY as before Layer 2 — the guard module
-// is not even imported on the inert path. The security guard never replaces
+// `security` context ({ supabaseAdmin, session }) built by
+// buildSecurityContext(). The TRUSTED server-side ACTIVATION_CONFIG decides
+// whether enforcement applies: when activated, a missing/incomplete
+// security context FAILS CLOSED (the route must be wired); when disabled,
+// the gates behave EXACTLY as before Layer 2 — the guard module is not
+// even imported on the inert path. The security guard never replaces
 // the workspace ownership predicates, and the rental missing-membership
 // fallback below is RENTAL-context behavior only (securityPolicy.js resolves
 // cohorts independently — see its header).
@@ -36,7 +32,9 @@
 // Wire points: requireRentalPermission (after preview + permission checks),
 // requireTeamManager (after the role check). SECURITY_ASSURANCE_HOOK.status
 // is "wired": the AND is implemented; activation (config.enabled) decides
-// whether it enforces.
+// whether it enforces. Rental routes supply the context via
+// buildSecurityContext(authenticated) — see the runbook's endpoint
+// enforcement table for the wired-route inventory.
 
 import { NextResponse } from "next/server";
 import { ACTIVATION_CONFIG, isMfaLayer2Activated } from "@/lib/auth/securityPolicy.js";
@@ -83,20 +81,25 @@ function forbidden(message) {
 /**
  * Layer 2 AND: deny unless the server-side MFA guard authorizes the actor's
  * session. Returns a 403 response when the guard denies, or null when the
- * guard authorizes (or when Layer 2 is not activated / no security context
- * was supplied — the inert path, which behaves EXACTLY as before Layer 2
- * and does not even import the guard module).
+ * guard authorizes.
  *
- * @param {{ supabaseAdmin, session, config? }|null} security - caller-supplied
- *   context: service-role client, the request's session ({ access_token }),
- *   optional activation config override (tests).
+ * L2-002: the TRUSTED server-side activation config decides FIRST whether
+ * enforcement applies — never a caller-supplied override. When Layer 2 is
+ * activated, the security context is MANDATORY: a route that was never
+ * wired to supply it fails closed (403) instead of silently skipping the
+ * guard. When activation is off (the shipped default), this returns null
+ * without importing the guard module — exact pre-Layer-2 behavior.
+ *
+ * @param {{ supabaseAdmin, session }|null} security - caller-supplied
+ *   context: service-role client + the request's session ({ access_token }).
+ *   Built by buildSecurityContext() in the route layer.
  */
 async function enforceSecurityAssurance(security, authenticated) {
-  if (!security) return null;
-  const config = security.config ?? ACTIVATION_CONFIG;
-  if (!isMfaLayer2Activated(config)) return null;
-  if (!security.supabaseAdmin || !security.session?.access_token) {
-    // Misconfigured security context under activation: fail closed.
+  if (!isMfaLayer2Activated(ACTIVATION_CONFIG)) return null;
+  if (!security?.supabaseAdmin || !security?.session?.access_token) {
+    // Activated but the route was never wired (or wiring failed): fail
+    // closed. A missing context under activation is a deployment bug, not
+    // an exemption.
     return forbidden("Additional verification is unavailable. Please try again later.");
   }
   const { requireSecurityAssurance } = await import("@/lib/auth/requireSecurityAssurance.js");
@@ -106,13 +109,50 @@ async function enforceSecurityAssurance(security, authenticated) {
       supabaseAdmin: security.supabaseAdmin,
       user: { id: authenticated?.user?.id },
       session: security.session,
-      config,
+      config: ACTIVATION_CONFIG,
     });
   } catch {
     return forbidden("Additional verification is unavailable. Please try again later.");
   }
   if (assurance?.authorized) return null;
   return forbidden("Additional verification required. Complete MFA to continue.");
+}
+
+/**
+ * Build the Layer 2 security context for a rental route from the shared
+ * request authentication (createAuthenticatedRentalManagerApplication).
+ *
+ * Returns null when Layer 2 is not activated — the inert path does zero
+ * extra work (no service-role client, no session read) so unwired routes
+ * behave EXACTLY as before Layer 2. When activated, returns
+ * { supabaseAdmin, session } with the request's cookie session; a missing
+ * piece fails closed in enforceSecurityAssurance rather than throwing.
+ *
+ * Routes wire it as:
+ *   const gate = await requireTeamManager({
+ *     authenticated, request,
+ *     security: await buildSecurityContext(authenticated),
+ *   });
+ */
+export async function buildSecurityContext(authenticated) {
+  if (!isMfaLayer2Activated(ACTIVATION_CONFIG)) return null;
+  let supabaseAdmin = null;
+  try {
+    const { createServerAuthClient } = await import("@/lib/auth/serverAuthTransport.js");
+    supabaseAdmin = createServerAuthClient();
+  } catch {
+    supabaseAdmin = null;
+  }
+  let accessToken = null;
+  try {
+    const { data } = await authenticated?.supabaseClient?.auth?.getSession();
+    if (typeof data?.session?.access_token === "string" && data.session.access_token !== "") {
+      accessToken = data.session.access_token;
+    }
+  } catch {
+    accessToken = null;
+  }
+  return { supabaseAdmin, session: accessToken ? { access_token: accessToken } : null };
 }
 
 async function loadMembership(supabaseClient, actorUserId) {

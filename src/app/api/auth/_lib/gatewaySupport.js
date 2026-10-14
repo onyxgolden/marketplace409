@@ -191,6 +191,64 @@ export function createUserScopedAuthClient(accessToken, env = process.env) {
 }
 
 /**
+ * L2-007 execution lease. Call AFTER gateAdmission allows and BEFORE any
+ * provider call. Exactly one owner token per operation_id wins the lease;
+ * duplicates must NOT execute the provider.
+ *
+ * @returns { granted: true } | { granted: false, response }
+ *   in_flight -> 429 with Retry-After (defer; the client retries with the
+ *     SAME operationId and replays the terminal outcome once recorded).
+ *   terminal  -> 409 (already executed; never re-execute).
+ *   uncertain -> 503 (prior attempt's fate unknown; reconcile before refire).
+ *   unknown   -> 503 (no such operation; fail closed).
+ *
+ * context: non-secret request identity (action intent, factor id) — never
+ * plaintext credentials, codes, or tokens.
+ */
+export async function claimExecution({ supabaseAdmin, operationId, ownerToken, context = null }) {
+  const deny = (status, message, retryAfter = null) => ({
+    granted: false,
+    response: NextResponse.json(
+      { error: message, ...(retryAfter !== null ? { retryAfterSeconds: retryAfter } : {}) },
+      {
+        status,
+        ...(retryAfter !== null ? { headers: { "Retry-After": String(retryAfter) } } : {}),
+      }
+    ),
+  });
+
+  let row;
+  try {
+    const { data, error } = await supabaseAdmin.rpc("auth_claim_execution", {
+      p_operation_id: operationId,
+      p_owner_token: ownerToken,
+      p_execution_context: context,
+    });
+    if (error) throw error;
+    row = Array.isArray(data) ? data[0] : data;
+  } catch {
+    return deny(503, MESSAGE_UNAVAILABLE);
+  }
+
+  if (!row || typeof row.granted !== "boolean") {
+    return deny(503, MESSAGE_UNAVAILABLE);
+  }
+  if (row.granted) return { granted: true, disposition: row.disposition };
+
+  switch (row.disposition) {
+    case "in_flight":
+      // Defer: short backoff, same operationId replays the terminal outcome.
+      return deny(429, MESSAGE_RATE_LIMITED, 2);
+    case "terminal":
+      return deny(409, "This operation was already processed.");
+    case "uncertain":
+    case "unknown":
+    default:
+      return deny(503, MESSAGE_UNAVAILABLE);
+  }
+}
+
+/**
  * Validate a presented bearer access token against the provider and return
  * the verified user, or null. The only identity a route may act on is the
  * provider-verified one — never a user id from the request body.

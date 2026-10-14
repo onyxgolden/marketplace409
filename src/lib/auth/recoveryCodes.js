@@ -19,8 +19,10 @@
 // constant-time comparison against the stored digest.
 //
 // Regeneration contract (caller-enforced, documented here): regenerating a
-// user's codes requires a recent verified AAL2 session and invalidates the
-// ENTIRE old generation. Consumed codes are never restored.
+// user's codes requires a recent verified AAL2 session bound to a recent
+// enrollment ceremony (enforced in the mfa route's issue_recovery_codes
+// action) and invalidates the ENTIRE old generation. Consumed codes are
+// never restored.
 //
 // Atomicity contract: consumeRecoveryCode goes through the Postgres RPC
 // `mfa_consume_recovery_code(p_user_id uuid, p_code_digest text,
@@ -28,7 +30,10 @@
 // atomically consumes the code AND enters RECOVERY_PENDING (latch +
 // operation row + audit row + grandfather-registry deletion) in one
 // transaction. One concurrent winner only; replays are bound to
-// user+digest.
+// user+digest. storeRecoveryGeneration goes through
+// `mfa_replace_recovery_generation` (per-user advisory lock + invalidate +
+// insert in ONE transaction): a failed replacement rolls back entirely and
+// the previously valid generation survives.
 
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
@@ -144,11 +149,12 @@ export function verifyRecoveryCodeDigest(code, storedDigest, keyVersion, env = p
  *   mfa_recovery_codes(id uuid pk, generation_id fk, code_digest,
  *     consumed_at, consumed_by_operation unique)
  *
- * L2-004: explicit UUIDs are supplied for every row (the migration also
- * carries gen_random_uuid() defaults); codes carry ONLY the columns that
- * exist (no user_id/key_version on the codes table); and the old generation
- * is invalidated BEFORE the new row is inserted, so the one-active
- * partial unique index is never violated.
+ * L2-004: replacement is ONE TRANSACTION via the
+ * mfa_replace_recovery_generation RPC (per-user advisory lock, invalidate
+ * old, insert generation, insert digests). ANY failure rolls back the whole
+ * transaction, so a failed replacement NEVER leaves the previously valid
+ * generation destroyed without a replacement. Concurrent issuers serialize;
+ * consumed codes are never restored.
  *
  * Marks every prior non-invalidated generation for the user invalidated —
  * regeneration invalidates the entire old generation.
@@ -163,31 +169,16 @@ export async function storeRecoveryGeneration(supabaseAdmin, userId, codes, opti
   const digests = codes.map((code) => deriveCodeDigest(code, keyVersion, env));
   const generationId = randomUUID();
 
-  // Invalidate the old generation FIRST: the partial unique index allows
-  // exactly one active generation per user, so inserting before
-  // invalidating would violate it. Never restores invalidated generations.
-  const { error: invalidateError } = await supabaseAdmin
-    .from("mfa_recovery_generations")
-    .update({ invalidated_at: new Date().toISOString() })
-    .eq("user_id", userId)
-    .is("invalidated_at", null);
-  if (invalidateError) throw invalidateError;
-
-  const { error: genError } = await supabaseAdmin.from("mfa_recovery_generations").insert({
-    id: generationId,
-    user_id: userId,
-    key_version: keyVersion,
+  const { data, error } = await supabaseAdmin.rpc("mfa_replace_recovery_generation", {
+    p_user_id: userId,
+    p_generation_id: generationId,
+    p_key_version: keyVersion,
+    p_code_digests: digests,
   });
-  if (genError) throw genError;
-
-  const { error: codeError } = await supabaseAdmin.from("mfa_recovery_codes").insert(
-    digests.map((codeDigest) => ({
-      id: randomUUID(),
-      generation_id: generationId,
-      code_digest: codeDigest,
-    }))
-  );
-  if (codeError) throw codeError;
+  if (error) throw error;
+  if (data !== generationId) {
+    throw new Error("mfa_replace_recovery_generation returned an unexpected generation id.");
+  }
 
   return { generationId };
 }

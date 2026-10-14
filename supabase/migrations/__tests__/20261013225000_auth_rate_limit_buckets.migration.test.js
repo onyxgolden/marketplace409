@@ -341,3 +341,102 @@ describe("rate-limit bucket migration", () => {
     expect(await bucketTokens("t6:acct:stale")).toBeNull();
   });
 });
+
+describe("L2-007 execution lease (auth_claim_execution)", () => {
+  async function claim(op, owner, context = null) {
+    const { rows } = await db.query(
+      `select * from public.auth_claim_execution($1, $2, $3)`,
+      [op, owner, context],
+    );
+    return rows[0];
+  }
+
+  async function setupAdmitted(op) {
+    // Unique bucket key per operation: the test bucket has capacity 2.
+    await admit({ keys: [`l2-007:ip:${op}`], op });
+  }
+
+  it("grants the lease to the first claimant (admitted -> executing)", async () => {
+    await setupAdmitted("op-lease-1");
+    const r = await claim("op-lease-1", "owner-A", { intent: "password_signin" });
+    expect(r.granted).toBe(true);
+    expect(r.disposition).toBe("granted");
+    const { rows } = await db.query(
+      `select outcome, execution_owner_token from public.auth_operation_log where operation_id = 'op-lease-1'`
+    );
+    expect(rows[0].outcome).toBe("executing");
+    expect(rows[0].execution_owner_token).toBe("owner-A");
+  });
+
+  it("L2-007 probe: a second claimant gets in_flight (no double execution)", async () => {
+    await setupAdmitted("op-lease-2");
+    const first = await claim("op-lease-2", "owner-A");
+    expect(first.granted).toBe(true);
+    const second = await claim("op-lease-2", "owner-B");
+    expect(second.granted).toBe(false);
+    expect(second.disposition).toBe("in_flight");
+    // The lease still belongs to the first owner.
+    const { rows } = await db.query(
+      `select execution_owner_token from public.auth_operation_log where operation_id = 'op-lease-2'`
+    );
+    expect(rows[0].execution_owner_token).toBe("owner-A");
+  });
+
+  it("replays terminal dispositions without granting (never re-executes)", async () => {
+    await setupAdmitted("op-lease-3");
+    await claim("op-lease-3", "owner-A");
+    expect(await recordOutcome("op-lease-3", "credential_succeeded", "acct-1")).toBe(true);
+    const replay = await claim("op-lease-3", "owner-B");
+    expect(replay.granted).toBe(false);
+    expect(replay.disposition).toBe("terminal");
+    expect(replay.outcome).toBe("credential_succeeded");
+  });
+
+  it("records mfa_failed and uncertain outcomes (L2-007/L2-008)", async () => {
+    await setupAdmitted("op-lease-4");
+    await claim("op-lease-4", "owner-A");
+    expect(await recordOutcome("op-lease-4", "mfa_failed", "acct-1")).toBe(true);
+    const { rows } = await db.query(
+      `select outcome from public.auth_operation_log where operation_id = 'op-lease-4'`
+    );
+    expect(rows[0].outcome).toBe("mfa_failed");
+
+    await setupAdmitted("op-lease-5");
+    await claim("op-lease-5", "owner-A");
+    expect(await recordOutcome("op-lease-5", "uncertain", "acct-1")).toBe(true);
+    // Uncertain blocks blind refire.
+    const refire = await claim("op-lease-5", "owner-B");
+    expect(refire.granted).toBe(false);
+    expect(refire.disposition).toBe("uncertain");
+  });
+
+  it("mfa_failed drives the backoff ladder", async () => {
+    const keys = ["l2-007-backoff:ip:9"];
+    const action = "mfa_verify";
+    // Two wrong-code failures...
+    await admit({ action, keys, op: "op-bo-1" });
+    await recordOutcome("op-bo-1", "mfa_failed", "acct-bo");
+    await admit({ action, keys, op: "op-bo-2" });
+    await recordOutcome("op-bo-2", "mfa_failed", "acct-bo");
+    // ...escalate backoff on the next admission.
+    const r = await admit({ action, keys, op: "op-bo-3" });
+    expect(r.backoff_seconds).toBeGreaterThan(0);
+  });
+
+  it("unknown operation ids fail closed (unknown, not granted)", async () => {
+    const r = await claim("op-never-admitted", "owner-A");
+    expect(r.granted).toBe(false);
+    expect(r.disposition).toBe("unknown");
+  });
+
+  it("the claim RPC is service-role only", async () => {
+    const { rows } = await db.query(`
+      select has_function_privilege('anon', 'public.auth_claim_execution(text,text,jsonb)', 'execute') as anon_can,
+             has_function_privilege('authenticated', 'public.auth_claim_execution(text,text,jsonb)', 'execute') as auth_can,
+             has_function_privilege('service_role', 'public.auth_claim_execution(text,text,jsonb)', 'execute') as svc_can
+    `);
+    expect(rows[0].anon_can).toBe(false);
+    expect(rows[0].auth_can).toBe(false);
+    expect(rows[0].svc_can).toBe(true);
+  });
+});

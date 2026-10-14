@@ -14,13 +14,14 @@ let browserClient = null;
 //
 // When enabled, the browser client's fetch is wrapped: token-endpoint calls
 // with grant_type=refresh_token are diverted to POST /api/auth/refresh,
-// which admission-gates the refresh (IP + session buckets) and performs the
+// which admission-gates the refresh (IP + per-credential buckets) and performs the
 // single provider refresh per request. The gateway's { status:'ok', session }
 // is translated into the token endpoint's response shape so the SDK's
 // session handling (including cookie persistence via @supabase/ssr) works
-// unchanged. A gateway refusal surfaces as a failed refresh; the app must
-// surface "session refresh failed, please sign in again" — never silently
-// sign out.
+// unchanged. A gateway refusal PRESERVES its status and Retry-After: 429/503
+// are retryable (the SDK backs off and keeps the session); only 401 means
+// the credential is dead. Mapping refusals to 401 would drop sessions a
+// backoff would have saved and desync cookie rotation.
 //
 // MULTI-TAB: the gateway performs exactly one provider refresh per request
 // and the provider's rotation invalidates the old refresh token on use, so
@@ -44,10 +45,10 @@ function isRefreshTokenRequest(input) {
   }
 }
 
-function jsonResponse(payload, status) {
+function jsonResponse(payload, status, extraHeaders = null) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(extraHeaders ?? {}) },
   });
 }
 
@@ -77,11 +78,27 @@ async function gatewayRefreshFetch(input, init) {
             200
           );
         }
+        // L2-008: preserve the gateway's refusal status and Retry-After.
+        // 429 (admission/backoff or the in-flight execution lease) and 503
+        // (unavailable) are RETRYABLE — the SDK must back off, not drop the
+        // session. Only 401 means the credential is dead. Mapping every
+        // refusal to 401 would make the SDK discard sessions a short
+        // backoff would have saved, and would desync cookie rotation.
+        const status =
+          typeof result?.httpStatus === "number" && result.httpStatus >= 400
+            ? result.httpStatus
+            : 503;
+        const retryHeaders =
+          typeof result?.retryAfterSeconds === "number" && result.retryAfterSeconds >= 0
+            ? { "retry-after": String(Math.ceil(result.retryAfterSeconds)) }
+            : null;
+        return jsonResponse({ error: "session refresh failed" }, status, retryHeaders);
       } catch {
-        // Fall through to the 401 below: a gateway failure is a failed
-        // refresh, never a silent direct retry (that would bypass admission).
+        // Transport failure reaching the gateway: 503 (retryable). Never
+        // silently retry direct against the provider — that would bypass
+        // admission.
+        return jsonResponse({ error: "session refresh failed" }, 503);
       }
-      return jsonResponse({ error: "session refresh failed" }, 401);
     }
   }
   return fetch(input, init);
@@ -102,4 +119,9 @@ export function createClient() {
 // Test seam: whether gateway-routed refresh is enabled.
 export function isGatewayRefreshEnabled() {
   return GATEWAY_REFRESH_ENABLED;
+}
+
+// Test seam: the wrapped fetch, for L2-008(d) tests.
+export function gatewayRefreshFetchForTest() {
+  return gatewayRefreshFetch;
 }

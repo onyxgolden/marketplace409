@@ -18,14 +18,16 @@
 // refresh operation itself is admission-gated.
 
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import { createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
-import { opaqueKey } from "@/lib/auth/authRateLimit.js";
+import { opaqueKey, recordAttemptOutcome } from "@/lib/auth/authRateLimit.js";
 import {
   AUTH_ACTIONS,
   ACTIVATION_CONFIG,
   MESSAGE_INVALID_REQUEST,
   MESSAGE_REFRESH_FAILED,
+  claimExecution,
   extractOperationId,
   gateAdmission,
   isActivationEnabled,
@@ -57,33 +59,60 @@ export async function POST(request) {
   // Fail closed before the provider call. accountId is null here by design:
   // the user id is established only by the provider validating the token,
   // and an unverified token must never be decoded for account attribution.
-  // The SESSION bucket is keyed on HMAC(refresh_token) — the refresh token
-  // is the bearer credential for its session family, so its keyed hash is
-  // an independently authenticated session identifier (never the account
-  // hash, never a decode). Racing tabs share the token and therefore share
-  // the bucket, which bounds multi-tab refresh storms.
-  let sessionId = null;
+  // L2-008: the per-CREDENTIAL abuse bucket is keyed on HMAC(refresh_token).
+  // A refresh token is a ROTATING credential, not a stable session — the
+  // bucket honestly bounds abuse per presented credential (racing tabs
+  // share the token and therefore share the bucket, which bounds multi-tab
+  // refresh storms). Account-level refresh budgeting is NOT YET IMPLEMENTED
+  // (see the runbook inventory): the account is unknown until the provider
+  // validates the token.
+  let credentialId = null;
   try {
-    sessionId = opaqueKey(refreshToken, env.AUTH_LIMITER_HMAC_KEY);
+    credentialId = opaqueKey(refreshToken, env.AUTH_LIMITER_HMAC_KEY);
   } catch {
-    // HMAC key misconfiguration: the session bucket is skipped, IP still applies.
+    // L2-008: HMAC key misconfiguration fails CLOSED. The per-credential
+    // abuse bucket is a required control; proceeding without it would
+    // silently weaken refresh-token abuse protection.
+    return NextResponse.json({ error: MESSAGE_REFRESH_FAILED }, { status: 503 });
   }
   const gate = await gateAdmission({
     supabaseAdmin,
     action: AUTH_ACTIONS.REFRESH,
     accountId: null,
-    sessionId,
+    sessionId: credentialId,
     ip,
     operationId,
     env,
   });
   if (!gate.allowed) return gate.response;
 
-  const { data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken });
+  // L2-007: claim the execution lease BEFORE the provider call. A duplicate
+  // in-flight request with the same operationId defers without executing a
+  // second provider refresh.
+  const claim = await claimExecution({
+    supabaseAdmin,
+    operationId,
+    ownerToken: randomUUID(),
+    context: { intent: "refresh" },
+  });
+  if (!claim.granted) return claim.response;
+
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabaseAdmin.auth.refreshSession({ refresh_token: refreshToken }));
+  } catch {
+    await recordAttemptOutcome({ supabaseAdmin, operationId, outcome: "uncertain", accountKey: null });
+    return NextResponse.json({ error: MESSAGE_REFRESH_FAILED }, { status: 503 });
+  }
   if (error || !data?.session) {
     // Generic: same response for expired, revoked, or malformed tokens.
+    // The IP + per-credential budgets were already charged at admission;
+    // no account outcome is recorded (the account was never established).
+    await recordAttemptOutcome({ supabaseAdmin, operationId, outcome: "credential_failed", accountKey: null });
     return NextResponse.json({ error: MESSAGE_REFRESH_FAILED }, { status: 401 });
   }
+  await recordAttemptOutcome({ supabaseAdmin, operationId, outcome: "credential_succeeded", accountKey: null });
 
   const response = NextResponse.json({ status: "ok", session: data.session });
   if (!isActivationEnabled(ACTIVATION_CONFIG)) markInert(response);
