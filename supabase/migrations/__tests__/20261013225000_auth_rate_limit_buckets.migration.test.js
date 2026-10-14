@@ -206,6 +206,57 @@ describe("rate-limit bucket migration", () => {
     expect(await bucketTokens("t4:acct:a")).toBeCloseTo(0, 5);
   });
 
+  it("L2-007 probe: cross-action replay of an admitted operation id is denied", async () => {
+    const keys = ["t7:acct:a"];
+    const limits = JSON.stringify([{ capacity: 100, window_seconds: 600 }]);
+    const first = await admit({ action: "password_signin", keys, limits, op: "op-t7-cross" });
+    expect(first.allowed).toBe(true);
+
+    // Same operation id, different action: denied — the sign-in admission
+    // cannot authorize a recovery attempt.
+    const cross = await admit({ action: "recovery", keys, limits, op: "op-t7-cross" });
+    expect(cross).toMatchObject({ allowed: false, unavailable: false });
+
+    // The original action still replays fine (bound replay is intact).
+    const legit = await admit({ action: "password_signin", keys, limits, op: "op-t7-cross" });
+    expect(legit.allowed).toBe(true);
+  });
+
+  it("L2-007 probe: cross-subject replay of an admitted operation id is denied", async () => {
+    const limits = JSON.stringify([{ capacity: 100, window_seconds: 600 }]);
+    const first = await admit({ keys: ["t7b:acct:user-a"], limits, op: "op-t7b-cross" });
+    expect(first.allowed).toBe(true);
+
+    // Same operation id and action, different key set: denied — one
+    // operation id cannot authorize another subject's attempt.
+    const cross = await admit({ keys: ["t7b:acct:user-b"], limits, op: "op-t7b-cross" });
+    expect(cross).toMatchObject({ allowed: false, unavailable: false });
+
+    // Key ORDER does not matter: the same key set in different order replays.
+    const reordered = await admit({ keys: ["t7b:acct:user-a"], limits, op: "op-t7b-cross" });
+    expect(reordered.allowed).toBe(true);
+  });
+
+  it("L2-007 probe: replay after a terminal outcome is denied (one operation id = one provider attempt)", async () => {
+    const keys = ["t7c:acct:a"];
+    const limits = JSON.stringify([{ capacity: 100, window_seconds: 600 }]);
+    const first = await admit({ keys, limits, op: "op-t7c-term" });
+    expect(first.allowed).toBe(true);
+
+    // The provider attempt executed and its outcome was recorded.
+    expect(await recordOutcome("op-t7c-term", "credential_failed", "t7c:acct:a")).toBe(true);
+
+    // Replaying the same bound operation id after the terminal outcome is
+    // denied: a new provider attempt requires a fresh operation id (which
+    // debits the buckets anew).
+    const replay = await admit({ keys, limits, op: "op-t7c-term" });
+    expect(replay).toMatchObject({ allowed: false, unavailable: false });
+
+    // A fresh operation id for the same subject is evaluated normally.
+    const fresh = await admit({ keys, limits, op: "op-t7c-fresh" });
+    expect(fresh.allowed).toBe(true);
+  });
+
   it("escalates backoff on failures and clears it on MFA success", async () => {
     const action = "signin-bk";
     const keys = ["bk:acct:u1", "bk:ip:9"];

@@ -9,19 +9,30 @@
 //
 // Contract notes:
 // - `supabaseAdmin` must be a service-role client (see serverAuthTransport.js).
-// - Session identity is independently validated via auth.getUser(accessToken).
-// - AAL2 means a provider-issued AAL2 claim (amr containing an enrolled
-//   factor, or aal === "aal2"). AAL1 with no enrolled factor is NOT
-//   sufficient for a required-cohort new session — the brief is explicit.
+// - Session identity is independently validated via auth.getUser(accessToken),
+//   and the AAL/AMR/session_id claims via auth.getClaims(accessToken) — the
+//   two are bound together (claims.sub === user.id). getUser's user object
+//   is NOT treated as carrying JWT claims: aal/amr/session_id come only
+//   from the independently validated claims.
+// - AAL2 means a provider-issued `aal === "aal2"` claim, or an `amr` claim
+//   containing a REAL second factor (totp, phone, webauthn). An AAL1 session
+//   whose amr lists only first-factor methods (password, oauth, magiclink,
+//   otp, email) is NOT AAL2 — oauth/magiclink never count as a second factor.
 // - The recovery latch (`mfa_security_latch`) denies latched users even with
 //   otherwise-valid tokens, independent of provider revocation propagation.
-// - The grandfather registry (`mfa_session_families`) covers pre-activation
-//   session families by (user_id, session_id). Refresh of the same family
-//   preserves eligibility; new families cannot join. A browser timestamp or a
-//   newly refreshed JWT iat NEVER determines grandfathering.
-// - Grandfathering applies to the session family that existed at activation,
-//   not to the person: revoked and recovery-pending families never regain
-//   access via grandfathering.
+// - The grandfather registry (`session_grandfather_registry`, keyed by
+//   (user_id, session_id)) covers pre-activation session families. Refresh of
+//   the same family preserves eligibility; new families cannot join. The
+//   session_id comes from the validated JWT claims, never from a
+//   caller-supplied field. A browser timestamp or a newly refreshed JWT iat
+//   NEVER determines grandfathering. Revoked and recovery-pending families
+//   never regain access via grandfathering — recovery deletes the user's
+//   registry rows when the latch is set, so row existence IS the eligibility
+//   signal (the table has no revoked_at/state columns by design).
+// - Factor listing uses the admin `_listFactors({ userId })` surface — the
+//   only admin factor-listing method in the locked @supabase/auth-js 2.110.5
+//   (public listFactors/deleteFactor do not exist there). Return shape is
+//   { data: { factors: [...] } }; only status === "verified" factors count.
 
 import {
   ACTIVATION_CONFIG,
@@ -31,8 +42,6 @@ import {
   isMfaLayer2Activated,
   resolveActorEligibility,
 } from "./securityPolicy.js";
-
-const RECOVERY_PENDING_STATES = new Set([MFA_STATES.RECOVERY_PENDING]);
 
 async function readLatch(supabaseAdmin, userId) {
   const { data, error } = await supabaseAdmin
@@ -44,11 +53,11 @@ async function readLatch(supabaseAdmin, userId) {
   return data ?? null;
 }
 
-async function readGrandfatherFamily(supabaseAdmin, userId, sessionId) {
+async function readGrandfatherRow(supabaseAdmin, userId, sessionId) {
   if (!sessionId) return null;
   const { data, error } = await supabaseAdmin
-    .from("mfa_session_families")
-    .select("user_id, session_id, state, revoked_at")
+    .from("session_grandfather_registry")
+    .select("user_id, session_id")
     .eq("user_id", userId)
     .eq("session_id", sessionId)
     .maybeSingle();
@@ -57,20 +66,47 @@ async function readGrandfatherFamily(supabaseAdmin, userId, sessionId) {
 }
 
 async function listVerifiedFactors(supabaseAdmin, userId) {
-  const { data, error } = await supabaseAdmin.auth.admin.listFactors({ id: userId });
+  // Locked SDK 2.110.5: the admin factor surface is the underscore-prefixed
+  // _listFactors({ userId }) (public listFactors does not exist). Return
+  // shape: { data: { factors: [...] } }. Pinned by adapter tests.
+  const { data, error } = await supabaseAdmin.auth.admin._listFactors({ userId });
   if (error) throw error;
-  const factors = Array.isArray(data?.all) ? data.all : Array.isArray(data?.totp) ? data.totp : [];
+  const factors = Array.isArray(data?.factors) ? data.factors : [];
   return factors.filter((f) => f?.status === "verified");
 }
 
-function verifiedAal2(verifiedUser) {
-  if (!verifiedUser) return false;
-  if (verifiedUser.aal === "aal2") return true;
-  const amr = verifiedUser.amr;
-  if (Array.isArray(amr) && amr.some((m) => String(m?.method ?? m).toLowerCase() !== "password")) {
-    return true;
+// Real second-factor methods. First-factor methods (password, oauth,
+// magiclink, otp, email, sso, saml, ...) NEVER satisfy AAL2, even when they
+// appear in amr alongside password on an AAL1 session.
+const SECOND_FACTOR_METHODS = new Set(["totp", "phone", "webauthn"]);
+
+function verifiedAal2(claims) {
+  if (!claims) return false;
+  if (claims.aal === "aal2") return true;
+  const amr = claims.amr;
+  if (!Array.isArray(amr)) return false;
+  return amr.some((m) => SECOND_FACTOR_METHODS.has(String(m?.method ?? m).toLowerCase()));
+}
+
+/**
+ * Validate the JWT claims for a session token, independently bound to the
+ * verified user. Returns the claims ({ sub, aal, amr, session_id, iat, ... })
+ * or null when the token is invalid or the binding fails.
+ */
+export async function verifiedSessionClaims(supabaseAdmin, accessToken, userId) {
+  try {
+    const { data, error } = await supabaseAdmin.auth.getClaims(accessToken);
+    if (error || !data?.claims) return null;
+    const claims = data.claims;
+    if (!claims || typeof claims !== "object") return null;
+    // Bind the claims to the independently verified user: the claims must
+    // name the same subject. Without this binding, claims from any valid
+    // token could be presented for another user.
+    if (String(claims.sub ?? "") !== String(userId ?? "")) return null;
+    return claims;
+  } catch {
+    return null;
   }
-  return false;
 }
 
 /**
@@ -78,7 +114,7 @@ function verifiedAal2(verifiedUser) {
  *
  * @param {{ supabaseAdmin, user, session, config }} args
  *   user: { id } claimed by the caller (re-validated against the session token).
- *   session: { access_token, user?: { id, aal, amr } } — the session to check.
+ *   session: { access_token } — the session to check.
  * @returns { authorized: boolean, state, cohort, reason }
  */
 export async function requireSecurityAssurance({
@@ -117,7 +153,15 @@ export async function requireSecurityAssurance({
     return deny(MFA_STATES.FIRST_FACTOR, COHORT_UNKNOWN, "session-validation-failed");
   }
 
-  // 2. Resolve the cohort from actual owned workspaces / active memberships.
+  // 1b. Independently validate the JWT claims (aal/amr/session_id) and bind
+  //     them to the verified user. The getUser user object is NOT treated
+  //     as carrying JWT claims.
+  const claims = await verifiedSessionClaims(supabaseAdmin, session.access_token, verifiedUser.id);
+  if (!claims) {
+    return deny(MFA_STATES.FIRST_FACTOR, COHORT_UNKNOWN, "claims-validation-failed");
+  }
+
+  // 2. Resolve the cohort from the deployed ownership schema.
   let eligibility;
   try {
     eligibility = await resolveActorEligibility(supabaseAdmin, verifiedUser.id);
@@ -148,8 +192,8 @@ export async function requireSecurityAssurance({
     return deny(MFA_STATES.FIRST_FACTOR, eligibility.cohort, "latch-check-failed");
   }
 
-  // 4. Provider-issued AAL2 on the verified session is sufficient.
-  if (verifiedAal2(verifiedUser)) {
+  // 4. Provider-issued AAL2 on the validated claims is sufficient.
+  if (verifiedAal2(claims)) {
     return {
       authorized: true,
       state: MFA_STATES.AUTHORIZED,
@@ -158,7 +202,30 @@ export async function requireSecurityAssurance({
     };
   }
 
-  // 5. Below AAL2: distinguish "must enroll" from "must challenge".
+  // 5. Below AAL2: the grandfather registry covers pre-activation session
+  //    families. The session_id comes from the VALIDATED claims, never from
+  //    a caller-supplied field. A legitimate old family authorizes even with
+  //    no enrolled factor — that is the entire point of the snapshot.
+  try {
+    const grandfathered = await readGrandfatherRow(
+      supabaseAdmin,
+      verifiedUser.id,
+      typeof claims.session_id === "string" ? claims.session_id : null
+    );
+    if (grandfathered) {
+      return {
+        authorized: true,
+        state: MFA_STATES.AUTHORIZED,
+        cohort: eligibility.cohort,
+        reason: "grandfathered",
+      };
+    }
+  } catch {
+    return deny(MFA_STATES.FIRST_FACTOR, eligibility.cohort, "grandfather-check-failed");
+  }
+
+  // 6. Not grandfathered and below AAL2: distinguish "must enroll" from
+  //    "must challenge".
   let verifiedFactors;
   try {
     verifiedFactors = await listVerifiedFactors(supabaseAdmin, verifiedUser.id);
@@ -170,22 +237,5 @@ export async function requireSecurityAssurance({
     return deny(MFA_STATES.ENROLL_REQUIRED, eligibility.cohort, "no-enrolled-factor");
   }
 
-  // 6. Factor exists but session is AAL1: grandfather registry check for a
-  //    pre-activation session family. Keyed by (user, Supabase session_id) —
-  //    never by browser timestamps or refreshed JWT iat.
-  try {
-    const family = await readGrandfatherFamily(supabaseAdmin, verifiedUser.id, session?.user?.session_id ?? session?.session_id);
-    if (family && !family.revoked_at && !RECOVERY_PENDING_STATES.has(family.state)) {
-      return {
-        authorized: true,
-        state: MFA_STATES.AUTHORIZED,
-        cohort: eligibility.cohort,
-        reason: "grandfathered-session-family",
-      };
-    }
-  } catch {
-    return deny(MFA_STATES.CHALLENGE_REQUIRED, eligibility.cohort, "grandfather-check-failed");
-  }
-
-  return deny(MFA_STATES.CHALLENGE_REQUIRED, eligibility.cohort, "challenge-required");
+  return deny(MFA_STATES.CHALLENGE_REQUIRED, eligibility.cohort, "aal1-with-factor");
 }

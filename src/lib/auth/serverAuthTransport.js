@@ -14,6 +14,7 @@
 // nothing in this module stores, accepts, or documents those credentials.
 
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 
 function requiredEnv(env, name) {
   const value = env?.[name];
@@ -44,8 +45,17 @@ export function createServerAuthClient(env = process.env) {
  * delete a lost factor and revoke sessions; they may do NOTHING else with
  * the admin client (no listUsers, no updateUser, no invite, no factor
  * creation). Every operation requires a caller-supplied audit id, recorded
- * in `mfa_audit_log` (migration spec table; RPC-free insert, best effort —
- * an audit-write failure fails the operation rather than proceeding blind).
+ * in `mfa_audit_log` (migration table: id uuid pk, user_id, action, actor,
+ * audit_id, metadata, created_at).
+ *
+ * SDK CONTRACT (locked @supabase/auth-js 2.110.5, verified 2026-10-14):
+ * - The admin factor surface is the underscore-prefixed
+ *   `_listFactors({ userId })` / `_deleteFactor({ userId, id })`; public
+ *   listFactors/deleteFactor DO NOT EXIST in this version.
+ * - `admin.signOut(jwt, scope)` revokes by JWT, not by user id: there is no
+ *   by-user-id session revocation in this SDK version. The recovery latch
+ *   (mfa_security_latch) is therefore the real guard; signOut is
+ *   belt-and-braces using the user's own JWT from the recovery request.
  *
  * The recovery latch itself is set/cleared through the recovery flow's own
  * transactional RPCs, not through this adapter.
@@ -53,16 +63,17 @@ export function createServerAuthClient(env = process.env) {
 export function adminRecoveryAdapter(supabaseAdmin) {
   if (!supabaseAdmin) throw new Error("adminRecoveryAdapter requires a server auth client.");
 
-  async function audit(auditId, action, userId, details = {}) {
+  async function audit(auditId, action, userId, metadata = {}) {
     if (typeof auditId !== "string" || auditId === "") {
       throw new Error("adminRecoveryAdapter operations require an audit id.");
     }
     const { error } = await supabaseAdmin.from("mfa_audit_log").insert({
+      id: randomUUID(),
       audit_id: auditId,
       action,
+      actor: "gateway",
       user_id: userId,
-      details,
-      created_at: new Date().toISOString(),
+      metadata,
     });
     if (error) throw error;
   }
@@ -77,20 +88,26 @@ export function adminRecoveryAdapter(supabaseAdmin) {
       if (typeof userId !== "string" || userId === "") throw new Error("deleteFactor requires userId.");
       if (typeof factorId !== "string" || factorId === "") throw new Error("deleteFactor requires factorId.");
       await audit(auditId, "factor.delete", userId, { factorId });
-      const { error } = await supabaseAdmin.auth.admin.deleteFactor({ id: factorId, userId });
+      const { error } = await supabaseAdmin.auth.admin._deleteFactor({ userId, id: factorId });
       if (error) throw error;
       return { deleted: true };
     },
 
     /**
-     * Revoke all sessions for a user (belt-and-braces beside the recovery
-     * latch, which independently denies old JWTs while revocation
-     * propagates).
+     * Revoke sessions using the user's own JWT (belt-and-braces beside the
+     * recovery latch, which independently denies old JWTs while revocation
+     * propagates). The locked SDK offers no by-user-id revocation:
+     * admin.signOut(jwt, 'global') is the only mechanism, so a current
+     * user JWT is REQUIRED — callers without one must rely on the latch
+     * and say so instead of passing a user id where a JWT belongs.
      */
-    async revokeSessions(userId, auditId) {
+    async revokeSessions(userJwt, userId, auditId) {
+      if (typeof userJwt !== "string" || userJwt === "") {
+        throw new Error("revokeSessions requires the user's JWT (the SDK has no by-user-id revocation).");
+      }
       if (typeof userId !== "string" || userId === "") throw new Error("revokeSessions requires userId.");
       await audit(auditId, "session.revoke", userId, {});
-      const { error } = await supabaseAdmin.auth.admin.signOut(userId);
+      const { error } = await supabaseAdmin.auth.admin.signOut(userJwt, "global");
       if (error) throw error;
       return { revoked: true };
     },

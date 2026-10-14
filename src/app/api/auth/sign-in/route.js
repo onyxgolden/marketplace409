@@ -20,6 +20,7 @@ import { NextResponse } from "next/server";
 
 import { createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
 import { requireSecurityAssurance } from "@/lib/auth/requireSecurityAssurance.js";
+import { accountKey, recordAttemptOutcome } from "@/lib/auth/authRateLimit.js";
 import {
   AUTH_ACTIONS,
   ACTIVATION_CONFIG,
@@ -68,10 +69,24 @@ export async function POST(request) {
   if (!gate.allowed) return gate.response;
 
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
+
+  // Drive the failure ladder / clear backoff. The account key is the
+  // HMAC of the normalized email (pre-authentication attribution).
+  let accountKeyHex = null;
+  try {
+    accountKeyHex = accountKey(email, env.AUTH_LIMITER_HMAC_KEY);
+  } catch {
+    // HMAC misconfiguration: outcome recording is skipped.
+  }
+  const recordOutcome = (outcome) =>
+    recordAttemptOutcome({ supabaseAdmin, operationId, outcome, accountKey: accountKeyHex });
+
   if (error || !data?.session || !data?.user) {
+    await recordOutcome("credential_failed");
     // Generic on purpose: identical response for bad password vs no-such-user.
     return NextResponse.json({ error: MESSAGE_SIGNIN_FAILED }, { status: 401 });
   }
+  await recordOutcome("credential_succeeded");
 
   const session = data.session;
   const user = data.user;
@@ -94,17 +109,23 @@ export async function POST(request) {
     return NextResponse.json({ status: "ok", session, cohort: assurance.cohort });
   }
 
+  // The AAL1 session is INCLUDED in the mfa_required response: it is the
+  // ceremony token the user needs to enroll/challenge via /api/auth/mfa.
+  // It grants NO privileged access — requireSecurityAssurance denies it on
+  // every privileged surface until AAL2 (or grandfathering) is established.
+  const ceremony = { status: "mfa_required", session };
+
   if (assurance.state === "ENROLL_REQUIRED") {
     // Required cohort, first factor only, no enrolled factor: the user must
     // enroll TOTP before privileged access. The session itself is withheld
     // from privileged surfaces (no session granted here).
-    return NextResponse.json({ status: "mfa_required", next: "enroll" }, { status: 403 });
+    return NextResponse.json({ ...ceremony, next: "enroll" }, { status: 403 });
   }
   if (assurance.state === "CHALLENGE_REQUIRED") {
-    return NextResponse.json({ status: "mfa_required", next: "challenge" }, { status: 403 });
+    return NextResponse.json({ ...ceremony, next: "challenge" }, { status: 403 });
   }
 
   // FIRST_FACTOR / RECOVERY_PENDING / unknown-cohort / invalid-session:
   // fail closed with the same non-enumerating shape.
-  return NextResponse.json({ status: "mfa_required", next: "challenge" }, { status: 403 });
+  return NextResponse.json({ ...ceremony, next: "challenge" }, { status: 403 });
 }

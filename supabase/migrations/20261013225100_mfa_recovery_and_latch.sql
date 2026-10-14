@@ -39,7 +39,8 @@
 --   2. Confirm no mfa_recovery_operations row is in a non-terminal
 --      status ('started' etc.); reconcile or fail them with an audit
 --      entry first.
---   3. DROP FUNCTION public.mfa_consume_recovery_code(uuid,text,text);
+--   3. DROP FUNCTION public.mfa_consume_recovery_code(uuid,text,text,text);
+--      DROP FUNCTION public.mfa_assert_recovery_latch(uuid,text,text);
 --      DROP FUNCTION public.mfa_audit_log_block_mutation();
 --   4. DROP TABLE in dependency order: mfa_recovery_codes,
 --      mfa_recovery_generations, mfa_recovery_operations,
@@ -60,7 +61,7 @@
 -- old one -- the old generation's codes stop working immediately.
 -- ---------------------------------------------------------------------------
 create table if not exists public.mfa_recovery_generations (
-  id uuid primary key,
+  id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
   key_version integer not null,
   created_at timestamptz not null default now(),
@@ -90,7 +91,7 @@ create index if not exists mfa_recovery_generations_user_idx
 -- operation id is idempotent.
 -- ---------------------------------------------------------------------------
 create table if not exists public.mfa_recovery_codes (
-  id uuid primary key,
+  id uuid primary key default gen_random_uuid(),
   generation_id uuid not null
     references public.mfa_recovery_generations (id) on delete cascade,
   code_digest text not null,
@@ -143,7 +144,7 @@ create table if not exists public.mfa_security_latch (
 -- depth on top of the revoke below): the log can only grow.
 -- ---------------------------------------------------------------------------
 create table if not exists public.mfa_audit_log (
-  id uuid primary key,
+  id uuid primary key default gen_random_uuid(),
   user_id uuid,
   action text not null,
   actor text not null,
@@ -238,19 +239,33 @@ end
 $$;
 
 -- ---------------------------------------------------------------------------
--- Atomic recovery-code consume. Exactly one concurrent winner per code;
--- the UNIQUE(consumed_by_operation) column makes one operation consume
--- exactly one code and makes replays idempotent.
+-- Atomic recovery-code consume + latch. Exactly one concurrent winner per
+-- code; the UNIQUE(consumed_by_operation) column makes one operation
+-- consume exactly one code and makes replays idempotent.
+--
+-- L2-005: the idempotent replay path is BOUND to the consuming user AND
+-- the presented digest. A replay of another user's operation id, or the
+-- same operation id with a different digest, returns consumed=false with
+-- NO side effects -- cross-user replay can never inherit a consumed code.
+--
+-- L2-006: a successful consume atomically (same transaction) enters
+-- RECOVERY_PENDING by upserting the mfa_security_latch row, records the
+-- recovery operation row, appends the audit row, and deletes the user's
+-- grandfather-registry rows (revoked/recovery-pending families never
+-- regain access via grandfathering). The gateway performs NO separate
+-- latch insert -- there is no window where the code is consumed but the
+-- latch is missing, and no "use a different code" retry path.
 --
 -- Returns one row: (code_id, generation_id, consumed). consumed=false
--- means: unknown digest, code already consumed, or the generation is
--- invalidated -- the gateway answers all three identically (generic
--- error) so callers cannot enumerate which case hit.
+-- means: unknown digest, code already consumed, the generation is
+-- invalidated, or a mismatched replay -- the gateway answers all
+-- identically (generic error) so callers cannot enumerate which case hit.
 -- ---------------------------------------------------------------------------
 create or replace function public.mfa_consume_recovery_code(
   p_user_id uuid,
   p_code_digest text,
-  p_operation_id text
+  p_operation_id text,
+  p_audit_id text
 )
 returns table (
   code_id uuid,
@@ -263,21 +278,44 @@ declare
   v_code_id uuid;
   v_gen_id uuid;
 begin
-  if p_user_id is null or p_code_digest is null or p_operation_id is null then
+  if p_user_id is null or p_code_digest is null
+     or p_operation_id is null or p_audit_id is null then
     code_id := null; generation_id := null; consumed := false;
     return next;
     return;
   end if;
 
-  -- Idempotent replay: this operation already consumed a code.
+  -- Idempotent replay, BOUND to user + digest: this operation already
+  -- consumed a code belonging to THIS user with THIS digest. Any other
+  -- combination falls through to consumed=false with no side effects.
   select c.id, c.generation_id
     into v_code_id, v_gen_id
     from public.mfa_recovery_codes c
+    join public.mfa_recovery_generations g
+      on g.id = c.generation_id
    where c.consumed_by_operation = p_operation_id
+     and g.user_id = p_user_id
+     and c.code_digest = p_code_digest
    limit 1;
 
   if found then
+    -- Ensure the latch/operation/audit side effects of the original
+    -- consume (self-healing if the first attempt crashed mid-transaction
+    -- after consume but before commit -- impossible in one transaction,
+    -- but harmless to re-assert).
+    perform public.mfa_assert_recovery_latch(p_user_id, p_operation_id, p_audit_id);
     code_id := v_code_id; generation_id := v_gen_id; consumed := true;
+    return next;
+    return;
+  end if;
+
+  -- A DIFFERENT user or digest replaying this operation id: no side
+  -- effects, no information. The caller must mint its own operation id.
+  if exists (
+    select 1 from public.mfa_recovery_codes c
+     where c.consumed_by_operation = p_operation_id
+  ) then
+    code_id := null; generation_id := null; consumed := false;
     return next;
     return;
   end if;
@@ -316,10 +354,15 @@ begin
     select c.id, c.generation_id
       into v_code_id, v_gen_id
       from public.mfa_recovery_codes c
+      join public.mfa_recovery_generations g
+        on g.id = c.generation_id
      where c.consumed_by_operation = p_operation_id
+       and g.user_id = p_user_id
+       and c.code_digest = p_code_digest
      limit 1;
 
     if found then
+      perform public.mfa_assert_recovery_latch(p_user_id, p_operation_id, p_audit_id);
       code_id := v_code_id; generation_id := v_gen_id; consumed := true;
     else
       code_id := null; generation_id := null; consumed := false;
@@ -334,10 +377,57 @@ begin
     -- nothing.
     code_id := null; generation_id := null; consumed := false;
   else
+    -- Atomic latch entry: same transaction as the consume.
+    perform public.mfa_assert_recovery_latch(p_user_id, p_operation_id, p_audit_id);
     code_id := v_code_id; generation_id := v_gen_id; consumed := true;
   end if;
   return next;
   return;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Idempotent recovery-latch assertion, called by the consume RPC inside
+-- its own transaction. Upserts the mfa_security_latch row, records the
+-- recovery operation row, appends the audit row, and deletes the user's
+-- grandfather-registry rows. Never clears the latch.
+-- ---------------------------------------------------------------------------
+create or replace function public.mfa_assert_recovery_latch(
+  p_user_id uuid,
+  p_operation_id text,
+  p_audit_id text
+)
+returns void
+language plpgsql
+as $$
+begin
+  insert into public.mfa_security_latch (user_id, reason, audit_id)
+  values (p_user_id, 'recovery_code_consumed', p_audit_id)
+  on conflict (user_id) do update
+     set latched_at = now(),
+         reason = excluded.reason,
+         audit_id = excluded.audit_id;
+
+  insert into public.mfa_recovery_operations (id, user_id, status)
+  values (p_operation_id, p_user_id, 'latched')
+  on conflict (id) do update
+     set status = 'latched',
+         updated_at = now()
+   where mfa_recovery_operations.status not in ('completed', 'failed');
+
+  insert into public.mfa_audit_log (user_id, action, actor, audit_id, metadata)
+  values (
+    p_user_id,
+    'recovery_code_consumed',
+    'gateway',
+    p_audit_id,
+    jsonb_build_object('operation_id', p_operation_id)
+  );
+
+  -- Revoked/recovery-pending families never regain access via
+  -- grandfathering: entering RECOVERY_PENDING deletes the snapshot rows.
+  delete from public.session_grandfather_registry
+   where user_id = p_user_id;
 end;
 $$;
 
@@ -348,10 +438,14 @@ $$;
 -- ---------------------------------------------------------------------------
 do $$
 begin
-  execute 'revoke all on function public.mfa_consume_recovery_code(uuid,text,text) from public';
-  execute 'revoke all on function public.mfa_consume_recovery_code(uuid,text,text) from anon';
-  execute 'revoke all on function public.mfa_consume_recovery_code(uuid,text,text) from authenticated';
-  execute 'grant execute on function public.mfa_consume_recovery_code(uuid,text,text) to service_role';
+  execute 'revoke all on function public.mfa_consume_recovery_code(uuid,text,text,text) from public';
+  execute 'revoke all on function public.mfa_consume_recovery_code(uuid,text,text,text) from anon';
+  execute 'revoke all on function public.mfa_consume_recovery_code(uuid,text,text,text) from authenticated';
+  execute 'grant execute on function public.mfa_consume_recovery_code(uuid,text,text,text) to service_role';
+  execute 'revoke all on function public.mfa_assert_recovery_latch(uuid,text,text) from public';
+  execute 'revoke all on function public.mfa_assert_recovery_latch(uuid,text,text) from anon';
+  execute 'revoke all on function public.mfa_assert_recovery_latch(uuid,text,text) from authenticated';
+  execute 'grant execute on function public.mfa_assert_recovery_latch(uuid,text,text) to service_role';
 end
 $$;
 

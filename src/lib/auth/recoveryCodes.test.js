@@ -102,28 +102,30 @@ describe("deriveCodeDigest / verifyRecoveryCodeDigest", () => {
 });
 
 describe("storeRecoveryGeneration", () => {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   function mockAdmin() {
     const inserted = { codes: [], generations: [] };
+    const calls = [];
     const admin = {
       inserted,
+      calls,
       from: vi.fn((table) => {
         if (table === "mfa_recovery_generations") {
           return {
-            insert: vi.fn((row) => {
-              inserted.generations.push(row);
+            // L2-004 order: invalidation FIRST (update), then insert.
+            update: vi.fn((row) => {
+              calls.push({ table, op: "update", row });
               return {
-                select: vi.fn(() => ({
-                  single: vi.fn(() => Promise.resolve({ data: { id: "gen-1" }, error: null })),
+                eq: vi.fn(() => ({
+                  is: vi.fn(() => Promise.resolve({ error: null })),
                 })),
               };
             }),
-            update: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                neq: vi.fn(() => ({
-                  is: vi.fn(() => Promise.resolve({ error: null })),
-                })),
-              })),
-            })),
+            insert: vi.fn((row) => {
+              calls.push({ table, op: "insert", row });
+              inserted.generations.push(row);
+              return Promise.resolve({ error: null });
+            }),
           };
         }
         return {
@@ -137,17 +139,37 @@ describe("storeRecoveryGeneration", () => {
     return admin;
   }
 
-  it("persists ONLY digests with key version, user binding, and generation id", async () => {
+  it("L2-004: invalidates the old generation BEFORE inserting (partial-unique safe)", async () => {
+    const admin = mockAdmin();
+    const { codes } = generateRecoveryCodes();
+    await storeRecoveryGeneration(admin, "user-1", codes, { env: ENV });
+    const ops = admin.calls.map((c) => c.op);
+    expect(ops).toEqual(["update", "insert"]);
+    const updateCall = admin.calls[0];
+    expect(updateCall.row.invalidated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("L2-004: supplies explicit UUIDs and only real columns", async () => {
     const admin = mockAdmin();
     const { codes } = generateRecoveryCodes();
     const { generationId } = await storeRecoveryGeneration(admin, "user-1", codes, { env: ENV });
-    expect(generationId).toBe("gen-1");
+    expect(generationId).toMatch(UUID_RE);
 
-    expect(admin.inserted.generations[0]).toMatchObject({ user_id: "user-1", key_version: 1 });
+    const genRow = admin.inserted.generations[0];
+    expect(genRow.id).toBe(generationId);
+    expect(genRow).toMatchObject({ user_id: "user-1", key_version: 1 });
+    // The generation row carries no invented columns.
+    expect(Object.keys(genRow).sort()).toEqual(["id", "key_version", "user_id"]);
+
     expect(admin.inserted.codes).toHaveLength(RECOVERY_CODE_COUNT);
+    const codeIds = new Set();
     for (const row of admin.inserted.codes) {
-      expect(row).toMatchObject({ generation_id: "gen-1", user_id: "user-1", key_version: 1 });
+      expect(row.id).toMatch(UUID_RE);
+      codeIds.add(row.id);
+      expect(row.generation_id).toBe(generationId);
       expect(row.code_digest).toMatch(/^[0-9a-f]{64}$/);
+      // Codes table has NO user_id / key_version columns: only real columns.
+      expect(Object.keys(row).sort()).toEqual(["code_digest", "generation_id", "id"]);
       // Plaintext must never be persisted: no stored field may equal a code.
       for (const code of codes) {
         expect(Object.values(row).includes(code)).toBe(false);
@@ -156,30 +178,7 @@ describe("storeRecoveryGeneration", () => {
       const match = codes.filter((c) => verifyRecoveryCodeDigest(c, row.code_digest, 1, ENV));
       expect(match).toHaveLength(1);
     }
-  });
-
-  it("invalidates prior generations on regeneration", async () => {
-    const admin = mockAdmin();
-    const { codes } = generateRecoveryCodes();
-    await storeRecoveryGeneration(admin, "user-1", codes, { env: ENV });
-
-    const genCalls = admin.from.mock.calls
-      .map((call, i) => ({ table: call[0], mock: admin.from.mock.results[i].value }))
-      .filter((x) => x.table === "mfa_recovery_generations");
-    expect(genCalls.length).toBeGreaterThan(0);
-    const updated = genCalls.find((x) => x.mock.update.mock.calls.length > 0);
-    expect(updated, "expected an update() on mfa_recovery_generations").toBeDefined();
-
-    // The invalidation targets this user's OTHER, still-valid generations:
-    // update({invalidated_at}).eq("user_id").neq("id", newGen).is("invalidated_at", null)
-    const updateArg = updated.mock.update.mock.calls[0][0];
-    expect(updateArg.invalidated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    const eqMock = updated.mock.update.mock.results[0].value.eq;
-    expect(eqMock).toHaveBeenCalledWith("user_id", "user-1");
-    const neqMock = eqMock.mock.results[0].value.neq;
-    expect(neqMock).toHaveBeenCalledWith("id", "gen-1");
-    const isMock = neqMock.mock.results[0].value.is;
-    expect(isMock).toHaveBeenCalledWith("invalidated_at", null);
+    expect(codeIds.size).toBe(RECOVERY_CODE_COUNT);
   });
 
   it("requires supabaseAdmin, userId, and codes", async () => {
@@ -196,16 +195,18 @@ describe("consumeRecoveryCode", () => {
   const { codes: fixtureCodes } = generateRecoveryCodes();
   const presentedCode = fixtureCodes[0];
   const otherCode = fixtureCodes[1];
+  const AUDIT = "audit-1";
   it("delegates atomic consumption to the RPC and returns its verdict", async () => {
     const rpc = vi.fn(() =>
       Promise.resolve({ data: [{ consumed: true, generation_id: "gen-1" }], error: null })
     );
-    const result = await consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-1", { env: ENV });
+    const result = await consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-1", { env: ENV, auditId: AUDIT });
     expect(result).toEqual({ consumed: true, generationId: "gen-1" });
     const args = rpc.mock.calls[0][1];
     expect(rpc.mock.calls[0][0]).toBe("mfa_consume_recovery_code");
     expect(args.p_user_id).toBe("user-1");
     expect(args.p_operation_id).toBe("op-1");
+    expect(args.p_audit_id).toBe(AUDIT);
     expect(args.p_code_digest).toBe(deriveCodeDigest(presentedCode, RECOVERY_CODE_KEY_VERSION, ENV));
   });
 
@@ -213,20 +214,20 @@ describe("consumeRecoveryCode", () => {
     const rpc = vi.fn(() =>
       Promise.resolve({ data: [{ consumed: false, generation_id: "gen-1" }], error: null })
     );
-    const result = await consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-2", { env: ENV });
+    const result = await consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-2", { env: ENV, auditId: AUDIT });
     expect(result).toEqual({ consumed: false, generationId: "gen-1" });
   });
 
   it("an unknown code returns consumed: false without throwing", async () => {
     const rpc = vi.fn(() => Promise.resolve({ data: [{ consumed: false, generation_id: null }], error: null }));
-    const result = await consumeRecoveryCode({ rpc }, "user-1", otherCode, "op-3", { env: ENV });
+    const result = await consumeRecoveryCode({ rpc }, "user-1", otherCode, "op-3", { env: ENV, auditId: AUDIT });
     expect(result.consumed).toBe(false);
     expect(result.generationId).toBeNull();
   });
 
   it("empty code is rejected without hitting the RPC", async () => {
     const rpc = vi.fn();
-    const result = await consumeRecoveryCode({ rpc }, "user-1", "", "op-4", { env: ENV });
+    const result = await consumeRecoveryCode({ rpc }, "user-1", "", "op-4", { env: ENV, auditId: AUDIT });
     expect(result.consumed).toBe(false);
     expect(rpc).not.toHaveBeenCalled();
   });
@@ -234,14 +235,18 @@ describe("consumeRecoveryCode", () => {
   it("propagates RPC errors (caller reconciles partial failure; never restores codes)", async () => {
     const rpc = vi.fn(() => Promise.resolve({ data: null, error: new Error("rpc failed") }));
     await expect(
-      consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-5", { env: ENV })
+      consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-5", { env: ENV, auditId: AUDIT })
     ).rejects.toThrow(/rpc failed/);
   });
 
-  it("requires an operationId idempotency key", async () => {
+  it("requires an operationId idempotency key and an auditId", async () => {
     const rpc = vi.fn();
     await expect(
-      consumeRecoveryCode({ rpc }, "user-1", presentedCode, "", { env: ENV })
+      consumeRecoveryCode({ rpc }, "user-1", presentedCode, "", { env: ENV, auditId: AUDIT })
     ).rejects.toThrow(/operationId/);
+    await expect(
+      consumeRecoveryCode({ rpc }, "user-1", presentedCode, "op-6", { env: ENV })
+    ).rejects.toThrow(/auditId/);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

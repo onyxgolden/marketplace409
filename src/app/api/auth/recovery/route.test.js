@@ -24,6 +24,15 @@ vi.mock("../_lib/gatewaySupport.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, isActivationEnabled: (...args) => mockIsActivationEnabled(...args) };
 });
+vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
+  verifiedSessionClaims: vi.fn(() =>
+    Promise.resolve({
+      sub: "user-synthetic-1",
+      session_id: "sess-synthetic-1",
+      iat: Math.floor(Date.now() / 1000) - 60, // fresh ceremony: 60s ago
+    })
+  ),
+}));
 
 const { POST } = await import("./route.js");
 
@@ -138,7 +147,7 @@ describe("initiate", () => {
 });
 
 describe("complete", () => {
-  it("consumes the code, sets the latch, revokes sessions, and returns recovery_pending (NOT aal2)", async () => {
+  it("consumes the code atomically (latch in the RPC), revokes sessions, returns recovery_pending (NOT aal2)", async () => {
     mockIsActivationEnabled.mockReturnValue(true);
     const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
@@ -153,17 +162,16 @@ describe("complete", () => {
     // No AAL2 grant: nothing session-like leaves this response.
     expect(json.session).toBeUndefined();
     expect(JSON.stringify(json)).not.toMatch(/access_token|aal2/);
-    // Atomic consume first, with the operationId idempotency key.
+    // Atomic consume with the operationId idempotency key and an audit id.
+    // L2-006: NO separate latch insert — the RPC commits consume+latch
+    // atomically, so the route performs zero from("mfa_security_latch") writes.
     expect(mockConsumeRecoveryCode).toHaveBeenCalledWith(
-      admin, USER.id, "KQ7M-SYNTHETIC", OP_ID
+      admin, USER.id, "KQ7M-SYNTHETIC", OP_ID, expect.objectContaining({ auditId: expect.any(String) })
     );
-    // Latch set on mfa_security_latch for this user.
-    const latchCall = admin.calls.find((c) => c.method === "from.insert" && c.table === "mfa_security_latch");
-    expect(latchCall).toBeDefined();
-    expect(latchCall.userId).toBe(USER.id);
-    expect(latchCall.reason).toBe("recovery_code_consumed");
-    // Narrow adapter revocation with the operationId as audit id.
-    expect(mockRevokeSessions).toHaveBeenCalledWith(USER.id, OP_ID);
+    expect(admin.calls.some((c) => c.table === "mfa_security_latch")).toBe(false);
+    // Narrow adapter revocation with the user's JWT (the locked SDK has no
+    // by-user-id revocation) and an audit id.
+    expect(mockRevokeSessions).toHaveBeenCalledWith("atk", USER.id, expect.any(String));
   });
 
   it("returns the same generic 401 when the code is not consumed (no oracle)", async () => {
@@ -177,21 +185,20 @@ describe("complete", () => {
     expect(res.status).toBe(401);
     const json = await res.json();
     expect(json.error).toBe("Recovery failed. Check your details and try again.");
-    // No latch, no revocation on a failed consume.
-    expect(admin.calls.some((c) => c.method === "from.insert")).toBe(false);
+    // No revocation on a failed consume.
     expect(mockRevokeSessions).not.toHaveBeenCalled();
   });
 
-  it("fails closed with 500 when the latch cannot be set (code stays consumed, never restored)", async () => {
+  it("fails closed with 500 when the atomic consume RPC throws (never restores codes)", async () => {
     mockIsActivationEnabled.mockReturnValue(true);
-    const admin = fakeAdmin({ latchInsertResult: { data: null, error: { message: "db down" } } });
+    const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
-    mockConsumeRecoveryCode.mockResolvedValue({ consumed: true, generationId: "gen-synthetic-1" });
+    mockConsumeRecoveryCode.mockRejectedValue(new Error("rpc down"));
     const res = await POST(
       post({ action: "complete", access_token: "atk", recovery_code: "KQ7M-SYNTHETIC", operationId: OP_ID })
     );
     expect(res.status).toBe(500);
-    // The latch row was attempted; revocation never ran; nothing claims success.
+    // Revocation never ran; nothing claims success.
     expect(mockRevokeSessions).not.toHaveBeenCalled();
     const json = await res.json();
     expect(json.status).not.toBe("recovery_pending");
@@ -208,5 +215,23 @@ describe("complete", () => {
     );
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe("recovery_pending");
+  });
+
+  it("L2-006 probe: rejects a stale first-factor ceremony (refreshed token, old iat)", async () => {
+    mockIsActivationEnabled.mockReturnValue(true);
+    const { verifiedSessionClaims } = await import("@/lib/auth/requireSecurityAssurance.js");
+    vi.mocked(verifiedSessionClaims).mockResolvedValueOnce({
+      sub: "user-synthetic-1",
+      session_id: "sess-synthetic-1",
+      iat: Math.floor(Date.now() / 1000) - 3600, // 1h old: NOT fresh
+    });
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(
+      post({ action: "complete", access_token: "atk", recovery_code: "KQ7M-SYNTHETIC", operationId: OP_ID })
+    );
+    expect(res.status).toBe(401);
+    expect(mockConsumeRecoveryCode).not.toHaveBeenCalled();
+    expect(mockRevokeSessions).not.toHaveBeenCalled();
   });
 });

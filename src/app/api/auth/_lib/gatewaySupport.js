@@ -108,11 +108,15 @@ export function trustedClientIp(request, env = process.env) {
  * into either { allowed: true } or { allowed: false, response } where the
  * response is a 429 (deny, with Retry-After) or a generic 503 (unavailable).
  * On any deny, the caller must make ZERO provider calls.
+ *
+ * L2-008: an allowed verdict that still carries a positive failure backoff
+ * is ENFORCED here (429 with Retry-After = backoffSeconds) — a positive
+ * backoff is never ignored when allowed is true.
  */
-export async function gateAdmission({ supabaseAdmin, action, accountId = null, ip = null, operationId, env = process.env }) {
+export async function gateAdmission({ supabaseAdmin, action, accountId = null, sessionId = null, ip = null, operationId, env = process.env }) {
   let decision;
   try {
-    decision = await checkAdmission({ supabaseAdmin, action, accountId, ip, operationId, env });
+    decision = await checkAdmission({ supabaseAdmin, action, accountId, sessionId, ip, operationId, env });
   } catch {
     // checkAdmission throws only on programmer error (unknown action,
     // missing client/operationId); treat as unavailable rather than allowing.
@@ -125,8 +129,11 @@ export async function gateAdmission({ supabaseAdmin, action, accountId = null, i
       response: NextResponse.json({ error: MESSAGE_UNAVAILABLE }, { status: 503 }),
     };
   }
-  if (!decision.allowed) {
-    const retryAfter = Math.max(0, Number(decision.retryAfterSeconds ?? 0) || 0);
+  const backoff = Math.max(0, Number(decision.backoffSeconds ?? 0) || 0);
+  if (!decision.allowed || backoff > 0) {
+    const retryAfter = decision.allowed
+      ? backoff
+      : Math.max(0, Number(decision.retryAfterSeconds ?? 0) || 0);
     return {
       allowed: false,
       response: NextResponse.json(
@@ -140,25 +147,47 @@ export async function gateAdmission({ supabaseAdmin, action, accountId = null, i
 
 /**
  * User-scoped server client for provider MFA operations (enroll / challenge /
- * verify). Built with the ANON key — never the service-role key — and the
- * caller's verified access token, so the request carries exactly the user's
- * own authority and nothing more. No session persistence, no refresh.
+ * verify). Built with the deployment's publishable key — never the
+ * service-role key — and the caller's verified access token injected as the
+ * Authorization bearer on every request, so each call carries exactly the
+ * user's own authority and nothing more. No session persistence, no refresh.
+ *
+ * SDK CONTRACT (locked @supabase/supabase-js 2.110.5, verified 2026-10-14):
+ * auth.setSession({ access_token, refresh_token: "" }) REJECTS an empty
+ * refresh token, so the old setSession-based construction is broken. Header
+ * injection is the supported way to scope a server client to a user token.
+ *
+ * Returns the client directly (synchronous). `await` on it is harmless.
  */
 export function createUserScopedAuthClient(accessToken, env = process.env) {
+  if (typeof accessToken !== "string" || accessToken === "") {
+    throw new Error("User-scoped auth client requires the user's access token.");
+  }
   const url = env?.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = env?.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  // Deployment contract: the app publishes NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  // (see src/lib/supabase/client.js). The legacy ANON_KEY name is accepted as
+  // a fallback so older deployments keep working; publishable wins.
+  const key = env?.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env?.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (typeof url !== "string" || url.trim() === "") {
     throw new Error("User-scoped auth client requires NEXT_PUBLIC_SUPABASE_URL.");
   }
-  if (typeof anonKey !== "string" || anonKey.trim() === "") {
-    throw new Error("User-scoped auth client requires NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+  if (typeof key !== "string" || key.trim() === "") {
+    throw new Error(
+      "User-scoped auth client requires NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY."
+    );
   }
-  const client = createClient(url.trim(), anonKey.trim(), {
+  const trimmedKey = key.trim();
+  return createClient(url.trim(), trimmedKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      fetch: (input, init = {}) => {
+        const headers = new Headers(init?.headers);
+        headers.set("Authorization", `Bearer ${accessToken}`);
+        headers.set("apikey", trimmedKey);
+        return fetch(input, { ...init, headers });
+      },
+    },
   });
-  // setSession attaches the user's access token to subsequent calls
-  // (Authorization header) without persisting anything server-side.
-  return client.auth.setSession({ access_token: accessToken, refresh_token: "" }).then(() => client);
 }
 
 /**

@@ -13,6 +13,8 @@ vi.mock("@/lib/auth/serverAuthTransport.js", () => ({
 vi.mock("@/lib/auth/authRateLimit.js", () => ({
   AUTH_ACTIONS: { PASSWORD_SIGNIN: "password_signin" },
   checkAdmission: (...args) => mockCheckAdmission(...args),
+  recordAttemptOutcome: vi.fn(() => Promise.resolve(true)),
+  accountKey: vi.fn(() => "deadbeef"),
 }));
 vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
   requireSecurityAssurance: (...args) => mockRequireSecurityAssurance(...args),
@@ -143,7 +145,7 @@ describe("disabled activation passthrough", () => {
 });
 
 describe("activated MFA gating", () => {
-  it("returns mfa_required/enroll for a required cohort with no enrolled factor", async () => {
+  it("returns mfa_required/enroll WITH the ceremony session for a required cohort with no enrolled factor", async () => {
     mockIsActivationEnabled.mockReturnValue(true);
     const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
@@ -152,13 +154,18 @@ describe("activated MFA gating", () => {
     });
     const res = await POST(post({ email: "a@b.c", password: "pw", operationId: OP_ID }));
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ status: "mfa_required", next: "enroll" });
+    // L2-002: the AAL1 session rides along as the ceremony token for
+    // /api/auth/mfa enroll/challenge — it grants no privileged access.
+    const json = await res.json();
+    expect(json.status).toBe("mfa_required");
+    expect(json.next).toBe("enroll");
+    expect(json.session.access_token).toBe("atk-synthetic");
     expect(mockRequireSecurityAssurance).toHaveBeenCalledWith(
       expect.objectContaining({ user: { id: "user-synthetic-1" } })
     );
   });
 
-  it("returns mfa_required/challenge for a required cohort with an unenrolled session", async () => {
+  it("returns mfa_required/challenge WITH the ceremony session for a required cohort with an unenrolled session", async () => {
     mockIsActivationEnabled.mockReturnValue(true);
     const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
@@ -167,7 +174,10 @@ describe("activated MFA gating", () => {
     });
     const res = await POST(post({ email: "a@b.c", password: "pw", operationId: OP_ID }));
     expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ status: "mfa_required", next: "challenge" });
+    const json = await res.json();
+    expect(json.status).toBe("mfa_required");
+    expect(json.next).toBe("challenge");
+    expect(json.session.access_token).toBe("atk-synthetic");
   });
 
   it("grants the session for an authorized assurance result", async () => {
@@ -182,5 +192,25 @@ describe("activated MFA gating", () => {
     const json = await res.json();
     expect(json.status).toBe("ok");
     expect(json.cohort).toBe("required");
+  });
+
+  it("L2-008 probe: records credential_failed on bad password and credential_succeeded on success", async () => {
+    mockIsActivationEnabled.mockReturnValue(false);
+    const { recordAttemptOutcome } = await import("@/lib/auth/authRateLimit.js");
+    const badPassword = fakeAdmin({ signInResult: { data: {}, error: { message: "Invalid login credentials" } } });
+    mockCreateServerAuthClient.mockReturnValue(badPassword);
+    await POST(post({ email: "a@b.c", password: "wrong", operationId: OP_ID }));
+    expect(recordAttemptOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: OP_ID, outcome: "credential_failed" })
+    );
+
+    vi.clearAllMocks();
+    mockCheckAdmission.mockResolvedValue(allowAdmission);
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    await POST(post({ email: "a@b.c", password: "pw", operationId: OP_ID }));
+    expect(recordAttemptOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: OP_ID, outcome: "credential_succeeded" })
+    );
   });
 });

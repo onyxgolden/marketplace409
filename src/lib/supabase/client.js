@@ -2,40 +2,104 @@ import {
   createBrowserClient,
 } from "@supabase/ssr";
 
+import { gatewayRefresh, newOperationId } from "@/lib/auth/authGateway.js";
+
 let browserClient = null;
+
+// Layer 2: route the SDK's silent token refresh through the gateway.
+//
+// Disabled by default: NEXT_PUBLIC_LAYER2_GATEWAY_REFRESH must be "true".
+// When disabled, the SDK refreshes directly against Supabase (existing
+// behavior, unchanged).
+//
+// When enabled, the browser client's fetch is wrapped: token-endpoint calls
+// with grant_type=refresh_token are diverted to POST /api/auth/refresh,
+// which admission-gates the refresh (IP + session buckets) and performs the
+// single provider refresh per request. The gateway's { status:'ok', session }
+// is translated into the token endpoint's response shape so the SDK's
+// session handling (including cookie persistence via @supabase/ssr) works
+// unchanged. A gateway refusal surfaces as a failed refresh; the app must
+// surface "session refresh failed, please sign in again" — never silently
+// sign out.
+//
+// MULTI-TAB: the gateway performs exactly one provider refresh per request
+// and the provider's rotation invalidates the old refresh token on use, so
+// two tabs racing the same token will lose one race. The losing tab's SDK
+// sees a 401 refresh, drops its local session, and re-reads the fresh
+// session from the shared cookie storage on the next getSession — the
+// provider's replay protections apply; this wrapper adds no extra rotation.
+// No secret keys ever enter this browser client.
+const GATEWAY_REFRESH_ENABLED = process.env.NEXT_PUBLIC_LAYER2_GATEWAY_REFRESH === "true";
+
+function isRefreshTokenRequest(input) {
+  try {
+    const url = typeof input === "string" ? input : input?.url;
+    return (
+      typeof url === "string" &&
+      url.includes("/auth/v1/token") &&
+      url.includes("grant_type=refresh_token")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function jsonResponse(payload, status) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function gatewayRefreshFetch(input, init) {
+  if (GATEWAY_REFRESH_ENABLED && isRefreshTokenRequest(input)) {
+    let refreshToken = null;
+    try {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      refreshToken = typeof body?.refresh_token === "string" ? body.refresh_token : null;
+    } catch {
+      refreshToken = null;
+    }
+    if (refreshToken) {
+      try {
+        const result = await gatewayRefresh({ operationId: newOperationId(), refreshToken });
+        if (result?.status === "ok" && result.session?.access_token) {
+          const s = result.session;
+          return jsonResponse(
+            {
+              access_token: s.access_token,
+              refresh_token: s.refresh_token,
+              expires_in: s.expires_in ?? 3600,
+              expires_at: s.expires_at,
+              token_type: "bearer",
+              user: s.user ?? null,
+            },
+            200
+          );
+        }
+      } catch {
+        // Fall through to the 401 below: a gateway failure is a failed
+        // refresh, never a silent direct retry (that would bypass admission).
+      }
+      return jsonResponse({ error: "session refresh failed" }, 401);
+    }
+  }
+  return fetch(input, init);
+}
 
 export function createClient() {
   if (!browserClient) {
     browserClient = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+      GATEWAY_REFRESH_ENABLED ? { global: { fetch: gatewayRefreshFetch } } : undefined
     );
   }
 
   return browserClient;
 }
 
-// TODO(layer2-refresh): silent token refresh coordination.
-//
-// The gateway route EXISTS (POST /api/auth/refresh { operationId,
-// refresh_token } -> { status:'ok', session } | 401/429/503 { error }), but
-// the browser client below still lets the Supabase SDK refresh directly.
-// When ACTIVATION_CONFIG.enabled is true, silent refresh must go through the
-// gateway instead: the client sends its refresh_token, applies the returned
-// session via setSession, and elects a SINGLE refresh leader per session
-// family across tabs (the gateway does one provider refresh per request;
-// the provider's rotation invalidates the old refresh token on use, so two
-// tabs racing the same token will lose one race — bounded retries, provider
-// replay protections preserved).
-//
-// Wiring sketch (not yet implemented — needs a refresh lock around the SDK's
-// automatic refresh, which is delicate):
-//   1. Intercept the SDK's refresh (custom fetch wrapper or a mutex around
-//      getSession/refresh calls).
-//   2. POST /api/auth/refresh with { operationId, refresh_token }.
-//   3. On { status:'ok', session }: supabase.auth.setSession(session).
-//   4. On 429: honor Retry-After; on 503/401: surface "session refresh
-//      failed, please sign in again" — never silently sign out.
-// Until this is wired and reviewed, the SDK's built-in refresh behavior above
-// is UNCHANGED. No secret keys may ever enter this browser client — the
-// service-role key stays in serverAuthTransport.js (server-only).
+// Test seam: whether gateway-routed refresh is enabled.
+export function isGatewayRefreshEnabled() {
+  return GATEWAY_REFRESH_ENABLED;
+}

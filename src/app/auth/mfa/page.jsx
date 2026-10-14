@@ -26,15 +26,12 @@
 // never persisted.
 //
 // ROUTE GAPS affecting this page (see authGateway.js):
-//   GAP-1: sign-in mfa_required withholds the session, so there may be no
-//     access_token — the page shows the no-session state instead of proceeding.
-//   GAP-2: no endpoint issues the 10 recovery codes after enrollment — the
-//     codes step explains this and does not block the user. If a future route
-//     response carries `recovery_codes`, they are shown once behind the
-//     mandatory acknowledgement gate with zero code changes.
-//   GAP-3: no factor discovery for challenge mode — factor_id currently comes
-//     from a temporary ?factor_id= bridge (TODO: remove once the route
-//     provides discovery, e.g. a list action or a factor_id on mfa_required).
+//   GAP-1 (CLOSED): sign-in mfa_required now includes the AAL1 ceremony
+//     session; the page establishes it via setSession and proceeds.
+//   GAP-2: the issue_recovery_codes action exists; the codes step shows them
+//     once behind the mandatory acknowledgement gate.
+//   GAP-3 (CLOSED): factor discovery via the list_factors action; the
+//     ?factor_id= bridge remains only for old deep links.
 
 import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
@@ -43,6 +40,7 @@ import {
   gatewayMfaChallenge,
   gatewayMfaEnroll,
   gatewayMfaIssueRecoveryCodes,
+  gatewayMfaListFactors,
   gatewayMfaVerify,
   getBrowserAccessToken,
   newOperationId,
@@ -109,12 +107,22 @@ export default function MfaPage() {
           setPhase("error");
         }
       } else {
-        if (bridgedFactorId) {
-          setFactorId(bridgedFactorId);
+        // Challenge mode: discover the user's verified factors through the
+        // gateway (list_factors). The ?factor_id= bridge is kept as a
+        // fallback for deep links minted before discovery existed.
+        let discovered = bridgedFactorId;
+        if (!discovered) {
+          const list = await gatewayMfaListFactors({ operationId: newOperationId(), accessToken: token });
+          if (cancelled) return;
+          if (list.status === "ok" && Array.isArray(list.factors) && list.factors.length > 0) {
+            discovered = list.factors[0].id;
+          }
+        }
+        if (discovered) {
+          setFactorId(discovered);
           setPhase("challenge");
         } else {
-          // ROUTE GAP 3: challenge needs the enrolled factor's id and the
-          // gateway offers no discovery. Fail loudly, not cryptically.
+          setMessage("No verified authenticator found on this account. Enroll one first.");
           setPhase("nofactor");
         }
       }

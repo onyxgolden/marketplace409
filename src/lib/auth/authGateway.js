@@ -64,28 +64,23 @@
 //
 // ROUTE GAPS (flagged for the route builder; the UI degrades gracefully and
 // does NOT invent workarounds):
-//   GAP-1: POST /api/auth/sign-in returns 403 { status:'mfa_required' } WITHOUT
-//     a session. The MFA page needs the first-factor access_token for
-//     enroll/challenge/verify, so the enroll/challenge ceremony cannot proceed
-//     from a gateway sign-in today. Likely fix: include the AAL1 session in
-//     the mfa_required response (it grants no privileged access by itself —
-//     requireSecurityAssurance still gates everything server-side), or issue
-//     a short-lived MFA-scoped token. Until then the MFA page shows a
-//     "sign in again" state when no session is present.
-//   GAP-2: No endpoint issues the 10 one-time recovery codes after enrollment.
-//     generateRecoveryCodes/storeRecoveryGeneration (src/lib/auth/recoveryCodes.js)
-//     are never called by any route. Likely fix: the mfa verify-enroll path
-//     (or a new action) generates a generation and returns the plaintext codes
-//     ONCE. Until then the enrollment-success screen notes the codes are
-//     pending and does not block the user.
-//   GAP-3: No factor discovery for challenge mode: /api/auth/mfa challenge
-//     requires `factor_id`, but no endpoint lists the caller's factors and
-//     the sign-in mfa_required response doesn't include one. Likely fix: a
-//     list-factors action or a factor_id on the mfa_required response. Until
-//     then challenge mode explains the gap instead of failing cryptically.
+//   GAP-1 (CLOSED 2026-10-14): POST /api/auth/sign-in now includes the AAL1
+//     ceremony session in the 403 { status:'mfa_required' } response. It
+//     grants no privileged access by itself — requireSecurityAssurance still
+//     gates everything server-side — but the MFA page can establish it via
+//     setSession and run the enroll/challenge ceremony.
+//   GAP-2 (CLOSED 2026-10-14): the mfa issue_recovery_codes action generates
+//     a generation and returns the plaintext codes ONCE after a newly
+//     enrolled factor is verified.
+//   GAP-3 (CLOSED 2026-10-14): the mfa list_factors action returns the
+//     caller's own verified factors for challenge-mode discovery.
 //   GAP-4: POST /api/auth/sign-up drops `emailRedirectTo` (invited-borrower
 //     confirmation links won't carry ?next=&email=). Likely fix: pass
 //     options.emailRedirectTo through to supabaseAdmin.auth.signUp.
+//   GAP-5 (CLOSED 2026-10-14): the mfa status action reports the
+//     server-side guard verdict { authorized, state, cohort } for a session,
+//     so /auth routes sessions established outside the gateway sign-in
+//     (e.g. ?code= exchange) to the MFA ceremony when required.
 
 export function newOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -166,6 +161,27 @@ export function gatewayMfaChallenge({ operationId, accessToken, factorId }) {
     access_token: accessToken,
     action: "challenge",
     factor_id: factorId,
+  });
+}
+
+export function gatewayMfaListFactors({ operationId, accessToken }) {
+  // Factor discovery for challenge mode: returns the user's own verified
+  // factors (no secrets). Replaces the temporary ?factor_id= bridge.
+  return postGateway("/api/auth/mfa", {
+    operationId,
+    access_token: accessToken,
+    action: "list_factors",
+  });
+}
+
+export function gatewayMfaStatus({ operationId, accessToken }) {
+  // Lightweight MFA status for a session: { authorized, state, cohort }.
+  // Used by /auth to route sessions established outside the gateway
+  // sign-in to the MFA ceremony when required.
+  return postGateway("/api/auth/mfa", {
+    operationId,
+    access_token: accessToken,
+    action: "status",
   });
 }
 

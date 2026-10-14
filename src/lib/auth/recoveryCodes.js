@@ -8,39 +8,29 @@
 // generateRecoveryCodes for one-time display after successful enrollment —
 // it is never logged, never persisted, never re-derivable.
 //
-// Storage contract: persist ONLY keyed HMAC digests with the digest key
-// version, the user id, and a generation id (see storeRecoveryGeneration).
-// Verification uses constant-time comparison against the stored digest.
+// Storage contract (supabase/migrations/20261013225100_mfa_recovery_and_latch.sql):
+//   mfa_recovery_generations(id uuid pk, user_id, key_version, created_at,
+//     invalidated_at) with a partial unique index allowing exactly one
+//     ACTIVE (invalidated_at is null) generation per user.
+//   mfa_recovery_codes(id uuid pk, generation_id fk, code_digest,
+//     consumed_at, consumed_by_operation unique).
+// Persist ONLY keyed HMAC digests with the digest key version, the user id,
+// and a generation id (see storeRecoveryGeneration). Verification uses
+// constant-time comparison against the stored digest.
 //
 // Regeneration contract (caller-enforced, documented here): regenerating a
 // user's codes requires a recent verified AAL2 session and invalidates the
 // ENTIRE old generation. Consumed codes are never restored.
 //
-// CONFLICT NOTE (2026-10-13): an untracked migration appeared in this
-// worktree during this build (supabase/migrations/20261013225100_mfa_recovery_and_latch.sql,
-// author unknown — NOT written by this task) naming the consume RPC
-// `mfa_consume_recovery_code(p_user_id uuid, p_code_digest text,
-// p_operation_id text)` returning (code_id, generation_id, consumed). That
-// differs from the brief's `auth_recovery_consume(p_user_id, p_digest,
-// p_operation_id)` contract documented below. This client keeps the brief's
-// contract per the task's instruction; the mismatch fails CLOSED (unknown
-// RPC -> the error propagates, the caller reconciles, consumed codes are
-// never restored). Reconcile the name/param before activation.
 // Atomicity contract: consumeRecoveryCode goes through the Postgres RPC
-// `auth_recovery_consume` (per the Layer 2 migration spec in the brief; the
-// RPC itself is NOT created here and NO migration is applied by this change).
-// Expected signature:
-//
-//   auth_recovery_consume(
-//     p_user_id text,
-//     p_digest text,            -- digest of the presented code
-//     p_operation_id text      -- idempotency key
-//   ) RETURNS TABLE ( consumed boolean, generation_id uuid )
-//
-// One concurrent winner only: the RPC consumes (sets consumed_at) inside a
-// single transaction and a second concurrent attempt with the same code loses.
+// `mfa_consume_recovery_code(p_user_id uuid, p_code_digest text,
+// p_operation_id text, p_audit_id text)` from the same migration, which
+// atomically consumes the code AND enters RECOVERY_PENDING (latch +
+// operation row + audit row + grandfather-registry deletion) in one
+// transaction. One concurrent winner only; replays are bound to
+// user+digest.
 
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 
 // Crockford base32: 0-9, A-Z minus I, L, O, U (the classic confusables).
 // 0 and 1 are kept but their lookalikes O, I, L never appear in a code, and
@@ -148,10 +138,17 @@ export function verifyRecoveryCodeDigest(code, storedDigest, keyVersion, env = p
 
 /**
  * Persist a recovery generation: ONLY digests, the key version, the user
- * binding, and a generation id. Expected tables (migration spec):
- *   mfa_recovery_generations(id uuid pk, user_id, created_at, invalidated_at)
- *   mfa_recovery_codes(generation_id fk, user_id, code_digest, consumed_at,
- *     unique(code_digest))
+ * binding, and a generation id. Actual tables (migration):
+ *   mfa_recovery_generations(id uuid pk, user_id, key_version, created_at,
+ *     invalidated_at) — partial unique index: one ACTIVE generation per user
+ *   mfa_recovery_codes(id uuid pk, generation_id fk, code_digest,
+ *     consumed_at, consumed_by_operation unique)
+ *
+ * L2-004: explicit UUIDs are supplied for every row (the migration also
+ * carries gen_random_uuid() defaults); codes carry ONLY the columns that
+ * exist (no user_id/key_version on the codes table); and the old generation
+ * is invalidated BEFORE the new row is inserted, so the one-active
+ * partial unique index is never violated.
  *
  * Marks every prior non-invalidated generation for the user invalidated —
  * regeneration invalidates the entire old generation.
@@ -164,48 +161,54 @@ export async function storeRecoveryGeneration(supabaseAdmin, userId, codes, opti
   if (!Array.isArray(codes) || codes.length === 0) throw new Error("storeRecoveryGeneration requires codes.");
 
   const digests = codes.map((code) => deriveCodeDigest(code, keyVersion, env));
+  const generationId = randomUUID();
 
-  const { data: generation, error: genError } = await supabaseAdmin
-    .from("mfa_recovery_generations")
-    .insert({ user_id: userId, key_version: keyVersion })
-    .select("id")
-    .single();
-  if (genError) throw genError;
-
-  const { error: codeError } = await supabaseAdmin.from("mfa_recovery_codes").insert(
-    digests.map((codeDigest) => ({
-      generation_id: generation.id,
-      user_id: userId,
-      code_digest: codeDigest,
-      key_version: keyVersion,
-    }))
-  );
-  if (codeError) throw codeError;
-
-  // Invalidate every older generation for this user (never restores them).
+  // Invalidate the old generation FIRST: the partial unique index allows
+  // exactly one active generation per user, so inserting before
+  // invalidating would violate it. Never restores invalidated generations.
   const { error: invalidateError } = await supabaseAdmin
     .from("mfa_recovery_generations")
     .update({ invalidated_at: new Date().toISOString() })
     .eq("user_id", userId)
-    .neq("id", generation.id)
     .is("invalidated_at", null);
   if (invalidateError) throw invalidateError;
 
-  return { generationId: generation.id };
+  const { error: genError } = await supabaseAdmin.from("mfa_recovery_generations").insert({
+    id: generationId,
+    user_id: userId,
+    key_version: keyVersion,
+  });
+  if (genError) throw genError;
+
+  const { error: codeError } = await supabaseAdmin.from("mfa_recovery_codes").insert(
+    digests.map((codeDigest) => ({
+      id: randomUUID(),
+      generation_id: generationId,
+      code_digest: codeDigest,
+    }))
+  );
+  if (codeError) throw codeError;
+
+  return { generationId };
 }
 
 /**
- * Atomically consume one recovery code via the `auth_recovery_consume` RPC.
- * One concurrent winner only; sets consumed_at. Never restores consumed codes.
+ * Atomically consume one recovery code via the `mfa_consume_recovery_code`
+ * RPC. One concurrent winner only; the RPC consumes the code AND enters
+ * RECOVERY_PENDING (latch + operation + audit + grandfather deletion) in a
+ * single transaction. Never restores consumed codes.
  * @returns {{ consumed: boolean, generationId: string | null }}
  */
 export async function consumeRecoveryCode(supabaseAdmin, userId, code, operationId, options = {}) {
-  const { keyVersion = RECOVERY_CODE_KEY_VERSION, env = process.env } = options;
+  const { keyVersion = RECOVERY_CODE_KEY_VERSION, env = process.env, auditId = null } = options;
   if (!supabaseAdmin) throw new Error("consumeRecoveryCode requires supabaseAdmin.");
   if (typeof userId !== "string" || userId === "") throw new Error("consumeRecoveryCode requires userId.");
   if (typeof code !== "string" || code === "") return { consumed: false, generationId: null };
   if (typeof operationId !== "string" || operationId === "") {
     throw new Error("consumeRecoveryCode requires an operationId idempotency key.");
+  }
+  if (typeof auditId !== "string" || auditId === "") {
+    throw new Error("consumeRecoveryCode requires an auditId for the atomic latch entry.");
   }
 
   const digest = deriveCodeDigest(code, keyVersion, env);
@@ -213,6 +216,7 @@ export async function consumeRecoveryCode(supabaseAdmin, userId, code, operation
     p_user_id: userId,
     p_code_digest: digest,
     p_operation_id: operationId,
+    p_audit_id: auditId,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;

@@ -187,8 +187,12 @@ declare
   v_denied boolean := false;
   v_replay_outcome text;
   v_replay_retry integer;
+  v_replay_action text;
+  v_replay_keys text[];
   v_failures integer;
   v_clear_at timestamptz;
+  v_sorted_p_keys text[];
+  v_sorted_replay_keys text[];
 begin
   -- Malformed input fails closed: it can never admit, and it surfaces as
   -- unavailable so the gateway answers 503 with no provider call.
@@ -217,8 +221,17 @@ begin
     on conflict (operation_id) do nothing;
 
     if not found then
-      select o.outcome, o.retry_after_seconds
-        into v_replay_outcome, v_replay_retry
+      -- L2-007 replay binding: the recorded verdict replays ONLY when the
+      -- replay presents the SAME action and the SAME key set. A
+      -- cross-action or cross-subject replay (different action or keys)
+      -- is denied, never admitted on another operation's budget.
+      -- Additionally, an operation_id whose recorded outcome is already
+      -- terminal (a provider attempt was executed and recorded) is denied:
+      -- one operation_id authorizes exactly one provider attempt; a new
+      -- attempt requires a fresh operation_id. This fences both
+      -- cross-action replay and same-action free-retry abuse.
+      select o.outcome, o.retry_after_seconds, o.action, o.bucket_keys
+        into v_replay_outcome, v_replay_retry, v_replay_action, v_replay_keys
         from public.auth_operation_log o
        where o.operation_id = p_operation_id
        for update;
@@ -242,7 +255,39 @@ begin
           return;
         end if;
       else
-        -- Replay path: the owner's verdict stands. Backoff is advisory
+        -- Bound replay: compare action and key SETS (order-independent).
+        select array_agg(k order by k) into v_sorted_p_keys
+          from unnest(p_keys) as k;
+        select array_agg(k order by k) into v_sorted_replay_keys
+          from unnest(v_replay_keys) as k;
+
+        if v_replay_action is distinct from p_action
+           or v_sorted_replay_keys is distinct from v_sorted_p_keys then
+          -- Cross-action or cross-subject replay: deny. The caller must
+          -- present a fresh operation_id bound to its own action/keys.
+          allowed := false;
+          retry_after_seconds := null;
+          backoff_seconds := 0;
+          unavailable := false;
+          return next;
+          return;
+        end if;
+
+        if v_replay_outcome not in ('evaluating', 'admitted') then
+          -- Terminal outcome already recorded (denied, credential_failed,
+          -- credential_succeeded, mfa_succeeded): this operation already
+          -- executed its provider attempt. Deny the replay; a new attempt
+          -- requires a fresh operation_id (which debits buckets anew).
+          allowed := false;
+          retry_after_seconds := null;
+          backoff_seconds := 0;
+          unavailable := false;
+          return next;
+          return;
+        end if;
+
+        -- Idempotent replay path: the owner's verdict stands for the same
+        -- bound operation that has not yet executed. Backoff is advisory
         -- and is recomputed on the next fresh evaluation.
         allowed := (v_replay_outcome = 'admitted');
         retry_after_seconds := v_replay_retry;

@@ -5,12 +5,16 @@
 // requireSecurityAssurance.js; the two are deliberately separate so policy
 // (who must use MFA) can never be confused with the guard (are they AAL2?).
 //
-// IMPORTANT: never reuse teamAuthorization.js's missing-membership fallback
-// here. In the rental context, a user with no membership row is treated as the
-// workspace's primary owner. If that fallback were reused for cohort
-// classification, EVERY authenticated consumer (tenant/borrower/portal user)
-// would be classified as a required owner. This module resolves actual owned
-// workspaces and actual active memberships only.
+// IMPORTANT: cohort classification distinguishes primary owners from
+// tenant/borrower consumers WITHOUT a workspaces table (none exists in
+// the deployed schema). The data-plane's own predicate (see
+// getActorRentalAuthorization in teamAuthorization.js) treats a user with
+// no membership row as the primary owner of their own workspace; this
+// module applies the same fallback ONLY after excluding users linked as
+// tenants/borrowers via rental_tenants.auth_user_id and
+// private_financing_borrowers.auth_user_id. Consumers linked in those
+// tables (and holding no active membership) are OPTIONAL; everyone else
+// with no active membership is REQUIRED (primary owner).
 
 export const MFA_STATES = Object.freeze({
   FIRST_FACTOR: "FIRST_FACTOR",
@@ -54,8 +58,7 @@ export const COHORT_OPTIONAL = "optional";
 export const COHORT_UNKNOWN = "unknown";
 
 // A membership row counts toward the required cohort only when it is ACTIVE.
-// Inactive, suspended, revoked, or missing rows never count — and missing
-// rows NEVER fall back to "owner" in this module (see note at the top).
+// Inactive, suspended, revoked, or missing rows never count.
 const ACTIVE_MEMBERSHIP_STATUSES = Object.freeze(["active"]);
 
 function isActiveMembership(row) {
@@ -67,23 +70,27 @@ function isActiveMembership(row) {
 /**
  * Resolve the MFA cohort for a user from first-party data only.
  *
- * Queries `workspace_members` (active memberships for this user) and
- * `workspaces` (workspaces this user owns) directly. Returns:
+ * Uses the ACTUAL deployed schema (see module header and
+ * src/lib/rental/teamAuthorization.js):
+ *   workspace_members(member_user_id uuid, owner_id text, role, status)
+ *   rental_tenants(auth_user_id uuid)
+ *   private_financing_borrowers(auth_user_id uuid)
  *
- *   { cohort, workspaceIds, memberships }
- *
- * - cohort "required": the user owns at least one workspace OR holds at least
- *   one active membership of any role (owner, co-owner, staff, restricted and
- *   read-only staff included). Ordinary tenant/borrower/consumer users have no
- *   membership rows and no owned workspaces, so they land in "optional".
- * - cohort "optional": resolution succeeded and the user owns nothing and
- *   holds no active membership.
- * - cohort "unknown": resolution failed (query error, malformed result).
- *   Callers must deny privileged access on "unknown" — it is never treated as
- *   an exemption.
+ * Returns { cohort, workspaceIds, memberships }:
+ * - cohort "required": the user holds at least one ACTIVE workspace
+ *   membership of any role (owner, co-owner, staff, restricted and
+ *   read-only staff included), OR has no membership row and is not linked
+ *   as a tenant/borrower -- the data-plane's own fallback treats that as
+ *   primary owner of their own workspace (see getActorRentalAuthorization).
+ * - cohort "optional": the user is linked as a tenant or borrower
+ *   (auth_user_id match) and holds no active membership.
+ * - cohort "unknown": resolution failed (query error or MALFORMED result
+ *   shape). A successful query returning a non-array payload is malformed
+ *   and yields UNKNOWN -- never "optional". Callers must deny privileged
+ *   access on "unknown"; it is never an exemption.
  *
  * Client metadata, invite email, localStorage, and view-as targets must not
- * influence the result — this function takes only (supabaseAdmin, userId).
+ * influence the result -- this function takes only (supabaseAdmin, userId).
  */
 export async function resolveActorEligibility(supabaseAdmin, userId) {
   if (typeof userId !== "string" || userId === "") {
@@ -91,42 +98,45 @@ export async function resolveActorEligibility(supabaseAdmin, userId) {
   }
 
   try {
-    const [membershipResult, ownershipResult] = await Promise.all([
+    const [membershipResult, tenantResult, borrowerResult] = await Promise.all([
       supabaseAdmin
         .from("workspace_members")
-        .select("workspace_id, role, status")
-        .eq("user_id", userId),
+        .select("owner_id, role, status")
+        .eq("member_user_id", userId),
+      supabaseAdmin.from("rental_tenants").select("id").eq("auth_user_id", userId).limit(1),
       supabaseAdmin
-        .from("workspaces")
+        .from("private_financing_borrowers")
         .select("id")
-        .eq("owner_id", userId),
+        .eq("auth_user_id", userId)
+        .limit(1),
     ]);
 
     if (membershipResult?.error) throw membershipResult.error;
-    if (ownershipResult?.error) throw ownershipResult.error;
+    if (tenantResult?.error) throw tenantResult.error;
+    if (borrowerResult?.error) throw borrowerResult.error;
 
-    const allMemberships = Array.isArray(membershipResult?.data) ? membershipResult.data : [];
-    const activeMemberships = allMemberships.filter(isActiveMembership);
-    const ownedWorkspaces = Array.isArray(ownershipResult?.data) ? ownershipResult.data : [];
-    const ownedIds = ownedWorkspaces.map((w) => w.id).filter(Boolean);
+    // Malformed successful results fail closed: a query that "succeeded"
+    // but returned a non-array payload is not evidence of "no rows".
+    if (
+      !Array.isArray(membershipResult?.data) ||
+      !Array.isArray(tenantResult?.data) ||
+      !Array.isArray(borrowerResult?.data)
+    ) {
+      return { cohort: COHORT_UNKNOWN, workspaceIds: [], memberships: [] };
+    }
 
-    const workspaceIds = [
-      ...new Set([
-        ...ownedIds,
-        ...activeMemberships.map((m) => m.workspace_id).filter(Boolean),
-      ]),
-    ];
+    const activeMemberships = membershipResult.data.filter(isActiveMembership);
+    const ownerIds = [...new Set(activeMemberships.map((m) => m.owner_id).filter(Boolean))];
+    const isLinkedConsumer = tenantResult.data.length > 0 || borrowerResult.data.length > 0;
 
     const cohort =
-      ownedIds.length > 0 || activeMemberships.length > 0
-        ? COHORT_REQUIRED
-        : COHORT_OPTIONAL;
+      activeMemberships.length > 0 || !isLinkedConsumer ? COHORT_REQUIRED : COHORT_OPTIONAL;
 
     return {
       cohort,
-      workspaceIds,
+      workspaceIds: ownerIds,
       memberships: activeMemberships.map((m) => ({
-        workspaceId: m.workspace_id,
+        workspaceId: m.owner_id,
         role: m.role,
         status: m.status,
       })),

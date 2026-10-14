@@ -32,10 +32,10 @@ const TABLES = [
   "session_grandfather_registry",
 ];
 
-async function consume(userId, digest, opId) {
+async function consume(userId, digest, opId, auditId = "audit-default") {
   const { rows } = await db.query(
-    `select * from public.mfa_consume_recovery_code($1::uuid, $2, $3)`,
-    [userId, digest, opId],
+    `select * from public.mfa_consume_recovery_code($1::uuid, $2, $3, $4)`,
+    [userId, digest, opId, auditId],
   );
   return rows[0];
 }
@@ -149,11 +149,11 @@ describe("mfa recovery and latch migration", () => {
 
     const { rows } = await db.query(
       `select has_function_privilege('service_role',
-               'public.mfa_consume_recovery_code(uuid,text,text)', 'execute') as srv,
+               'public.mfa_consume_recovery_code(uuid,text,text,text)', 'execute') as srv,
               has_function_privilege('anon',
-               'public.mfa_consume_recovery_code(uuid,text,text)', 'execute') as anon,
+               'public.mfa_consume_recovery_code(uuid,text,text,text)', 'execute') as anon,
               has_function_privilege('authenticated',
-               'public.mfa_consume_recovery_code(uuid,text,text)', 'execute') as auth`,
+               'public.mfa_consume_recovery_code(uuid,text,text,text)', 'execute') as auth`,
     );
     expect(rows[0]).toMatchObject({ srv: true, anon: false, auth: false });
   });
@@ -195,16 +195,17 @@ describe("mfa recovery and latch migration", () => {
     expect(genId).toBeTruthy();
   });
 
-  it("consumes a recovery code exactly once and replays idempotently", async () => {
+  it("consumes a recovery code exactly once and replays idempotently (bound to user+digest)", async () => {
     const userId = randomUUID();
     const { genId, digests } = await seedGeneration(userId, 1, 2);
 
-    const first = await consume(userId, digests[0], "rec-op-1");
+    const first = await consume(userId, digests[0], "rec-op-1", "audit-1");
     expect(first).toMatchObject({ consumed: true, generation_id: genId });
     expect(first.code_id).toBeTruthy();
 
-    // Same operation id replays as success without consuming a 2nd code.
-    const replay = await consume(userId, digests[1], "rec-op-1");
+    // Same operation id + same user + same digest replays as success
+    // without consuming a 2nd code.
+    const replay = await consume(userId, digests[0], "rec-op-1", "audit-1");
     expect(replay).toMatchObject({
       consumed: true,
       code_id: first.code_id,
@@ -212,18 +213,122 @@ describe("mfa recovery and latch migration", () => {
     });
 
     // A different operation cannot reuse the consumed code...
-    const reuse = await consume(userId, digests[0], "rec-op-2");
+    const reuse = await consume(userId, digests[0], "rec-op-2", "audit-2");
     expect(reuse.consumed).toBe(false);
 
     // ...but the sibling code from the same generation still works.
-    const sibling = await consume(userId, digests[1], "rec-op-3");
+    const sibling = await consume(userId, digests[1], "rec-op-3", "audit-3");
     expect(sibling.consumed).toBe(true);
 
     // Unknown digest, wrong user, and null inputs all fail closed with
     // an indistinguishable false.
-    expect((await consume(userId, "digest-nope", "rec-op-4")).consumed).toBe(false);
-    expect((await consume(randomUUID(), digests[1], "rec-op-5")).consumed).toBe(false);
-    expect((await consume(null, digests[1], "rec-op-6")).consumed).toBe(false);
+    expect((await consume(userId, "digest-nope", "rec-op-4", "audit-4")).consumed).toBe(false);
+    expect((await consume(randomUUID(), digests[1], "rec-op-5", "audit-5")).consumed).toBe(false);
+    expect((await consume(null, digests[1], "rec-op-6", "audit-6")).consumed).toBe(false);
+  });
+
+  it("L2-005 probe: cross-user replay of a consumed operation id returns consumed:false", async () => {
+    const userA = randomUUID();
+    const userB = randomUUID();
+    const { digests: digestsA } = await seedGeneration(userA, 1, 1);
+    const { digests: digestsB } = await seedGeneration(userB, 1, 1);
+
+    const first = await consume(userA, digestsA[0], "rec-op-cross", "audit-a");
+    expect(first.consumed).toBe(true);
+
+    // User B replays user A's operation id with B's own digest: denied,
+    // no side effects — B's code stays unconsumed.
+    const cross = await consume(userB, digestsB[0], "rec-op-cross", "audit-b");
+    expect(cross.consumed).toBe(false);
+
+    // B's code still works under B's own operation id.
+    const legit = await consume(userB, digestsB[0], "rec-op-cross-b", "audit-b2");
+    expect(legit.consumed).toBe(true);
+
+    // User B replays with A's digest but B's identity: also denied.
+    const crossDigest = await consume(userB, digestsA[0], "rec-op-cross", "audit-b3");
+    expect(crossDigest.consumed).toBe(false);
+  });
+
+  it("L2-005 probe: same-user replay with a DIFFERENT digest returns consumed:false", async () => {
+    const userId = randomUUID();
+    const { digests } = await seedGeneration(userId, 1, 2);
+    const first = await consume(userId, digests[0], "rec-op-diff", "audit-1");
+    expect(first.consumed).toBe(true);
+
+    // Same operation id, same user, different digest: denied, and the
+    // sibling code is NOT consumed as a side effect.
+    const r = await consume(userId, digests[1], "rec-op-diff", "audit-2");
+    expect(r.consumed).toBe(false);
+    const { rows } = await db.query(
+      `select consumed_at from public.mfa_recovery_codes
+        where code_digest = $1`,
+      [digests[1]],
+    );
+    expect(rows[0].consumed_at).toBeNull();
+  });
+
+  it("L2-006 probe: a successful consume atomically latches, logs, and clears grandfathering", async () => {
+    const userId = randomUUID();
+    const { genId, digests } = await seedGeneration(userId, 1, 1);
+
+    // Seed a grandfather row: recovery must delete it.
+    await db.query(
+      `insert into public.session_grandfather_registry (user_id, session_id, family_id)
+       values ($1::uuid, 'sess-old', 'fam-old')`,
+      [userId],
+    );
+
+    const r = await consume(userId, digests[0], "rec-op-atomic", "audit-atomic");
+    expect(r.consumed).toBe(true);
+
+    // Latch row exists, bound to the audit id.
+    const latch = await db.query(
+      `select reason, audit_id from public.mfa_security_latch where user_id = $1::uuid`,
+      [userId],
+    );
+    expect(latch.rows[0]).toMatchObject({ reason: "recovery_code_consumed", audit_id: "audit-atomic" });
+
+    // Recovery operation row recorded as latched.
+    const op = await db.query(
+      `select user_id, status from public.mfa_recovery_operations where id = 'rec-op-atomic'`,
+    );
+    expect(op.rows[0]).toMatchObject({ user_id: userId, status: "latched" });
+
+    // Audit row appended.
+    const audit = await db.query(
+      `select action, actor, audit_id from public.mfa_audit_log
+        where user_id = $1::uuid and action = 'recovery_code_consumed'`,
+      [userId],
+    );
+    expect(audit.rows[0]).toMatchObject({
+      action: "recovery_code_consumed",
+      actor: "gateway",
+      audit_id: "audit-atomic",
+    });
+
+    // Grandfather rows deleted: the family can never regain access.
+    const gf = await db.query(
+      `select count(*)::int as n from public.session_grandfather_registry where user_id = $1::uuid`,
+      [userId],
+    );
+    expect(gf.rows[0].n).toBe(0);
+
+    // The consumed code's generation is unchanged.
+    expect(r.generation_id).toBe(genId);
+  });
+
+  it("L2-006 probe: idempotent replay re-asserts the latch without duplicating audit rows", async () => {
+    const userId = randomUUID();
+    const { digests } = await seedGeneration(userId, 1, 1);
+    await consume(userId, digests[0], "rec-op-reassert", "audit-r1");
+    const replay = await consume(userId, digests[0], "rec-op-reassert", "audit-r1");
+    expect(replay.consumed).toBe(true);
+    const latch = await db.query(
+      `select count(*)::int as n from public.mfa_security_latch where user_id = $1::uuid`,
+      [userId],
+    );
+    expect(latch.rows[0].n).toBe(1);
   });
 
   it("rejects codes from invalidated generations", async () => {

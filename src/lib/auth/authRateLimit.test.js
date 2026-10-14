@@ -7,6 +7,8 @@ import {
   accountKey,
   checkAdmission,
   normalizeAccountIdentifier,
+  opaqueKey,
+  recordAttemptOutcome,
 } from "./authRateLimit.js";
 
 const ENV = { AUTH_LIMITER_HMAC_KEY: "test-hmac-key" };
@@ -213,5 +215,113 @@ describe("DEFAULT_LIMITS", () => {
 
   it("is frozen", () => {
     expect(Object.isFrozen(DEFAULT_LIMITS)).toBe(true);
+  });
+});
+
+describe("opaqueKey", () => {
+  it("hashes byte-for-byte without normalization (case-sensitive bearer material)", () => {
+    const a = opaqueKey("AbC-123_XyZ", ENV.AUTH_LIMITER_HMAC_KEY);
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(opaqueKey("abc-123_xyz", ENV.AUTH_LIMITER_HMAC_KEY)).not.toBe(a);
+    expect(opaqueKey("AbC-123_XyZ", ENV.AUTH_LIMITER_HMAC_KEY)).toBe(a);
+    expect(opaqueKey(" AbC-123_XyZ ", ENV.AUTH_LIMITER_HMAC_KEY)).not.toBe(a);
+  });
+
+  it("requires a value and an HMAC key", () => {
+    expect(() => opaqueKey("", ENV.AUTH_LIMITER_HMAC_KEY)).toThrow();
+    expect(() => opaqueKey("x", "")).toThrow();
+  });
+});
+
+describe("L2-008 session attribution", () => {
+  function mockAdmin(rpcImpl) {
+    return { rpc: vi.fn(rpcImpl) };
+  }
+
+  it("keys session-kind buckets on the sessionId, never the account hash", async () => {
+    const admin = mockAdmin(() =>
+      Promise.resolve({ data: [{ allowed: true, retry_after_seconds: 0, backoff_seconds: 0 }], error: null })
+    );
+    await checkAdmission({
+      supabaseAdmin: admin,
+      action: AUTH_ACTIONS.REFRESH,
+      accountId: null,
+      sessionId: "sess-abc-123",
+      ip: "203.0.113.7",
+      operationId: "op-sess-1",
+      env: ENV,
+    });
+    const keys = admin.rpc.mock.calls[0][1].p_keys;
+    expect(keys).toContain("refresh:session:sess-abc-123");
+    expect(keys).toContain("refresh:ip:203.0.113.7");
+    // No account bucket without an accountId; the session key is the raw
+    // session id, never derived from an account hash.
+    expect(keys.some((k) => k.startsWith("refresh:account"))).toBe(false);
+  });
+
+  it("skips session buckets when no sessionId is available (account+IP still apply)", async () => {
+    const admin = mockAdmin(() =>
+      Promise.resolve({ data: [{ allowed: true, retry_after_seconds: 0, backoff_seconds: 0 }], error: null })
+    );
+    await checkAdmission({
+      supabaseAdmin: admin,
+      action: AUTH_ACTIONS.MFA_VERIFY,
+      accountId: "user@example.com",
+      sessionId: null,
+      ip: "203.0.113.7",
+      operationId: "op-sess-2",
+      env: ENV,
+    });
+    const keys = admin.rpc.mock.calls[0][1].p_keys;
+    expect(keys.some((k) => k.includes(":session:"))).toBe(false);
+    expect(keys.some((k) => k.startsWith("mfa_verify:account:"))).toBe(true);
+  });
+
+  it("fails closed (unavailable) when an IP bucket is required but no trusted IP exists", async () => {
+    const admin = mockAdmin(() =>
+      Promise.resolve({ data: [{ allowed: true, retry_after_seconds: 0, backoff_seconds: 0 }], error: null })
+    );
+    const result = await checkAdmission({
+      supabaseAdmin: admin,
+      action: AUTH_ACTIONS.PASSWORD_SIGNIN,
+      accountId: "user@example.com",
+      ip: null,
+      operationId: "op-noip-1",
+      env: ENV,
+    });
+    // L2-008: required IP buckets are never silently dropped.
+    expect(result).toMatchObject({ allowed: false, unavailable: true });
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordAttemptOutcome", () => {
+  it("calls auth_record_attempt_outcome and returns the recorded flag", async () => {
+    const rpc = vi.fn(() => Promise.resolve({ data: true, error: null }));
+    const ok = await recordAttemptOutcome({
+      supabaseAdmin: { rpc },
+      operationId: "op-1",
+      outcome: "credential_failed",
+      accountKey: "deadbeef",
+    });
+    expect(ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith("auth_record_attempt_outcome", {
+      p_operation_id: "op-1",
+      p_outcome: "credential_failed",
+      p_account_key: "deadbeef",
+    });
+  });
+
+  it("never throws: RPC errors become false", async () => {
+    const rpc = vi.fn(() => Promise.resolve({ data: null, error: new Error("down") }));
+    expect(
+      await recordAttemptOutcome({ supabaseAdmin: { rpc }, operationId: "op-1", outcome: "mfa_succeeded" })
+    ).toBe(false);
+    expect(
+      await recordAttemptOutcome({ supabaseAdmin: null, operationId: "op-1", outcome: "mfa_succeeded" })
+    ).toBe(false);
+    expect(
+      await recordAttemptOutcome({ supabaseAdmin: { rpc }, operationId: "", outcome: "mfa_succeeded" })
+    ).toBe(false);
   });
 });

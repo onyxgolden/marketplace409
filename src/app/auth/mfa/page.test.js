@@ -8,12 +8,14 @@ const {
   gatewayMfaChallenge,
   gatewayMfaVerify,
   gatewayMfaIssueRecoveryCodes,
+  gatewayMfaListFactors,
   getBrowserAccessToken,
 } = vi.hoisted(() => ({
   gatewayMfaEnroll: vi.fn(),
   gatewayMfaChallenge: vi.fn(),
   gatewayMfaVerify: vi.fn(),
   gatewayMfaIssueRecoveryCodes: vi.fn(),
+  gatewayMfaListFactors: vi.fn(),
   getBrowserAccessToken: vi.fn(),
 }));
 
@@ -32,6 +34,7 @@ vi.mock("@/lib/auth/authGateway.js", () => ({
   gatewayMfaChallenge,
   gatewayMfaVerify,
   gatewayMfaIssueRecoveryCodes,
+  gatewayMfaListFactors,
   getBrowserAccessToken,
   gatewayErrorMessage: (result) => result?.error ?? result?.transportError ?? "Service unavailable.",
   newOperationId: () => "00000000-0000-4000-a000-000000000001",
@@ -237,6 +240,7 @@ describe("MfaPage challenge mode", () => {
   beforeEach(() => {
     getBrowserAccessToken.mockReset().mockResolvedValue("test-access-token");
     gatewayMfaChallenge.mockReset().mockResolvedValue({ status: "ok", challenge_id: "challenge-9" });
+    gatewayMfaListFactors.mockReset().mockResolvedValue({ status: "ok", factors: [] });
     gatewayMfaVerify.mockReset().mockResolvedValue({
       status: "ok",
       session: { access_token: "aal2-token", refresh_token: "refresh-9" },
@@ -248,7 +252,23 @@ describe("MfaPage challenge mode", () => {
     container.remove();
   });
 
-  it("explains the gap (ROUTE GAP 3) when no factor id is available", async () => {
+  it("discovers the factor via list_factors when no factor id is bridged", async () => {
+    getBrowserAccessToken.mockResolvedValue("atk-1");
+    gatewayMfaListFactors.mockResolvedValue({
+      status: "ok",
+      factors: [{ id: "factor-discovered-1", friendly_name: "App", factor_type: "totp" }],
+    });
+    ({ container, root } = renderPage("/auth/mfa?mode=challenge"));
+    await act(async () => {});
+
+    expect(gatewayMfaListFactors).toHaveBeenCalled();
+    const code = container.querySelector("#mfa-code");
+    expect(code).not.toBeNull();
+  });
+
+  it("explains when no verified factor exists for challenge", async () => {
+    getBrowserAccessToken.mockResolvedValue("atk-1");
+    gatewayMfaListFactors.mockResolvedValue({ status: "ok", factors: [] });
     ({ container, root } = renderPage("/auth/mfa?mode=challenge"));
     await act(async () => {});
 

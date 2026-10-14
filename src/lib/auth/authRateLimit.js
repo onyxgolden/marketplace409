@@ -4,34 +4,19 @@
 // the `auth_admission_check` RPC — there is no in-memory production counter.
 // This module is a thin, fail-closed client around that RPC.
 //
-// CONFLICT NOTE (2026-10-13): an untracked migration appeared in this
-// worktree during this build (supabase/migrations/20261013225000_auth_rate_limit_buckets.sql,
-// author unknown — NOT written by this task) defining auth_admission_check as
-//   (p_action text, p_keys text[], p_limits jsonb, p_operation_id text,
-//    p_now timestamptz default null)
-//   returns table (allowed, retry_after_seconds, backoff_seconds, unavailable)
-// That differs from the brief's contract documented below. This client keeps
-// the brief's contract per the task's "assume it exists per the migration
-// spec in the brief" instruction; the mismatch fails CLOSED (unknown RPC or
-// bad params -> unavailable -> no provider call). Reconcile the two before
-// activation: either rename/reparam the migration or this client — never both
-// drifting. As a defensive bridge, this client honors an in-band
-// `unavailable` flag when the RPC returns one (the migration's shape), so a
-// reconciled RPC that reports unavailability in-band is still fail-closed.
-//
-// Expected RPC signature (per the Layer 2 migration spec in the brief; the
-// RPC itself is NOT created here and NO migration is applied by this change):
-//
+// RPC contract (supabase/migrations/20261013225000_auth_rate_limit_buckets.sql):
 //   auth_admission_check(
 //     p_action text,          -- one of the ACTION namespaces below
-//     p_account_key text,     -- HMAC-SHA256 hex of the normalized account id, or NULL
-//     p_ip text,              -- trusted deployment-derived IP, or NULL
-//     p_operation_id text     -- idempotency key for failed-attempt recording
+//     p_keys text[],          -- positional bucket keys (opaque strings)
+//     p_limits jsonb,         -- positional [{capacity, window_seconds}]
+//     p_operation_id text,    -- idempotency key; replay is bound to
+//                              action+key-set and to one provider attempt
+//     p_now timestamptz       -- NULL in production (server clock governs)
 //   ) RETURNS TABLE (
 //     allowed boolean,
 //     retry_after_seconds integer,
 //     backoff_seconds integer,
-//     limit_name text
+//     unavailable boolean
 //   )
 //
 // Fail-closed contract: ANY store error (RPC error, network failure,
@@ -43,6 +28,9 @@
 // - Account key = HMAC-SHA256(normalized identifier) with the server-held
 //   AUTH_LIMITER_HMAC_KEY. Normalization is trim + lowercase ONLY — no
 //   Gmail dot/plus collapsing, matching provider behavior.
+// - Session key = an independently authenticated session identifier, used
+//   AS-IS (callers pre-hash bearer material with opaqueKey()). It is NEVER
+//   derived from the account hash.
 // - IP is the trusted deployment-derived value passed in by the caller (edge
 //   / load-balancer extraction the deployment controls). NEVER trust an
 //   arbitrary X-Forwarded-For value here; header handling belongs to the
@@ -131,14 +119,17 @@ export const ACTION_BUCKETS = Object.freeze({
     Object.freeze({ kinds: ["ip"], capacity: 1000, windowSeconds: 300 }),
   ]),
   mfa_challenge: Object.freeze([
+    Object.freeze({ kinds: ["session"], capacity: 30, windowSeconds: 300 }),
     Object.freeze({ kinds: ["account"], capacity: 5, windowSeconds: 300 }),
     Object.freeze({ kinds: ["ip"], capacity: 60, windowSeconds: 300 }),
   ]),
   mfa_verify: Object.freeze([
+    Object.freeze({ kinds: ["session"], capacity: 30, windowSeconds: 300 }),
     Object.freeze({ kinds: ["account"], capacity: 5, windowSeconds: 300 }),
     Object.freeze({ kinds: ["ip"], capacity: 60, windowSeconds: 300 }),
   ]),
   recovery: Object.freeze([
+    Object.freeze({ kinds: ["session"], capacity: 30, windowSeconds: 300 }),
     Object.freeze({ kinds: ["account"], capacity: 5, windowSeconds: 300 }),
     Object.freeze({ kinds: ["ip"], capacity: 60, windowSeconds: 300 }),
   ]),
@@ -170,12 +161,59 @@ export function accountKey(identifier, hmacKey) {
 }
 
 /**
+ * Opaque HMAC key for values that must NOT be normalized — case-sensitive
+ * bearer material such as refresh tokens. Unlike accountKey, the input is
+ * hashed byte-for-byte (no trim/lowercase). The output reveals nothing about
+ * the input and is safe to send as a bucket key or session identifier.
+ */
+export function opaqueKey(value, hmacKey) {
+  if (typeof value !== "string" || value === "") {
+    throw new Error("opaqueKey requires a non-empty value.");
+  }
+  if (typeof hmacKey !== "string" || hmacKey === "") {
+    throw new Error("opaqueKey requires a server-side HMAC key.");
+  }
+  return createHmac("sha256", hmacKey).update(value, "utf8").digest("hex");
+}
+
+/**
+ * Record a provider-attempt outcome against the operation id claimed by
+ * auth_admission_check. Drives the failure ladder (credential_failed) and
+ * clears failure backoff on success (credential_succeeded / mfa_succeeded).
+ * Never throws: outcome recording must not break the auth path.
+ *
+ * @param {object} args - { supabaseAdmin, operationId, outcome, accountKey }
+ *   outcome: 'credential_failed' | 'credential_succeeded' | 'mfa_succeeded'
+ *   accountKey: HMAC hex from accountKey()/opaqueKey(), or null
+ * @returns {Promise<boolean>} true when the outcome is (now) recorded.
+ */
+export async function recordAttemptOutcome({ supabaseAdmin, operationId, outcome, accountKey = null }) {
+  try {
+    if (!supabaseAdmin) return false;
+    if (typeof operationId !== "string" || operationId === "") return false;
+    const { data, error } = await supabaseAdmin.rpc("auth_record_attempt_outcome", {
+      p_operation_id: operationId,
+      p_outcome: outcome,
+      p_account_key: accountKey,
+    });
+    if (error) return false;
+    return data === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check admission for an auth action.
  *
  * @param {{
  *   supabaseAdmin,            // service-role client with the RPC visible
  *   action: string,           // one of AUTH_ACTIONS values
  *   accountId?: string,        // raw identifier (email/user id); hashed here
+ *   sessionId?: string,        // independently authenticated session id
+ *                              // (verified claims session_id, or
+ *                              // opaqueKey(refresh_token)); used AS-IS for
+ *                              // session-kind buckets, never the account hash
  *   ip?: string,              // trusted deployment-derived IP
  *   operationId: string,      // idempotency key for failed-attempt recording
  *   env?: object,             // default process.env; AUTH_LIMITER_HMAC_KEY
@@ -184,11 +222,18 @@ export function accountKey(identifier, hmacKey) {
  *            limitName?: string, unavailable?: boolean }
  *   unavailable: true means the counter store failed — fail closed, do not
  *   call the provider, return a generic 503 upstream.
+ *
+ * L2-008: when the action's buckets REQUIRE an IP bucket and no trusted IP
+ * is available, this returns unavailable (fail closed) instead of silently
+ * dropping the IP bucket. A missing trusted IP means the deployment's
+ * ingress policy is misconfigured; proceeding without the IP bucket would
+ * silently weaken the limiter.
  */
 export async function checkAdmission({
   supabaseAdmin,
   action,
   accountId = null,
+  sessionId = null,
   ip = null,
   operationId,
   env = process.env,
@@ -215,15 +260,27 @@ export async function checkAdmission({
     // Build positional keys + limits for the migration's
     // auth_admission_check(p_action, p_keys, p_limits, p_operation_id, p_now).
     const buckets = ACTION_BUCKETS[action];
+
+    // L2-008: required IP buckets are never silently dropped. If any bucket
+    // needs the IP and none is available, the deployment's trusted-ingress
+    // policy is misconfigured — fail closed.
+    const ipRequired = buckets.some((b) => b.kinds.some((k) => k === "ip" || k === "account_ip"));
+    if (ipRequired && !ip) {
+      return { allowed: false, retryAfterSeconds: 0, backoffSeconds: 0, unavailable: true };
+    }
+
     const pKeys = [];
     const pLimits = [];
     for (const bucket of buckets) {
-      const needsAccount = bucket.kinds.some((k) => k === "account" || k === "account_ip" || k === "session");
+      const needsAccount = bucket.kinds.some((k) => k === "account" || k === "account_ip");
+      const needsSession = bucket.kinds.some((k) => k === "session");
       const needsIp = bucket.kinds.some((k) => k === "ip" || k === "account_ip");
       if (needsAccount && !accountKeyHex) continue;
+      if (needsSession && !sessionId) continue;
       if (needsIp && !ip) continue;
       const parts = [action, bucket.kinds.join("+")];
       if (needsAccount) parts.push(accountKeyHex);
+      if (needsSession) parts.push(String(sessionId));
       if (needsIp) parts.push(ip);
       pKeys.push(parts.join(":"));
       pLimits.push({ capacity: bucket.capacity, window_seconds: bucket.windowSeconds });
@@ -245,8 +302,7 @@ export async function checkAdmission({
     if (!row || typeof row.allowed !== "boolean") {
       throw new Error("auth_admission_check returned an unexpected shape.");
     }
-    // In-band unavailability (the in-worktree migration's shape reports
-    // `unavailable` in the row): fail closed even when the call succeeded.
+    // In-band unavailability: fail closed even when the call succeeded.
     if (row.unavailable === true) {
       return { allowed: false, retryAfterSeconds: 0, backoffSeconds: 0, unavailable: true };
     }

@@ -16,33 +16,30 @@
 //     expires after 4 hours.
 //   - An unresolvable preview cookie fails closed (403), never silently ignored.
 //
-// Layer 2 (MFA/rate-limit) server-guard hook point — NOT YET WIRED (inert until activation):
-//   Once Layer 2 activates, requireRentalPermission and requireTeamManager must AND the
-//   server-side requireSecurityAssurance() result (src/lib/auth/requireSecurityAssurance.js)
-//   with the rental authorization computed below:
+// Layer 2 (MFA/rate-limit) server-guard hook — WIRED, activation-gated:
 //
-//     const assurance = await requireSecurityAssurance({
-//       supabaseAdmin,                       // service-role client (serverAuthTransport.js)
-//       user: { id: authenticated.user.id }, // re-validated against the session token
-//       session: <the request's session>,    // access_token validated server-side
-//     });
-//     // AND semantics: allow ONLY when assurance.authorized AND the existing
-//     // rental permission/preview checks below pass. A deny from EITHER side
-//     // is a 403. The security guard never replaces the workspace ownership
-//     // predicates and never reuses the rental missing-membership fallback
-//     // (securityPolicy.js resolves actual owned workspaces / active
-//     // memberships only — see its header).
+// requireRentalPermission and requireTeamManager accept an optional
+// `security` context ({ supabaseAdmin, session, config }). When supplied AND
+// Layer 2 is activated, the server-side requireSecurityAssurance() result is
+// ANDed with the rental authorization computed below:
 //
-//   Wiring checklist (for the activation PR, not this one):
-//   - requireRentalPermission: after the preview read-only check and the
-//     hasRentalPermission check pass, AND assurance.authorized.
-//   - requireTeamManager: after the role check passes, AND assurance.authorized.
-//   - getActorRentalAuthorization's missing-membership => primary_owner fallback
-//     is RENTAL-context behavior and MUST NOT change here; the security layer
-//     performs its own strict cohort resolution independently.
-//   - SECURITY_ASSURANCE_HOOK.status flips to "wired" when the AND is live.
+//   allow ONLY when assurance.authorized AND the existing rental
+//   permission/preview checks pass. A deny from EITHER side is a 403.
+//
+// When activation is off (the shipped default) or no security context is
+// supplied, the gates behave EXACTLY as before Layer 2 — the guard module
+// is not even imported on the inert path. The security guard never replaces
+// the workspace ownership predicates, and the rental missing-membership
+// fallback below is RENTAL-context behavior only (securityPolicy.js resolves
+// cohorts independently — see its header).
+//
+// Wire points: requireRentalPermission (after preview + permission checks),
+// requireTeamManager (after the role check). SECURITY_ASSURANCE_HOOK.status
+// is "wired": the AND is implemented; activation (config.enabled) decides
+// whether it enforces.
 
 import { NextResponse } from "next/server";
+import { ACTIVATION_CONFIG, isMfaLayer2Activated } from "@/lib/auth/securityPolicy.js";
 import {
   RENTAL_PERMISSION_KEYS,
   RENTAL_PERMISSION_LABELS,
@@ -52,14 +49,15 @@ import {
 } from "./permissions";
 
 // Documents where the Layer 2 server guard ANDs into the rental gates.
-// status "not-wired": the gates below behave EXACTLY as before Layer 2 —
-// this constant is the hook point, not an enforcement change.
+// status "wired": the AND below is implemented; enforcement is decided by
+// the activation config (default off => exact pre-Layer-2 behavior).
 export const SECURITY_ASSURANCE_HOOK = Object.freeze({
-  status: "not-wired",
+  status: "wired",
   guardModule: "@/lib/auth/requireSecurityAssurance.js",
   adminTransport: "@/lib/auth/serverAuthTransport.js",
   andSemantics: "deny-unless-both-assurance-and-rental-checks-pass",
   wirePoints: Object.freeze(["requireRentalPermission", "requireTeamManager"]),
+  activationGated: true,
 });
 
 export const PREVIEW_COOKIE_NAME = "forge_rental_preview_as";
@@ -80,6 +78,41 @@ function parsePreviewMemberId(request) {
 
 function forbidden(message) {
   return NextResponse.json({ error: message }, { status: 403 });
+}
+
+/**
+ * Layer 2 AND: deny unless the server-side MFA guard authorizes the actor's
+ * session. Returns a 403 response when the guard denies, or null when the
+ * guard authorizes (or when Layer 2 is not activated / no security context
+ * was supplied — the inert path, which behaves EXACTLY as before Layer 2
+ * and does not even import the guard module).
+ *
+ * @param {{ supabaseAdmin, session, config? }|null} security - caller-supplied
+ *   context: service-role client, the request's session ({ access_token }),
+ *   optional activation config override (tests).
+ */
+async function enforceSecurityAssurance(security, authenticated) {
+  if (!security) return null;
+  const config = security.config ?? ACTIVATION_CONFIG;
+  if (!isMfaLayer2Activated(config)) return null;
+  if (!security.supabaseAdmin || !security.session?.access_token) {
+    // Misconfigured security context under activation: fail closed.
+    return forbidden("Additional verification is unavailable. Please try again later.");
+  }
+  const { requireSecurityAssurance } = await import("@/lib/auth/requireSecurityAssurance.js");
+  let assurance;
+  try {
+    assurance = await requireSecurityAssurance({
+      supabaseAdmin: security.supabaseAdmin,
+      user: { id: authenticated?.user?.id },
+      session: security.session,
+      config,
+    });
+  } catch {
+    return forbidden("Additional verification is unavailable. Please try again later.");
+  }
+  if (assurance?.authorized) return null;
+  return forbidden("Additional verification required. Complete MFA to continue.");
 }
 
 async function loadMembership(supabaseClient, actorUserId) {
@@ -162,7 +195,12 @@ export async function getActorRentalAuthorization({ supabaseClient, actorUserId,
 
 // Gate for a single permission. In preview mode EVERY mutation is denied -- the preview is a
 // read-only verification surface, never a way to act as the other user.
-export async function requireRentalPermission({ authenticated, request, permission }) {
+//
+// Layer 2: when `security` ({ supabaseAdmin, session, config? }) is supplied
+// AND Layer 2 is activated, requireSecurityAssurance is ANDed with the rental
+// checks below. Without a security context, or with activation off, behavior
+// is EXACTLY as before Layer 2.
+export async function requireRentalPermission({ authenticated, request, permission, security = null }) {
   const authorization = await getActorRentalAuthorization({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
@@ -188,10 +226,13 @@ export async function requireRentalPermission({ authenticated, request, permissi
     };
   }
 
+  const assuranceDeny = await enforceSecurityAssurance(security, authenticated);
+  if (assuranceDeny) return { response: assuranceDeny, authorization: null };
+
   return { response: null, authorization };
 }
 
-export async function requireTeamManager({ authenticated, request }) {
+export async function requireTeamManager({ authenticated, request, security = null }) {
   const authorization = await getActorRentalAuthorization({
     supabaseClient: authenticated.supabaseClient,
     actorUserId: authenticated.user.id,
@@ -216,6 +257,9 @@ export async function requireTeamManager({ authenticated, request }) {
   if (!authorization.isPrimaryOwner && authorization.role !== "co_owner") {
     return { response: forbidden("Only the owner or co-owner can manage the team."), authorization: null };
   }
+
+  const assuranceDeny = await enforceSecurityAssurance(security, authenticated);
+  if (assuranceDeny) return { response: assuranceDeny, authorization: null };
 
   return { response: null, authorization };
 }

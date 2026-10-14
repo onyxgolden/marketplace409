@@ -49,6 +49,21 @@ vi.mock("@/lib/supabase/client", () => ({
     },
   }),
 }));
+// Mocked here so the page's status-endpoint routing can be tested in
+// isolation: the endpoint's own contract is tested in
+// src/app/api/auth/mfa/route.test.js. All other gateway helpers stay real
+// (the "Layer 2 enabled" block below stubs fetch to test real route
+// contracts through them).
+const { gatewayMfaStatus } = vi.hoisted(() => ({
+  gatewayMfaStatus: vi.fn(async () => ({ status: "ok", authorized: true, state: "AUTHORIZED", cohort: "unknown" })),
+}));
+vi.mock("@/lib/auth/authGateway.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    gatewayMfaStatus: (...args) => gatewayMfaStatus(...args),
+  };
+});
 // Mocked here so this file can test "did page.jsx call the shared helper correctly and handle its
 // result" in isolation -- the helper's own cache-clearing/redirect/failure behavior is tested once,
 // directly, in signOutSafely.test.js, rather than re-verified at every call site.
@@ -559,17 +574,34 @@ describe("AuthPage Layer 2 enabled: gateway integration (real route contracts)",
     expect(container.textContent).toContain("Check your email for a secure password-reset link.");
   });
 
-  it("keeps the onAuthStateChange redirect to next (TODO: server status endpoint, GAP-5)", async () => {
+  it("routes an AAL1 required-cohort session to the MFA ceremony via the status endpoint", async () => {
+    gatewayMfaStatus.mockResolvedValueOnce({
+      status: "ok", authorized: false, state: "CHALLENGE_REQUIRED", cohort: "required",
+    });
     const restore = captureRedirect();
 
     await act(async () => {
-      await authStateCallback.current("SIGNED_IN", { user: { id: "user-1" } });
+      await authStateCallback.current("SIGNED_IN", {
+        user: { id: "user-1" },
+        access_token: "atk-aal1",
+      });
     });
 
-    // A session reaching this subscription when the layer is active has
-    // already passed the server-side requireSecurityAssurance check (the
-    // gateway only issues a session when authorized). GAP-5 tracks the
-    // future status endpoint for non-gateway sessions.
+    expect(gatewayMfaStatus).toHaveBeenCalled();
+    expect(window.location.href).toBe("/auth/mfa?mode=challenge&next=%2Fforge%2Fportal");
+    restore();
+  });
+
+  it("keeps the onAuthStateChange redirect to next when the status endpoint authorizes", async () => {
+    const restore = captureRedirect();
+
+    await act(async () => {
+      await authStateCallback.current("SIGNED_IN", {
+        user: { id: "user-1" },
+        access_token: "atk-aal2",
+      });
+    });
+
     expect(window.location.href).toBe("/forge/portal");
     restore();
   });

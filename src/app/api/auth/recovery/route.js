@@ -6,35 +6,45 @@
 //     Requires a valid first-factor session. Returns nothing sensitive —
 //     only an acknowledgement that a recovery code may now be presented.
 //   {action:'complete', access_token, recovery_code, operationId}
-//     Atomically consumes one recovery code (one concurrent winner via the
-//     auth_recovery_consume/mfa_consume_recovery_code RPC), enters
-//     RECOVERY_PENDING by setting the mfa_security_latch row, and revokes
-//     the user's sessions through the narrow admin recovery adapter.
-//     Returns {status:'recovery_pending'}.
+//     Requires a FRESH first-factor ceremony (claims.iat within the fresh
+//     window — a current refreshed access token is NOT evidence of one).
+//     Atomically consumes one recovery code AND enters RECOVERY_PENDING via
+//     the mfa_consume_recovery_code RPC (consume + latch + operation row +
+//     audit row + grandfather-registry deletion in ONE transaction; one
+//     concurrent winner only), then revokes the user's sessions through the
+//     narrow admin recovery adapter (JWT-based; the latch is the real guard
+//     while revocation propagates). Returns {status:'recovery_pending'}.
+//     Failures are generic and identical (no oracle): wrong code,
+//     already-consumed code, wrong generation, wrong user, or mismatched
+//     replay all answer the same 401.
 //
 // What recovery IS and IS NOT:
 //   - IS permission to reset enrollment (re-enroll a real TOTP factor).
 //   - IS NOT AAL2 and IS NOT workspace access. The recovery latch denies
 //     even otherwise-valid tokens until the user enrolls and verifies a new
-//     TOTP factor, at which point privileged access resumes through the
-//     normal requireSecurityAssurance path.
+//     TOTP factor (via /api/auth/mfa verify, which completes the recovery),
+//     at which point privileged access resumes through the normal
+//     requireSecurityAssurance path.
 //   - Consumed codes are NEVER restored, and the latch is never cleared
-//     merely because a provider call failed (see partial-failure handling
-//     below).
+//     merely because a provider call failed.
+//
+// Admission is TWO-PHASE (L2-008): IP-keyed before token verification, then
+// verified account + session_id from the JWT claims before the consume.
 //
 // With Layer 2 DISABLED this route does nothing at all (no code is consumed,
 // no latch is set): it returns 501 with the inert label header. There is no
 // "existing behavior" to pass through to — recovery is a Layer 2-only flow.
 
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import { adminRecoveryAdapter, createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
 import { consumeRecoveryCode } from "@/lib/auth/recoveryCodes.js";
+import { verifiedSessionClaims } from "@/lib/auth/requireSecurityAssurance.js";
 import {
   AUTH_ACTIONS,
   ACTIVATION_CONFIG,
   MESSAGE_INVALID_REQUEST,
-  MESSAGE_MFA_FAILED,
   MESSAGE_RECOVERY_FAILED,
   extractOperationId,
   gateAdmission,
@@ -49,6 +59,12 @@ export const runtime = "nodejs";
 
 const INITIATE_ACTION = "initiate";
 const COMPLETE_ACTION = "complete";
+
+// A first-factor ceremony counts as "fresh" for recovery when the
+// validated JWT was issued within this window. A refreshed access token
+// (old iat, rotated by the provider) is NOT evidence of a fresh ceremony —
+// the user must sign in again with their password.
+const FRESH_FIRST_FACTOR_MAX_AGE_SECONDS = 600;
 
 export async function POST(request) {
   const body = await readJsonBody(request);
@@ -89,8 +105,7 @@ export async function POST(request) {
     return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 500 });
   }
 
-  // Fail-closed admission before any provider call. Keyed on the trusted IP
-  // bucket: the user id comes from the verified token, after admission.
+  // Phase 1 admission: IP-keyed only (the user is not yet verified).
   const gate = await gateAdmission({
     supabaseAdmin,
     action: AUTH_ACTIONS.RECOVERY,
@@ -101,14 +116,33 @@ export async function POST(request) {
   });
   if (!gate.allowed) return gate.response;
 
-  // Fresh first factor required for both steps. The provider is the only
-  // authority on the token; freshness is bounded by the provider's short
-  // access-token lifetime (validated here, never decoded client-side).
+  // The provider is the only authority on the token.
   const verifiedUser = await verifiedUserFromToken(supabaseAdmin, accessToken);
   if (!verifiedUser) {
     return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 401 });
   }
   const userId = verifiedUser.id;
+
+  // Independently validated claims, bound to the verified user.
+  const claims = await verifiedSessionClaims(supabaseAdmin, accessToken, userId);
+  if (!claims) {
+    return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 401 });
+  }
+  const sessionId =
+    typeof claims.session_id === "string" && claims.session_id !== "" ? claims.session_id : null;
+
+  // Phase 2 admission: verified account + authenticated session.
+  const verifiedOperationId = `${operationId}:verified`;
+  const gate2 = await gateAdmission({
+    supabaseAdmin,
+    action: AUTH_ACTIONS.RECOVERY,
+    accountId: userId,
+    sessionId,
+    ip,
+    operationId: verifiedOperationId,
+    env,
+  });
+  if (!gate2.allowed) return gate2.response;
 
   if (action === INITIATE_ACTION) {
     // Nothing sensitive leaves here: the caller already holds a valid
@@ -116,11 +150,31 @@ export async function POST(request) {
     return NextResponse.json({ status: "recovery_initiated" });
   }
 
-  // COMPLETE_ACTION: atomic consume first — one concurrent winner only.
+  // COMPLETE_ACTION: require a FRESH first-factor ceremony. The JWT iat
+  // from the validated claims bounds the ceremony age; a refreshed token
+  // carries an old iat and does not qualify.
+  const issuedAt = Number(claims.iat ?? 0);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (
+    !Number.isFinite(issuedAt) ||
+    issuedAt <= 0 ||
+    nowSeconds - issuedAt > FRESH_FIRST_FACTOR_MAX_AGE_SECONDS
+  ) {
+    return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 401 });
+  }
+
+  // Atomic consume + RECOVERY_PENDING entry (one transaction, one concurrent
+  // winner). There is NO separate latch insert and NO "use a different
+  // code" retry path: the RPC either commits consume+latch together or
+  // reports consumed=false.
+  const auditId = randomUUID();
   let consumed;
   let generationId;
   try {
-    ({ consumed, generationId } = await consumeRecoveryCode(supabaseAdmin, userId, recoveryCode, operationId));
+    ({ consumed, generationId } = await consumeRecoveryCode(supabaseAdmin, userId, recoveryCode, operationId, {
+      auditId,
+      env,
+    }));
   } catch {
     // RPC/store failure: fail closed, generic message. The code may or may
     // not have been consumed server-side; never retry-restore it.
@@ -128,38 +182,26 @@ export async function POST(request) {
   }
   if (!consumed) {
     // Same generic response for wrong code, already-consumed code, wrong
-    // generation, or wrong user: no oracle.
+    // generation, wrong user, or mismatched replay: no oracle.
     return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 401 });
   }
 
-  // Enter RECOVERY_PENDING: set the latch BEFORE any further provider call.
-  // requireSecurityAssurance denies latched users independently of provider
-  // revocation propagation, so the latch is the real guard.
-  const { error: latchError } = await supabaseAdmin.from("mfa_security_latch").insert({
-    user_id: userId,
-    latched_at: new Date().toISOString(),
-    reason: "recovery_code_consumed",
-  });
-  if (latchError) {
-    // The code stays consumed (never restored). The user retries 'complete'
-    // with a DIFFERENT unused code; that attempt will set the latch.
-    console.error("Recovery latch set failed", { operationId });
-    return NextResponse.json({ error: MESSAGE_RECOVERY_FAILED }, { status: 500 });
-  }
-
-  // Belt-and-braces: revoke provider sessions. If this fails, the latch
-  // still denies old JWTs — report recovery_pending and reconcile later.
+  // Belt-and-braces: revoke provider sessions with the user's own JWT. The
+  // locked SDK has no by-user-id revocation; if revocation fails, the latch
+  // (set atomically above) still denies old JWTs — report recovery_pending
+  // and reconcile later. Never log raw provider errors.
   try {
-    await adminRecoveryAdapter(supabaseAdmin).revokeSessions(userId, operationId);
-  } catch (error) {
-    console.error("Recovery session revocation failed", { operationId, error });
+    await adminRecoveryAdapter(supabaseAdmin).revokeSessions(accessToken, userId, auditId);
+  } catch {
+    // Coarse label only — no provider error text, no token material.
+    console.error("Recovery session revocation failed", { operationId });
   }
 
   // The lost factor is NOT deleted here: the user re-enrolls a real new TOTP
   // factor through /api/auth/mfa (action 'enroll' + 'verify') while
-  // RECOVERY_PENDING; factor removal and generation invalidation happen as
-  // part of that re-enrollment per the brief's sequence. This response is
-  // NOT AAL2 and grants NO workspace access.
+  // RECOVERY_PENDING; factor removal, generation invalidation, and latch
+  // clearance happen as part of that verified re-enrollment. This response
+  // is NOT AAL2 and grants NO workspace access.
   return NextResponse.json({
     status: "recovery_pending",
     generation_id: generationId,

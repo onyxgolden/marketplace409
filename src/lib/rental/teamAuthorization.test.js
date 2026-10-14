@@ -8,6 +8,20 @@ import {
 } from "./teamAuthorization.js";
 import { RENTAL_PERMISSION_KEYS } from "./permissions.js";
 
+// Controllable mock for the Layer 2 guard (dynamically imported by
+// teamAuthorization.js only when a security context is supplied AND
+// activation is on). Default: authorize. vi.hoisted so the hoisted vi.mock
+// factory can reference it.
+const { mockRequireSecurityAssurance } = vi.hoisted(() => ({
+  mockRequireSecurityAssurance: vi.fn(async () => ({
+    authorized: true, state: "AUTHORIZED", cohort: "required", reason: "aal2",
+  })),
+}));
+vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
+  requireSecurityAssurance: (...args) => mockRequireSecurityAssurance(...args),
+  verifiedSessionClaims: vi.fn(async () => null),
+}));
+
 // Builds a supabase-client stub that answers the two workspace_members queries the
 // authorization layer makes: the actor membership lookup and the preview target lookup.
 // The two queries are told apart by their .eq() arguments.
@@ -339,15 +353,113 @@ describe("NO-GO fix 2026-10-01 (finding 2): requireTeamManager enforces role, no
   });
 });
 
-describe("Layer 2 security-assurance hook point (inert until activation)", () => {
-  it("exposes a documented, not-wired hook descriptor with AND semantics", async () => {
+describe("Layer 2 security-assurance hook (wired, activation-gated)", () => {
+  it("exposes a documented, wired hook descriptor with AND semantics", async () => {
     const { SECURITY_ASSURANCE_HOOK } = await import("./teamAuthorization.js");
-    expect(SECURITY_ASSURANCE_HOOK.status).toBe("not-wired");
+    expect(SECURITY_ASSURANCE_HOOK.status).toBe("wired");
     expect(SECURITY_ASSURANCE_HOOK.guardModule).toBe("@/lib/auth/requireSecurityAssurance.js");
     expect(SECURITY_ASSURANCE_HOOK.andSemantics).toBe("deny-unless-both-assurance-and-rental-checks-pass");
     expect([...SECURITY_ASSURANCE_HOOK.wirePoints]).toEqual(
       expect.arrayContaining(["requireRentalPermission", "requireTeamManager"])
     );
+    expect(SECURITY_ASSURANCE_HOOK.activationGated).toBe(true);
     expect(Object.isFrozen(SECURITY_ASSURANCE_HOOK)).toBe(true);
+  });
+
+  it("L2-002 probe: behaves EXACTLY as before when no security context is supplied (inert)", async () => {
+    mockRequireSecurityAssurance.mockClear();
+    const result = await requireRentalPermission({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      permission: "tenants.manage",
+    });
+    expect(result.response).toBeNull();
+    expect(result.authorization.isPrimaryOwner).toBe(true);
+    expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+  });
+
+  it("L2-002 probe: behaves EXACTLY as before when activation is off, even with a security context", async () => {
+    mockRequireSecurityAssurance.mockClear();
+    const result = await requireRentalPermission({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      permission: "tenants.manage",
+      security: {
+        supabaseAdmin: { kind: "fake-admin" },
+        session: { access_token: "atk" },
+        config: { enabled: false },
+      },
+    });
+    expect(result.response).toBeNull();
+    expect(result.authorization.isPrimaryOwner).toBe(true);
+    expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+  });
+
+  it("L2-002 probe: ANDs the MFA guard when activated — guard deny becomes 403", async () => {
+    mockRequireSecurityAssurance.mockResolvedValueOnce({
+      authorized: false, state: "CHALLENGE_REQUIRED", cohort: "required", reason: "aal1-with-factor",
+    });
+    const result = await requireRentalPermission({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      permission: "tenants.manage",
+      security: {
+        supabaseAdmin: { kind: "fake-admin" },
+        session: { access_token: "atk" },
+        config: { enabled: true },
+      },
+    });
+    expect(mockRequireSecurityAssurance).toHaveBeenCalledWith(
+      expect.objectContaining({ user: { id: "owner_1" }, session: { access_token: "atk" } })
+    );
+    expect(result.response).not.toBeNull();
+    expect(result.response.status).toBe(403);
+    expect(result.authorization).toBeNull();
+  });
+
+  it("L2-002 probe: AND allows when both the guard and the rental checks pass", async () => {
+    mockRequireSecurityAssurance.mockResolvedValueOnce({
+      authorized: true, state: "AUTHORIZED", cohort: "required", reason: "aal2",
+    });
+    const result = await requireTeamManager({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      security: {
+        supabaseAdmin: { kind: "fake-admin" },
+        session: { access_token: "atk" },
+        config: { enabled: true },
+      },
+    });
+    expect(result.response).toBeNull();
+    expect(result.authorization.isPrimaryOwner).toBe(true);
+  });
+
+  it("L2-002 probe: rental deny still wins even when the guard would authorize", async () => {
+    mockRequireSecurityAssurance.mockClear();
+    const result = await requireRentalPermission({
+      authenticated: authenticated(stubClient({ membership: member({ role: "bookkeeper" }) }), "staff_user"),
+      request: noPreview,
+      permission: "team.manage",
+      security: {
+        supabaseAdmin: { kind: "fake-admin" },
+        session: { access_token: "atk" },
+        config: { enabled: true },
+      },
+    });
+    // Rental permission check fails first: the guard is never consulted.
+    expect(result.response).not.toBeNull();
+    expect(result.response.status).toBe(403);
+    expect(mockRequireSecurityAssurance).not.toHaveBeenCalled();
+  });
+
+  it("L2-002 probe: fail-closed on a misconfigured security context under activation", async () => {
+    const result = await requireTeamManager({
+      authenticated: authenticated(stubClient({ membership: null })),
+      request: noPreview,
+      security: { supabaseAdmin: { kind: "fake" }, session: null, config: { enabled: true } },
+    });
+    expect(result.response).not.toBeNull();
+    expect(result.response.status).toBe(403);
+    expect(result.authorization).toBeNull();
   });
 });

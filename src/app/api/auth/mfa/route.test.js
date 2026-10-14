@@ -12,6 +12,16 @@ vi.mock("@/lib/auth/serverAuthTransport.js", () => ({
 vi.mock("@/lib/auth/authRateLimit.js", () => ({
   AUTH_ACTIONS: { MFA_CHALLENGE: "mfa_challenge", MFA_VERIFY: "mfa_verify" },
   checkAdmission: (...args) => mockCheckAdmission(...args),
+  recordAttemptOutcome: vi.fn(() => Promise.resolve(true)),
+  accountKey: vi.fn(() => "deadbeef"),
+}));
+vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
+  verifiedSessionClaims: vi.fn(() =>
+    Promise.resolve({ sub: "user-synthetic-1", session_id: "sess-synthetic-1" })
+  ),
+  requireSecurityAssurance: vi.fn(async () => ({
+    authorized: true, state: "AUTHORIZED", cohort: "unknown", reason: "layer2-disabled",
+  })),
 }));
 vi.mock("../_lib/gatewaySupport.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -81,7 +91,8 @@ function post(body) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockCheckAdmission.mockResolvedValue(allowAdmission);
-  mockCreateUserScopedAuthClient.mockImplementation(async () => fakeUserClient());
+  // createUserScopedAuthClient is synchronous (header injection, no setSession).
+  mockCreateUserScopedAuthClient.mockImplementation(() => fakeUserClient());
 });
 
 describe("input validation", () => {
@@ -149,6 +160,45 @@ describe("session authority", () => {
 });
 
 describe("provider proxy with inert label", () => {
+  it("list_factors returns the user's own verified factors (no secrets)", async () => {
+    const admin = fakeAdmin();
+    admin.auth.admin = {
+      _listFactors: vi.fn(() =>
+        Promise.resolve({
+          data: {
+            factors: [
+              { id: "f-1", friendly_name: "App", factor_type: "totp", status: "verified", created_at: "2026-01-01" },
+              { id: "f-2", friendly_name: "Old", factor_type: "totp", status: "unverified", created_at: "2026-01-02" },
+            ],
+          },
+          error: null,
+        })
+      ),
+    };
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ action: "list_factors", access_token: "atk", operationId: OP_ID }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-forge-layer2")).toBe("inert-disabled");
+    const json = await res.json();
+    expect(json.status).toBe("ok");
+    expect(json.factors).toHaveLength(1);
+    expect(json.factors[0]).toMatchObject({ id: "f-1", friendly_name: "App", factor_type: "totp" });
+    expect(admin.auth.admin._listFactors).toHaveBeenCalledWith({ userId: USER.id });
+    // No secrets leak: the factor payload carries no secret/uri.
+    expect(JSON.stringify(json)).not.toMatch(/secret|qr_code|uri/i);
+  });
+
+  it("status returns the server-side guard verdict for the session", async () => {
+    const admin = fakeAdmin();
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    const res = await POST(post({ action: "status", access_token: "atk", operationId: OP_ID }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe("ok");
+    // Layer 2 disabled: the guard passes through as authorized/inert.
+    expect(json.authorized).toBe(true);
+    expect(json.cohort).toBe("unknown");
+  });
   it("enroll returns factor material with the inert header and never logs secrets", async () => {
     const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
@@ -187,7 +237,7 @@ describe("provider proxy with inert label", () => {
   it("verify failure returns the same generic 401 (no enumeration of code vs challenge state)", async () => {
     const admin = fakeAdmin();
     mockCreateServerAuthClient.mockReturnValue(admin);
-    mockCreateUserScopedAuthClient.mockImplementation(async () =>
+    mockCreateUserScopedAuthClient.mockImplementation(() =>
       fakeUserClient({ verifyResult: { data: null, error: { message: "Token has expired or is invalid" } } })
     );
     const res = await POST(

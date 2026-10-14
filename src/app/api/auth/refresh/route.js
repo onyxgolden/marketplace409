@@ -20,6 +20,7 @@
 import { NextResponse } from "next/server";
 
 import { createServerAuthClient } from "@/lib/auth/serverAuthTransport.js";
+import { opaqueKey } from "@/lib/auth/authRateLimit.js";
 import {
   AUTH_ACTIONS,
   ACTIVATION_CONFIG,
@@ -54,11 +55,24 @@ export async function POST(request) {
   }
 
   // Fail closed before the provider call. accountId is null here by design:
-  // the user id is established only by the provider validating the token.
+  // the user id is established only by the provider validating the token,
+  // and an unverified token must never be decoded for account attribution.
+  // The SESSION bucket is keyed on HMAC(refresh_token) — the refresh token
+  // is the bearer credential for its session family, so its keyed hash is
+  // an independently authenticated session identifier (never the account
+  // hash, never a decode). Racing tabs share the token and therefore share
+  // the bucket, which bounds multi-tab refresh storms.
+  let sessionId = null;
+  try {
+    sessionId = opaqueKey(refreshToken, env.AUTH_LIMITER_HMAC_KEY);
+  } catch {
+    // HMAC key misconfiguration: the session bucket is skipped, IP still applies.
+  }
   const gate = await gateAdmission({
     supabaseAdmin,
     action: AUTH_ACTIONS.REFRESH,
     accountId: null,
+    sessionId,
     ip,
     operationId,
     env,

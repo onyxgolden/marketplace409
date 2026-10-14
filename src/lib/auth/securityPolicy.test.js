@@ -11,21 +11,31 @@ import {
   resolveActorEligibility,
 } from "./securityPolicy.js";
 
-// PostgREST-style query builder mock: from().select().eq() resolves a result.
-function mockAdmin({ memberships = [], workspaces = [], error = null } = {}) {
+// PostgREST-style query builder mock: from().select().eq()[.limit()] resolves a result.
+// Mirrors the ACTUAL deployed schema columns (member_user_id, auth_user_id).
+function mockAdmin({ memberships = [], tenants = [], borrowers = [], error = null, malformed = null } = {}) {
   return {
     from: vi.fn((table) => ({
       select: vi.fn(() => ({
-        eq: vi.fn(() =>
-          Promise.resolve(
+        eq: vi.fn(() => {
+          const p = Promise.resolve(
             error
               ? { data: null, error }
-              : {
-                  data: table === "workspace_members" ? memberships : workspaces,
-                  error: null,
-                }
-          )
-        ),
+              : malformed === table
+                ? { data: { not: "an-array" }, error: null }
+                : {
+                    data:
+                      table === "workspace_members"
+                        ? memberships
+                        : table === "rental_tenants"
+                          ? tenants
+                          : borrowers,
+                    error: null,
+                  }
+          );
+          p.limit = vi.fn(() => p);
+          return p;
+        }),
       })),
     })),
   };
@@ -77,49 +87,62 @@ describe("ACTIVATION_CONFIG", () => {
 });
 
 describe("resolveActorEligibility", () => {
-  it("classifies a workspace owner as required", async () => {
+  it("classifies an active membership (any role) as required", async () => {
     const admin = mockAdmin({
-      memberships: [{ workspace_id: "ws-1", role: "owner", status: "active" }],
-      workspaces: [{ id: "ws-1" }],
+      memberships: [{ owner_id: "owner-1", role: "owner", status: "active" }],
     });
     const result = await resolveActorEligibility(admin, "user-1");
     expect(result.cohort).toBe(COHORT_REQUIRED);
-    expect(result.workspaceIds).toContain("ws-1");
+    expect(result.workspaceIds).toEqual(["owner-1"]);
     expect(result.memberships).toHaveLength(1);
-  });
-
-  it("classifies a workspace owner with NO membership row as required (owned workspaces count)", async () => {
-    const admin = mockAdmin({ memberships: [], workspaces: [{ id: "ws-9" }] });
-    const result = await resolveActorEligibility(admin, "user-1");
-    expect(result.cohort).toBe(COHORT_REQUIRED);
-    expect(result.workspaceIds).toEqual(["ws-9"]);
   });
 
   it("classifies active staff — including restricted/read-only — as required", async () => {
     const admin = mockAdmin({
-      memberships: [{ workspace_id: "ws-2", role: "staff_readonly", status: "active" }],
-      workspaces: [],
+      memberships: [{ owner_id: "owner-2", role: "read_only", status: "active" }],
     });
     const result = await resolveActorEligibility(admin, "user-2");
     expect(result.cohort).toBe(COHORT_REQUIRED);
   });
 
-  it("does NOT count inactive memberships toward the required cohort", async () => {
+  it("does NOT count inactive memberships, but the user is still required as primary owner", async () => {
+    // Suspended staff with no tenant/borrower link: no ACTIVE membership,
+    // so the primary-owner fallback applies (fail-closed direction).
     const admin = mockAdmin({
-      memberships: [{ workspace_id: "ws-3", role: "staff", status: "suspended" }],
-      workspaces: [],
+      memberships: [{ owner_id: "owner-3", role: "staff", status: "suspended" }],
     });
     const result = await resolveActorEligibility(admin, "user-3");
-    expect(result.cohort).toBe(COHORT_OPTIONAL);
+    expect(result.cohort).toBe(COHORT_REQUIRED);
     expect(result.memberships).toHaveLength(0);
   });
 
-  it("classifies an ordinary consumer (no rows at all) as optional — no owner fallback", async () => {
-    const admin = mockAdmin({ memberships: [], workspaces: [] });
+  it("classifies a linked tenant (no membership) as optional", async () => {
+    const admin = mockAdmin({ memberships: [], tenants: [{ id: "t-1" }], borrowers: [] });
     const result = await resolveActorEligibility(admin, "tenant-user");
     expect(result.cohort).toBe(COHORT_OPTIONAL);
     expect(result.workspaceIds).toEqual([]);
     expect(result.memberships).toEqual([]);
+  });
+
+  it("classifies a linked borrower (no membership) as optional", async () => {
+    const admin = mockAdmin({ memberships: [], tenants: [], borrowers: [{ id: "b-1" }] });
+    const result = await resolveActorEligibility(admin, "borrower-user");
+    expect(result.cohort).toBe(COHORT_OPTIONAL);
+  });
+
+  it("L2-001 probe: membership wins over a tenant link (required, never optional)", async () => {
+    const admin = mockAdmin({
+      memberships: [{ owner_id: "owner-4", role: "manager", status: "active" }],
+      tenants: [{ id: "t-2" }],
+    });
+    const result = await resolveActorEligibility(admin, "user-4");
+    expect(result.cohort).toBe(COHORT_REQUIRED);
+  });
+
+  it("classifies a user with no rows at all as required (primary-owner fallback, matching the data plane)", async () => {
+    const admin = mockAdmin({ memberships: [], tenants: [], borrowers: [] });
+    const result = await resolveActorEligibility(admin, "owner-user");
+    expect(result.cohort).toBe(COHORT_REQUIRED);
   });
 
   it("returns unknown on query failure (never assumes exemption)", async () => {
@@ -129,6 +152,12 @@ describe("resolveActorEligibility", () => {
     expect(result.workspaceIds).toEqual([]);
   });
 
+  it("L2-001 probe: a malformed successful result is UNKNOWN, not optional", async () => {
+    const admin = mockAdmin({ memberships: [], malformed: "workspace_members" });
+    const result = await resolveActorEligibility(admin, "user-5");
+    expect(result.cohort).toBe(COHORT_UNKNOWN);
+  });
+
   it("returns unknown for a missing user id", async () => {
     const admin = mockAdmin();
     expect((await resolveActorEligibility(admin, "")).cohort).toBe(COHORT_UNKNOWN);
@@ -136,10 +165,14 @@ describe("resolveActorEligibility", () => {
     expect(admin.from).not.toHaveBeenCalled();
   });
 
-  it("queries workspace_members and workspaces directly by user id", async () => {
+  it("queries the deployed tables (workspace_members, rental_tenants, private_financing_borrowers)", async () => {
     const admin = mockAdmin();
     await resolveActorEligibility(admin, "user-5");
     const tables = admin.from.mock.calls.map((c) => c[0]).sort();
-    expect(tables).toEqual(["workspace_members", "workspaces"]);
+    expect(tables).toEqual([
+      "private_financing_borrowers",
+      "rental_tenants",
+      "workspace_members",
+    ]);
   });
 });
