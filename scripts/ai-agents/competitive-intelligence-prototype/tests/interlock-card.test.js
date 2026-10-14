@@ -478,3 +478,50 @@ test("CI-003r4: genuine card release frees the lease via the bound registry", ()
   assert.equal(r.ok, true, "genuine card closure frees the lease");
   assert.equal(i.holder(), null);
 });
+
+// CI-003 round 5 — card-free closure must bind the trial ledger's registered
+// service to the lease service. Evaluation match alone is not proof the
+// closure belongs to this lease.
+
+test("CI-003r5: card-free wrong-service CLOSED closure refuses", () => {
+  const i = new EvaluationInterlock();
+  i.acquire({ evaluation_id: "e1", service_id: "compa" });
+  // Genuine compb trial through the full lifecycle, bound to e1.
+  const proof = closedLedgerProof("trialB", "compb", "e1");
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof });
+  assert.equal(r.ok, false, "a compb closure must not free a compa lease");
+  assert.equal(r.reason, "proof_binding_mismatch");
+  assert.match(r.detail, /compb/, "detail names the closure's service");
+  assert.match(r.detail, /compa/, "detail names the lease's service");
+  assert.notEqual(i.holder(), null, "the lease is unchanged on refusal");
+});
+
+test("CI-003r5: card-free wrong-service pre-account skip refuses", () => {
+  const i = new EvaluationInterlock();
+  i.acquire({ evaluation_id: "e1", service_id: "compa" });
+  // Genuine compb trial ending as a pre-account safe skip (no obligations).
+  const l = new TrialLedger();
+  assert.ok(l.transition({ trial_id: "tSkip", service_id: "compb", to_state: "PLANNED", actor: "h", evaluation_id: "e1" }).ok);
+  assert.ok(l.transition({ trial_id: "tSkip", service_id: "compb", to_state: "RESERVED", actor: "h" }).ok);
+  assert.ok(l.transition({ trial_id: "tSkip", service_id: "compb", to_state: "BLOCKED", actor: "h" }).ok);
+  assert.equal(l.isPreAccountSkip("tSkip"), true, "fixture is a genuine pre-account skip");
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof: { ledger: l, trial_id: "tSkip" } });
+  assert.equal(r.ok, false, "a compb skip must not free a compa lease");
+  assert.equal(r.reason, "proof_binding_mismatch");
+  assert.notEqual(i.holder(), null, "the lease is unchanged on refusal");
+});
+
+test("CI-003r5: card-free matching-service CLOSED closure frees the lease", () => {
+  const i = new EvaluationInterlock();
+  i.acquire({ evaluation_id: "e1", service_id: "compa" });
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof: closedLedgerProof("t1", "compa", "e1") });
+  assert.equal(r.ok, true, "matching service closure still frees the lease");
+  assert.equal(i.holder(), null);
+});
+
+test("CI-003r5: ledger serviceOf exposes the immutable trial service", () => {
+  const { ledger } = closedLedgerProof("tSvc", "compb", "e1");
+  assert.equal(ledger.serviceOf("tSvc"), "compb");
+  assert.equal(ledger.evaluationOf("tSvc"), "e1");
+  assert.equal(ledger.serviceOf("nope"), null);
+});

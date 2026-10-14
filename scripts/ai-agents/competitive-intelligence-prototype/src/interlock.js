@@ -85,7 +85,9 @@ export class EvaluationInterlock {
    * proof from the host:
    *   proof = { ledger, trial_id }
    * The ledger's trial must be CLOSED (or a pre-account BLOCKED skip) and
-   * its evaluation_id must match the lease. Card obligations are discovered
+   * its evaluation_id AND registered service_id must match the lease
+   * (CI-003 round 5: evaluation alone does not prove the closure belongs
+   * to this lease). Card obligations are discovered
    * from the TRUSTED card registry bound at construction (CI-003 round 4) —
    * never from optional caller proof input. A lost heartbeat or a caller
    * status string is never proof.
@@ -103,6 +105,19 @@ export class EvaluationInterlock {
       typeof proof.ledger.evaluationOf === "function" ? proof.ledger.evaluationOf(proof.trial_id) : null;
     if (trialEval !== evaluation_id) {
       return { ok: false, reason: "proof_binding_mismatch", detail: "closure proof is not bound to this lease's evaluation" };
+    }
+    // CI-003 round 5: a matching evaluation_id does not make a wrong-service
+    // trial the closure of this lease. The trial ledger's registered service
+    // must match the lease service BEFORE accepting any closure — card-free
+    // or card-bound, CLOSED or a safe pre-account skip. Refuse mismatch
+    // without changing the lease.
+    const trialService =
+      typeof proof.ledger.serviceOf === "function" ? proof.ledger.serviceOf(proof.trial_id) : null;
+    if (trialService !== this.lease.service_id) {
+      return {
+        ok: false, reason: "proof_binding_mismatch",
+        detail: `closure proof binds service ${trialService}, lease is ${this.lease.service_id}`,
+      };
     }
     const cleanSkip =
       state === "BLOCKED" &&

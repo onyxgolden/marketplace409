@@ -183,6 +183,12 @@ export class TrialLedger {
     return recs.length === 0 ? null : recs[0].evaluation_id || null;
   }
 
+  /** service_id bound at PLANNED (immutable across the trial lifecycle). */
+  serviceOf(trial_id) {
+    const recs = this._trialRecords(trial_id);
+    return recs.length === 0 ? null : recs[0].service_id || null;
+  }
+
   /** account identity registered at SIGNED_UP. */
   accountOf(trial_id) {
     const rec = this._trialRecords(trial_id).find((r) => r.to_state === "SIGNED_UP");
