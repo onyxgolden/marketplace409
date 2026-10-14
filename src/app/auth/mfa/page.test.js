@@ -305,4 +305,48 @@ describe("MfaPage challenge mode", () => {
     expect(container.querySelector('a[href="/auth/recovery"]')).not.toBeNull();
     expect(container.querySelector('a[href="/auth"]')).not.toBeNull();
   });
+
+  it("L2-006 (round 3): does NOT proceed when the route reports an incomplete recovery", async () => {
+    // The verify succeeded at the provider, but the latched recovery did
+    // not commit — the latch still denies privileged access, so the page
+    // must surface the incomplete state instead of redirecting onward.
+    gatewayMfaVerify.mockResolvedValue({
+      status: "ok",
+      session: { access_token: "aal2-token", refresh_token: "refresh-9" },
+      recovery: { completed: false, reason: "factor deletion failed", operationId: "op-1" },
+    });
+    ({ container, root } = renderPage("/auth/mfa?mode=challenge&factor_id=factor-9&next=%2Fforge%2Fportal"));
+    await act(async () => {});
+    const restore = captureRedirect();
+    const code = container.querySelector("#mfa-code");
+    act(() => enter(code, "654321"));
+
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toMatch(/recovery did not complete/i);
+    expect(window.location.href).not.toBe("/forge/portal");
+    restore();
+  });
+
+  it("L2-006 (round 3): proceeds when the route reports a completed recovery", async () => {
+    gatewayMfaVerify.mockResolvedValue({
+      status: "ok",
+      session: { access_token: "aal2-token", refresh_token: "refresh-9" },
+      recovery: { completed: true, operationId: "op-1" },
+    });
+    ({ container, root } = renderPage("/auth/mfa?mode=challenge&factor_id=factor-9&next=%2Fforge%2Fportal"));
+    await act(async () => {});
+    const restore = captureRedirect();
+    const code = container.querySelector("#mfa-code");
+    act(() => enter(code, "654321"));
+
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(window.location.href).toBe("/forge/portal");
+    restore();
+  });
 });

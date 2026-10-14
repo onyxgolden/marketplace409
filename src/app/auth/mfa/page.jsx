@@ -179,6 +179,18 @@ export default function MfaPage() {
       codeInputRef.current?.focus();
       return;
     }
+    // L2-006 (round 3): a latched recovery whose completion did NOT commit
+    // must not proceed — the latch still denies privileged access, so
+    // redirecting onward would land on a denial. Surface the incomplete
+    // state and let the user retry the ceremony (completion is resumable).
+    if (verifyResult.recovery && verifyResult.recovery.completed === false) {
+      setMessage(
+        "Recovery did not complete. Your authenticator was not fully reset — please verify again."
+      );
+      setCode("");
+      codeInputRef.current?.focus();
+      return;
+    }
     // The provider issued the AAL2 session: establish it in the browser, then
     // continue to the one-time recovery-code step (enroll) or onward.
     const { error: sessionError } = await supabase.auth.setSession({

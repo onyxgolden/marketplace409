@@ -129,6 +129,34 @@ export function freshFirstFactorAt(claims) {
 }
 
 /**
+ * L2-004 (round 3): derive the freshest SECOND-factor event from the JWT
+ * claims' AMR method timestamps — the actual MFA ceremony clock bound to
+ * THIS session. claims.iat records JWT issuance (including refresh), not
+ * when the session last completed MFA: a stolen old AAL2 session refreshed
+ * a minute ago must NOT mint recovery authority. A second-factor method
+ * present WITHOUT a timestamp, or with a missing/invalid timestamp, is
+ * not evidence of a recent ceremony — returns null so callers refuse.
+ *
+ * Returns the latest second-factor method timestamp in SECONDS, or null.
+ * Callers must ALSO refuse timestamps in the future (beyond a small skew
+ * allowance). Supabase/GoTrue AMR entries are { method, timestamp } with
+ * timestamp in Unix seconds.
+ */
+export function freshSecondFactorAt(claims) {
+  const amr = claims?.amr;
+  if (!Array.isArray(amr) || amr.length === 0) return null;
+  let latest = null;
+  for (const entry of amr) {
+    const method = String(entry?.method ?? entry ?? "").toLowerCase();
+    if (!SECOND_FACTOR_METHODS.has(method)) continue;
+    const ts = Number(entry?.timestamp);
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    if (latest === null || ts > latest) latest = ts;
+  }
+  return latest;
+}
+
+/**
  * Validate the JWT claims for a session token, independently bound to the
  * verified user. Returns the claims ({ sub, aal, amr, session_id, iat, ... })
  * or null when the token is invalid or the binding fails.

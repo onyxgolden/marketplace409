@@ -59,6 +59,22 @@ vi.mock("@/lib/auth/requireSecurityAssurance.js", () => ({
     }
     return latest;
   }),
+  // Real second-factor ceremony clock for the L2-004 issuance gate
+  // (round 3; mirrors the module). iat is never the ceremony.
+  freshSecondFactorAt: vi.fn((claims) => {
+    const amr = claims?.amr;
+    if (!Array.isArray(amr) || amr.length === 0) return null;
+    const secondFactors = ["totp", "phone", "webauthn"];
+    let latest = null;
+    for (const entry of amr) {
+      const method = String(entry?.method ?? entry ?? "").toLowerCase();
+      if (!secondFactors.includes(method)) continue;
+      const ts = Number(entry?.timestamp);
+      if (!Number.isFinite(ts) || ts <= 0) return null;
+      if (latest === null || ts > latest) latest = ts;
+    }
+    return latest;
+  }),
   requireSecurityAssurance: vi.fn(async () => ({
     authorized: true, state: "AUTHORIZED", cohort: "unknown", reason: "layer2-disabled",
   })),
@@ -92,6 +108,11 @@ function fakeAdmin({ getUserResult } = {}) {
             operation_created_at: new Date(Date.now() - 60000).toISOString(),
             status: "latched",
             terminal: false,
+            refused: false,
+            refused_reason: null,
+            chosen_factor_id: params.p_chosen_factor_id ?? null,
+            completion_owner: params.p_completion_owner ?? "owner-synthetic-1",
+            completion_generation: 1,
           }],
           error: null,
         };
@@ -436,12 +457,43 @@ describe("L2-004 issue_recovery_codes authority", () => {
     expect(admin.rpc).not.toHaveBeenCalled();
   });
 
-  it("L2-004 probe: stale AAL2 ceremony (old iat) does NOT issue codes (403)", async () => {
+  it("L2-004 probe (round 3): day-old second-factor AMR + current iat + recently created factor does NOT issue codes (403)", async () => {
+    // The verdict's residual probe: iat records token issuance (a refresh
+    // a minute ago), not the MFA ceremony. A factor enrolled 60s ago —
+    // even through another legitimate session — does not refresh THIS
+    // session's authentication authority.
+    const dayAgo = Math.floor(Date.now() / 1000) - 86400;
     const admin = adminWithFactor(freshIso());
     const res = await issueCodes(admin, {
       aal: "aal2",
-      iat: Math.floor(Date.now() / 1000) - 3600,
-      amr: [{ method: "totp", timestamp: Math.floor(Date.now() / 1000) - 60 }],
+      iat: freshIat(),
+      amr: [
+        { method: "password", timestamp: dayAgo },
+        { method: "totp", timestamp: dayAgo },
+      ],
+    });
+    expect(res.status).toBe(403);
+    // Refused BEFORE any replacement write.
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("L2-004 probe (round 3): a future second-factor AMR timestamp does NOT issue codes (403)", async () => {
+    const admin = adminWithFactor(freshIso());
+    const res = await issueCodes(admin, {
+      aal: "aal2",
+      iat: freshIat(),
+      amr: [{ method: "totp", timestamp: Math.floor(Date.now() / 1000) + 3600 }],
+    });
+    expect(res.status).toBe(403);
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it("L2-004 probe (round 3): a second-factor method WITHOUT a timestamp does NOT issue codes (403)", async () => {
+    const admin = adminWithFactor(freshIso());
+    const res = await issueCodes(admin, {
+      aal: "aal2",
+      iat: freshIat(),
+      amr: [{ method: "totp" }],
     });
     expect(res.status).toBe(403);
     expect(admin.rpc).not.toHaveBeenCalled();
@@ -454,9 +506,17 @@ describe("L2-004 issue_recovery_codes authority", () => {
     expect(admin.rpc).not.toHaveBeenCalled();
   });
 
-  it("L2-004 probe: fresh AAL2 + recent enrollment issues codes via the atomic RPC", async () => {
+  it("L2-004 probe (round 3): genuine fresh MFA (fresh second-factor AMR ceremony) issues codes via the atomic RPC", async () => {
     const admin = adminWithFactor(freshIso());
-    const res = await issueCodes(admin, { aal: "aal2", iat: freshIat() });
+    const nowS = Math.floor(Date.now() / 1000);
+    const res = await issueCodes(admin, {
+      aal: "aal2",
+      iat: freshIat(),
+      amr: [
+        { method: "password", timestamp: nowS - 120 },
+        { method: "totp", timestamp: nowS - 60 },
+      ],
+    });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.status).toBe("ok");
@@ -496,7 +556,14 @@ describe("L2-006 recovery completion boundaries (verify with latch)", () => {
               order: vi.fn(() => ({
                 limit: vi.fn(() => ({
                   maybeSingle: vi.fn(() =>
-                    Promise.resolve({ data: { id: "op-recovery-1", status: operationStatus }, error: null })
+                    Promise.resolve({
+                      data: {
+                        id: "op-recovery-1",
+                        status: operationStatus,
+                        created_at: OP_STARTED_AT,
+                      },
+                      error: null,
+                    })
                   ),
                 })),
               })),
@@ -528,12 +595,27 @@ describe("L2-006 recovery completion boundaries (verify with latch)", () => {
         return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
       }
       if (fn === "mfa_recovery_begin_completion") {
-        return { data: [{ operation_created_at: OP_STARTED_AT, status: operationStatus, terminal: operationStatus === "completed" || operationStatus === "failed" }], error: null };
+        return {
+          data: [{
+            operation_created_at: OP_STARTED_AT,
+            status: operationStatus,
+            terminal: operationStatus === "completed" || operationStatus === "failed",
+            refused: false,
+            refused_reason: null,
+            chosen_factor_id: params.p_chosen_factor_id ?? null,
+            completion_owner: params.p_completion_owner ?? "owner-synthetic-1",
+            completion_generation: 1,
+          }],
+          error: null,
+        };
       }
       if (fn === "mfa_recovery_mark_factors_removed") {
         return { data: true, error: null };
       }
       if (fn === "mfa_recovery_finalize") {
+        return { data: true, error: null };
+      }
+      if (fn === "mfa_recovery_release_completion") {
         return { data: true, error: null };
       }
       throw new Error(`unexpected rpc ${fn}`);
@@ -626,5 +708,362 @@ describe("L2-006 recovery completion boundaries (verify with latch)", () => {
       "mfa_recovery_mark_factors_removed",
       "mfa_recovery_finalize",
     ]);
+  });
+
+  it("L2-006 probe: the chosen factor is revalidated before finalize; a dead factor releases the claim instead of finalizing", async () => {
+    const admin = adminWithLatch({ newFactorCreatedAt: new Date().toISOString() });
+    const OLD = { id: OLD_FACTOR_ID, factor_type: "totp", status: "verified", created_at: new Date(Date.now() - 86400 * 1000).toISOString() };
+    const NEW_LIVE = { id: NEW_FACTOR_ID, factor_type: "totp", status: "verified", created_at: new Date().toISOString() };
+    const NEW_DEAD = { ...NEW_LIVE, status: "unverified" };
+    // Binding listing: chosen factor verified. Revalidation listing: dead.
+    admin.auth.admin._listFactors
+      .mockResolvedValueOnce({ data: { factors: [NEW_LIVE, OLD] }, error: null })
+      .mockResolvedValueOnce({ data: { factors: [NEW_DEAD, OLD] }, error: null });
+    const res = await verifyWithLatch(admin, NEW_FACTOR_ID);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.recovery.completed).toBe(false);
+    expect(json.recovery.reason).toBe("chosen factor no longer verified");
+    // Finalize never ran; the fence claim was released so a later
+    // ceremony is not wedged.
+    const finalizeCalls = admin.rpc.mock.calls.filter(([fn]) => fn === "mfa_recovery_finalize");
+    expect(finalizeCalls).toHaveLength(0);
+    const releaseCalls = admin.rpc.mock.calls.filter(([fn]) => fn === "mfa_recovery_release_completion");
+    expect(releaseCalls).toHaveLength(1);
+    // The release presented the exact fence lineage begin returned.
+    const beginCalls = admin.rpc.mock.calls.filter(([fn]) => fn === "mfa_recovery_begin_completion");
+    expect(beginCalls).toHaveLength(1);
+    expect(releaseCalls[0][1].p_completion_owner).toBe(beginCalls[0][1].p_completion_owner);
+    expect(releaseCalls[0][1].p_operation_id).toBe("op-recovery-1");
+  });
+});
+
+describe("L2-006A fenced completion (round 3): two ceremonies, one recovery", () => {
+  const OP_STARTED = new Date(Date.now() - 3600 * 1000).toISOString(); // 1h ago
+  const OP_ID_A = "123e4567-e89b-12d3-a456-426614174001";
+  const OP_ID_B = "123e4567-e89b-12d3-a456-426614174002";
+
+  // Test-local fencing adapter mirroring the SQL semantics: the
+  // check-and-set in begin is synchronous (atomic under JS
+  // single-threading). The factor listing is synchronized so both
+  // ceremonies see the same valid [A, B] snapshot, exactly like the
+  // verdict's interleaving probe.
+  function fencingRaceAdmin() {
+    const FACTOR_A = "factor-race-A";
+    const FACTOR_B = "factor-race-B";
+    const admin = fakeAdmin();
+    const deleted = [];
+    const fence = { claimed: null };
+    const snapshot = [
+      { id: FACTOR_A, factor_type: "totp", status: "verified", created_at: new Date().toISOString() },
+      { id: FACTOR_B, factor_type: "totp", status: "verified", created_at: new Date().toISOString() },
+    ];
+    admin.from = vi.fn((table) => {
+      if (table === "mfa_security_latch") {
+        return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { user_id: USER.id }, error: null }) }) }) };
+      }
+      if (table === "mfa_recovery_operations") {
+        return { select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve({ data: { id: "op-recovery-1", status: "latched", created_at: OP_STARTED }, error: null }) }) }) }) }) };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    admin.auth.admin = {
+      _listFactors: vi.fn(() => Promise.resolve({ data: { factors: snapshot.map((f) => ({ ...f })) }, error: null })),
+      _deleteFactor: vi.fn(async ({ id }) => {
+        deleted.push(id);
+        return { data: {}, error: null };
+      }),
+    };
+    admin.rpc = vi.fn(async (fn, params) => {
+      if (fn === "auth_claim_execution") {
+        return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
+      }
+      if (fn === "mfa_recovery_begin_completion") {
+        const c = fence.claimed;
+        if (!c) {
+          fence.claimed = { chosen: params.p_chosen_factor_id, owner: params.p_completion_owner, gen: 1 };
+        } else if (c.chosen !== params.p_chosen_factor_id) {
+          return { data: [{ operation_created_at: OP_STARTED, status: "latched", terminal: false, refused: true, refused_reason: "claimed", chosen_factor_id: c.chosen, completion_owner: c.owner, completion_generation: c.gen }], error: null };
+        } else {
+          c.gen += 1;
+        }
+        const cur = fence.claimed;
+        return { data: [{ operation_created_at: OP_STARTED, status: "latched", terminal: false, refused: false, refused_reason: null, chosen_factor_id: cur.chosen, completion_owner: cur.owner, completion_generation: cur.gen }], error: null };
+      }
+      if (fn === "mfa_recovery_mark_factors_removed" || fn === "mfa_recovery_finalize") {
+        const c = fence.claimed;
+        if (!c || params.p_completion_owner !== c.owner || params.p_completion_generation !== c.gen) {
+          return { data: false, error: null };
+        }
+        return { data: true, error: null };
+      }
+      if (fn === "mfa_recovery_release_completion") {
+        return { data: true, error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    });
+    return { admin, deleted, FACTOR_A, FACTOR_B, fence };
+  }
+
+  async function claimsWithFreshFirstFactor() {
+    const { verifiedSessionClaims } = await import("@/lib/auth/requireSecurityAssurance.js");
+    const nowS = Math.floor(Date.now() / 1000);
+    vi.mocked(verifiedSessionClaims).mockResolvedValue({
+      sub: USER.id,
+      session_id: "sess-synthetic-1",
+      aal: "aal1",
+      iat: nowS - 60,
+      amr: [{ method: "password", timestamp: nowS - 60 }],
+    });
+  }
+
+  function verifyPost(admin, factorId, operationId) {
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    return POST(
+      post({ action: "verify", access_token: "atk", factor_id: factorId, challenge_id: "c", code: "123456", operationId: operationId })
+    );
+  }
+
+  it("L2-006A probe (round 3): two concurrent ceremonies with different chosen factors — exactly one completes, zero factors lost wrongly", async () => {
+    const { admin, deleted, FACTOR_A, FACTOR_B } = fencingRaceAdmin();
+    await claimsWithFreshFirstFactor();
+    // Two verify requests, DIFFERENT admitted HTTP operation IDs, racing
+    // the SAME latched recovery operation.
+    const [resA, resB] = await Promise.all([
+      verifyPost(admin, FACTOR_A, OP_ID_A),
+      verifyPost(admin, FACTOR_B, OP_ID_B),
+    ]);
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+    const jsonA = await resA.json();
+    const jsonB = await resB.json();
+    const completed = [jsonA, jsonB].filter((j) => j.recovery?.completed === true);
+    const refused = [jsonA, jsonB].filter((j) => j.recovery?.completed === false);
+    // Exactly one ceremony completes; the other is refused — never two
+    // completed:true with zero surviving factors.
+    expect(completed).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect(refused[0].recovery.reason).toBe("completion owned by another ceremony");
+    // The winner's chosen factor was never deleted; only the loser's was
+    // (deleted by the single fenced ceremony).
+    const winnerId = completed[0].recovery.chosenFactorId;
+    expect([FACTOR_A, FACTOR_B]).toContain(winnerId);
+    expect(deleted).not.toContain(winnerId);
+    expect(deleted).toHaveLength(1);
+    // Exactly one finalize ran.
+    const finalizeCalls = admin.rpc.mock.calls.filter(([fn]) => fn === "mfa_recovery_finalize");
+    expect(finalizeCalls).toHaveLength(1);
+  });
+
+  it("L2-006A probe (round 3): same-factor resume re-enters under the fence after a partial failure", async () => {
+    const { admin, FACTOR_A } = fencingRaceAdmin();
+    await claimsWithFreshFirstFactor();
+    // First ceremony: provider deletion throws mid-completion.
+    admin.auth.admin._deleteFactor.mockRejectedValueOnce(new Error("provider unavailable"));
+    const res1 = await verifyPost(admin, FACTOR_A, OP_ID_A);
+    expect((await res1.json()).recovery).toMatchObject({ completed: false, reason: "factor deletion failed" });
+    // Second ceremony, same chosen factor, different HTTP operation id:
+    // resumes the fenced completion and finishes it.
+    const res2 = await verifyPost(admin, FACTOR_A, OP_ID_B);
+    const json2 = await res2.json();
+    expect(json2.recovery.completed).toBe(true);
+    expect(json2.recovery.chosenFactorId).toBe(FACTOR_A);
+    const finalizeCalls = admin.rpc.mock.calls.filter(([fn]) => fn === "mfa_recovery_finalize");
+    expect(finalizeCalls).toHaveLength(1);
+  });
+
+  it("L2-006A probe (round 3): a stale owner presenting a different chosen factor is refused with zero deletions", async () => {
+    const admin = fakeAdmin();
+    admin.from = vi.fn((table) => {
+      if (table === "mfa_security_latch") {
+        return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { user_id: USER.id }, error: null }) }) }) };
+      }
+      if (table === "mfa_recovery_operations") {
+        return { select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve({ data: { id: "op-recovery-1", status: "latched", created_at: OP_STARTED }, error: null }) }) }) }) }) };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    admin.auth.admin = {
+      _listFactors: vi.fn(() => Promise.resolve({
+        data: { factors: [{ id: "factor-new-9", factor_type: "totp", status: "verified", created_at: new Date().toISOString() }] },
+        error: null,
+      })),
+      _deleteFactor: vi.fn(async () => ({ data: {}, error: null })),
+    };
+    admin.rpc = vi.fn(async (fn, params) => {
+      if (fn === "auth_claim_execution") {
+        return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
+      }
+      if (fn === "mfa_recovery_begin_completion") {
+        // Already claimed by a competing ceremony with another factor.
+        return { data: [{ operation_created_at: OP_STARTED, status: "latched", terminal: false, refused: true, refused_reason: "claimed", chosen_factor_id: "factor-other", completion_owner: "owner-other", completion_generation: 1 }], error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    });
+    await claimsWithFreshFirstFactor();
+    const res = await verifyPost(admin, "factor-new-9", OP_ID_A);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.recovery.completed).toBe(false);
+    expect(json.recovery.reason).toBe("completion owned by another ceremony");
+    expect(admin.auth.admin._deleteFactor).not.toHaveBeenCalled();
+    const phaseCalls = admin.rpc.mock.calls.filter(([fn]) => fn.startsWith("mfa_recovery_") && fn !== "mfa_recovery_begin_completion");
+    expect(phaseCalls).toHaveLength(0);
+  });
+
+  it("L2-006A probe (round 3): an older operation is refused when a newer recovery operation exists", async () => {
+    const admin = fakeAdmin();
+    admin.from = vi.fn((table) => {
+      if (table === "mfa_security_latch") {
+        return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { user_id: USER.id }, error: null }) }) }) };
+      }
+      if (table === "mfa_recovery_operations") {
+        // The route resolved an older operation (stale read); the RPC
+        // knows a newer non-terminal operation exists.
+        return { select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve({ data: { id: "op-old-1", status: "latched", created_at: OP_STARTED }, error: null }) }) }) }) }) };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    admin.auth.admin = {
+      _listFactors: vi.fn(() => Promise.resolve({
+        data: { factors: [{ id: "factor-new-9", factor_type: "totp", status: "verified", created_at: new Date().toISOString() }] },
+        error: null,
+      })),
+      _deleteFactor: vi.fn(async () => ({ data: {}, error: null })),
+    };
+    admin.rpc = vi.fn(async (fn) => {
+      if (fn === "auth_claim_execution") {
+        return { data: [{ granted: true, disposition: "granted", outcome: "executing" }], error: null };
+      }
+      if (fn === "mfa_recovery_begin_completion") {
+        return { data: [{ operation_created_at: OP_STARTED, status: "latched", terminal: false, refused: true, refused_reason: "stale_operation", chosen_factor_id: null, completion_owner: null, completion_generation: null }], error: null };
+      }
+      throw new Error(`unexpected rpc ${fn}`);
+    });
+    await claimsWithFreshFirstFactor();
+    const res = await verifyPost(admin, "factor-new-9", OP_ID_A);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.recovery.completed).toBe(false);
+    expect(json.recovery.reason).toBe("a newer recovery operation supersedes this one");
+    // The older operation deleted nothing and advanced nothing.
+    expect(admin.auth.admin._deleteFactor).not.toHaveBeenCalled();
+    const phaseCalls = admin.rpc.mock.calls.filter(([fn]) => fn.startsWith("mfa_recovery_") && fn !== "mfa_recovery_begin_completion");
+    expect(phaseCalls).toHaveLength(0);
+  });
+});
+
+describe("L2-006B verify-response validation ordering (round 3)", () => {
+  const NEW_FACTOR_ID = "factor-new-3";
+  const OP_STARTED_AT = new Date(Date.now() - 3600 * 1000).toISOString();
+
+  function latchedAdmin() {
+    const admin = fakeAdmin();
+    admin.from = vi.fn((table) => {
+      if (table === "mfa_security_latch") {
+        return { select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { user_id: USER.id }, error: null }) }) }) };
+      }
+      if (table === "mfa_recovery_operations") {
+        return { select: () => ({ eq: () => ({ order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve({ data: { id: "op-recovery-1", status: "latched", created_at: OP_STARTED_AT }, error: null }) }) }) }) }) };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    admin.auth.admin = {
+      _listFactors: vi.fn(() => Promise.resolve({
+        data: {
+          factors: [
+            { id: NEW_FACTOR_ID, factor_type: "totp", status: "verified", created_at: new Date().toISOString() },
+            { id: "factor-old-9", factor_type: "totp", status: "verified", created_at: new Date(Date.now() - 86400 * 1000).toISOString() },
+          ],
+        },
+        error: null,
+      })),
+      _deleteFactor: vi.fn(async () => ({ data: {}, error: null })),
+    };
+    return admin;
+  }
+
+  async function verifyMalformed(admin, verifyResult) {
+    const { verifiedSessionClaims } = await import("@/lib/auth/requireSecurityAssurance.js");
+    const nowS = Math.floor(Date.now() / 1000);
+    vi.mocked(verifiedSessionClaims).mockResolvedValue({
+      sub: USER.id,
+      session_id: "sess-synthetic-1",
+      aal: "aal1",
+      iat: nowS - 60,
+      amr: [{ method: "password", timestamp: nowS - 60 }],
+    });
+    mockCreateServerAuthClient.mockReturnValue(admin);
+    mockCreateUserScopedAuthClient.mockImplementation(() => fakeUserClient({ verifyResult }));
+    return POST(
+      post({ action: "verify", access_token: "atk", factor_id: NEW_FACTOR_ID, challenge_id: "c", code: "123456", operationId: OP_ID })
+    );
+  }
+
+  async function attemptOutcomes() {
+    const { recordAttemptOutcome } = await import("@/lib/auth/authRateLimit.js");
+    return vi.mocked(recordAttemptOutcome).mock.calls.map((args) => args[0]?.outcome);
+  }
+
+  it("L2-006B probe (round 3): {data:{},error:null} is a failed verify with ZERO recovery side effects", async () => {
+    const admin = latchedAdmin();
+    const res = await verifyMalformed(admin, { data: {}, error: null });
+    expect(res.status).toBe(401);
+    // No success accounting: mfa_succeeded never recorded.
+    const outcomes = await attemptOutcomes();
+    expect(outcomes).not.toContain("mfa_succeeded");
+    expect(outcomes).toContain("mfa_failed");
+    // Zero recovery mutation: no begin, no deletions, no finalize.
+    expect(admin.auth.admin._deleteFactor).not.toHaveBeenCalled();
+    const recoveryCalls = admin.rpc.mock.calls.filter(([fn]) => fn.startsWith("mfa_recovery_"));
+    expect(recoveryCalls).toHaveLength(0);
+  });
+
+  it("L2-006B probe (round 3): a token bound to the WRONG user is rejected before any recovery side effect", async () => {
+    const admin = latchedAdmin();
+    const res = await verifyMalformed(admin, {
+      data: { access_token: "tok-wrong-user", user: { id: "user-attacker" } },
+      error: null,
+    });
+    expect(res.status).toBe(401);
+    const outcomes = await attemptOutcomes();
+    expect(outcomes).not.toContain("mfa_succeeded");
+    expect(admin.auth.admin._deleteFactor).not.toHaveBeenCalled();
+    const recoveryCalls = admin.rpc.mock.calls.filter(([fn]) => fn.startsWith("mfa_recovery_"));
+    expect(recoveryCalls).toHaveLength(0);
+  });
+
+  it("L2-006B probe (round 3): a response reporting non-AAL2 assurance is rejected before any recovery side effect", async () => {
+    const admin = latchedAdmin();
+    const res = await verifyMalformed(admin, {
+      data: { access_token: "tok-aal1", user: { id: USER.id, aal: "aal1" } },
+      error: null,
+    });
+    expect(res.status).toBe(401);
+    const outcomes = await attemptOutcomes();
+    expect(outcomes).not.toContain("mfa_succeeded");
+    expect(admin.auth.admin._deleteFactor).not.toHaveBeenCalled();
+    const recoveryCalls = admin.rpc.mock.calls.filter(([fn]) => fn.startsWith("mfa_recovery_"));
+    expect(recoveryCalls).toHaveLength(0);
+  });
+
+  it("L2-006B probe (round 3): a valid flat SDK response still verifies and completes the latched recovery", async () => {
+    const admin = latchedAdmin();
+    const res = await verifyMalformed(admin, {
+      data: {
+        access_token: "tok-valid",
+        refresh_token: "rt-valid",
+        expires_in: 3600,
+        user: { id: USER.id, aal: "aal2" },
+      },
+      error: null,
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe("ok");
+    expect(json.session.access_token).toBe("tok-valid");
+    const outcomes = await attemptOutcomes();
+    expect(outcomes).toContain("mfa_succeeded");
+    expect(json.recovery.completed).toBe(true);
   });
 });

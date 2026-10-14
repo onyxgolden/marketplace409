@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   freshFirstFactorAt,
+  freshSecondFactorAt,
   requireSecurityAssurance,
   verifiedSessionClaims,
 } from "./requireSecurityAssurance.js";
@@ -431,6 +432,63 @@ describe("L2-006 freshFirstFactorAt (AMR ceremony clock, never iat)", () => {
   it("never returns iat: a fresh iat with a stale AMR yields the stale AMR time", () => {
     expect(
       freshFirstFactorAt({ iat: NOW, amr: [{ method: "password", timestamp: NOW - 86400 }] })
+    ).toBe(NOW - 86400);
+  });
+});
+
+describe("L2-004 freshSecondFactorAt (AMR MFA ceremony clock, never iat)", () => {
+  const NOW = 1_790_000_000;
+  it("returns the latest second-factor method timestamp", () => {
+    expect(
+      freshSecondFactorAt({
+        iat: NOW,
+        aal: "aal2",
+        amr: [
+          { method: "password", timestamp: NOW - 60 },
+          { method: "totp", timestamp: NOW - 3600 },
+          { method: "webauthn", timestamp: NOW - 30 },
+        ],
+      })
+    ).toBe(NOW - 30);
+  });
+
+  it("ignores first-factor methods (they are not the MFA ceremony)", () => {
+    expect(
+      freshSecondFactorAt({
+        iat: NOW,
+        amr: [
+          { method: "password", timestamp: NOW - 10 },
+          { method: "totp", timestamp: NOW - 3600 },
+        ],
+      })
+    ).toBe(NOW - 3600);
+  });
+
+  it("returns null when AMR is missing, empty, or has no second-factor method", () => {
+    expect(freshSecondFactorAt({ iat: NOW, aal: "aal2" })).toBeNull();
+    expect(freshSecondFactorAt({ iat: NOW, aal: "aal2", amr: [] })).toBeNull();
+    expect(
+      freshSecondFactorAt({ iat: NOW, aal: "aal2", amr: [{ method: "password", timestamp: NOW }] })
+    ).toBeNull();
+  });
+
+  it("returns null when a present second-factor method lacks a timestamp (refuse, never fall back to iat)", () => {
+    // The verdict's probe: current iat + day-old TOTP AMR must NOT issue.
+    // A method without a timestamp is not ceremony evidence.
+    expect(
+      freshSecondFactorAt({ iat: NOW, aal: "aal2", amr: [{ method: "totp" }] })
+    ).toBeNull();
+    expect(
+      freshSecondFactorAt({ iat: NOW, aal: "aal2", amr: [{ method: "totp", timestamp: "NaN" }] })
+    ).toBeNull();
+    expect(
+      freshSecondFactorAt({ iat: NOW, aal: "aal2", amr: ["totp"] })
+    ).toBeNull();
+  });
+
+  it("never returns iat: a fresh iat with a stale TOTP AMR yields the stale TOTP time", () => {
+    expect(
+      freshSecondFactorAt({ iat: NOW, aal: "aal2", amr: [{ method: "totp", timestamp: NOW - 86400 }] })
     ).toBe(NOW - 86400);
   });
 });
