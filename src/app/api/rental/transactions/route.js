@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { validateTransaction } from "@/application/rental/validateTransaction";
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 import { createExpenseWithTenantCharge, validateTenantChargeInput } from "@/application/rental/tenantCharges";
@@ -8,12 +8,16 @@ import { createExpenseWithTenantCharge, validateTenantChargeInput } from "@/appl
 // R17: granular permission gates replace the old read_only-only check. Recording/editing
 // needs payments.record; deleting (soft-delete) needs payments.void_refund.
 async function requirePaymentRecorder(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.record" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.record",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 
 async function requireVoidRefund(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.void_refund" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.void_refund",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 

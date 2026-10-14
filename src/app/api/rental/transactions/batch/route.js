@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { validateTransaction } from "@/application/rental/validateTransaction";
 import { ChartUnavailableError, resolvePostingCategories } from "@/application/rental/chartOfAccounts";
 
@@ -15,7 +15,9 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const gate = await requireRentalPermission({ authenticated, request, permission: "payments.record" });
+    const gate = await requireRentalPermission({ authenticated, request, permission: "payments.record",
+      security: await buildSecurityContext(authenticated),
+    });
     if (gate.response) return gate.response;
     const { supabaseClient, effectiveOwnerId } = authenticated;
 

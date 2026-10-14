@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 
 // PATCH /api/rental/financial-event — the register's cleared flag.
 // Body: { id, cleared } → sets cleared and cleared_at (now() when clearing,
@@ -14,7 +14,9 @@ export async function PATCH(request) {
 
     // R17: toggling the cleared flag needs payments.record (was: read_only-only check),
     // mirroring the manual-financial-event route's guard.
-    const clearedGate = await requireRentalPermission({ authenticated: a, request, permission: "payments.record" });
+    const clearedGate = await requireRentalPermission({ authenticated: a, request, permission: "payments.record",
+      security: await buildSecurityContext(a),
+    });
     if (clearedGate.response) return clearedGate.response;
 
     const body = await request.json();

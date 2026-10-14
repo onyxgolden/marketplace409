@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthenticatedForgeApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { validateManualFinancialEvent } from "@/application/financial/validateManualFinancialEvent";
 import { SupabaseFinancialEventRepository } from "@/domains/financial-event/SupabaseFinancialEventRepository";
 
@@ -14,7 +14,9 @@ export async function POST(request) {
     // even though scoping alone would only divert it into the actor's own fallback workspace.
     // Non-members (no membership row) keep the scoping behavior -- their writes land under
     // their own id and can never touch this workspace.
-    const manualEntryGate = await requireRentalPermission({ authenticated: a, request, permission: "payments.record" });
+    const manualEntryGate = await requireRentalPermission({ authenticated: a, request, permission: "payments.record",
+      security: await buildSecurityContext(a),
+    });
     if (manualEntryGate.response) return manualEntryGate.response;
 
     const body = await request.json();

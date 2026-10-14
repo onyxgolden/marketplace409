@@ -2,6 +2,7 @@
 
 import Header from "@/components/Header";
 import { createClient } from "@/lib/supabase/client";
+import { gatewayMfaStatus, newOperationId } from "@/lib/auth/authGateway.js";
 import { friendlySignOutError, signOutSafely } from "@/lib/auth/signOutSafely.js";
 import { useCredentialAuth } from "@/lib/auth/useCredentialAuth.js";
 import { useLoginSafety } from "@/lib/auth/useLoginSafety.js";
@@ -63,12 +64,59 @@ export default function AuthPage() {
   // an explicit sign-up (when email confirmation is off), and a session Supabase auto-recovers from a
   // `?code=` in the URL after the borrower clicks a confirmation link, so there is exactly one place
   // that decides "authenticated, go to `next`" instead of three imperative redirects that can drift.
+  //
+  // Layer 2: sessions established OUTSIDE the gateway sign-in (e.g. a ?code=
+  // exchange) may land an AAL1 session for a required-cohort user. The
+  // status endpoint runs the server-side guard for the session; when it
+  // reports ENROLL_REQUIRED/CHALLENGE_REQUIRED we route to /auth/mfa instead
+  // of blindly redirecting to `next`. When Layer 2 is disabled the endpoint
+  // passes through as authorized, so the redirect below is unchanged.
   useEffect(() => {
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) window.location.href = nextDestination();
+    const { data: subscription } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!session?.user?.id) return;
+      // When the access token is available, consult the server-side MFA
+      // status before redirecting: sessions established outside the gateway
+      // sign-in may need the MFA ceremony. Without a token we cannot check
+      // — fall through to the default redirect (previous behavior).
+      if (session.access_token) {
+        try {
+          const status = await gatewayMfaStatus({
+            operationId: newOperationId(),
+            accessToken: session.access_token,
+          });
+          if (
+            status?.status === "ok" &&
+            status.authorized === false &&
+            (status.state === "ENROLL_REQUIRED" || status.state === "CHALLENGE_REQUIRED")
+          ) {
+            const mode = status.state === "ENROLL_REQUIRED" ? "enroll" : "challenge";
+            const params = new URLSearchParams({ mode, next: nextDestination() });
+            window.location.href = `/auth/mfa?${params.toString()}`;
+            return;
+          }
+        } catch {
+          // Status check failed (network, 429, 503): fall through to the
+          // default redirect rather than stranding the user here.
+        }
+      }
+      window.location.href = nextDestination();
     });
     return () => subscription.subscription.unsubscribe();
   }, []);
+
+  // The gateway sign-in can come back "MFA required" WITH the AAL1 ceremony
+  // session (it grants no privileged access). That outcome is not an error
+  // message; the MFA page establishes the session via setSession and the
+  // submit handler redirects to the ceremony per the route's authoritative
+  // next hint.
+  async function submitSignIn(event) {
+    event.preventDefault();
+    const outcome = await signIn();
+    if (outcome && outcome.mfaNext) {
+      const params = new URLSearchParams({ mode: outcome.mfaNext, next: nextDestination() });
+      window.location.href = `/auth/mfa?${params.toString()}`;
+    }
+  }
 
   async function signOut() {
     if (authActionPending) return;
@@ -113,10 +161,7 @@ export default function AuthPage() {
              (Sign In), the way users expect. The other buttons stay type="button" so Enter
              never fires Create Account, Forgot password, or Sign Out by accident. */}
           <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              signIn();
-            }}
+            onSubmit={submitSignIn}
           >
             <input
               className="w-full truncate border rounded-xl px-4 py-4 mb-4 disabled:bg-gray-100 disabled:text-gray-600"

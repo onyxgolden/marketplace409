@@ -6,6 +6,7 @@ vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
 }));
 vi.mock("@/lib/rental/teamAuthorization", () => ({
   requireRentalPermission: mocks.gate,
+  buildSecurityContext: vi.fn(async () => null),
 }));
 
 import { NextResponse } from "next/server";

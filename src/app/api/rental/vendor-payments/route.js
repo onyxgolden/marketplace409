@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import {
   buildVendorPaymentId,
   serializeVendorPayment,
@@ -9,7 +9,9 @@ import {
 
 // R17: recording a vendor payment needs vendor_payments.record (was: read_only-only check).
 async function requireVendorPaymentRecorder(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_payments.record" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_payments.record",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 

@@ -1,0 +1,708 @@
+-- Security Layer 2 — distributed authentication admission limiter.
+--
+-- One server-only Postgres atomic admission RPC (auth_admission_check)
+-- transactionally evaluates every relevant token bucket before the
+-- gateway authorizes a provider auth operation. There is no in-memory
+-- production counter and no allow-on-error fallback: when the limiter
+-- store is unavailable the RPC reports unavailable=true and the gateway
+-- answers generic 503 with NO provider call. Already-authorized sessions
+-- continue; new auth operations and refresh fail closed.
+--
+-- Buckets are keyed by opaque server-constructed strings, e.g.
+--   signin:acct:<hmac-of-normalized-account>
+--   signin:ip:<trusted-deployment-derived-ip>
+--   refresh:sess:<verified-session-id>
+-- Key construction (HMAC, normalization, trusted IP extraction) lives in
+-- the gateway, never in SQL: the RPC treats keys as opaque.
+--
+-- STAGING DEFAULTS (reference only -- limits are passed as the JSONB
+-- argument, never hardcoded; tune in the gateway config, no migration):
+--   sign-in : account/IP 5 failed attempts/5 min (capacity 5, window 300),
+--             account-wide 30/15 min, IP 100/5 min
+--   sign-up : IP 20/10 min, account 3/hour
+--   reset   : account 3/hour, IP 30/hour
+--   refresh : session 30/5 min, account 120/5 min, IP 1000/5 min
+--   mfa/recovery: account 5 failures/5 min, IP 60/5 min
+-- Backoff after repeated failures: 2,4,8,16,32,60 seconds, capped at 60,
+-- then bounded bucket cooldown. No permanent attacker-triggerable
+-- account lock. Successful MFA clears applicable failure backoff, never
+-- refunds IP abuse budgets.
+--
+-- ROLLBACK (manual, forward-only migration -- no down migration):
+--   1. Confirm AUTH_RATE_LIMIT_ENABLED=false everywhere (gateway config)
+--      so no new auth operation depends on these tables.
+--   2. DROP FUNCTION public.auth_record_attempt_outcome(text,text,text);
+--      DROP FUNCTION public.auth_admission_check(text,text[],jsonb,text,timestamptz);
+--   3. DROP TABLE public.auth_backoff_clears, public.auth_operation_log,
+--      public.auth_rate_limit_buckets (order irrelevant, no FKs).
+-- Data loss is limited to limiter state: budgets reset to full on
+-- re-install, which is the permissive direction and therefore safe to
+-- re-tune. Rollback does NOT grant access -- with the flag off, auth
+-- flows behave exactly as before Layer 2. Never roll back while the
+-- limiter is enforced: new auth operations would fail closed until a
+-- compatible gateway version is restored.
+--
+-- DEPLOY NOTE: migration file only. Applying to any database is a
+-- separate, explicit Jason authorization (not granted by the build).
+
+-- ---------------------------------------------------------------------------
+-- Bucket store. tokens is a fractional token-bucket balance; last_refill
+-- is the server-clock instant the balance was last reconciled.
+-- ---------------------------------------------------------------------------
+create table if not exists public.auth_rate_limit_buckets (
+  bucket_key text primary key,
+  tokens double precision not null default 0,
+  last_refill timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Operation dedupe log. One row per gateway auth attempt, claimed by the
+-- RPC before any bucket is touched, so a retried operation_id replays the
+-- recorded verdict instead of consuming tokens twice. Also the source of
+-- truth for failure-backoff accounting (outcomes 'denied' and
+-- 'credential_failed').
+--
+-- L2-007 execution lease: admission (allowed:true) is NOT permission to
+-- execute. After admission, the gateway MUST claim an execution lease via
+-- auth_claim_execution(p_operation_id, p_owner_token) BEFORE calling the
+-- provider. Exactly one owner token holds the lease (outcome 'executing');
+-- duplicate in-flight requests with the same operation_id are denied the
+-- lease (disposition 'in_flight') and must defer/replay WITHOUT provider
+-- execution. execution_context carries non-secret request identity
+-- (action intent, factor id) — never plaintext credentials or codes.
+-- ---------------------------------------------------------------------------
+create table if not exists public.auth_operation_log (
+  operation_id text primary key,
+  action text not null,
+  bucket_keys text[] not null,
+  outcome text not null
+    check (outcome in (
+      'evaluating', 'admitted', 'denied',
+      'executing', 'uncertain',
+      'credential_failed', 'credential_succeeded',
+      'mfa_failed', 'mfa_succeeded'
+    )),
+  retry_after_seconds integer,
+  execution_owner_token text,
+  execution_claimed_at timestamptz,
+  execution_context jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- L2-007: execution-lease columns for tables created by an earlier
+-- revision of this migration (fresh installs get them from CREATE TABLE).
+alter table public.auth_operation_log
+  add column if not exists execution_owner_token text,
+  add column if not exists execution_claimed_at timestamptz,
+  add column if not exists execution_context jsonb;
+
+-- L2-007: widen the outcome lifecycle on pre-existing tables. Only
+-- replaces the constraint when it lacks the new outcome values.
+do $$
+declare
+  v_def text;
+begin
+  select pg_get_constraintdef(oid) into v_def
+    from pg_constraint
+   where conname = 'auth_operation_log_outcome_check'
+     and conrelid = 'public.auth_operation_log'::regclass;
+
+  if v_def is not null and v_def not like '%mfa_failed%' then
+    alter table public.auth_operation_log drop constraint auth_operation_log_outcome_check;
+    alter table public.auth_operation_log
+      add constraint auth_operation_log_outcome_check
+      check (outcome in (
+        'evaluating', 'admitted', 'denied',
+        'executing', 'uncertain',
+        'credential_failed', 'credential_succeeded',
+        'mfa_failed', 'mfa_succeeded'
+      ));
+  end if;
+end
+$$;
+
+create index if not exists auth_operation_log_action_keys_created_idx
+  on public.auth_operation_log (action, created_at);
+
+-- ---------------------------------------------------------------------------
+-- Backoff clear markers. A credential/MFA success records the account key
+-- here; the admission RPC ignores failures older than the latest clear.
+-- IP token budgets are separate bucket rows and are never refunded.
+-- ---------------------------------------------------------------------------
+create table if not exists public.auth_backoff_clears (
+  action text not null,
+  key_fingerprint text not null,
+  cleared_at timestamptz not null default now(),
+  primary key (action, key_fingerprint)
+);
+
+-- ---------------------------------------------------------------------------
+-- Restrictive RLS: service-role only. RLS is enabled on every table and
+-- the ONLY policy grants full access to service_role (which bypasses RLS
+-- in Supabase regardless -- the policy documents intent). There are NO
+-- policies for anon or authenticated, and their table privileges are
+-- revoked below, so no client-side role can read or write limiter state.
+-- The application reaches these tables exclusively through the server
+-- gateway routes running as service_role. This is deliberate: limiter
+-- state must never be OR-ed around by a permissive client policy.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  t text;
+begin
+  foreach t in array array[
+    'auth_rate_limit_buckets',
+    'auth_operation_log',
+    'auth_backoff_clears'
+  ] loop
+    execute format('alter table public.%I enable row level security', t);
+
+    if not exists (
+      select 1 from pg_policies
+       where schemaname = 'public'
+         and tablename = t
+         and policyname = 'service_role_full_access'
+    ) then
+      execute format(
+        'create policy service_role_full_access on public.%I ' ||
+        'for all to service_role using (true) with check (true)', t);
+    end if;
+
+    execute format('revoke all on public.%I from anon, authenticated, public', t);
+    execute format('grant all on public.%I to service_role', t);
+  end loop;
+end
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Atomic admission check. Evaluates ALL buckets for one auth attempt in a
+-- single transaction, reserves admissions before returning allowed, and
+-- records the attempt idempotently by operation_id.
+--
+-- Returns exactly one row:
+--   allowed            -- every bucket had a token; all were decremented
+--   retry_after_seconds-- when denied: seconds until the most constrained
+--                        bucket refills one token (for the 429 Retry-After)
+--   backoff_seconds    -- advisory failure backoff: 0,2,4,8,16,32,60
+--   unavailable        -- true when the limiter could not evaluate
+--                        (storage down, misconfiguration, lock failure):
+--                        the gateway must answer generic 503 and make NO
+--                        provider call.
+--
+-- p_limits is a JSONB array aligned positionally with p_keys; each
+-- element is {"capacity": <tokens>, "window_seconds": <seconds>}.
+-- p_now exists for deterministic tests; production callers pass NULL and
+-- the SERVER clock (now()) governs refill math.
+-- ---------------------------------------------------------------------------
+create or replace function public.auth_admission_check(
+  p_action text,
+  p_keys text[],
+  p_limits jsonb,
+  p_operation_id text,
+  p_now timestamptz default null
+)
+returns table (
+  allowed boolean,
+  retry_after_seconds integer,
+  backoff_seconds integer,
+  unavailable boolean
+)
+language plpgsql
+as $$
+declare
+  v_now timestamptz := coalesce(p_now, now());
+  backoff_steps constant integer[] := array[0, 2, 4, 8, 16, 32, 60];
+  v_n integer;
+  v_order integer[];
+  v_ord integer;
+  v_i integer;
+  v_key text;
+  v_limit jsonb;
+  v_capacity double precision;
+  v_window double precision;
+  v_rate double precision;
+  v_tokens double precision;
+  v_last_refill timestamptz;
+  v_elapsed double precision;
+  v_refilled double precision;
+  v_retry integer := 0;
+  v_bucket_retry integer;
+  v_denied boolean := false;
+  v_replay_outcome text;
+  v_replay_retry integer;
+  v_replay_action text;
+  v_replay_keys text[];
+  v_failures integer;
+  v_clear_at timestamptz;
+  v_sorted_p_keys text[];
+  v_sorted_replay_keys text[];
+begin
+  -- Malformed input fails closed: it can never admit, and it surfaces as
+  -- unavailable so the gateway answers 503 with no provider call.
+  if p_action is null or p_operation_id is null
+     or p_keys is null or coalesce(array_length(p_keys, 1), 0) = 0
+     or p_limits is null or jsonb_typeof(p_limits) <> 'array'
+     or jsonb_array_length(p_limits) < array_length(p_keys, 1) then
+    allowed := false;
+    retry_after_seconds := null;
+    backoff_seconds := 0;
+    unavailable := true;
+    return next;
+    return;
+  end if;
+
+  begin
+    -- Claim the operation id FIRST. Exactly one evaluator per operation:
+    -- a concurrent replay of the same operation_id blocks on this row's
+    -- lock (SELECT ... FOR UPDATE below) until the owner commits, then
+    -- replays the owner's recorded verdict instead of consuming tokens a
+    -- second time. A retried gateway call is therefore idempotent.
+    insert into public.auth_operation_log
+      (operation_id, action, bucket_keys, outcome, created_at, updated_at)
+    values
+      (p_operation_id, p_action, p_keys, 'evaluating', v_now, v_now)
+    on conflict (operation_id) do nothing;
+
+    if not found then
+      -- L2-007 replay binding: the recorded verdict replays ONLY when the
+      -- replay presents the SAME action and the SAME key set. A
+      -- cross-action or cross-subject replay (different action or keys)
+      -- is denied, never admitted on another operation's budget.
+      -- Additionally, an operation_id whose recorded outcome is already
+      -- terminal (a provider attempt was executed and recorded) is denied:
+      -- one operation_id authorizes exactly one provider attempt; a new
+      -- attempt requires a fresh operation_id. This fences both
+      -- cross-action replay and same-action free-retry abuse.
+      select o.outcome, o.retry_after_seconds, o.action, o.bucket_keys
+        into v_replay_outcome, v_replay_retry, v_replay_action, v_replay_keys
+        from public.auth_operation_log o
+       where o.operation_id = p_operation_id
+       for update;
+
+      if not found then
+        -- Owner rolled back between the claim race and our read; retry
+        -- once as the owner.
+        insert into public.auth_operation_log
+          (operation_id, action, bucket_keys, outcome, created_at, updated_at)
+        values
+          (p_operation_id, p_action, p_keys, 'evaluating', v_now, v_now)
+        on conflict (operation_id) do nothing;
+
+        if not found then
+          -- Lost the race twice: fail closed, never double-evaluate.
+          allowed := false;
+          retry_after_seconds := null;
+          backoff_seconds := 0;
+          unavailable := true;
+          return next;
+          return;
+        end if;
+      else
+        -- Bound replay: compare action and key SETS (order-independent).
+        select array_agg(k order by k) into v_sorted_p_keys
+          from unnest(p_keys) as k;
+        select array_agg(k order by k) into v_sorted_replay_keys
+          from unnest(v_replay_keys) as k;
+
+        if v_replay_action is distinct from p_action
+           or v_sorted_replay_keys is distinct from v_sorted_p_keys then
+          -- Cross-action or cross-subject replay: deny. The caller must
+          -- present a fresh operation_id bound to its own action/keys.
+          allowed := false;
+          retry_after_seconds := null;
+          backoff_seconds := 0;
+          unavailable := false;
+          return next;
+          return;
+        end if;
+
+        if v_replay_outcome not in ('evaluating', 'admitted') then
+          -- Terminal outcome already recorded (denied, credential_failed,
+          -- credential_succeeded, mfa_succeeded): this operation already
+          -- executed its provider attempt. Deny the replay; a new attempt
+          -- requires a fresh operation_id (which debits buckets anew).
+          allowed := false;
+          retry_after_seconds := null;
+          backoff_seconds := 0;
+          unavailable := false;
+          return next;
+          return;
+        end if;
+
+        -- Idempotent replay path: the owner's verdict stands for the same
+        -- bound operation that has not yet executed. Backoff is advisory
+        -- and is recomputed on the next fresh evaluation.
+        allowed := (v_replay_outcome = 'admitted');
+        retry_after_seconds := v_replay_retry;
+        backoff_seconds := 0;
+        unavailable := false;
+        return next;
+        return;
+      end if;
+    end if;
+
+    v_n := array_length(p_keys, 1);
+
+    -- Lock buckets in deterministic key order: concurrent evaluators of
+    -- overlapping key sets always acquire row locks in the same order,
+    -- so they serialize instead of deadlocking. The function never
+    -- throws on contention; lock waits resolve in commit order.
+    select array_agg(u.idx order by u.k)
+      into v_order
+      from unnest(p_keys) with ordinality as u(k, idx);
+
+    foreach v_ord in array v_order loop
+      v_i := v_ord;
+      v_key := p_keys[v_i];
+      v_limit := p_limits -> (v_i - 1);
+
+      v_capacity := nullif(v_limit ->> 'capacity', '')::double precision;
+      v_window := nullif(v_limit ->> 'window_seconds', '')::double precision;
+
+      -- Misconfigured limits fail closed and loud (caught below ->
+      -- unavailable; the gateway answers 503 and makes no provider call).
+      -- Windows are capped at 24h: the pruning bound below is only safe
+      -- for windows at or under that bound.
+      if v_capacity is null or v_capacity <= 0
+         or v_window is null or v_window <= 0 or v_window > 86400 then
+        raise exception
+          'auth_admission_check: invalid limit for action % key %',
+          p_action, v_key;
+      end if;
+
+      v_rate := v_capacity / v_window;
+
+      insert into public.auth_rate_limit_buckets
+        (bucket_key, tokens, last_refill, created_at, updated_at)
+      values
+        (v_key, v_capacity, v_now, v_now, v_now)
+      on conflict (bucket_key) do nothing;
+
+      select b.tokens, b.last_refill
+        into v_tokens, v_last_refill
+        from public.auth_rate_limit_buckets b
+       where b.bucket_key = v_key
+       for update;
+
+      -- Token-bucket refill on the SERVER clock: elapsed time since the
+      -- last touch, capped at capacity.
+      v_elapsed := greatest(0, extract(epoch from (v_now - v_last_refill)));
+      v_refilled := least(v_capacity, v_tokens + (v_elapsed * v_rate));
+
+      if v_refilled >= 1.0 then
+        -- Reserve the admission BEFORE returning allowed: the decrement
+        -- happens inside the same row lock, so N concurrent evaluators
+        -- can never admit more than the available tokens.
+        v_tokens := v_refilled - 1.0;
+      else
+        v_denied := true;
+        v_bucket_retry :=
+          greatest(1, ceil((1.0 - v_refilled) / v_rate)::integer);
+        v_retry := greatest(v_retry, v_bucket_retry);
+      end if;
+
+      update public.auth_rate_limit_buckets
+         set tokens = v_tokens,
+             last_refill = v_now,
+             updated_at = v_now
+       where bucket_key = v_key;
+    end loop;
+
+    -- Opportunistic TTL pruning keeps bucket cardinality bounded. A row
+    -- idle for 24h is fully refilled for every supported window (capped
+    -- at 24h above), so deleting it is exactly equivalent to a full
+    -- refill -- pruning can never make a bucket MORE permissive than its
+    -- configured limit. A dedicated scheduled pruning job is documented
+    -- in the runbook; this in-path prune only bounds growth between runs.
+    delete from public.auth_rate_limit_buckets
+     where last_refill < v_now - interval '24 hours';
+
+    -- Backoff after repeated failures: 2,4,8,16,32,60 seconds, capped at
+    -- 60. Counts admission denials AND recorded credential/MFA failures for
+    -- this action on overlapping keys in the trailing 15 minutes. L2-007:
+    -- 'mfa_failed' (wrong TOTP) and 'uncertain' (ambiguous provider
+    -- outcome) also drive the ladder. A later success clears the failure
+    -- history for the account key (successful MFA clears backoff); IP token
+    -- budgets are separate bucket rows and are never refunded by success.
+    select max(c.cleared_at)
+      into v_clear_at
+      from public.auth_backoff_clears c
+     where c.action = p_action
+       and c.key_fingerprint = any (p_keys);
+
+    select count(*)::integer
+      into v_failures
+      from public.auth_operation_log o
+     where o.action = p_action
+       and o.bucket_keys && p_keys
+       and o.outcome in ('denied', 'credential_failed', 'mfa_failed', 'uncertain')
+       and o.created_at > v_now - interval '15 minutes'
+       and (v_clear_at is null or o.created_at > v_clear_at);
+
+    backoff_seconds := backoff_steps[least(v_failures, 6) + 1];
+
+    -- Publish the verdict on the claimed row, then return it. Replayers
+    -- blocked on the row lock observe exactly this committed state. The
+    -- outcome='evaluating' guard means a (mis-sequenced) outcome write
+    -- that landed first is never clobbered: the terminal outcome stands.
+    update public.auth_operation_log
+       set outcome = case when v_denied then 'denied' else 'admitted' end,
+           retry_after_seconds =
+             case when v_denied then v_retry else null end,
+           updated_at = v_now
+     where operation_id = p_operation_id
+       and outcome = 'evaluating';
+
+    allowed := not v_denied;
+    retry_after_seconds := case when v_denied then v_retry else null end;
+    unavailable := false;
+    return next;
+    return;
+
+  exception when others then
+    -- The limiter NEVER throws to the caller: lock contention, missing
+    -- tables (migration not applied), or misconfiguration all surface as
+    -- unavailable, and the gateway answers generic 503 with NO provider
+    -- call. Already-authorized sessions continue; new auth operations
+    -- fail closed.
+    allowed := false;
+    retry_after_seconds := null;
+    backoff_seconds := 0;
+    unavailable := true;
+    return next;
+    return;
+  end;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Atomic execution-claim lease (L2-007). Admission (allowed:true) is NOT
+-- permission to execute: the gateway MUST call this AFTER admission and
+-- BEFORE the provider call, with a per-request owner token.
+--
+-- Exactly one owner token wins the lease (row lock + conditional update);
+-- the winner's outcome becomes 'executing'. Any other claimant gets:
+--   'in_flight'  — another owner holds the lease; defer (429) and replay
+--                   WITHOUT provider execution.
+--   'terminal'   — the operation already executed; replay the recorded
+--                   outcome, never re-execute (409 to the caller).
+--   'uncertain'  — a prior attempt's fate is unknown; reconcile before any
+--                   refire (503 to the caller).
+--   'unknown'    — no such operation (admission never happened); 503.
+--
+-- p_execution_context is non-secret request identity (action intent,
+-- factor id) — NEVER plaintext credentials, codes, or tokens.
+-- ---------------------------------------------------------------------------
+create or replace function public.auth_claim_execution(
+  p_operation_id text,
+  p_owner_token text,
+  p_execution_context jsonb default null
+)
+returns table (
+  granted boolean,
+  disposition text,
+  outcome text
+)
+language plpgsql
+as $$
+declare
+  v_outcome text;
+  v_owner text;
+begin
+  if p_operation_id is null or p_owner_token is null or p_owner_token = '' then
+    granted := false; disposition := 'unknown'; outcome := null;
+    return next;
+    return;
+  end if;
+
+  select o.outcome, o.execution_owner_token
+    into v_outcome, v_owner
+    from public.auth_operation_log o
+   where o.operation_id = p_operation_id
+   for update;
+
+  if not found then
+    granted := false; disposition := 'unknown'; outcome := null;
+    return next;
+    return;
+  end if;
+
+  -- Terminal: already executed. Replay the disposition; never re-execute.
+  if v_outcome in (
+    'denied', 'credential_failed', 'credential_succeeded',
+    'mfa_failed', 'mfa_succeeded'
+  ) then
+    granted := false; disposition := 'terminal'; outcome := v_outcome;
+    return next;
+    return;
+  end if;
+
+  -- Uncertain: a prior attempt may or may not have executed. The caller
+  -- must reconcile (or mint a fresh operation); never grant blind refire.
+  if v_outcome = 'uncertain' then
+    granted := false; disposition := 'uncertain'; outcome := v_outcome;
+    return next;
+    return;
+  end if;
+
+  -- In-flight: the lease is held.
+  if v_outcome = 'executing' then
+    if v_owner is distinct from p_owner_token then
+      granted := false; disposition := 'in_flight'; outcome := v_outcome;
+    else
+      -- Same owner re-entering (retry after a crash before the outcome
+      -- was recorded): the prior attempt's fate is unknown — treat as
+      -- uncertain, do not grant a second execution.
+      granted := false; disposition := 'uncertain'; outcome := v_outcome;
+    end if;
+    return next;
+    return;
+  end if;
+
+  -- 'evaluating' or 'admitted': claim the lease atomically. The conditional
+  -- update is the atomicity: exactly one concurrent claimant wins.
+  -- (Table alias: the OUT param is also named `outcome`.)
+  update public.auth_operation_log o
+     set outcome = 'executing',
+         execution_owner_token = p_owner_token,
+         execution_claimed_at = now(),
+         execution_context = p_execution_context,
+         updated_at = now()
+   where o.operation_id = p_operation_id
+     and o.outcome in ('evaluating', 'admitted');
+
+  if found then
+    granted := true; disposition := 'granted'; outcome := 'executing';
+    return next;
+    return;
+  end if;
+
+  -- Lost a race with another claim: re-read under the lock and report.
+  select o.outcome, o.execution_owner_token
+    into v_outcome, v_owner
+    from public.auth_operation_log o
+   where o.operation_id = p_operation_id
+   for update;
+
+  granted := false;
+  disposition := case
+    when v_outcome in (
+      'denied', 'credential_failed', 'credential_succeeded',
+      'mfa_failed', 'mfa_succeeded'
+    ) then 'terminal'
+    when v_outcome = 'uncertain' then 'uncertain'
+    when v_owner is distinct from p_owner_token then 'in_flight'
+    else 'uncertain'
+  end;
+  outcome := v_outcome;
+  return next;
+  return;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Idempotent attempt-outcome recorder. The gateway calls this after the
+-- provider operation to record credential/MFA outcomes against the
+-- operation_id claimed by auth_admission_check. Transitions are
+-- forward-only (evaluating/admitted/executing/uncertain -> terminal); the
+-- first terminal outcome wins and replays are idempotent. L2-007: 'mfa_failed'
+-- records wrong-TOTP failures (drives the MFA backoff ladder); 'uncertain'
+-- records an ambiguous provider outcome (reconcile before refire). A
+-- success records an account-key clear marker so failure backoff resets;
+-- IP token budgets are never refunded.
+-- Returns true when the outcome is (now) recorded, false otherwise.
+-- ---------------------------------------------------------------------------
+create or replace function public.auth_record_attempt_outcome(
+  p_operation_id text,
+  p_outcome text,
+  p_account_key text default null
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_action text;
+  v_existing text;
+  v_recorded boolean := false;
+begin
+  if p_outcome not in
+     ('credential_failed', 'credential_succeeded',
+      'mfa_failed', 'mfa_succeeded', 'uncertain') then
+    raise exception
+      'auth_record_attempt_outcome: invalid outcome %', p_outcome;
+  end if;
+
+  update public.auth_operation_log
+     set outcome = p_outcome,
+         updated_at = now()
+   where operation_id = p_operation_id
+     and outcome in ('evaluating', 'admitted', 'executing', 'uncertain');
+
+  if found then
+    v_recorded := true;
+    select o.action into v_action
+      from public.auth_operation_log o
+     where o.operation_id = p_operation_id;
+  else
+    select o.outcome, o.action into v_existing, v_action
+      from public.auth_operation_log o
+     where o.operation_id = p_operation_id;
+
+    if not found then
+      return false; -- unknown operation: nothing recorded
+    end if;
+
+    if v_existing = p_outcome then
+      v_recorded := true; -- idempotent replay
+    else
+      return false; -- a terminal outcome is already recorded; first wins
+    end if;
+  end if;
+
+  if v_recorded
+     and p_outcome in ('credential_succeeded', 'mfa_succeeded')
+     and p_account_key is not null
+     and v_action is not null then
+    insert into public.auth_backoff_clears (action, key_fingerprint, cleared_at)
+    values (v_action, p_account_key, now())
+    on conflict (action, key_fingerprint)
+    do update set cleared_at = excluded.cleared_at;
+  end if;
+
+  return v_recorded;
+
+exception when others then
+  -- Outcome recording must never break the auth path: the caller already
+  -- has its admission verdict. A false return is logged gateway-side.
+  return false;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Execute grants: service-role only, matching the table posture. The
+-- gateway calls these RPCs as service_role; no client role may call them
+-- directly.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'auth_admission_check(text,text[],jsonb,text,timestamptz)',
+    'auth_record_attempt_outcome(text,text,text)',
+    'auth_claim_execution(text,text,jsonb)'
+  ] loop
+    execute format('revoke all on function public.%s from public', fn);
+    execute format('revoke all on function public.%s from anon', fn);
+    execute format('revoke all on function public.%s from authenticated', fn);
+    execute format('grant execute on function public.%s to service_role', fn);
+  end loop;
+end
+$$;
+
+-- Re-applying this migration is a no-op: CREATE TABLE IF NOT EXISTS,
+-- CREATE OR REPLACE FUNCTION, guarded policy creation, and idempotent
+-- revoke/grant statements leave existing rows untouched.

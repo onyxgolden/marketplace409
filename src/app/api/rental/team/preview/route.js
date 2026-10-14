@@ -3,6 +3,7 @@ import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/crea
 import {
   PREVIEW_COOKIE_MAX_AGE_SECONDS,
   PREVIEW_COOKIE_NAME,
+  buildSecurityContext,
   getActorRentalAuthorization,
   requireTeamManager,
 } from "@/lib/rental/teamAuthorization";
@@ -62,7 +63,9 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const gate = await requireTeamManager({ authenticated, request });
+    const gate = await requireTeamManager({ authenticated, request,
+      security: await buildSecurityContext(authenticated),
+    });
     if (gate.response) return gate.response;
 
     const body = await request.json();
