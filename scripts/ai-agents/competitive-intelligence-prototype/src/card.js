@@ -77,7 +77,16 @@ function validateCents(n, name) {
 }
 
 /** Cancellation evidence must bind to the card holder's trial/service/account. */
-export function validateCardCancellation(ev, holder) {
+/**
+ * Validate card cancellation evidence.
+ *
+ * CI-004: the account_identity is bound to the REGISTERED trial account from
+ * separately trusted administrative evidence (the trial ledger's accountOf),
+ * never to a request-provided identity string on its own. Pass the trusted
+ * registered account as registeredAccountIdentity; a mismatched or missing
+ * binding refuses.
+ */
+export function validateCardCancellation(ev, holder, registeredAccountIdentity = null) {
   const errors = [];
   if (!ev || typeof ev !== "object") return ["cancellation evidence must be an object"];
   for (const k of ["trial_id", "service_id", "account_identity", "cancelled_at", "outcome", "evidence_hash", "issuer"]) {
@@ -88,6 +97,12 @@ export function validateCardCancellation(ev, holder) {
   if (holder) {
     if (ev.trial_id !== holder.trial_id) errors.push("trial_id does not match the card holder");
     if (ev.service_id !== holder.service_id) errors.push("service_id does not match the card holder");
+  }
+  // CI-004: the evidence account must be the ledger-registered account.
+  if (registeredAccountIdentity == null) {
+    errors.push("no trusted trial-account binding: registered account identity required from the trial ledger");
+  } else if (ev.account_identity !== registeredAccountIdentity) {
+    errors.push(`account_identity ${ev.account_identity} does not match the trial ledger's registered account`);
   }
   return errors;
 }
@@ -199,7 +214,7 @@ export class CardRegistry {
    *   hold_cents:    new outstanding holds (replaces holdsCents)
    * Cap is enforced on post-mutation exposure BEFORE mutating.
    */
-  reconcile({ cancellation_evidence, settled_cents = 0, hold_cents = 0, charge_cents = 0, generation }) {
+  reconcile({ cancellation_evidence, settled_cents = 0, hold_cents = 0, charge_cents = 0, generation, trialLedger = null }) {
     if (this.state !== "CANCEL_PENDING") return { ok: false, reason: "bad_state", state: this.state };
     const g = this._checkGeneration(generation);
     if (g) return { ok: false, reason: g };
@@ -207,7 +222,19 @@ export class CardRegistry {
       const e = validateCents(v, n);
       if (e) return { ok: false, reason: "invalid_amount", detail: e };
     }
-    const evErrors = validateCardCancellation(cancellation_evidence, this.holder);
+    // CI-004: bind to the registered trial account from the trusted ledger.
+    // A request-provided account_identity string is not proof.
+    const registeredAccount =
+      trialLedger && typeof trialLedger.accountOf === "function"
+        ? trialLedger.accountOf(this.holder.trial_id)
+        : null;
+    if (!registeredAccount) {
+      return {
+        ok: false, reason: "no_trusted_account_binding",
+        detail: "reconcile requires the trial ledger's registered account identity for the card holder's trial",
+      };
+    }
+    const evErrors = validateCardCancellation(cancellation_evidence, this.holder, registeredAccount);
     if (evErrors.length > 0) {
       return { ok: false, reason: "no_cancellation_evidence", errors: evErrors };
     }
@@ -228,18 +255,27 @@ export class CardRegistry {
   }
 
   /** Cleanup must be verified (bound receipt) before the card goes FREE. */
-  verifyCleanup({ generation, cleanup_receipt }) {
+  verifyCleanup({ generation, cleanup_receipt, trialLedger = null }) {
     if (this.state !== "RECONCILING") return { ok: false, reason: "bad_state", state: this.state };
     const g = this._checkGeneration(generation);
     if (g) return { ok: false, reason: g };
     const h = this.holder;
     const errors = [];
+    // CI-004: the cleanup receipt's account must be the ledger-registered
+    // account for the holder's trial — not a request-provided string.
+    const registeredAccount =
+      trialLedger && typeof trialLedger.accountOf === "function" ? trialLedger.accountOf(h.trial_id) : null;
+    if (!registeredAccount) {
+      errors.push("no trusted trial-account binding: trial ledger required for cleanup verification");
+    }
     if (!cleanup_receipt || typeof cleanup_receipt !== "object") errors.push("cleanup receipt required");
     else {
       if (cleanup_receipt.trial_id !== h.trial_id) errors.push("trial_id mismatch");
       if (cleanup_receipt.service_id !== h.service_id) errors.push("service_id mismatch");
       if (typeof cleanup_receipt.account_identity !== "string" || !cleanup_receipt.account_identity) {
         errors.push("account_identity required");
+      } else if (registeredAccount && cleanup_receipt.account_identity !== registeredAccount) {
+        errors.push("account_identity does not match the trial ledger's registered account");
       }
     }
     if (errors.length > 0) return { ok: false, reason: "cleanup_unverified", errors };

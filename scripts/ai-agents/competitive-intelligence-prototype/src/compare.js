@@ -40,6 +40,7 @@ import {
   admitSubject,
   admitForgePin,
   resolveCitation,
+  resolveForgeRef,
 } from "./trust.js";
 
 function stableSort(arr, keyFn) {
@@ -61,7 +62,7 @@ function utf8Bytes(s) {
  * Cells with unresolvable citations are downgraded to unsupported —
  * unregistered evidence can never drive a score.
  */
-function admitCell(trusted, subject, cell) {
+function admitCell(trusted, subject, confirmedVendor, cell) {
   const cellErrors = validateCell(cell);
   if (cellErrors.length > 0) {
     return { admitted: null, diagnostic: { issue: "cell_invalid", errors: cellErrors } };
@@ -76,11 +77,54 @@ function admitCell(trusted, subject, cell) {
       },
     };
   }
-  // Resolve every citation against the admitted store.
+  // CI-001: exact confirmed product/scope admission. Vendor identity alone is
+  // not enough: the cell must be about the confirmed product, and its scope
+  // must be the confirmed scope shape (edition/platform/region/version).
+  if (confirmedVendor && confirmedVendor.product_id) {
+    if (cell.subject_ref.product_id !== confirmedVendor.product_id) {
+      return {
+        admitted: null,
+        diagnostic: {
+          issue: "product_unconfirmed",
+          errors: [
+            `cell subject_ref.product_id=${cell.subject_ref.product_id ?? "none"} != confirmed product ${confirmedVendor.product_id}`,
+          ],
+        },
+      };
+    }
+    // The cell's scope must also be about the confirmed product — a scope
+    // naming a different product/edition is not admitted under this vendor.
+    if (cell.scope && cell.scope.product_id && cell.scope.product_id !== confirmedVendor.product_id) {
+      return {
+        admitted: null,
+        diagnostic: {
+          issue: "product_unconfirmed",
+          errors: [
+            `cell scope.product_id=${cell.scope.product_id} != confirmed product ${confirmedVendor.product_id}`,
+          ],
+        },
+      };
+    }
+  }
+  // CI-006: per-cell citation bound enforced before any traversal work.
+  const citationIds = cell.citations || [];
+  if (citationIds.length > LIMITS.maxCitationsPerCell) {
+    return {
+      admitted: null,
+      diagnostic: {
+        issue: "cell_invalid",
+        errors: [`too many citations on one cell: ${citationIds.length} > ${LIMITS.maxCitationsPerCell}`],
+      },
+    };
+  }
+  // Resolve every citation against the admitted store, bound to the confirmed
+  // product (CI-001). A source that matches the vendor but is about a
+  // different product/edition/platform/region does not ground this cell.
   const failures = [];
   let freshness = "fresh";
-  for (const sid of cell.citations || []) {
-    const r = resolveCitation(trusted, sid, subject);
+  const confirmedProductId = confirmedVendor ? confirmedVendor.product_id ?? null : null;
+  for (const sid of citationIds) {
+    const r = resolveCitation(trusted, sid, subject, confirmedProductId);
     if (!r.ok) {
       failures.push({ source_id: sid, reason: r.reason });
     } else if (r.freshness === "stale") {
@@ -89,18 +133,23 @@ function admitCell(trusted, subject, cell) {
       freshness = "unknown";
     }
   }
-  // FORGE cells may ground in the verified snapshot via forge_refs instead.
+  // FORGE cells may ground in the verified snapshot via forge_refs instead —
+  // but ONLY through the host's verified repo-file resolver (CI-001). A pin
+  // is snapshot identity, not proof the file exists; every ref is resolved
+  // at the pinned tree, and unverifiable refs leave the cell unsupported.
   let forgeRefsOk = false;
   if (Array.isArray(cell.forge_refs) && cell.forge_refs.length > 0) {
-    const snap = trusted.forgeSnapshot;
-    forgeRefsOk = cell.forge_refs.every(
-      (fr) => fr && fr.repo === snap.repo && fr.commit === snap.commit && typeof fr.path === "string" && fr.path,
-    );
-    if (!forgeRefsOk) {
-      failures.push({ source_id: "(forge_refs)", reason: "FORGE_PIN_UNVERIFIED" });
+    forgeRefsOk = true;
+    for (const fr of cell.forge_refs) {
+      const rr = resolveForgeRef(trusted, fr);
+      if (!rr.ok) {
+        forgeRefsOk = false;
+        failures.push({ source_id: `(forge_refs:${fr && fr.path ? fr.path : "?"})`, reason: rr.reason });
+        break;
+      }
     }
   }
-  const groundedByCitations = failures.length === 0 && (cell.citations || []).length > 0;
+  const groundedByCitations = failures.length === 0 && citationIds.length > 0;
   const grounded = groundedByCitations || (subject === "forge" && forgeRefsOk);
   // A non-unsupported cell with no admitted grounding is unregistered evidence:
   // it can never drive a score.
@@ -154,12 +203,18 @@ export function runComparison(input, cellsBySubject, trusted = null) {
     return refusal("REFUSED", pin.reason, [pin.detail]);
   }
 
+  // 4. Bounds on RAW input BEFORE any traversal/processing (CI-006).
+  //    Closed shapes first: every subject bucket must be an array, otherwise
+  //    the input is malformed (refused, never an exception mid-traversal).
   const subjects = Object.keys(cellsBySubject || {});
   if (!subjects.includes("forge")) {
     return refusal("REFUSED", "INPUT_INVALID", ["cellsBySubject must include 'forge'"]);
   }
-
-  // 4. Bounds on RAW input BEFORE any traversal/processing (CI-006).
+  for (const s of subjects) {
+    if (!Array.isArray(cellsBySubject[s])) {
+      return refusal("REFUSED", "INPUT_INVALID", [`cellsBySubject[${s}] must be an array`]);
+    }
+  }
   let rawCells = 0;
   let rawCitations = 0;
   const rawFeatures = new Set();
@@ -181,33 +236,92 @@ export function runComparison(input, cellsBySubject, trusted = null) {
     return refusal("BLOCKED", "INPUT_LIMIT", [`${rawCitations} raw citations > ${LIMITS.maxCitations}`]);
   }
 
-  // 5. Subject admission: every non-forge subject must be confirmed.
+  // 5. Subject admission: every non-forge subject must be confirmed. The
+  //    confirmed vendor record is captured for exact product/scope admission.
+  const confirmedVendors = {};
   for (const s of stableSort(subjects, (x) => x)) {
     const a = admitSubject(trusted, s);
     if (!a.ok) {
       return refusal("REFUSED", a.reason, [a.detail]);
     }
+    confirmedVendors[s] = a.vendor; // null for forge
   }
 
-  // 6. Admit cells into the ONE canonical representation. First admitted cell
-  //    per subject+feature wins deterministically; later duplicates are
-  //    diagnostics, never silent alternate scorings.
+  // 6. Admit cells into the ONE canonical representation.
+  //
+  //    CI-002: duplicates do NOT reduce to first-wins. Only TRUE identical
+  //    duplicates collapse (same evidence_state, citations, scope, conflict,
+  //    subject binding). A later cell that conflicts on any of those fields
+  //    replaces the scored entry with an undetermined marker and keeps BOTH
+  //    evidence sides in the diagnostic — the conflict is scored as
+  //    undetermined, never voted away.
   const diagnostics = [];
   const contradictions = [];
   const scored = new Map(); // `${subject}:${feature_id}` -> admitted cell
   const citedSourceIds = new Set();
 
+  const identicalCells = (a, b) =>
+    a.evidence_state === b.evidence_state &&
+    JSON.stringify([...(a.citations || [])].sort()) === JSON.stringify([...(b.citations || [])].sort()) &&
+    JSON.stringify(a.scope || null) === JSON.stringify(b.scope || null) &&
+    Boolean(a.conflict) === Boolean(b.conflict) &&
+    JSON.stringify(a.subject_ref || null) === JSON.stringify(b.subject_ref || null);
+
+  let traversed = 0;
   for (const subject of stableSort(subjects, (s) => s)) {
     const cells = cellsBySubject[subject] || [];
     for (const cell of cells) {
-      const { admitted, diagnostic } = admitCell(trusted, subject, cell);
+      // CI-006: fail-fast tripwire DURING traversal — the count can never
+      // exceed the bound no matter what shape the input took.
+      traversed += 1;
+      if (traversed > LIMITS.maxCells) {
+        return refusal("BLOCKED", "INPUT_LIMIT", [`traversed ${traversed} cells > ${LIMITS.maxCells}`]);
+      }
+      const { admitted, diagnostic } = admitCell(trusted, subject, confirmedVendors[subject], cell);
       if (diagnostic) {
         diagnostics.push({ subject, feature_id: cell?.feature_id || null, ...diagnostic });
       }
       if (!admitted) continue;
       const key = `${subject}:${admitted.feature_id}`;
-      if (scored.has(key)) {
-        diagnostics.push({ subject, feature_id: admitted.feature_id, issue: "duplicate_cell", detail: "first admitted cell wins" });
+      const prior = scored.get(key);
+      if (prior) {
+        if (identicalCells(prior, admitted)) {
+          diagnostics.push({ subject, feature_id: admitted.feature_id, issue: "duplicate_cell", detail: "identical duplicate collapsed" });
+          continue;
+        }
+        // Conflicting duplicate: scored identity is undetermined; both
+        // evidence sides are retained in the diagnostic.
+        const mergedCitations = [...new Set([...(prior.citations || []), ...(admitted.citations || [])])];
+        const marker = {
+          ...prior,
+          evidence_state: "unsupported",
+          reason_code: "conflicting_duplicates",
+          citations: mergedCitations,
+          paraphrase: null,
+          opposing_paraphrase: null,
+          attribution: "none",
+          conflict: false,
+          freshness_status: "unknown",
+          confidence_reason: "conflicting duplicate cells: scored identity undetermined",
+        };
+        scored.set(key, marker);
+        for (const sid of mergedCitations) citedSourceIds.add(sid);
+        diagnostics.push({
+          subject,
+          feature_id: admitted.feature_id,
+          issue: "conflicting_duplicates",
+          detail: "conflicting duplicate cells; scored identity undetermined with both evidence sides retained",
+          sides: [
+            {
+              evidence_state: prior.evidence_state, citations: prior.citations,
+              scope: prior.scope, conflict: prior.conflict, subject_ref: prior.subject_ref,
+            },
+            {
+              evidence_state: admitted.evidence_state, citations: admitted.citations,
+              scope: admitted.scope, conflict: admitted.conflict, subject_ref: admitted.subject_ref,
+            },
+          ],
+        });
         continue;
       }
       scored.set(key, { ...admitted, subject });

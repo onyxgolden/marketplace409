@@ -35,6 +35,7 @@ export {
   makeChallengeRecord,
   createWorkflowRegistry,
   createChallengeHistory,
+  workflowAttemptKey,
   PERMITTED_PHASE,
 } from "./challenges.js";
 export { forgeEvidence, classifyForgeFinding, snapshotPin } from "./inventory.js";
@@ -45,12 +46,12 @@ export {
   admitSubject,
   admitForgePin,
   resolveCitation,
+  resolveForgeRef,
   sourceFreshness,
   verifyCorpusManifest,
   manifestDigest,
   canonicalize,
   sha256Hex,
-  APPROVED_ROOT_DIGEST,
 } from "./trust.js";
 export { TAXONOMY_DIGEST } from "./taxonomy.js";
 

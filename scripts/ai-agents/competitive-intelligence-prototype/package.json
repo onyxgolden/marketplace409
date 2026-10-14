@@ -1,1 +1,14 @@
-{"description":"Competitive Intelligence agent Phase 2 real-competitor core: deterministic tri-state comparison, rubric scoring, trial lifecycle/card ledgers, challenge classification. Read-only comparison core; no network, no credentials, no model calls.","engines":{"node":">=24"},"name":"competitive-intelligence-prototype","scripts":{"test":"node --test tests/*.test.js"},"type":"module","version":"0.1.0"}
+{
+  "description": "Competitive Intelligence agent Phase 2 real-competitor core: deterministic tri-state comparison, rubric scoring, trial lifecycle/card ledgers, challenge classification. Read-only comparison core; no network, no credentials, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "competitive-intelligence-prototype",
+  "scripts": {
+    "test": "node runner/launch.js test",
+    "test:direct": "node --test tests/*.test.js",
+    "manual": "node runner/launch.js manual"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

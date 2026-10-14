@@ -63,16 +63,30 @@ export function createWorkflowRegistry() {
 }
 
 /** Durable per-challenge attempt history (host-held). */
+/**
+ * Host-held challenge history, keyed by STABLE WORKFLOW OPERATION
+ * (registration_id::handler), never by challenge_id (CI-005).
+ *
+ * consume() allocates one attempt for a workflow operation ATOMICALLY and
+ * BEFORE any external submission: the caller classifies, checks
+ * attemptAllowed, then consume()s the attempt, then submits. A later
+ * challenge-ID change or process restart cannot reset the count — the key
+ * is stable and the host persists the history.
+ */
 export function createChallengeHistory() {
   const counts = new Map();
   return {
-    record(challenge_id, outcome) {
-      const next = (counts.get(challenge_id) || 0) + 1;
-      counts.set(challenge_id, next);
+    consume(workflowKey) {
+      if (typeof workflowKey !== "string" || !workflowKey) {
+        throw new Error("consume requires a workflow attempt key (registration_id::handler)");
+      }
+      const next = (counts.get(workflowKey) || 0) + 1;
+      counts.set(workflowKey, next);
       return next;
     },
-    attempts(challenge_id) {
-      return counts.get(challenge_id) || 0;
+    attempts(workflowKey) {
+      if (typeof workflowKey !== "string" || !workflowKey) return 0;
+      return counts.get(workflowKey) || 0;
     },
   };
 }
@@ -108,18 +122,45 @@ function refuseReceipt(type, reason_code, workflow_step, destination) {
  * The registered phase must match workflow_step — a spoofed page purpose
  * that disagrees with the registration refuses.
  */
-export function classifyChallenge({ detected, workflow_step, destination, registration }) {
+/**
+ * Stable workflow-operation key for attempt accounting (CI-005).
+ * One attempt is allocated per signup workflow + handler, never per
+ * challenge_id: a challenge-ID change or a process restart is not a new
+ * attempt. The host persists the history; the key is stable across both.
+ */
+export function workflowAttemptKey(registration_id, handler) {
+  return `${registration_id}::${handler}`;
+}
+
+export function classifyChallenge({
+  detected, workflow_step, destination, target_origin = null,
+  service_id = null, evaluation_id = null, registration_id = null, registry = null,
+}) {
   const step = workflow_step || "unknown_step";
-  const dest = destination || "unknown_destination";
-  if (
-    !registration ||
-    typeof registration.registration_id !== "string" ||
-    registration.phase !== PERMITTED_PHASE
-  ) {
+  const dest = destination || target_origin || "unknown_destination";
+  // CI-005: the registration is resolved against a SEPARATELY INJECTED
+  // trusted registry — a caller-supplied registration-shaped object is never
+  // authoritative. Unknown registration_id refuses.
+  const registration =
+    registry && typeof registry.get === "function" && typeof registration_id === "string"
+      ? registry.get(registration_id)
+      : null;
+  if (!registration || typeof registration.registration_id !== "string" || registration.phase !== PERMITTED_PHASE) {
     return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "UNREGISTERED_WORKFLOW", step, dest) };
   }
   if (step !== registration.phase) {
     return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "PHASE_MISMATCH", step, dest) };
+  }
+  // CI-005: bind origin/service/evaluation to the registered workflow. An
+  // unrelated destination/origin never authorizes a permitted handler.
+  if (target_origin !== null && target_origin !== registration.origin) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "ORIGIN_MISMATCH", step, dest) };
+  }
+  if (service_id !== null && service_id !== registration.service_id) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "SERVICE_MISMATCH", step, dest) };
+  }
+  if (evaluation_id !== null && registration.evaluation_id && evaluation_id !== registration.evaluation_id) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "EVALUATION_MISMATCH", step, dest) };
   }
 
   // Purpose first: prohibited payment/fraud/phone wins over any wording.
@@ -151,6 +192,8 @@ export function classifyChallenge({ detected, workflow_step, destination, regist
     purpose_classification: `${step} -> ${dest}`,
     risk_flags: [],
     reason_code,
+    registration_id: registration.registration_id,
+    workflow_attempt_key: type !== "unknown" ? workflowAttemptKey(registration.registration_id, handler) : null,
   };
   if (type === "image_captcha") {
     receipt.risk_flags.push("TOS_VIOLATION_RISK", "ACCOUNT_BAN_RISK");
@@ -165,16 +208,20 @@ export function classifyChallenge({ detected, workflow_step, destination, regist
  * ignored. Permitted handlers require history; without it they refuse.
  */
 export function attemptAllowed(type, ctx = {}) {
-  const { challenge_id, history, solver_credits_ok, own_mailbox_ready } = ctx;
+  // CI-005: attempts are keyed by stable workflow operation
+  // (registration_id::handler). challenge_id is NOT an attempt key — a
+  // challenge-ID change never grants a new attempt. Caller-supplied
+  // attempt_count is ignored; only the host-held history counts.
+  const { workflowKey, history, solver_credits_ok, own_mailbox_ready } = ctx;
   switch (type) {
     case "email_verification":
     case "checkbox_passive":
     case "image_captcha": {
-      if (!challenge_id || !history || typeof history.attempts !== "function") {
-        return { allowed: false, reason: "no_workflow_history", detail: "attempts require durable host-held history" };
+      if (!workflowKey || !history || typeof history.attempts !== "function" || typeof history.consume !== "function") {
+        return { allowed: false, reason: "no_workflow_history", detail: "attempts require durable host-held workflow history" };
       }
-      if (history.attempts(challenge_id) >= 1) {
-        return { allowed: false, reason: "one_attempt_per_challenge", detail: "no retry loops; a new challenge is not a new attempt" };
+      if (history.attempts(workflowKey) >= 1) {
+        return { allowed: false, reason: "one_attempt_per_workflow", detail: "one attempt per signup workflow/handler; challenge_id change is not a new attempt" };
       }
       if (type === "email_verification") {
         return own_mailbox_ready

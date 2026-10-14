@@ -345,3 +345,38 @@ test("transition map self-consistency", () => {
   }
   assert.ok(count >= 15, `exercised ${count} legal edges`);
 });
+
+// CI-003 round 3: a CLOSED trial never frees another trial entitlement. The
+// permanent reservation is derived from the append-only history.
+test("CI-003: CLOSED trial never re-mints a trial entitlement", () => {
+  const l = new TrialLedger();
+  fullRun(l, "t1", "s");
+  assert.equal(l.currentState("t1"), "CLOSED");
+  assert.equal(l.serviceConsumed("s"), true);
+  const r = l.transition({ trial_id: "t2", service_id: "s", to_state: "PLANNED", actor: "host" });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes("across all time")), `errors: ${r.errors}`);
+});
+
+// CI-003 round 3: the permanent reservation survives a restart — it is
+// derived from the durable record history, not process memory.
+test("CI-003: service reservation survives restart via the durable store", () => {
+  const store = createLedgerStore();
+  const l1 = new TrialLedger(store);
+  fullRun(l1, "t1", "s");
+  const l2 = new TrialLedger(store); // "restart": new instance, same store
+  assert.equal(l2.serviceConsumed("s"), true);
+  const r = l2.transition({ trial_id: "t2", service_id: "s", to_state: "PLANNED", actor: "host" });
+  assert.equal(r.ok, false);
+});
+
+// CI-003 round 3: a pre-account BLOCKED skip never consumed, so the service
+// stays plannable (clean skip, no obligations).
+test("CI-003: pre-account BLOCKED skip does not consume the service", () => {
+  const l = new TrialLedger();
+  l.transition({ trial_id: "t1", service_id: "s", to_state: "PLANNED", actor: "host" });
+  l.transition({ trial_id: "t1", service_id: "s", to_state: "BLOCKED", actor: "host" });
+  assert.equal(l.serviceConsumed("s"), false);
+  const r = l.transition({ trial_id: "t2", service_id: "s", to_state: "PLANNED", actor: "host" });
+  assert.equal(r.ok, true, `clean skip must stay plannable: ${r.errors}`);
+});

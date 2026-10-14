@@ -26,7 +26,10 @@ export const LIMITS = {
   maxCells: 512,
   maxPropositions: 256,
   maxCitations: 512,
+  maxCitationsPerCell: 128,
   maxOutputBytes: 1024 * 1024,
+  maxTrustedSources: 1024,
+  maxTrustedBytes: 4 * 1024 * 1024,
 };
 
 /** Exact allowed keys for a PublicSourceRef (contract §4 provenance/locator/integrity). */

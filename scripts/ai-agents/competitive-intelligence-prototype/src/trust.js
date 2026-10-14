@@ -14,21 +14,15 @@
  *
  * 2. Corpus authentication (CI-006). The fixture + expected-oracle + scorer +
  *    official-runner corpus is frozen into corpus/manifest.json. The manifest
- *    digest (the approved root) is embedded below as APPROVED_ROOT_DIGEST.
- *    trust.js itself is the trust anchor and is NOT listed in the manifest —
- *    it is deployed by the trusted host, not authenticated by the corpus.
- *    verifyCorpusManifest must pass before any scored import in the runner.
+ *    digest (the approved root) is HOST INPUT — it is passed to
+ *    verifyCorpusManifest, never embedded in the corpus. The builtins-only
+ *    launcher (runner/launch.js) authenticates every corpus byte before any
+ *    corpus import executes. trust.js itself is IN the manifest: executable
+ *    verifier code is never exempt from authentication by declaration.
  */
 
 import { createHash } from "node:crypto";
-
-/**
- * Approved root digest of corpus/manifest.json, set at freeze time by
- * corpus/freeze.js. Any edit to the corpus without re-freezing fails
- * verification. Placeholder fails closed: verification never passes with it.
- */
-export const APPROVED_ROOT_DIGEST =
-  "4048d9ef908965276928701dbb491b40ad055076e66296c7e43e0d6c009b89de";
+import { LIMITS } from "./schemas.js";
 
 export function sha256Hex(s) {
   return createHash("sha256").update(String(s), "utf8").digest("hex");
@@ -55,8 +49,8 @@ const HEX40 = /^[0-9a-f]{40}$/;
  *     clock: <ISO date-time>
  *   }
  */
-export function createTrustedContext({ confirmedSet, admittedSources, forgeSnapshot, clock }) {
-  return { confirmedSet, admittedSources, forgeSnapshot, clock };
+export function createTrustedContext({ confirmedSet, admittedSources, forgeSnapshot, forgeFileResolver = null, clock }) {
+  return { confirmedSet, admittedSources, forgeSnapshot, forgeFileResolver, clock };
 }
 
 /** Canonical digest the confirmed set must carry (self-checking). */
@@ -89,6 +83,21 @@ export function validateTrustedContext(ctx) {
   if (!isPlainObject(ctx.admittedSources)) {
     errors.push("admittedSources must be an object");
   } else {
+    // CI-006: fail fast on trusted-context shape BEFORE any per-cell work.
+    const sourceIds = Object.keys(ctx.admittedSources);
+    if (sourceIds.length > LIMITS.maxTrustedSources) {
+      errors.push(`too many trusted sources: ${sourceIds.length} > ${LIMITS.maxTrustedSources}`);
+    } else {
+      let bytes = 0;
+      try {
+        bytes = Buffer.byteLength(JSON.stringify(ctx.admittedSources), "utf8");
+      } catch {
+        errors.push("admittedSources not serializable");
+      }
+      if (bytes > LIMITS.maxTrustedBytes) {
+        errors.push(`trusted sources exceed byte budget: ${bytes} > ${LIMITS.maxTrustedBytes}`);
+      }
+    }
     for (const [sid, ref] of Object.entries(ctx.admittedSources)) {
       if (!isPlainObject(ref) || ref.source_id !== sid) errors.push(`admitted source ${sid}: key/source_id mismatch`);
       if (typeof ref?.content_sha256 !== "string" || !HEX64.test(ref.content_sha256)) {
@@ -114,17 +123,24 @@ export function validateTrustedContext(ctx) {
   if (typeof ctx.clock !== "string" || Number.isNaN(Date.parse(ctx.clock))) {
     errors.push("clock must be an ISO date-time string");
   }
+  // CI-001: a supplied resolver must be a function; if absent, FORGE refs are
+  // unsupported via resolveForgeRef (never silently admitted).
+  if (ctx.forgeFileResolver != null && typeof ctx.forgeFileResolver !== "function") {
+    errors.push("forgeFileResolver must be a function when provided");
+  }
   return errors;
 }
 
 /** Is this subject admitted? "forge" always; vendors must be confirmed. */
 export function admitSubject(ctx, subject) {
-  if (subject === "forge") return { ok: true };
-  const vendors = ctx.confirmedSet.vendors.map((v) => v.vendor_id);
-  if (!vendors.includes(subject)) {
+  if (subject === "forge") return { ok: true, vendor: null };
+  const vendor = ctx.confirmedSet.vendors.find((v) => v.vendor_id === subject);
+  if (!vendor) {
     return { ok: false, reason: "SUBJECT_UNCONFIRMED", detail: `${subject} is not in the confirmed set` };
   }
-  return { ok: true };
+  // CI-001: return the confirmed vendor record so callers bind the exact
+  // confirmed product/scope, not just vendor identity.
+  return { ok: true, vendor };
 }
 
 /** The caller's forge_base_pin must exactly match the host-verified snapshot. */
@@ -143,16 +159,82 @@ export function admitForgePin(ctx, pin) {
  * Returns {ok, source, freshness} or {ok:false, reason}.
  * Reasons: SOURCE_UNVERIFIED | ACCESS_RESTRICTED | VENDOR_MISMATCH.
  */
-export function resolveCitation(ctx, source_id, vendor_id = null) {
+/**
+ * Resolve a citation against the admitted source store.
+ *
+ * CI-001: when the confirmed vendor record is supplied (or an expected
+ * product_id), the admitted source must match BOTH the vendor_id and the
+ * confirmed product_id. Vendor match alone does not prove the citation is
+ * about the confirmed product/scope.
+ *
+ * @param ctx trusted context
+ * @param source_id the cited source
+ * @param vendor_id expected vendor (string) or null
+ * @param product_id expected confirmed product_id (string) or null
+ */
+export function resolveCitation(ctx, source_id, vendor_id = null, product_id = null) {
   const source = ctx.admittedSources?.[source_id];
   if (!source) return { ok: false, reason: "SOURCE_UNVERIFIED", detail: `${source_id} is not an admitted source` };
   if (vendor_id !== null && source.vendor_id !== vendor_id) {
     return { ok: false, reason: "VENDOR_MISMATCH", detail: `${source_id} belongs to ${source.vendor_id}, not ${vendor_id}` };
   }
+  if (product_id !== null && product_id !== undefined && source.product_id !== product_id) {
+    return {
+      ok: false, reason: "PRODUCT_MISMATCH",
+      detail: `${source_id} is about ${source.product_id ?? "unknown product"}, not confirmed product ${product_id}`,
+    };
+  }
   if (source.access_status !== "ok") {
     return { ok: false, reason: "ACCESS_RESTRICTED", detail: `${source_id} access_status=${source.access_status}` };
   }
   return { ok: true, source, freshness: sourceFreshness(ctx, source) };
+}
+
+/**
+ * Resolve one FORGE reference (path/blob/span) against the host's verified
+ * repo-file resolver at the pinned tree (CI-001).
+ *
+ * A pin (repo+commit+tree) is snapshot IDENTITY, not proof the file exists.
+ * The ref is verified only when:
+ *   1. its repo and commit exactly match the trusted forgeSnapshot pin,
+ *   2. the host-injected forgeFileResolver function confirms path/blob/span
+ *      exist at that pinned tree.
+ * A missing resolver, a pin mismatch, or a negative resolution all yield
+ * ok:false — the FORGE grounding is unsupported/undetermined, never admitted.
+ *
+ * @param ctx trusted context (carries forgeSnapshot + forgeFileResolver)
+ * @param ref { repo, path, commit, blob, line_span? }
+ */
+export function resolveForgeRef(ctx, ref) {
+  const snap = ctx.forgeSnapshot;
+  if (typeof ctx.forgeFileResolver !== "function") {
+    return { ok: false, reason: "FORGE_RESOLVER_REQUIRED", detail: "no trusted forge file resolver on the context" };
+  }
+  if (!ref || typeof ref !== "object") {
+    return { ok: false, reason: "FORGE_REF_INVALID", detail: "ref must be an object" };
+  }
+  if (ref.repo !== snap.repo || ref.commit !== snap.commit) {
+    return {
+      ok: false, reason: "FORGE_PIN_MISMATCH",
+      detail: `ref pins ${ref.repo}@${ref.commit}, trusted snapshot is ${snap.repo}@${snap.commit}`,
+    };
+  }
+  if (typeof ref.path !== "string" || !ref.path) {
+    return { ok: false, reason: "FORGE_REF_INVALID", detail: "ref.path required" };
+  }
+  let resolved;
+  try {
+    resolved = ctx.forgeFileResolver({ repo: ref.repo, commit: ref.commit, path: ref.path, blob: ref.blob ?? null, line_span: ref.line_span ?? null });
+  } catch (err) {
+    return { ok: false, reason: "FORGE_RESOLVER_ERROR", detail: String(err && err.message ? err.message : err) };
+  }
+  if (!resolved || typeof resolved !== "object" || resolved.ok !== true) {
+    return {
+      ok: false, reason: "FORGE_REF_UNVERIFIED",
+      detail: `resolver could not verify ${ref.path} at ${ref.commit.slice(0, 12)}: ${resolved && resolved.reason ? resolved.reason : "not found"}`,
+    };
+  }
+  return { ok: true, ref };
 }
 
 /** Freshness of an admitted source against the trusted clock. */
@@ -192,19 +274,26 @@ export function manifestDigest(filesMap) {
  * readFile: (path) -> file content string (throws or returns non-string on failure)
  * Fails closed on: placeholder digest, manifest tamper, missing/tampered file.
  */
-export function verifyCorpusManifest(manifest, readFile) {
+/**
+ * Verify the frozen corpus against a HOST-SUPPLIED approved root digest.
+ *
+ * CI-006: the digest is trusted host input (runner/launch.js reads it from
+ * CI_APPROVED_ROOT_DIGEST), never a constant embedded in the corpus itself.
+ * Without a 64-hex host digest, verification fails closed.
+ */
+export function verifyCorpusManifest(manifest, readFile, approvedRootDigest) {
   if (!isPlainObject(manifest) || !isPlainObject(manifest.files)) {
     return { ok: false, reason: "manifest_malformed" };
   }
-  if (!HEX64.test(APPROVED_ROOT_DIGEST)) {
-    return { ok: false, reason: "root_not_frozen", detail: "APPROVED_ROOT_DIGEST is a placeholder" };
+  if (typeof approvedRootDigest !== "string" || !HEX64.test(approvedRootDigest)) {
+    return { ok: false, reason: "host_root_required", detail: "approved root digest is host input (CI_APPROVED_ROOT_DIGEST), not corpus content" };
   }
   const digest = manifestDigest(manifest.files);
-  if (digest !== APPROVED_ROOT_DIGEST) {
+  if (digest !== approvedRootDigest) {
     return {
       ok: false,
       reason: "root_digest_mismatch",
-      detail: { expected: APPROVED_ROOT_DIGEST, got: digest },
+      detail: { expected: approvedRootDigest, got: digest },
     };
   }
   for (const [path, expected] of Object.entries(manifest.files)) {

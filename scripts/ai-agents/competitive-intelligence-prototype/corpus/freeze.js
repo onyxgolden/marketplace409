@@ -4,10 +4,14 @@
  * Usage: node corpus/freeze.js   (run from the prototype root)
  *
  * Writes corpus/manifest.json: {files: {<path>: <sha256>}} over every
- * scored corpus file (src minus the trust anchor, tests, runner).
- * Prints APPROVED_ROOT_DIGEST — embed it in src/trust.js, then re-run the
- * full test battery. trust.js itself is the trust anchor and is excluded
- * from the manifest by design.
+ * scored corpus file (src, tests, runner — INCLUDING src/trust.js: there is
+ * no trust-anchor exemption; executable verifier code is authenticated like
+ * everything else).
+ *
+ * Prints APPROVED_ROOT_DIGEST. That digest is TRUSTED HOST INPUT — it is
+ * supplied to runner/launch.js via CI_APPROVED_ROOT_DIGEST (or --digest),
+ * never embedded in the corpus. Re-run freeze.js after any corpus change
+ * and update the host's stored digest.
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -30,7 +34,6 @@ const files = [];
 for (const dir of ["src", "tests", "runner"]) {
   for (const f of readdirSync(dir).sort()) {
     if (!f.endsWith(".js")) continue;
-    if (dir === "src" && f === "trust.js") continue; // trust anchor, not authenticated content
     files.push(`${dir}/${f}`);
   }
 }
@@ -46,7 +49,7 @@ writeFileSync(
   JSON.stringify(
     {
       frozen_note:
-        "Authenticated corpus: scorer (src), fixtures + expected oracles (tests), official runner (runner). trust.js is the trust anchor and is intentionally excluded. Re-run freeze.js after any corpus change and re-embed the root digest in src/trust.js.",
+        "Authenticated corpus: scorer + verifier (src, including trust.js), fixtures + expected oracles (tests), official runner (runner). No exemptions. The approved root digest is trusted HOST input (CI_APPROVED_ROOT_DIGEST), not corpus content. Re-run freeze.js after any corpus change and update the host digest.",
       files: map,
     },
     null,

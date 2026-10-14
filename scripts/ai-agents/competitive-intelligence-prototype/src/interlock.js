@@ -76,13 +76,32 @@ export class EvaluationInterlock {
     if (state !== "CLOSED" && !cleanSkip) {
       return { ok: false, reason: "obligations_outstanding", state };
     }
-    if (this.lease.card_bound) {
-      const last =
-        proof.cardRegistry && typeof proof.cardRegistry.lastRelease === "function"
-          ? proof.cardRegistry.lastRelease()
-          : null;
-      if (!last || last.evaluation_id !== evaluation_id || last.generation !== generation) {
+    // CI-003: card obligations are determined from the TRUSTED card registry,
+    // never from the caller's card_bound flag alone. If the registry shows a
+    // holder or a closure bound to this evaluation, card obligations exist
+    // even when the caller claims card_bound:false.
+    const cardReg = proof.cardRegistry || null;
+    const cardHolder = cardReg && cardReg.holder ? cardReg.holder : null;
+    const lastCardRelease =
+      cardReg && typeof cardReg.lastRelease === "function" ? cardReg.lastRelease() : null;
+    let cardObligated = this.lease.card_bound === true;
+    if (cardHolder && cardHolder.evaluation_id === evaluation_id) cardObligated = true;
+    if (lastCardRelease && lastCardRelease.evaluation_id === evaluation_id) cardObligated = true;
+    if (cardObligated) {
+      if (!cardReg) {
+        return { ok: false, reason: "card_closure_unverified", detail: "card obligations require the trusted card registry" };
+      }
+      if (!lastCardRelease || lastCardRelease.evaluation_id !== evaluation_id || lastCardRelease.generation !== generation) {
         return { ok: false, reason: "card_closure_unverified" };
+      }
+      // Bind the closure to the actual service/trial/generation — a closure
+      // record for a different service, trial, or generation does not free
+      // this lease's card obligation.
+      if (lastCardRelease.service_id !== this.lease.service_id || lastCardRelease.trial_id !== proof.trial_id) {
+        return {
+          ok: false, reason: "card_closure_binding_mismatch",
+          detail: `card closure binds ${lastCardRelease.service_id}/${lastCardRelease.trial_id}, lease is ${this.lease.service_id}/${proof.trial_id}`,
+        };
       }
     }
     const released = { ...this.lease };

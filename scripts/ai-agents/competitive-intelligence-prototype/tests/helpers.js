@@ -96,6 +96,13 @@ export function trustedContext(overrides = {}) {
     confirmedSet: { vendors: CONFIRMED_VENDORS, digest: CONFIRMED_SET_DIGEST },
     admittedSources,
     forgeSnapshot: { ...FORGE_PIN },
+    // CI-001: host-injected FORGE file resolver. The fixture pinned tree
+    // contains two known files; every other path is unverified (a pin alone
+    // never proves a file exists).
+    forgeFileResolver: ({ path: p }) =>
+      ["src/app/page.js", "supabase/migrations/0001_init.sql"].includes(p)
+        ? { ok: true }
+        : { ok: false, reason: "PATH_NOT_FOUND", detail: `${p} is not in the pinned tree` },
     clock: "2026-10-13T00:00:00Z",
     ...overrides,
   };

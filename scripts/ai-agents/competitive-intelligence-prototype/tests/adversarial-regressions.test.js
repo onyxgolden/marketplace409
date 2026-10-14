@@ -159,6 +159,28 @@ test("CI-002: duplicates are deterministic (first admitted wins)", () => {
   assert.equal(out.cells.filter((c) => c.subject === "compa").length, 1);
 });
 
+// CI-002 round 3: conflicting duplicate cells do NOT reduce to first-wins.
+// The scored identity becomes undetermined and BOTH evidence sides are
+// retained in the diagnostic.
+test("CI-002: conflicting duplicates score undetermined with both sides retained", () => {
+  const contradicted = evaluateCell({
+    feature_id: F, subject_ref: subj("compa"), scope: scope(),
+    evidence: [ev("Docs state this is not available.", "vendor_documented", false, "compa")],
+  });
+  const out = runAdmitted(taskInput({ task_id: "ci002-r3" }), {
+    forge: [supportedFor("forge")],
+    compa: [supportedFor("compa"), contradicted],
+  });
+  const comp = out.comparisons.find((c) => c.vendor_id === "compa");
+  assert.notEqual(comp.verdict, "ahead", "conflicting duplicates must never manufacture a win");
+  assert.equal(comp.verdict, "undetermined");
+  assert.equal(comp.competitor_evidence, "unsupported");
+  const diag = out.diagnostics.find((d) => d.issue === "conflicting_duplicates");
+  assert.ok(diag, "conflicting duplicates are a diagnostic");
+  assert.equal(diag.sides.length, 2, "both evidence sides retained");
+  assert.deepEqual(diag.sides.map((s) => s.evidence_state).sort(), ["contradicted", "supported"]);
+});
+
 test("CI-002: hand-crafted supported cell with no citations cannot score", () => {
   const fake = {
     ...supportedFor("compa"),
@@ -193,38 +215,45 @@ test("CI-003: interlock release needs ledger proof, not a string", () => {
 /* ---------------- CI-005: challenge purpose ---------------- */
 
 function reg() {
-  const r = createWorkflowRegistry();
-  return r.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa" }).registration;
+  const registry = createWorkflowRegistry();
+  const registration = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa" }).registration;
+  return { registry, registration };
+}
+
+function classifyReg({ detected, workflow_step, destination }) {
+  const { registry, registration } = reg();
+  return classifyChallenge({
+    detected, workflow_step, destination,
+    target_origin: "https://example.com", service_id: "compa",
+    registration_id: registration.registration_id, registry,
+  });
 }
 
 test("CI-005: verdict probe — payment CAPTCHA is payment_fraud, never image", () => {
-  const c = classifyChallenge({
+  const c = classifyReg({
     detected: "image captcha for payment fraud verification",
     workflow_step: "trial_signup",
     destination: "issuer",
-    registration: reg(),
   });
   assert.equal(c.type, "payment_fraud");
   assert.equal(c.handler, "refuse");
-  assert.equal(attemptAllowed("payment_fraud", { challenge_id: "ch1", history: createChallengeHistory(), solver_credits_ok: true }).allowed, false);
+  assert.equal(attemptAllowed("payment_fraud", { workflowKey: "wfreg-1::refuse", history: createChallengeHistory(), solver_credits_ok: true }).allowed, false);
 });
 
 test("CI-005: checkbox + SMS wording is phone_sms", () => {
-  const c = classifyChallenge({
+  const c = classifyReg({
     detected: "checkbox then SMS code",
     workflow_step: "trial_signup",
     destination: "vendor signup",
-    registration: reg(),
   });
   assert.equal(c.type, "phone_sms");
 });
 
 test("CI-005: spoofed page purpose refuses", () => {
-  const c = classifyChallenge({
+  const c = classifyReg({
     detected: "image captcha required",
     workflow_step: "payment", // disagrees with the registered trial_signup phase
     destination: "issuer",
-    registration: reg(),
   });
   assert.equal(c.type, "unknown");
   assert.equal(c.receipt.reason_code, "PHASE_MISMATCH");
@@ -263,4 +292,52 @@ test("CI-006: output measured in UTF-8 bytes", () => {
 test("CI-006: as_of_date must be a valid date", () => {
   const out = runAdmitted(taskInput({ as_of_date: "not-a-date" }), { forge: [] });
   assert.equal(out.status, "REFUSED");
+});
+
+// CI-006 round 3: fail-fast during raw traversal. 600 raw cells (over the
+// 512-cell bound) refuse with INPUT_LIMIT — no comparison is produced.
+test("CI-006: 600 raw cells refuse fail-fast with no comparison", () => {
+  const cells = [];
+  for (let k = 0; k < 600; k++) {
+    cells.push({ feature_id: PROPOSITION_IDS[k % PROPOSITION_IDS.length] });
+  }
+  const out = runAdmitted(taskInput({ task_id: "ci006-600" }), { forge: [], compa: cells });
+  assert.equal(out.status, "BLOCKED");
+  assert.equal(out.reason_code, "INPUT_LIMIT");
+  assert.ok(!out.comparisons || out.comparisons.length === 0, "no comparisons on refusal");
+});
+
+// CI-006 round 3: trusted-context metadata bounds fail before per-cell work.
+test("CI-006: oversized trusted source store is refused", () => {
+  const t = trustedContext();
+  const big = { ...t.admittedSources };
+  for (let k = 0; k < 1100; k++) big[`flood-${k}`] = { ...big["compa-src-1"], source_id: `flood-${k}` };
+  const out = runComparison(
+    taskInput({ task_id: "ci006-flood" }),
+    { forge: [supportedFor("forge")], compa: [supportedFor("compa")] },
+    { ...t, admittedSources: big },
+  );
+  assert.equal(out.status, "REFUSED");
+  assert.equal(out.reason_code, "TRUSTED_CONTEXT_REQUIRED");
+});
+
+// CI-006 round 3: per-cell citation cap enforced before traversal.
+test("CI-006: cell with too many citations is invalid", () => {
+  const c = { ...supportedFor("compa") };
+  c.citations = Array.from({ length: 200 }, (_, k) => `cite-${k}`);
+  const out = runAdmitted(taskInput({ task_id: "ci006-cites" }), {
+    forge: [supportedFor("forge")], compa: [c],
+  });
+  assert.ok(out.diagnostics.some((d) => d.issue === "cell_invalid"));
+  assert.ok(!out.cells.some((x) => x.subject === "compa"));
+});
+
+// CI-006 round 3: malformed cellsBySubject shape refuses (closed shapes
+// before expensive work), never throws mid-traversal.
+test("CI-006: non-array subject bucket refuses", () => {
+  const out = runAdmitted(taskInput({ task_id: "ci006-shape" }), {
+    forge: [supportedFor("forge")], compa: { not: "an array" },
+  });
+  assert.equal(out.status, "REFUSED");
+  assert.equal(out.reason_code, "INPUT_INVALID");
 });

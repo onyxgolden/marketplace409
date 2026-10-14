@@ -141,3 +141,88 @@ test("displayed cells are the scored inputs", () => {
     assert.equal(cmp.competitor_evidence, dispComp ? dispComp.evidence_state : "missing");
   }
 });
+
+// CI-001: exact confirmed product/scope admission. A cell whose subject_ref
+// or scope names a different product than the confirmed set is never
+// admitted under that vendor — vendor identity alone does not ground.
+test("CI-001: wrong product_id is not admitted under the confirmed vendor", () => {
+  const fid = PROPOSITION_IDS[4];
+  const wrong = cell(fid, "compa", "supported");
+  wrong.subject_ref = { vendor_id: "compa", product_id: "compa-OTHER-product" };
+  const out = runAdmitted(taskInput({ task_id: "ci001-wrong-product" }), {
+    forge: [cell(fid, "forge", "supported")],
+    compa: [wrong],
+  });
+  const comp = out.comparisons.find((c) => c.feature_id === fid && c.vendor_id === "compa");
+  assert.equal(comp.competitor_evidence, "missing", "wrong-product cell must not score");
+  assert.ok(
+    out.diagnostics.some((d) => d.issue === "product_unconfirmed"),
+    `expected product_unconfirmed diagnostic, got ${JSON.stringify(out.diagnostics.map((d) => d.issue))}`,
+  );
+});
+
+test("CI-001: citation about a different product does not ground", () => {
+  const fid = PROPOSITION_IDS[5];
+  const t = (function () {
+    const ctx = trustedContext();
+    // compa-src-2 exists but is about a different product of the same vendor.
+    ctx.admittedSources["compa-src-2"] = {
+      ...ctx.admittedSources["compa-src-2"],
+      product_id: "compa-OTHER-product",
+    };
+    return ctx;
+  })();
+  const c = cell(fid, "compa", "supported");
+  // Point the cell's evidence at the wrong-product source.
+  c.citations = ["compa-src-2"];
+  const out = runComparison(taskInput({ task_id: "ci001-wrong-cite" }), {
+    forge: [cell(fid, "forge", "supported")],
+    compa: [c],
+  }, t);
+  const scored = out.cells.find((x) => x.subject === "compa" && x.feature_id === fid);
+  assert.equal(scored.evidence_state, "unsupported", "wrong-product citation must downgrade to unsupported");
+  assert.equal(scored.reason_code, "source_unverified");
+});
+
+// CI-001: FORGE grounding requires the resolver, not just the pin. A FORGE
+// cell citing an imaginary path at the correct pin is unsupported.
+test("CI-001: imaginary FORGE path is unsupported even at the correct pin", () => {
+  const fid = PROPOSITION_IDS[6];
+  const c = cell(fid, "forge", "supported");
+  c.citations = [];
+  c.forge_refs = [{
+    repo: "onyxgolden/marketplace409",
+    commit: "ec995080ec995080ec995080ec995080ec995080",
+    path: "imaginary/no-such-file.js",
+    blob: "deadbeef",
+  }];
+  const out = runAdmitted(taskInput({ task_id: "ci001-imaginary-forge" }), {
+    forge: [c],
+    compa: [cell(fid, "compa", "supported")],
+  });
+  const scored = out.cells.find((x) => x.subject === "forge" && x.feature_id === fid);
+  assert.equal(scored.evidence_state, "unsupported");
+  assert.ok(
+    out.diagnostics.some((d) => d.issue === "citation_unresolved"),
+    "imaginary FORGE ref must surface as unresolved citation",
+  );
+});
+
+// CI-001: a real path verified by the resolver grounds the FORGE cell.
+test("CI-001: resolver-verified FORGE path grounds the cell", () => {
+  const fid = PROPOSITION_IDS[7];
+  const c = cell(fid, "forge", "supported");
+  c.citations = [];
+  c.forge_refs = [{
+    repo: "onyxgolden/marketplace409",
+    commit: "ec995080ec995080ec995080ec995080ec995080",
+    path: "src/app/page.js",
+    blob: "abc123",
+  }];
+  const out = runAdmitted(taskInput({ task_id: "ci001-real-forge" }), {
+    forge: [c],
+    compa: [cell(fid, "compa", "supported")],
+  });
+  const scored = out.cells.find((x) => x.subject === "forge" && x.feature_id === fid);
+  assert.equal(scored.evidence_state, "supported", "resolver-verified FORGE ref grounds the cell");
+});

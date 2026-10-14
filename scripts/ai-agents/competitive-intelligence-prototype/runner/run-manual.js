@@ -1,33 +1,32 @@
 /**
  * run-manual.js — manual smoke run of the CI core on invented fixtures.
- * Usage: node runner/run-manual.js
+ *
+ * Official usage: CI_APPROVED_ROOT_DIGEST=<64-hex> node runner/launch.js
  * Everything here is synthetic; no real vendors, no network.
  *
- * The corpus is authenticated BEFORE any scored module is imported
- * (dynamic import after verification, CI-006).
+ * CI-006: corpus authentication is owned ENTIRELY by runner/launch.js, which
+ * verifies every corpus byte with builtins only BEFORE this file is
+ * imported. This file performs no self-verification (a self-check that
+ * imports the code it verifies cannot authenticate a tampered verifier).
+ * Direct invocation without the launcher is refused: the launcher sets
+ * CI_CORPUS_AUTHENTICATED=1 after successful authentication, and this file
+ * checks it before any corpus import executes (dynamic imports only).
  */
-import { readFileSync } from "node:fs";
-import { verifyCorpusManifest } from "../src/trust.js";
-
-const root = new URL("..", import.meta.url);
-const manifest = JSON.parse(readFileSync(new URL("corpus/manifest.json", root), "utf8"));
-const v = verifyCorpusManifest(manifest, (p) => readFileSync(new URL(p, root), "utf8"));
-if (!v.ok) {
-  console.error(`corpus authentication failed: ${v.reason}${v.path ? ` (${v.path})` : ""}`);
+if (process.env.CI_CORPUS_AUTHENTICATED !== "1") {
+  console.error("refused: run-manual.js must be launched via runner/launch.js (corpus not authenticated)");
   process.exit(1);
 }
-console.error(`corpus authenticated: ${v.files} files`);
 
 const { runPipeline } = await import("../src/index.js");
 const { PROPOSITION_IDS, TAXONOMY_DIGEST } = await import("../src/taxonomy.js");
-const { confirmedSetDigest } = await import("../src/trust.js");
+const { confirmedSetDigest, createTrustedContext } = await import("../src/trust.js");
 
 const fid = PROPOSITION_IDS[0];
 const mkCell = (subject, state) => ({
   feature_id: fid,
   proposition: "invented",
   subject_ref: { vendor_id: subject, product_id: `${subject}-p`, edition: null },
-  scope: { edition: "standard", platform: "web", region: "US" },
+  scope: { product_id: `${subject}-p`, edition: "standard", platform: "web", region: "US", version: "2026.1" },
   evidence_state: state,
   citations: state === "unsupported" ? [] : [`${subject}-src-1`],
   paraphrase: state === "unsupported" ? null : "Invented fixture paraphrase.",
@@ -62,7 +61,7 @@ for (const v of [...vendors, { vendor_id: "forge", product_id: "forge-p" }]) {
   };
 }
 
-const trusted = {
+const trusted = createTrustedContext({
   confirmedSet: { vendors, digest: confirmedSetDigest(vendors) },
   admittedSources,
   forgeSnapshot: {
@@ -70,8 +69,9 @@ const trusted = {
     commit: "ec995080ec995080ec995080ec995080ec995080",
     tree: "manual-fixture-tree",
   },
+  forgeFileResolver: null, // no FORGE refs in this fixture; refs would be unsupported
   clock: "2026-10-13T00:00:00Z",
-};
+});
 
 const input = {
   task_id: "manual-smoke",

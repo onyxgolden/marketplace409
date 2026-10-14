@@ -12,6 +12,11 @@
  * Rules enforced here (pure logic over a host-provided record store):
  * - Append-only: transitions are new frozen entries, never edits.
  * - One trial per service while obligations are outstanding.
+ * - CI-003: one trial per service across ALL time. serviceConsumed() is
+ *   derived from the append-only history (any SIGNED_UP record), so the
+ *   permanent reservation survives restarts by construction — the history
+ *   IS the registry. CLOSED trials never free another trial entitlement;
+ *   a pre-account BLOCKED skip never consumed and stays plannable.
  * - Trial/service identity is immutable once PLANNED.
  * - SIGNED_UP registers the account identity; cancellation and cleanup
  *   evidence must bind to that same account/service or it is refused.
@@ -208,6 +213,21 @@ export class TrialLedger {
     return false;
   }
 
+  /**
+   * CI-003: permanent service reservation. True when ANY trial for this
+   * service ever reached SIGNED_UP. Derived from the append-only record
+   * history, so it survives process restarts by construction — the history
+   * IS the registry; there is no separate in-memory flag to lose.
+   *
+   * A service consumed this way never becomes plannable again: CLOSED
+   * trials never free another trial entitlement (cancellation evidence is
+   * what closes the trial, not what re-arms the service). A pre-account
+   * BLOCKED skip never consumed (it never signed up), so it stays plannable.
+   */
+  serviceConsumed(service_id) {
+    return this.records.some((r) => r.service_id === service_id && r.to_state === "SIGNED_UP");
+  }
+
   transition({ trial_id, service_id, to_state, actor, evidence = null, note = null, at = null, evaluation_id = null }) {
     const errors = [];
     const trialRecs = this._trialRecords(trial_id);
@@ -233,6 +253,12 @@ export class TrialLedger {
     }
     if (to_state === "PLANNED" && this.serviceHasOutstandingTrial(service_id)) {
       errors.push(`one trial per service: ${service_id} has an outstanding trial`);
+    }
+    // CI-003: permanent reservation — a service that ever signed up can never
+    // be planned again, even after CLOSED. Cancellation evidence closes the
+    // trial; it does not re-arm the service entitlement.
+    if (to_state === "PLANNED" && this.serviceConsumed(service_id)) {
+      errors.push(`one trial per service across all time: ${service_id} already consumed its trial (CLOSED trials never free another)`);
     }
     if (to_state === "SIGNED_UP") {
       if (!evidence || typeof evidence.account_identity !== "string" || !evidence.account_identity) {

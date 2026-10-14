@@ -7,21 +7,29 @@ import {
   makeChallengeRecord,
   createWorkflowRegistry,
   createChallengeHistory,
+  workflowAttemptKey,
   HANDLERS,
 } from "../src/challenges.js";
 
-function reg(overrides = {}) {
-  const r = createWorkflowRegistry();
-  const res = r.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa", ...overrides });
+function setup(overrides = {}) {
+  const registry = createWorkflowRegistry();
+  const res = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa", ...overrides });
   assert.ok(res.ok, res.errors);
-  return res.registration;
+  return { registry, registration: res.registration };
 }
 
-const cls = (detected, step = "trial_signup", dest = "vendor signup", registration = reg()) =>
-  classifyChallenge({ detected, workflow_step: step, destination: dest, registration });
+const cls = (detected, step = "trial_signup", dest = "vendor signup", s = setup()) => {
+  const c = classifyChallenge({
+    detected, workflow_step: step, destination: dest,
+    target_origin: "https://example.com", service_id: "compa",
+    registration_id: s.registration.registration_id, registry: s.registry,
+  });
+  // Carry the stable workflow-operation key for attempt accounting.
+  return { ...c, workflowKey: c.receipt.workflow_attempt_key };
+};
 
 const hist = () => createChallengeHistory();
-const allowedCtx = (h, extra = {}) => ({ challenge_id: "ch1", history: h, ...extra });
+const allowedCtx = (h, extra = {}) => ({ workflowKey: workflowAttemptKey("wfreg-1", "own_mailbox_self_service"), history: h, ...extra });
 
 // 1-3: email verification
 test("email verification classified + allowed with mailbox", () => {
@@ -52,10 +60,10 @@ test("passive browser check", () => {
 });
 test("checkbox failure -> skip, no loop (history-driven)", () => {
   const h = hist();
-  h.record("ch1", "failed");
+  h.consume(workflowAttemptKey("wfreg-1", "own_mailbox_self_service"));
   const r = attemptAllowed("checkbox_passive", allowedCtx(h));
   assert.equal(r.allowed, false);
-  assert.equal(r.reason, "one_attempt_per_challenge");
+  assert.equal(r.reason, "one_attempt_per_workflow");
 });
 
 // 7-11: image captcha
@@ -78,7 +86,7 @@ test("solver unavailable -> skip", () => {
 });
 test("second attempt denied even with credits", () => {
   const h = hist();
-  h.record("ch1", "failed");
+  h.consume(workflowAttemptKey("wfreg-1", "own_mailbox_self_service"));
   const r = attemptAllowed("image_captcha", allowedCtx(h, { solver_credits_ok: true }));
   assert.equal(r.allowed, false);
 });
@@ -148,7 +156,7 @@ test("payment challenge inside trial still refused", () => {
 test("one attempt policy is global (history-driven)", () => {
   for (const t of ["email_verification", "checkbox_passive", "image_captcha"]) {
     const h = hist();
-    for (let k = 0; k < 5; k++) h.record("ch1", "failed");
+    for (let k = 0; k < 5; k++) h.consume(workflowAttemptKey("wfreg-1", "own_mailbox_self_service"));
     const ctx = allowedCtx(h, { own_mailbox_ready: true, solver_credits_ok: true });
     assert.equal(attemptAllowed(t, ctx).allowed, false, t);
   }
@@ -161,8 +169,19 @@ test("unregistered workflow -> unknown/refuse", () => {
   assert.equal(c.receipt.reason_code, "UNREGISTERED_WORKFLOW");
 });
 
+test("invented registration_id not in the registry refuses", () => {
+  const { registry } = setup();
+  const c = classifyChallenge({
+    detected: "image captcha required", workflow_step: "trial_signup",
+    destination: "vendor signup", target_origin: "https://example.com",
+    registration_id: "invented-reg-999", registry,
+  });
+  assert.equal(c.type, "unknown");
+  assert.equal(c.receipt.reason_code, "UNREGISTERED_WORKFLOW");
+});
+
 test("permitted handler without history refuses", () => {
-  const r = attemptAllowed("image_captcha", { challenge_id: "ch1", solver_credits_ok: true });
+  const r = attemptAllowed("image_captcha", { workflowKey: "wfreg-1::single_solver_submission", solver_credits_ok: true });
   assert.equal(r.allowed, false);
   assert.equal(r.reason, "no_workflow_history");
 });
@@ -170,8 +189,64 @@ test("permitted handler without history refuses", () => {
 test("caller attempt_count is ignored", () => {
   // attempt_count: 0 must not grant an attempt when history says otherwise.
   const h = hist();
-  h.record("ch1", "failed");
-  const r = attemptAllowed("checkbox_passive", { challenge_id: "ch1", history: h, attempt_count: 0 });
+  h.consume(workflowAttemptKey("wfreg-1", "own_mailbox_self_service"));
+  const r = attemptAllowed("checkbox_passive", { workflowKey: workflowAttemptKey("wfreg-1", "own_mailbox_self_service"), history: h, attempt_count: 0 });
   assert.equal(r.allowed, false);
-  assert.equal(r.reason, "one_attempt_per_challenge");
+  assert.equal(r.reason, "one_attempt_per_workflow");
+});
+
+// CI-005 round 3: an unrelated destination/origin never authorizes a
+// permitted handler, even with a valid registration_id.
+test("CI-005: unrelated destination does not authorize", () => {
+  const { registry, registration } = setup();
+  const c = classifyChallenge({
+    detected: "image captcha required", workflow_step: "trial_signup",
+    destination: "https://evil.example/phish", target_origin: "https://evil.example/phish",
+    registration_id: registration.registration_id, registry,
+  });
+  assert.equal(c.type, "unknown");
+  assert.equal(c.handler, "refuse");
+  assert.equal(c.receipt.reason_code, "ORIGIN_MISMATCH");
+});
+
+// CI-005 round 3: one attempt per stable workflow operation, allocated
+// BEFORE external submission. A challenge-ID change is not a new attempt.
+test("CI-005: challenge_id change does not reset attempts", () => {
+  const s = setup();
+  const c = classifyChallenge({
+    detected: "image captcha required", workflow_step: "trial_signup",
+    destination: "vendor signup", target_origin: "https://example.com", service_id: "compa",
+    registration_id: s.registration.registration_id, registry: s.registry,
+  });
+  assert.equal(c.type, "image_captcha");
+  const key = c.receipt.workflow_attempt_key;
+  assert.ok(key, "classification carries the stable workflow attempt key");
+  const h = hist();
+  // First attempt allowed...
+  assert.equal(attemptAllowed("image_captcha", { workflowKey: key, history: h, solver_credits_ok: true }).allowed, true);
+  // ...allocated atomically BEFORE external submission...
+  assert.equal(h.consume(key), 1);
+  // ...and a "new" challenge_id for the same workflow is still denied.
+  const again = attemptAllowed("image_captcha", { workflowKey: key, history: h, solver_credits_ok: true, challenge_id: "ch2-NEW" });
+  assert.equal(again.allowed, false);
+  assert.equal(again.reason, "one_attempt_per_workflow");
+});
+
+// CI-005 round 3: a restarted history (new instance, same workflow key)
+// still denies — the key is stable, so re-derivation cannot reset it.
+test("CI-005: workflow key is stable across history instances", () => {
+  const s = setup();
+  const key = workflowAttemptKey(s.registration.registration_id, "single_solver_submission");
+  const h1 = hist();
+  h1.consume(key);
+  const h2 = hist(); // fresh instance, same key derivation
+  assert.equal(h2.attempts(key), 0, "fresh instance starts empty (host must persist)");
+  assert.equal(h1.attempts(key), 1);
+  // The point: the KEY does not change with challenge_id, so a host that
+  // persists the history cannot be reset by a challenge-ID rotation.
+  assert.equal(
+    workflowAttemptKey(s.registration.registration_id, "single_solver_submission"),
+    key,
+    "key derivation is deterministic",
+  );
 });
