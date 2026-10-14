@@ -41,6 +41,8 @@ import {
   admitForgePin,
   resolveCitation,
   resolveForgeRef,
+  validateExactScope,
+  SCOPE_DIMENSIONS,
 } from "./trust.js";
 
 function stableSort(arr, keyFn) {
@@ -77,9 +79,11 @@ function admitCell(trusted, subject, confirmedVendor, cell) {
       },
     };
   }
-  // CI-001: exact confirmed product/scope admission. Vendor identity alone is
-  // not enough: the cell must be about the confirmed product, and its scope
-  // must be the confirmed scope shape (edition/platform/region/version).
+  // CI-001 round 4: the exact scope contract. A cell that claims a scope
+  // must claim its dimensions exactly (edition/platform/region/version all
+  // required). The product travels on the cell's subject_ref (bound to the
+  // confirmed vendor here); a scope that names a product_id must agree
+  // with it — scope.product_id is never optional-when-truthy.
   if (confirmedVendor && confirmedVendor.product_id) {
     if (cell.subject_ref.product_id !== confirmedVendor.product_id) {
       return {
@@ -92,18 +96,54 @@ function admitCell(trusted, subject, confirmedVendor, cell) {
         },
       };
     }
-    // The cell's scope must also be about the confirmed product — a scope
-    // naming a different product/edition is not admitted under this vendor.
-    if (cell.scope && cell.scope.product_id && cell.scope.product_id !== confirmedVendor.product_id) {
-      return {
-        admitted: null,
-        diagnostic: {
-          issue: "product_unconfirmed",
-          errors: [
-            `cell scope.product_id=${cell.scope.product_id} != confirmed product ${confirmedVendor.product_id}`,
-          ],
-        },
-      };
+  }
+  let claimedScope = null;
+  if (cell.scope !== null && cell.scope !== undefined) {
+    const dimErrors = [];
+    for (const f of SCOPE_DIMENSIONS) {
+      if (typeof cell.scope[f] !== "string" || !cell.scope[f]) {
+        dimErrors.push(`scope.${f} is required (exact scope contract)`);
+      }
+    }
+    if (dimErrors.length > 0) {
+      return { admitted: null, diagnostic: { issue: "cell_invalid", errors: dimErrors } };
+    }
+    if (cell.scope.product_id !== undefined && cell.scope.product_id !== null) {
+      if (cell.scope.product_id !== cell.subject_ref.product_id) {
+        return {
+          admitted: null,
+          diagnostic: {
+            issue: "cell_invalid",
+            errors: [
+              `cell scope.product_id=${cell.scope.product_id} contradicts subject_ref.product_id=${cell.subject_ref.product_id}`,
+            ],
+          },
+        };
+      }
+      if (confirmedVendor && confirmedVendor.product_id && cell.scope.product_id !== confirmedVendor.product_id) {
+        return {
+          admitted: null,
+          diagnostic: {
+            issue: "product_unconfirmed",
+            errors: [
+              `cell scope.product_id=${cell.scope.product_id} != confirmed product ${confirmedVendor.product_id}`,
+            ],
+          },
+        };
+      }
+    }
+    // The effective exact scope: product anchored on the cell's own subject
+    // binding, dimensions from the claimed scope. All five present here.
+    claimedScope = {
+      product_id: cell.subject_ref.product_id,
+      edition: cell.scope.edition,
+      platform: cell.scope.platform,
+      region: cell.scope.region,
+      version: cell.scope.version,
+    };
+    const exactErrors = validateExactScope(claimedScope);
+    if (exactErrors.length > 0) {
+      return { admitted: null, diagnostic: { issue: "cell_invalid", errors: exactErrors } };
     }
   }
   // CI-006: per-cell citation bound enforced before any traversal work.
@@ -118,13 +158,15 @@ function admitCell(trusted, subject, confirmedVendor, cell) {
     };
   }
   // Resolve every citation against the admitted store, bound to the confirmed
-  // product (CI-001). A source that matches the vendor but is about a
-  // different product/edition/platform/region does not ground this cell.
+  // product AND the cell's exact claimed scope (CI-001 round 4). A source
+  // that matches the vendor/product but is about a different
+  // edition/platform/region/version — or whose applicability is unknown —
+  // does not ground this cell.
   const failures = [];
   let freshness = "fresh";
   const confirmedProductId = confirmedVendor ? confirmedVendor.product_id ?? null : null;
   for (const sid of citationIds) {
-    const r = resolveCitation(trusted, sid, subject, confirmedProductId);
+    const r = resolveCitation(trusted, sid, subject, confirmedProductId, claimedScope);
     if (!r.ok) {
       failures.push({ source_id: sid, reason: r.reason });
     } else if (r.freshness === "stale") {
@@ -215,19 +257,27 @@ export function runComparison(input, cellsBySubject, trusted = null) {
       return refusal("REFUSED", "INPUT_INVALID", [`cellsBySubject[${s}] must be an array`]);
     }
   }
+  // CI-006 round 4: the raw CELL COUNT is refused from array lengths alone —
+  // zero per-cell metadata reads before the count gate. Reading cell fields
+  // (citations, feature_id getters) to decide the count lets a getter-heavy
+  // input do unbounded work before the refusal lands.
   let rawCells = 0;
+  for (const s of subjects) {
+    rawCells += cellsBySubject[s].length;
+  }
+  if (rawCells > LIMITS.maxCells) {
+    return refusal("BLOCKED", "INPUT_LIMIT", [`${rawCells} raw cells > ${LIMITS.maxCells}`]);
+  }
+  // Per-cell metadata reads (citations, feature_id) only happen below, with
+  // the cell count already gated — total reads are bounded by maxCells.
   let rawCitations = 0;
   const rawFeatures = new Set();
   for (const s of subjects) {
     const arr = cellsBySubject[s] || [];
-    rawCells += arr.length;
     for (const c of arr) {
       rawCitations += Array.isArray(c?.citations) ? c.citations.length : 0;
       if (c?.feature_id) rawFeatures.add(c.feature_id);
     }
-  }
-  if (rawCells > LIMITS.maxCells) {
-    return refusal("BLOCKED", "INPUT_LIMIT", [`${rawCells} raw cells > ${LIMITS.maxCells}`]);
   }
   if (rawFeatures.size > LIMITS.maxPropositions) {
     return refusal("BLOCKED", "INPUT_LIMIT", [`${rawFeatures.size} propositions > ${LIMITS.maxPropositions}`]);
@@ -368,7 +418,9 @@ export function runComparison(input, cellsBySubject, trusted = null) {
     }
   }
 
-  // Source index: only actually-cited ADMITTED sources, with full provenance.
+  // Source index: only actually-cited ADMITTED sources, with full provenance
+  // including applicability (CI-001 round 4) so downstream readers can see
+  // exactly which edition/platform/region/version each source grounds.
   const source_index = [...citedSourceIds]
     .sort()
     .map((sid) => trusted.admittedSources[sid])
@@ -377,6 +429,10 @@ export function runComparison(input, cellsBySubject, trusted = null) {
       source_id: r.source_id,
       vendor_id: r.vendor_id,
       product_id: r.product_id,
+      edition: r.edition ?? null,
+      platform: r.platform ?? null,
+      region: r.region ?? null,
+      version: r.version ?? null,
       url: r.url,
       source_type: r.source_type,
       accessed_at: r.accessed_at,

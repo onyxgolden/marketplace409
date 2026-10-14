@@ -139,11 +139,13 @@ test("interlock: heartbeat requires current generation", () => {
 });
 
 test("interlock: card-bound lease requires card closure proof", () => {
-  const i = new EvaluationInterlock();
   const card = new CardRegistry(issuedStore());
+  // CI-003 round 4: the trusted card registry is bound at construction —
+  // card obligations are never discovered from optional proof input.
+  const i = new EvaluationInterlock({ cardRegistry: card });
   i.acquire({ evaluation_id: "e1", service_id: "rentec", card_bound: true });
   // Ledger closed but no card release -> refuse.
-  const r = i.release({ evaluation_id: "e1", generation: 1, proof: { ...closedLedgerProof(), cardRegistry: card } });
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof: closedLedgerProof() });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "card_closure_unverified");
   // Attach/release the card properly, then release succeeds.
@@ -154,7 +156,7 @@ test("interlock: card-bound lease requires card closure proof", () => {
   assert.ok(card.reconcile({ cancellation_evidence: cancelEv(card.holder), generation: 1, trialLedger: cardLedger("t1", "rentec") }).ok);
   assert.ok(card.verifyCleanup({ generation: 1, cleanup_receipt: cleanupRcpt(card.holder), trialLedger: cardLedger("t1", "rentec") }).ok);
   assert.ok(card.releaseToFree({ generation: 1 }).ok);
-  const r2 = i.release({ evaluation_id: "e1", generation: 1, proof: { ...closedLedgerProof(), cardRegistry: card } });
+  const r2 = i.release({ evaluation_id: "e1", generation: 1, proof: closedLedgerProof() });
   assert.equal(r2.ok, true);
 });
 
@@ -218,9 +220,11 @@ test("card: attach requires the interlock lease", () => {
 });
 
 test("card: aggregate cap never resets", () => {
-  const i = new EvaluationInterlock();
-  i.acquire({ evaluation_id: "e1", service_id: "a" });
   const c = new CardRegistry(issuedStore());
+  // CI-003 round 4: the interlock binds the trusted card registry at
+  // construction so the post-attach release can verify card closure.
+  const i = new EvaluationInterlock({ cardRegistry: c });
+  i.acquire({ evaluation_id: "e1", service_id: "a" });
   c.reserve({ service_id: "a", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i });
   c.attach({ issuance_id: "card-1", service_id: "a", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i });
   c.beginCancel({ generation: 1 });
@@ -348,28 +352,32 @@ test("card: cap is $50", () => {
 // CI-003 round 3: the caller's card_bound flag is not authoritative. A card
 // attached to this evaluation's trial creates a card obligation even when
 // the caller claims card_bound:false — release still requires verified
-// card closure.
+// card closure. CI-003 round 4: the registry is bound at construction; the
+// proof carries NO card registry (the exact verdict probe).
 test("CI-003: card_bound:false cannot bypass a real card obligation", () => {
-  const i = new EvaluationInterlock();
   const card = new CardRegistry(issuedStore());
+  const i = new EvaluationInterlock({ cardRegistry: card });
   i.acquire({ evaluation_id: "e1", service_id: "rentec", card_bound: false }); // caller lies
   assert.ok(card.reserve({ service_id: "rentec", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i }).ok);
   assert.ok(card.attach({ issuance_id: "card-1", service_id: "rentec", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i }).ok);
-  // Ledger closed, but the card is still attached: release must refuse.
-  const r = i.release({ evaluation_id: "e1", generation: 1, proof: { ...closedLedgerProof(), cardRegistry: card } });
+  // Ledger closed, but the card is still attached: release must refuse even
+  // with no card evidence in the proof — the bound registry shows the holder.
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof: closedLedgerProof() });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "card_closure_unverified");
 });
 
 // CI-003 round 3: card closure binds the actual service/trial/generation —
 // a closure record for a different service does not free this lease.
+// CI-003 round 4: the registry is bound at construction on the lease being
+// released (not smuggled in via proof).
 test("CI-003: card closure bound to a different service is rejected", () => {
-  const i = new EvaluationInterlock();
   const card = new CardRegistry(issuedStore());
+  const i = new EvaluationInterlock({ cardRegistry: card });
   i.acquire({ evaluation_id: "e1", service_id: "rentec", card_bound: true });
   // Drive the card lifecycle for a DIFFERENT service, then hand that
   // closure to the rentec lease's release.
-  const other = new EvaluationInterlock();
+  const other = new EvaluationInterlock({ cardRegistry: card });
   other.acquire({ evaluation_id: "e1", service_id: "other", card_bound: true });
   assert.ok(card.reserve({ service_id: "other", trial_id: "t9", evaluation_id: "e1", generation: 1, interlock: other }).ok);
   assert.ok(card.attach({ issuance_id: "card-1", service_id: "other", trial_id: "t9", evaluation_id: "e1", generation: 1, interlock: other }).ok);
@@ -380,7 +388,7 @@ test("CI-003: card closure bound to a different service is rejected", () => {
   assert.ok(card.reconcile({ cancellation_evidence: { ...cancelEv(card.holder), trial_id: "t9", service_id: "other" }, generation: 1, trialLedger: l }).ok);
   assert.ok(card.verifyCleanup({ generation: 1, cleanup_receipt: { ...cleanupRcpt(card.holder), trial_id: "t9", service_id: "other" }, trialLedger: l }).ok);
   assert.ok(card.releaseToFree({ generation: 1 }).ok);
-  const r = i.release({ evaluation_id: "e1", generation: 1, proof: { ...closedLedgerProof(), cardRegistry: card } });
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof: closedLedgerProof() });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "card_closure_binding_mismatch");
 });
@@ -432,4 +440,41 @@ test("CI-004: cleanup receipt with unrelated account is refused", () => {
   const r = c.verifyCleanup({ generation: 1, cleanup_receipt: evil, trialLedger: ledger });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "cleanup_unverified");
+});
+
+// CI-003 round 4 — verdict probe 5: default card-free lease, attach the
+// fixture card under a registered issuance, keep it ATTACHED, present a
+// genuine CLOSED trial ledger, omit cardRegistry from proof. Release must
+// DENY: the bound registry shows the outstanding card obligation and
+// missing card evidence cannot erase it.
+test("CI-003r4: omitted registry cannot bypass an attached card obligation", () => {
+  const card = new CardRegistry(issuedStore());
+  const i = new EvaluationInterlock({ cardRegistry: card });
+  assert.ok(i.acquire({ evaluation_id: "e1", service_id: "compa" }).ok);
+  assert.equal(i.holder().card_bound, false, "lease starts card-free");
+  assert.ok(card.reserve({ service_id: "compa", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i }).ok);
+  assert.ok(card.attach({ issuance_id: "card-1", service_id: "compa", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i }).ok);
+  assert.equal(i.holder().card_bound, true, "attach atomically marks the lease card-bound");
+  assert.equal(card.state, "ATTACHED", "card is still held");
+  const proof = closedLedgerProof("t1", "compa", "e1"); // genuine CLOSED ledger
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof }); // no cardRegistry in proof
+  assert.equal(r.ok, false, "release must deny while the card is still held");
+  assert.equal(r.reason, "card_closure_unverified");
+});
+
+// CI-003 round 4 — positive: a genuinely released card (full lifecycle)
+// frees the lease through the bound registry.
+test("CI-003r4: genuine card release frees the lease via the bound registry", () => {
+  const card = new CardRegistry(issuedStore());
+  const i = new EvaluationInterlock({ cardRegistry: card });
+  i.acquire({ evaluation_id: "e1", service_id: "compa" });
+  assert.ok(card.reserve({ service_id: "compa", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i }).ok);
+  assert.ok(card.attach({ issuance_id: "card-1", service_id: "compa", trial_id: "t1", evaluation_id: "e1", generation: 1, interlock: i }).ok);
+  assert.ok(card.beginCancel({ generation: 1 }).ok);
+  assert.ok(card.reconcile({ cancellation_evidence: cancelEv(card.holder), generation: 1, trialLedger: cardLedger("t1", "compa") }).ok);
+  assert.ok(card.verifyCleanup({ generation: 1, cleanup_receipt: cleanupRcpt(card.holder), trialLedger: cardLedger("t1", "compa") }).ok);
+  assert.ok(card.releaseToFree({ generation: 1 }).ok);
+  const r = i.release({ evaluation_id: "e1", generation: 1, proof: closedLedgerProof("t1", "compa", "e1") });
+  assert.equal(r.ok, true, "genuine card closure frees the lease");
+  assert.equal(i.holder(), null);
 });

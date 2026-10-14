@@ -216,7 +216,8 @@ test("CI-003: interlock release needs ledger proof, not a string", () => {
 
 function reg() {
   const registry = createWorkflowRegistry();
-  const registration = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa" }).registration;
+  // CI-005 round 4: evaluation_id is required at registration.
+  const registration = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa", evaluation_id: "e1" }).registration;
   return { registry, registration };
 }
 
@@ -224,7 +225,7 @@ function classifyReg({ detected, workflow_step, destination }) {
   const { registry, registration } = reg();
   return classifyChallenge({
     detected, workflow_step, destination,
-    target_origin: "https://example.com", service_id: "compa",
+    target_origin: "https://example.com", service_id: "compa", evaluation_id: "e1",
     registration_id: registration.registration_id, registry,
   });
 }
@@ -340,4 +341,101 @@ test("CI-006: non-array subject bucket refuses", () => {
   });
   assert.equal(out.status, "REFUSED");
   assert.equal(out.reason_code, "INPUT_INVALID");
+});
+
+/* ---------------- CI-001 round 4: source applicability ---------------- */
+
+// Verdict probe 1: the admitted source is about the enterprise edition while
+// the cell claims the standard edition — same product, wrong applicability.
+// Expect no parity: the citation cannot ground the cell.
+test("CI-001r4: wrong edition does not ground (no parity)", () => {
+  const t = trustedContext();
+  t.admittedSources["compa-src-1"].edition = "enterprise";
+  const out = runComparison(
+    taskInput({ task_id: "ci001r4-edition" }),
+    { forge: [supportedFor("forge")], compa: [supportedFor("compa")] },
+    t,
+  );
+  const comp = out.comparisons.find((c) => c.feature_id === F && c.vendor_id === "compa");
+  assert.ok(!comp || comp.verdict !== "parity", `wrong-edition citation must not produce parity, got ${comp && comp.verdict}`);
+  assert.ok(
+    out.diagnostics.some((d) => d.issue === "citation_unresolved"),
+    "wrong-edition citation must surface as unresolved",
+  );
+});
+
+// Same product, wrong platform / region / version on the admitted source.
+for (const [dim, bad] of [["platform", "mobile"], ["region", "EU"], ["version", "2024"]]) {
+  test(`CI-001r4: wrong ${dim} does not ground`, () => {
+    const t = trustedContext();
+    t.admittedSources["compa-src-1"][dim] = bad;
+    const out = runComparison(
+      taskInput({ task_id: `ci001r4-${dim}` }),
+      { forge: [supportedFor("forge")], compa: [supportedFor("compa")] },
+      t,
+    );
+    const comp = out.comparisons.find((c) => c.feature_id === F && c.vendor_id === "compa");
+    assert.ok(!comp || comp.verdict !== "parity", `wrong-${dim} citation must not produce parity`);
+  });
+}
+
+// Unknown applicability (source does not state the dimension) never becomes
+// an exact scoped claim.
+test("CI-001r4: unknown source applicability does not ground an exact claim", () => {
+  const t = trustedContext();
+  t.admittedSources["compa-src-1"].edition = null;
+  const out = runComparison(
+    taskInput({ task_id: "ci001r4-unknown" }),
+    { forge: [supportedFor("forge")], compa: [supportedFor("compa")] },
+    t,
+  );
+  const comp = out.comparisons.find((c) => c.feature_id === F && c.vendor_id === "compa");
+  assert.ok(!comp || comp.verdict !== "parity", "unknown-applicability citation must not produce parity");
+});
+
+// Positive: exact applicability (all dimensions match) still grounds parity.
+test("CI-001r4: exact applicability grounds the cell", () => {
+  const out = runAdmitted(taskInput({ task_id: "ci001r4-exact" }), {
+    forge: [supportedFor("forge")], compa: [supportedFor("compa")],
+  });
+  const comp = out.comparisons.find((c) => c.feature_id === F && c.vendor_id === "compa");
+  assert.ok(comp, "comparison present");
+  assert.equal(comp.verdict, "parity", "exact-applicability citation grounds parity");
+  const idx = out.source_index.find((s) => s.source_id === "compa-src-1");
+  assert.ok(idx, "source_index carries the cited source");
+  assert.equal(idx.edition, "standard", "source_index preserves applicability");
+  assert.equal(idx.platform, "web");
+  assert.equal(idx.region, "US");
+  assert.equal(idx.version, "2026");
+});
+
+// A scope that names a product contradicting the subject binding is invalid.
+test("CI-001r4: scope.product_id contradicting subject_ref is cell_invalid", () => {
+  const c = supportedFor("compa");
+  c.scope = { ...c.scope, product_id: "compa-OTHER-product" };
+  const out = runAdmitted(taskInput({ task_id: "ci001r4-scope-product" }), {
+    forge: [supportedFor("forge")], compa: [c],
+  });
+  assert.ok(out.diagnostics.some((d) => d.issue === "cell_invalid"));
+  assert.ok(!out.cells.some((x) => x.subject === "compa"), "contradictory scope must not score");
+});
+
+/* ---------------- CI-006 round 4: early raw-count bounds ---------------- */
+
+// Verdict probe 4: 513 raw cells with counted metadata getters. The INPUT_LIMIT
+// refusal must land with ZERO per-cell metadata reads — counts come from
+// array lengths alone.
+test("CI-006r4: raw cell count refused before any cell metadata read", () => {
+  let reads = 0;
+  const cells = [];
+  for (let k = 0; k < 513; k++) {
+    cells.push({
+      get feature_id() { reads += 1; return PROPOSITION_IDS[k % PROPOSITION_IDS.length]; },
+      get citations() { reads += 1; return []; },
+    });
+  }
+  const out = runAdmitted(taskInput({ task_id: "ci006r4-rawcount" }), { forge: cells, compa: [supportedFor("compa")] });
+  assert.equal(out.status, "BLOCKED");
+  assert.equal(out.reason_code, "INPUT_LIMIT");
+  assert.equal(reads, 0, `no per-cell metadata reads before the count gate, got ${reads}`);
 });

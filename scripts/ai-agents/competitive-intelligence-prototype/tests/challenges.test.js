@@ -13,7 +13,9 @@ import {
 
 function setup(overrides = {}) {
   const registry = createWorkflowRegistry();
-  const res = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa", ...overrides });
+  // CI-005 round 4: the registration binds phase + origin + service_id +
+  // evaluation_id — all required.
+  const res = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa", evaluation_id: "e1", ...overrides });
   assert.ok(res.ok, res.errors);
   return { registry, registration: res.registration };
 }
@@ -21,7 +23,7 @@ function setup(overrides = {}) {
 const cls = (detected, step = "trial_signup", dest = "vendor signup", s = setup()) => {
   const c = classifyChallenge({
     detected, workflow_step: step, destination: dest,
-    target_origin: "https://example.com", service_id: "compa",
+    target_origin: "https://example.com", service_id: "compa", evaluation_id: "e1",
     registration_id: s.registration.registration_id, registry: s.registry,
   });
   // Carry the stable workflow-operation key for attempt accounting.
@@ -174,6 +176,7 @@ test("invented registration_id not in the registry refuses", () => {
   const c = classifyChallenge({
     detected: "image captcha required", workflow_step: "trial_signup",
     destination: "vendor signup", target_origin: "https://example.com",
+    service_id: "compa", evaluation_id: "e1",
     registration_id: "invented-reg-999", registry,
   });
   assert.equal(c.type, "unknown");
@@ -202,6 +205,7 @@ test("CI-005: unrelated destination does not authorize", () => {
   const c = classifyChallenge({
     detected: "image captcha required", workflow_step: "trial_signup",
     destination: "https://evil.example/phish", target_origin: "https://evil.example/phish",
+    service_id: "compa", evaluation_id: "e1",
     registration_id: registration.registration_id, registry,
   });
   assert.equal(c.type, "unknown");
@@ -216,6 +220,7 @@ test("CI-005: challenge_id change does not reset attempts", () => {
   const c = classifyChallenge({
     detected: "image captcha required", workflow_step: "trial_signup",
     destination: "vendor signup", target_origin: "https://example.com", service_id: "compa",
+    evaluation_id: "e1",
     registration_id: s.registration.registration_id, registry: s.registry,
   });
   assert.equal(c.type, "image_captcha");
@@ -249,4 +254,112 @@ test("CI-005: workflow key is stable across history instances", () => {
     key,
     "key derivation is deterministic",
   );
+});
+
+// CI-005 round 4 — verdict probe 2: registered https://vendor.example /
+// compa / e1 workflow; image challenge with an UNRELATED destination and
+// omitted actual bindings. Must refuse — a valid registration is not
+// portable authority for unrelated destinations.
+test("CI-005r4: unrelated destination with omitted bindings refuses", () => {
+  const registry = createWorkflowRegistry();
+  const reg = registry.register({
+    phase: "trial_signup", origin: "https://vendor.example", service_id: "compa", evaluation_id: "e1",
+  }).registration;
+  const c = classifyChallenge({
+    detected: "image captcha required", workflow_step: "trial_signup",
+    destination: "https://unrelated.example/signup",
+    registration_id: reg.registration_id, registry,
+    // target_origin / service_id / evaluation_id omitted
+  });
+  assert.equal(c.type, "unknown");
+  assert.equal(c.handler, "refuse");
+  assert.equal(c.receipt.reason_code, "BINDING_REQUIRED");
+});
+
+// The same probe with the bindings supplied must still refuse on the
+// destination origin.
+test("CI-005r4: unrelated URL destination refuses even with bindings supplied", () => {
+  const registry = createWorkflowRegistry();
+  const reg = registry.register({
+    phase: "trial_signup", origin: "https://vendor.example", service_id: "compa", evaluation_id: "e1",
+  }).registration;
+  const c = classifyChallenge({
+    detected: "image captcha required", workflow_step: "trial_signup",
+    destination: "https://unrelated.example/signup",
+    target_origin: "https://vendor.example", service_id: "compa", evaluation_id: "e1",
+    registration_id: reg.registration_id, registry,
+  });
+  assert.equal(c.type, "unknown");
+  assert.equal(c.handler, "refuse");
+  assert.equal(c.receipt.reason_code, "DESTINATION_MISMATCH");
+});
+
+// Each missing binding is a refusal, not an exemption.
+for (const missing of ["target_origin", "service_id", "evaluation_id"]) {
+  test(`CI-005r4: missing ${missing} binding refuses`, () => {
+    const { registry, registration } = setup();
+    const args = {
+      detected: "image captcha required", workflow_step: "trial_signup",
+      destination: "vendor signup",
+      target_origin: "https://example.com", service_id: "compa", evaluation_id: "e1",
+      registration_id: registration.registration_id, registry,
+    };
+    delete args[missing];
+    const c = classifyChallenge(args);
+    assert.equal(c.type, "unknown");
+    assert.equal(c.receipt.reason_code, "BINDING_REQUIRED", missing);
+  });
+}
+
+// Registration without an evaluation binding refuses at registration time.
+test("CI-005r4: registration requires evaluation_id", () => {
+  const registry = createWorkflowRegistry();
+  const r = registry.register({ phase: "trial_signup", origin: "https://example.com", service_id: "compa" });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes("evaluation_id")));
+});
+
+// CI-005 round 4 — verdict probe 3: the atomic attempt grant. Two callers
+// racing on one workflow key: exactly one obtains the grant.
+test("CI-005r4: simultaneous tryReserve grants exactly one winner", () => {
+  const h = hist();
+  const key = workflowAttemptKey("wfreg-9", "single_solver_submission");
+  const first = h.tryReserve(key);
+  const second = h.tryReserve(key);
+  const winners = [first, second].filter((r) => r.granted);
+  assert.equal(winners.length, 1, "exactly one caller wins the atomic grant");
+  assert.equal(second.granted, false);
+  assert.equal(second.reason, "already_consumed");
+  // The advisory read agrees with the grant state.
+  assert.equal(attemptAllowed("image_captcha", { workflowKey: key, history: h, solver_credits_ok: true }).allowed, false);
+});
+
+// A failed/crashed handler keeps its reservation consumed — no retry.
+test("CI-005r4: crashed reservation stays consumed", () => {
+  const h = hist();
+  const key = workflowAttemptKey("wfreg-9", "single_solver_submission");
+  assert.equal(h.tryReserve(key).granted, true);
+  // Handler "crashes" before submitting: no release API exists, the attempt
+  // is gone. A retry for the same workflow is denied.
+  assert.equal(h.tryReserve(key).granted, false);
+  assert.equal(h.attempts(key), 1);
+});
+
+// Restart persistence: the host's snapshot/restore carries the grant across
+// instances — a fresh history object cannot re-arm the workflow.
+test("CI-005r4: attempt grant survives history restore", () => {
+  const h1 = hist();
+  const key = workflowAttemptKey("wfreg-9", "single_solver_submission");
+  assert.equal(h1.tryReserve(key).granted, true);
+  const h2 = hist();
+  h2.restore(h1.snapshot());
+  assert.equal(h2.tryReserve(key).granted, false, "restored history still denies");
+  assert.equal(h2.attempts(key), 1);
+});
+
+// Invalid keys fail closed.
+test("CI-005r4: tryReserve with an invalid key fails closed", () => {
+  const h = hist();
+  assert.equal(h.tryReserve("").granted, false);
+  assert.equal(h.tryReserve(null).granted, false);
 });

@@ -38,6 +38,10 @@ export const PERMITTED_PHASE = "trial_signup";
 /**
  * Host-held workflow registry. The host registers the genuine own-trial
  * signup workflow; classification binds challenges to that registration.
+ *
+ * CI-005 round 4: the registration binds phase + origin + service_id +
+ * evaluation_id — all required. The origin is canonicalized at registration
+ * so later comparisons are exact, not string-prefix games.
  */
 export function createWorkflowRegistry() {
   const regs = new Map();
@@ -48,10 +52,17 @@ export function createWorkflowRegistry() {
       if (typeof phase !== "string" || !phase) errors.push("phase required");
       if (typeof origin !== "string" || !origin) errors.push("origin required");
       if (typeof service_id !== "string" || !service_id) errors.push("service_id required");
+      if (typeof evaluation_id !== "string" || !evaluation_id) errors.push("evaluation_id required");
       if (errors.length > 0) return { ok: false, errors };
+      let canonOrigin;
+      try {
+        canonOrigin = new URL(origin).origin;
+      } catch {
+        return { ok: false, errors: ["origin must be a parseable URL"] };
+      }
       n += 1;
       const id = `wfreg-${n}`;
-      const reg = { registration_id: id, phase, origin, service_id, evaluation_id: evaluation_id || null };
+      const reg = { registration_id: id, phase, origin: canonOrigin, service_id, evaluation_id };
       regs.set(id, reg);
       return { ok: true, registration: { ...reg } };
     },
@@ -67,11 +78,12 @@ export function createWorkflowRegistry() {
  * Host-held challenge history, keyed by STABLE WORKFLOW OPERATION
  * (registration_id::handler), never by challenge_id (CI-005).
  *
- * consume() allocates one attempt for a workflow operation ATOMICALLY and
- * BEFORE any external submission: the caller classifies, checks
- * attemptAllowed, then consume()s the attempt, then submits. A later
- * challenge-ID change or process restart cannot reset the count — the key
- * is stable and the host persists the history.
+ * The AUTHORIZATION gate is tryReserve(): one synchronous check-and-reserve
+ * that returns granted/denied atomically (CI-005 round 4). Two callers can
+ * never both observe "free" — the first synchronous call wins and the loser
+ * is denied. attempts() is a read-only view for diagnostics; consume() is
+ * the legacy allocator. The host persists the history via snapshot()/restore()
+ * so a restart cannot re-arm a consumed attempt.
  */
 export function createChallengeHistory() {
   const counts = new Map();
@@ -84,9 +96,40 @@ export function createChallengeHistory() {
       counts.set(workflowKey, next);
       return next;
     },
+    /**
+     * Atomic check-and-reserve: grants exactly one attempt per workflow key.
+     * Returns {granted:true} for the first caller, {granted:false} for every
+     * later one — including after a failed/crashed handler (a crashed
+     * reservation stays consumed; there is no retry). The grant is bound to
+     * the resolved workflow/handler via the key; the key is stable across
+     * restarts when the host persists snapshot()/restore().
+     */
+    tryReserve(workflowKey) {
+      if (typeof workflowKey !== "string" || !workflowKey) {
+        return { granted: false, reason: "invalid_workflow_key" };
+      }
+      if (counts.has(workflowKey)) {
+        return { granted: false, reason: "already_consumed", detail: "one attempt per signup workflow/handler" };
+      }
+      counts.set(workflowKey, 1);
+      return { granted: true, attempts: 1 };
+    },
     attempts(workflowKey) {
       if (typeof workflowKey !== "string" || !workflowKey) return 0;
       return counts.get(workflowKey) || 0;
+    },
+    /** Durable snapshot for the host store (restart persistence contract). */
+    snapshot() {
+      return { counts: [...counts.entries()] };
+    },
+    restore(snap) {
+      counts.clear();
+      if (snap && Array.isArray(snap.counts)) {
+        for (const [k, v] of snap.counts) {
+          if (typeof k === "string" && Number.isInteger(v)) counts.set(k, v);
+        }
+      }
+      return { ok: true };
     },
   };
 }
@@ -132,6 +175,20 @@ export function workflowAttemptKey(registration_id, handler) {
   return `${registration_id}::${handler}`;
 }
 
+/**
+ * Canonicalize an observed origin for exact comparison (CI-005 round 4).
+ * Returns the URL origin, or null when the input is not a parseable URL
+ * (free-text destinations are covered by the target_origin binding instead).
+ */
+function canonOrigin(v) {
+  if (typeof v !== "string" || !v) return null;
+  try {
+    return new URL(v).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function classifyChallenge({
   detected, workflow_step, destination, target_origin = null,
   service_id = null, evaluation_id = null, registration_id = null, registry = null,
@@ -151,16 +208,36 @@ export function classifyChallenge({
   if (step !== registration.phase) {
     return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "PHASE_MISMATCH", step, dest) };
   }
-  // CI-005: bind origin/service/evaluation to the registered workflow. An
-  // unrelated destination/origin never authorizes a permitted handler.
-  if (target_origin !== null && target_origin !== registration.origin) {
+  // CI-005 round 4: all three actual bindings are required. The challenge
+  // must be independently observed on the registered origin/service/
+  // evaluation — omitting one is a refusal, not an exemption from the check.
+  // Origins are canonicalized (new URL().origin) before exact comparison.
+  if (typeof target_origin !== "string" || !target_origin) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "BINDING_REQUIRED", step, dest) };
+  }
+  if (typeof service_id !== "string" || !service_id) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "BINDING_REQUIRED", step, dest) };
+  }
+  if (typeof evaluation_id !== "string" || !evaluation_id) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "BINDING_REQUIRED", step, dest) };
+  }
+  const observedOrigin = canonOrigin(target_origin);
+  if (observedOrigin !== registration.origin) {
     return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "ORIGIN_MISMATCH", step, dest) };
   }
-  if (service_id !== null && service_id !== registration.service_id) {
+  if (service_id !== registration.service_id) {
     return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "SERVICE_MISMATCH", step, dest) };
   }
-  if (evaluation_id !== null && registration.evaluation_id && evaluation_id !== registration.evaluation_id) {
+  if (evaluation_id !== registration.evaluation_id) {
     return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "EVALUATION_MISMATCH", step, dest) };
+  }
+  // The destination is resolved to its origin and compared to the
+  // registration. A URL destination on an unrelated origin refuses even
+  // when the observed bindings above were supplied — a valid registration
+  // is not portable authority for unrelated destinations.
+  const destOrigin = canonOrigin(destination);
+  if (destOrigin !== null && destOrigin !== registration.origin) {
+    return { type: "unknown", handler: "refuse", receipt: refuseReceipt("unknown", "DESTINATION_MISMATCH", step, dest) };
   }
 
   // Purpose first: prohibited payment/fraud/phone wins over any wording.
@@ -203,9 +280,14 @@ export function classifyChallenge({
 
 /**
  * Decide whether a handler attempt is allowed.
- * ctx: {challenge_id, history, solver_credits_ok, own_mailbox_ready}
+ * ctx: {workflowKey, history, solver_credits_ok, own_mailbox_ready}
  * Attempts are read from the durable history — a caller attempt_count is
  * ignored. Permitted handlers require history; without it they refuse.
+ *
+ * CI-005 round 4: this is ADVISORY (read-only). The authorization gate is
+ * history.tryReserve(workflowKey) — one atomic check-and-reserve that must
+ * succeed before any external submission. attemptAllowed:true followed by a
+ * denied tryReserve means the handler cannot execute.
  */
 export function attemptAllowed(type, ctx = {}) {
   // CI-005: attempts are keyed by stable workflow operation

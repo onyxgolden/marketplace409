@@ -91,6 +91,37 @@ function main() {
   }
   console.error(`launcher: corpus authenticated (${count} files, root ${digest.slice(0, 12)}…) — host digest trusted`);
 
+  // CI-006 round 4: enforce the expected executable file set on BOTH launch
+  // paths. Test execution is derived EXCLUSIVELY from authenticated manifest
+  // entries — never from disk enumeration. Any .js file under the corpus
+  // dirs that is not in the manifest is an unlisted executable and fails
+  // closed BEFORE any corpus code runs. This covers additions as well as
+  // mutations/deletions.
+  const manifestFiles = Object.keys(manifest.files).sort();
+  const diskFiles = [];
+  for (const dir of ["src", "tests", "runner"]) {
+    const dirPath = path.join(root, dir);
+    let entries;
+    try {
+      entries = readdirSync(dirPath);
+    } catch (e) {
+      fail("corpus_dir_unreadable", dir);
+    }
+    for (const f of entries.sort()) {
+      if (f.endsWith(".js")) diskFiles.push(`${dir}/${f}`);
+    }
+  }
+  diskFiles.sort();
+  const manifestSet = new Set(manifestFiles);
+  const unlisted = diskFiles.filter((f) => !manifestSet.has(f));
+  if (unlisted.length > 0) {
+    fail("unlisted_executable", `files on disk but not in the authenticated manifest: ${unlisted.join(", ")}`);
+  }
+  const missing = manifestFiles.filter((f) => !diskFiles.includes(f));
+  if (missing.length > 0) {
+    fail("manifest_file_missing", `manifest entries absent from disk: ${missing.join(", ")}`);
+  }
+
   const mode = args[0] || "manual";
   // Mark authentication so runner code can refuse direct (unauthenticated) invocation.
   process.env.CI_CORPUS_AUTHENTICATED = "1";
@@ -105,13 +136,11 @@ function main() {
     );
   }
   if (mode === "test") {
-    const testDir = path.join(root, "tests");
-    const files = readdirSync(testDir)
-      .filter((f) => f.endsWith(".test.js"))
-      .sort()
-      .map((f) => path.join(testDir, f));
-    if (files.length === 0) fail("no_tests", "no *.test.js under tests/");
-    const r = spawnSync(process.execPath, ["--test", ...files], {
+    const testFiles = manifestFiles
+      .filter((f) => f.startsWith("tests/") && f.endsWith(".test.js"))
+      .map((f) => path.join(root, f));
+    if (testFiles.length === 0) fail("no_tests", "no *.test.js in the authenticated manifest");
+    const r = spawnSync(process.execPath, ["--test", ...testFiles], {
       cwd: root,
       env: process.env,
       stdio: "inherit",

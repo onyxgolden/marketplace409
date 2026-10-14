@@ -190,6 +190,18 @@ export class CardRegistry {
     }
     const il = this._checkInterlock(interlock, { evaluation_id, service_id, generation });
     if (il) return { ok: false, reason: il };
+    // CI-003 round 4: atomically mark the lease card-bound BEFORE mutating
+    // card state. If the lease does not match, attachment fails and no card
+    // state changes — a later release cannot claim "card-free" by omitting
+    // card evidence.
+    if (typeof interlock.markCardAttached === "function") {
+      const marked = interlock.markCardAttached({ evaluation_id, service_id, generation });
+      if (!marked.ok) {
+        return { ok: false, reason: "interlock_mark_failed", detail: marked.reason };
+      }
+    } else {
+      return { ok: false, reason: "interlock_required", detail: "interlock must support atomic card-bound marking" };
+    }
     this.state = "ATTACHED";
     this.holder = { service_id, trial_id, evaluation_id, generation };
     this.cleanupVerified = false;

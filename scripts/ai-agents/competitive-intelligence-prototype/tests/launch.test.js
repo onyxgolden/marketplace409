@@ -103,3 +103,34 @@ test("launcher: missing host digest fails closed before any import", () => {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("CI-006r4: added unlisted test file fails closed before it executes", () => {
+  const tmp = copyCorpus();
+  try {
+    // Add an executable the manifest never approved.
+    writeFileSync(
+      path.join(tmp, "tests", "reviewer-extra.test.js"),
+      `import { test } from "node:test";\ntest("canary", () => { console.log("${CANARY}"); });\n`,
+    );
+    const r = runLauncher(tmp, "test");
+    const combined = `${r.stdout}\n${r.stderr}`;
+    assert.notEqual(r.status, 0, "unlisted executable must fail closed");
+    assert.ok(!combined.includes(CANARY), "the unlisted canary must NEVER execute");
+    assert.match(combined, /unlisted_executable/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("CI-006r4: added unlisted src file fails closed on the manual path", () => {
+  const tmp = copyCorpus();
+  try {
+    writeFileSync(path.join(tmp, "src", "reviewer-extra.js"), `console.log("${CANARY}");\n`);
+    const r = runLauncher(tmp, "manual");
+    const combined = `${r.stdout}\n${r.stderr}`;
+    assert.notEqual(r.status, 0, "unlisted executable must fail closed");
+    assert.ok(!combined.includes(CANARY), "the unlisted file must NEVER execute");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

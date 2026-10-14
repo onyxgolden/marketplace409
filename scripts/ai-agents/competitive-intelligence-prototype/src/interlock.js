@@ -11,9 +11,23 @@
  */
 
 export class EvaluationInterlock {
-  constructor() {
+  /**
+   * cardRegistry: the host's TRUSTED card registry, injected at construction
+   * (CI-003 round 4). Card obligations are discovered from this binding —
+   * never from optional caller proof input. A lease the card attaches to is
+   * atomically marked card_bound via markCardAttached(); missing card
+   * evidence cannot erase an existing obligation.
+   */
+  constructor({ cardRegistry = null } = {}) {
     this.lease = null; // {evaluation_id, service_id, generation, acquired_at, heartbeat_at, card_bound}
     this.generation = 0;
+    this.cardRegistry = cardRegistry;
+  }
+
+  /** Bind (or rebind) the host's trusted card registry. */
+  bindCardRegistry(cardRegistry) {
+    this.cardRegistry = cardRegistry;
+    return { ok: true };
   }
 
   /** Acquire the single global evaluation slot. Fails if held. */
@@ -47,13 +61,34 @@ export class EvaluationInterlock {
   }
 
   /**
+   * Atomically mark the current lease as card-bound (CI-003 round 4).
+   * Called by CardRegistry.attach() on successful attachment, BEFORE the
+   * card mutates its own state: if the lease does not match, attachment
+   * fails and no card state changes. The lease's card_bound flag is host
+   * state — a later release cannot claim "card-free" by omitting evidence.
+   */
+  markCardAttached({ evaluation_id, service_id, generation }) {
+    if (!this.lease) return { ok: false, reason: "no_lease" };
+    if (
+      this.lease.evaluation_id !== evaluation_id ||
+      this.lease.service_id !== service_id ||
+      this.lease.generation !== generation
+    ) {
+      return { ok: false, reason: "stale_generation", detail: "card attachment does not match the current lease" };
+    }
+    this.lease.card_bound = true;
+    return { ok: true };
+  }
+
+  /**
    * Release the slot. Requires matching generation AND a trusted closure
    * proof from the host:
-   *   proof = { ledger, trial_id, cardRegistry? }
+   *   proof = { ledger, trial_id }
    * The ledger's trial must be CLOSED (or a pre-account BLOCKED skip) and
-   * its evaluation_id must match the lease. When the lease is card-bound,
-   * the card registry must show a matching release record. A lost heartbeat
-   * or a caller status string is never proof.
+   * its evaluation_id must match the lease. Card obligations are discovered
+   * from the TRUSTED card registry bound at construction (CI-003 round 4) —
+   * never from optional caller proof input. A lost heartbeat or a caller
+   * status string is never proof.
    */
   release({ evaluation_id, generation, proof }) {
     if (!this.lease) return { ok: false, reason: "no_lease" };
@@ -76,11 +111,12 @@ export class EvaluationInterlock {
     if (state !== "CLOSED" && !cleanSkip) {
       return { ok: false, reason: "obligations_outstanding", state };
     }
-    // CI-003: card obligations are determined from the TRUSTED card registry,
-    // never from the caller's card_bound flag alone. If the registry shows a
-    // holder or a closure bound to this evaluation, card obligations exist
-    // even when the caller claims card_bound:false.
-    const cardReg = proof.cardRegistry || null;
+    // CI-003 round 4: card obligations are determined from the TRUSTED card
+    // registry bound at construction, never from the caller's card_bound
+    // flag or an optional proof-supplied registry. If the lease is
+    // card-bound (marked atomically at attach time), closure MUST be proven
+    // against the bound registry — omitting card evidence refuses.
+    const cardReg = this.cardRegistry;
     const cardHolder = cardReg && cardReg.holder ? cardReg.holder : null;
     const lastCardRelease =
       cardReg && typeof cardReg.lastRelease === "function" ? cardReg.lastRelease() : null;
@@ -89,7 +125,7 @@ export class EvaluationInterlock {
     if (lastCardRelease && lastCardRelease.evaluation_id === evaluation_id) cardObligated = true;
     if (cardObligated) {
       if (!cardReg) {
-        return { ok: false, reason: "card_closure_unverified", detail: "card obligations require the trusted card registry" };
+        return { ok: false, reason: "card_closure_unverified", detail: "card obligations require the trusted card registry bound at construction" };
       }
       if (!lastCardRelease || lastCardRelease.evaluation_id !== evaluation_id || lastCardRelease.generation !== generation) {
         return { ok: false, reason: "card_closure_unverified" };

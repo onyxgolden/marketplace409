@@ -21,7 +21,13 @@ export function srcRef(vendor_id, n = 1) {
     source_id: `${vendor_id}-src-${n}`,
     vendor_id,
     product_id: `${vendor_id}-product`,
-    edition: null,
+    // CI-001 round 4: sources state their applicability explicitly, matching
+    // the default exact scope in scope(). Unknown applicability never grounds
+    // an exact scoped claim (see checkSourceApplicability).
+    edition: "standard",
+    platform: "web",
+    region: "US",
+    version: "2026",
     url,
     final_url: url,
     source_type: "vendor_docs",

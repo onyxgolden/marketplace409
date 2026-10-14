@@ -83,19 +83,29 @@ export function validateTrustedContext(ctx) {
   if (!isPlainObject(ctx.admittedSources)) {
     errors.push("admittedSources must be an object");
   } else {
-    // CI-006: fail fast on trusted-context shape BEFORE any per-cell work.
+    // CI-006 round 4: fail fast on trusted-context shape BEFORE any
+    // per-source enumeration or serialization. An oversized store
+    // short-circuits here — the per-source loop below never runs on it.
     const sourceIds = Object.keys(ctx.admittedSources);
     if (sourceIds.length > LIMITS.maxTrustedSources) {
-      errors.push(`too many trusted sources: ${sourceIds.length} > ${LIMITS.maxTrustedSources}`);
-    } else {
-      let bytes = 0;
+      return [...errors, `too many trusted sources: ${sourceIds.length} > ${LIMITS.maxTrustedSources}`];
+    }
+    // Bounded incremental byte accounting: per-source serialization with an
+    // early abort, so total work stays within the byte budget instead of one
+    // unbounded whole-store stringify before validation.
+    let bytes = 2; // "{}"
+    for (const sid of sourceIds) {
+      let chunk;
       try {
-        bytes = Buffer.byteLength(JSON.stringify(ctx.admittedSources), "utf8");
+        chunk =
+          Buffer.byteLength(JSON.stringify(ctx.admittedSources[sid]), "utf8") +
+          Buffer.byteLength(sid, "utf8") + 4;
       } catch {
-        errors.push("admittedSources not serializable");
+        return [...errors, "admittedSources not serializable"];
       }
+      bytes += chunk + (bytes > 2 ? 1 : 0);
       if (bytes > LIMITS.maxTrustedBytes) {
-        errors.push(`trusted sources exceed byte budget: ${bytes} > ${LIMITS.maxTrustedBytes}`);
+        return [...errors, `trusted sources exceed byte budget: > ${LIMITS.maxTrustedBytes}`];
       }
     }
     for (const [sid, ref] of Object.entries(ctx.admittedSources)) {
@@ -143,6 +153,60 @@ export function admitSubject(ctx, subject) {
   return { ok: true, vendor };
 }
 
+/* ------------------------------------------------------------------ */
+/* Exact scope contract (CI-001 round 4)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The exact scope contract. A capability claim is scoped to a product in a
+ * specific edition/platform/region/version. The product travels on the
+ * cell's subject_ref (already bound to the confirmed vendor); the four
+ * dimensions are required on the cell's scope. A scope that names a
+ * product_id must agree with the subject binding — scope.product_id is
+ * never optional-when-truthy. Unknown source applicability on any dimension
+ * never becomes an exact scoped claim.
+ */
+export const SCOPE_DIMENSIONS = ["edition", "platform", "region", "version"];
+export const SCOPE_FIELDS = ["product_id", ...SCOPE_DIMENSIONS];
+
+/** The effective exact scope: all five fields, non-empty strings. */
+export function validateExactScope(scope) {
+  const errors = [];
+  if (!isPlainObject(scope)) return ["scope must be an object"];
+  for (const f of SCOPE_FIELDS) {
+    if (typeof scope[f] !== "string" || !scope[f]) {
+      errors.push(`scope.${f} is required (exact scope contract)`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * Compare a source's applicability against an exact claimed scope.
+ * Returns null when applicable, or {reason, detail}:
+ *   APPLICABILITY_UNKNOWN — the source does not state this dimension, so it
+ *     cannot ground an exact claim about it.
+ *   APPLICABILITY_MISMATCH — the source states a different value.
+ */
+export function checkSourceApplicability(source, scope) {
+  for (const dim of SCOPE_DIMENSIONS) {
+    const v = source ? source[dim] : undefined;
+    if (v === null || v === undefined || v === "") {
+      return {
+        reason: "APPLICABILITY_UNKNOWN",
+        detail: `source ${source?.source_id ?? "?"} does not state ${dim}; unknown applicability cannot ground an exact ${scope[dim]} claim`,
+      };
+    }
+    if (v !== scope[dim]) {
+      return {
+        reason: "APPLICABILITY_MISMATCH",
+        detail: `source ${source?.source_id ?? "?"} is about ${dim}=${v}, not the claimed ${dim}=${scope[dim]}`,
+      };
+    }
+  }
+  return null;
+}
+
 /** The caller's forge_base_pin must exactly match the host-verified snapshot. */
 export function admitForgePin(ctx, pin) {
   if (!isPlainObject(pin)) return { ok: false, reason: "FORGE_PIN_UNVERIFIED", detail: "pin must be an object" };
@@ -167,12 +231,18 @@ export function admitForgePin(ctx, pin) {
  * confirmed product_id. Vendor match alone does not prove the citation is
  * about the confirmed product/scope.
  *
+ * CI-001 round 4: when expectedScope (the cell's exact claimed scope) is
+ * supplied, the source's edition/platform/region/version applicability must
+ * match it. A source about a different edition does not ground the cell;
+ * unknown applicability never becomes an exact scoped claim.
+ *
  * @param ctx trusted context
  * @param source_id the cited source
  * @param vendor_id expected vendor (string) or null
  * @param product_id expected confirmed product_id (string) or null
+ * @param expectedScope exact claimed scope {product_id,edition,platform,region,version} or null
  */
-export function resolveCitation(ctx, source_id, vendor_id = null, product_id = null) {
+export function resolveCitation(ctx, source_id, vendor_id = null, product_id = null, expectedScope = null) {
   const source = ctx.admittedSources?.[source_id];
   if (!source) return { ok: false, reason: "SOURCE_UNVERIFIED", detail: `${source_id} is not an admitted source` };
   if (vendor_id !== null && source.vendor_id !== vendor_id) {
@@ -183,6 +253,14 @@ export function resolveCitation(ctx, source_id, vendor_id = null, product_id = n
       ok: false, reason: "PRODUCT_MISMATCH",
       detail: `${source_id} is about ${source.product_id ?? "unknown product"}, not confirmed product ${product_id}`,
     };
+  }
+  if (expectedScope !== null && expectedScope !== undefined) {
+    const scopeErrors = validateExactScope(expectedScope);
+    if (scopeErrors.length > 0) {
+      return { ok: false, reason: "SCOPE_INVALID", detail: scopeErrors.join("; ") };
+    }
+    const appl = checkSourceApplicability(source, expectedScope);
+    if (appl) return { ok: false, reason: appl.reason, detail: appl.detail };
   }
   if (source.access_status !== "ok") {
     return { ok: false, reason: "ACCESS_RESTRICTED", detail: `${source_id} access_status=${source.access_status}` };
