@@ -3,7 +3,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { resetPasswordForEmail, signInWithPassword, signUp, onAuthStateChange, authStateCallback, signOutSafely } = vi.hoisted(() => {
+const { resetPasswordForEmail, signInWithPassword, signUp, onAuthStateChange, authStateCallback, signOutSafely, setSession } = vi.hoisted(() => {
   const state = { current: null };
   return {
     resetPasswordForEmail: vi.fn(),
@@ -15,8 +15,27 @@ const { resetPasswordForEmail, signInWithPassword, signUp, onAuthStateChange, au
     }),
     authStateCallback: state,
     signOutSafely: vi.fn(),
+    // Establishes the browser session from a gateway-issued session object.
+    setSession: vi.fn(),
   };
 });
+
+// Layer-2 activation flag for page.jsx + useCredentialAuth.js, both of which import
+// isMfaLayer2Activated from this module. Defaults to false so every pre-existing test
+// below exercises the exact pre-Layer-2 behavior; the "Layer 2 enabled" describe block
+// flips it to true.
+const { layer2Enabled } = vi.hoisted(() => ({ layer2Enabled: { current: false } }));
+
+vi.mock("@/lib/auth/securityPolicy.js", () => ({
+  MFA_STATES: {
+    FIRST_FACTOR: "FIRST_FACTOR",
+    ENROLL_REQUIRED: "ENROLL_REQUIRED",
+    CHALLENGE_REQUIRED: "CHALLENGE_REQUIRED",
+    AUTHORIZED: "AUTHORIZED",
+    RECOVERY_PENDING: "RECOVERY_PENDING",
+  },
+  isMfaLayer2Activated: () => layer2Enabled.current,
+}));
 
 vi.mock("@/components/Header", () => ({ default: () => React.createElement("header", null, "409 Marketplace") }));
 vi.mock("@/lib/supabase/client", () => ({
@@ -26,6 +45,7 @@ vi.mock("@/lib/supabase/client", () => ({
       signInWithPassword,
       signUp,
       onAuthStateChange,
+      setSession,
     },
   }),
 }));
@@ -128,14 +148,19 @@ describe("AuthPage password controls", () => {
     });
   });
 
-  it("redirects once onAuthStateChange reports a session -- covering sign-in, sign-up, and a confirmation-link auto-recovered session alike", () => {
+  // The onAuthStateChange callback is async in page.jsx (it awaits the Layer-2 eligibility
+  // check when activated), so this test awaits act() -- a floating act() promise leaves React's
+  // act scope open and breaks rendering in later tests.
+  it("redirects once onAuthStateChange reports a session -- covering sign-in, sign-up, and a confirmation-link auto-recovered session alike", async () => {
     const originalLocation = window.location;
     // jsdom's window.location.href setter can't be spied on directly (its property descriptor isn't
     // configurable); swap in a plain writable stand-in for the duration of this one assertion instead.
     delete window.location;
     window.location = { ...originalLocation, href: "" };
 
-    act(() => authStateCallback.current("SIGNED_IN", { user: { id: "user-1" } }));
+    await act(async () => {
+      await authStateCallback.current("SIGNED_IN", { user: { id: "user-1" } });
+    });
 
     expect(window.location.href).toBe("/forge/financial");
     window.location = originalLocation;
@@ -383,5 +408,169 @@ describe("AuthPage invited-borrower mode", () => {
       email: "borrower@example.com",
       options: { emailRedirectTo: `${window.location.origin}/auth?next=%2Fforge%2Fprivate-financing%2Fportal&email=borrower%40example.com` },
     }));
+  });
+});
+
+describe("AuthPage Layer 2 enabled: gateway integration (real route contracts)", () => {
+  let container;
+  let root;
+  let originalFetch;
+
+  // Mocks the gateway routes' ACTUAL response shapes
+  // (src/app/api/auth/*/route.js): { status:'ok', ... } | { error }.
+  function stubGateway(handler) {
+    globalThis.fetch = vi.fn(async (url, options) => handler(String(url), options));
+  }
+
+  function jsonResponse(payload) {
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => payload };
+  }
+
+  // Swaps in a writable location stand-in (jsdom's href setter isn't
+  // configurable); returns a restore function.
+  function captureRedirect() {
+    const originalLocation = window.location;
+    delete window.location;
+    window.location = { ...originalLocation, href: "" };
+    return () => { window.location = originalLocation; };
+  }
+
+  beforeEach(() => {
+    layer2Enabled.current = true;
+    originalFetch = globalThis.fetch;
+    stubGateway(() => jsonResponse({ status: "ok", session: { access_token: "atk", refresh_token: "rtk" } }));
+    resetPasswordForEmail.mockReset().mockResolvedValue({ error: null });
+    signInWithPassword.mockReset().mockResolvedValue({ data: { session: {}, user: { id: "user-1" } }, error: null });
+    signUp.mockReset().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+    signOutSafely.mockReset().mockResolvedValue({ success: true, error: null });
+    setSession.mockReset().mockResolvedValue({ data: {}, error: null });
+    window.history.pushState({}, "", "/auth?next=%2Fforge%2Fportal");
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root.render(React.createElement(AuthPage)));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    globalThis.fetch = originalFetch;
+    layer2Enabled.current = false;
+  });
+
+  it("establishes the browser session from the gateway-issued session via setSession", async () => {
+    const email = container.querySelector('input[placeholder="Email"]');
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => {
+      enter(email, "owner@example.com");
+      enter(password, "correct horse battery staple");
+    });
+    const signIn = findButton(container, "Sign In");
+
+    await act(async () => signIn.click());
+
+    // The direct provider call is NOT used on the gateway path.
+    expect(signInWithPassword).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/auth/sign-in",
+      expect.objectContaining({ method: "POST" })
+    );
+    const [, options] = globalThis.fetch.mock.calls.find(([url]) => url === "/api/auth/sign-in");
+    const body = JSON.parse(options.body);
+    expect(body.email).toBe("owner@example.com");
+    expect(body.password).toBe("correct horse battery staple");
+    // operationId must be UUID-shaped — the gateway 400s otherwise.
+    expect(body.operationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // The gateway-issued session is established in the browser client...
+    expect(setSession).toHaveBeenCalledWith({ access_token: "atk", refresh_token: "rtk" });
+    // ...and no error message is shown (onAuthStateChange will redirect).
+    expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("redirects to the MFA ceremony on the route's authoritative mfa_required hint", async () => {
+    stubGateway((url) => {
+      if (url === "/api/auth/sign-in") {
+        return { ok: false, status: 403, headers: { get: () => null }, json: async () => ({ status: "mfa_required", next: "challenge" }) };
+      }
+      return jsonResponse({ status: "ok" });
+    });
+    const restore = captureRedirect();
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => enter(password, "correct horse battery staple"));
+    const signIn = findButton(container, "Sign In");
+
+    await act(async () => signIn.click());
+
+    expect(window.location.href).toBe("/auth/mfa?mode=challenge&next=%2Fforge%2Fportal");
+    // No session is established and no error is shown for this outcome.
+    expect(setSession).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    restore();
+  });
+
+  it("shows the gateway's generic message verbatim on sign-in failure", async () => {
+    stubGateway((url) => {
+      if (url === "/api/auth/sign-in") {
+        return { ok: false, status: 401, headers: { get: () => null }, json: async () => ({ error: "Sign-in failed. Check your email and password and try again." }) };
+      }
+      return jsonResponse({ status: "ok" });
+    });
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => enter(password, "wrong"));
+    const signIn = findButton(container, "Sign In");
+
+    await act(async () => signIn.click());
+
+    const status = container.querySelector('[role="status"]');
+    expect(status.textContent).toBe("Sign-in failed. Check your email and password and try again.");
+    expect(setSession).not.toHaveBeenCalled();
+  });
+
+  it("routes sign-up through the gateway and keeps SIGNUP_SUBMITTED_MESSAGE verbatim", async () => {
+    const password = container.querySelector('input[placeholder="Password"]');
+    act(() => enter(password, "correct horse battery staple"));
+    const create = findButton(container, "Create Account");
+
+    await act(async () => create.click());
+
+    expect(signUp).not.toHaveBeenCalled();
+    const call = globalThis.fetch.mock.calls.find(([url]) => url === "/api/auth/sign-up");
+    expect(call).toBeDefined();
+    const body = JSON.parse(call[1].body);
+    expect(body.operationId).toMatch(/^[0-9a-f-]{36}$/i);
+    const status = container.querySelector('[role="status"]');
+    expect(status.textContent).toContain("check your inbox");
+  });
+
+  it("routes password reset through the gateway (server-side redirectTo)", async () => {
+    const email = container.querySelector('input[placeholder="Email"]');
+    act(() => enter(email, "owner@example.com"));
+    const forgot = findButton(container, "Forgot password?");
+
+    await act(async () => forgot.click());
+
+    expect(resetPasswordForEmail).not.toHaveBeenCalled();
+    const call = globalThis.fetch.mock.calls.find(([url]) => url === "/api/auth/reset");
+    expect(call).toBeDefined();
+    const body = JSON.parse(call[1].body);
+    // The route uses a server-side redirectTo; the client sends only identity fields.
+    expect(Object.keys(body).sort()).toEqual(["email", "operationId"]);
+    expect(body.email).toBe("owner@example.com");
+    expect(container.textContent).toContain("Check your email for a secure password-reset link.");
+  });
+
+  it("keeps the onAuthStateChange redirect to next (TODO: server status endpoint, GAP-5)", async () => {
+    const restore = captureRedirect();
+
+    await act(async () => {
+      await authStateCallback.current("SIGNED_IN", { user: { id: "user-1" } });
+    });
+
+    // A session reaching this subscription when the layer is active has
+    // already passed the server-side requireSecurityAssurance check (the
+    // gateway only issues a session when authorized). GAP-5 tracks the
+    // future status endpoint for non-gateway sessions.
+    expect(window.location.href).toBe("/forge/portal");
+    restore();
   });
 });

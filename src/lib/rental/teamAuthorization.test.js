@@ -338,3 +338,16 @@ describe("NO-GO fix 2026-10-01 (finding 2): requireTeamManager enforces role, no
     expect(auth.forbidden.status).toBe(403);
   });
 });
+
+describe("Layer 2 security-assurance hook point (inert until activation)", () => {
+  it("exposes a documented, not-wired hook descriptor with AND semantics", async () => {
+    const { SECURITY_ASSURANCE_HOOK } = await import("./teamAuthorization.js");
+    expect(SECURITY_ASSURANCE_HOOK.status).toBe("not-wired");
+    expect(SECURITY_ASSURANCE_HOOK.guardModule).toBe("@/lib/auth/requireSecurityAssurance.js");
+    expect(SECURITY_ASSURANCE_HOOK.andSemantics).toBe("deny-unless-both-assurance-and-rental-checks-pass");
+    expect([...SECURITY_ASSURANCE_HOOK.wirePoints]).toEqual(
+      expect.arrayContaining(["requireRentalPermission", "requireTeamManager"])
+    );
+    expect(Object.isFrozen(SECURITY_ASSURANCE_HOOK)).toBe(true);
+  });
+});

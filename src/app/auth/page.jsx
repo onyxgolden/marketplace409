@@ -63,12 +63,37 @@ export default function AuthPage() {
   // an explicit sign-up (when email confirmation is off), and a session Supabase auto-recovers from a
   // `?code=` in the URL after the borrower clicks a confirmation link, so there is exactly one place
   // that decides "authenticated, go to `next`" instead of three imperative redirects that can drift.
+  //
+  // Layer 2 note: when the layer is active, the gateway sign-in route is the authoritative MFA
+  // router — it returns { status:'mfa_required', next } and the submit handler below redirects to
+  // /auth/mfa per that hint. A session that reaches THIS subscription when the layer is active has
+  // already passed the server-side requireSecurityAssurance check (the route only issues a session
+  // when authorized), so redirecting to `next` here is correct.
+  //
+  // TODO(layer2-routes, GAP-5): there is currently no lightweight "MFA status" endpoint for
+  // sessions established outside the gateway sign-in (e.g. a `?code=` exchange that lands an AAL1
+  // session for a required-cohort user). When the route builder adds one (e.g. GET
+  // /api/auth/mfa?action=status -> { state, cohort }), this subscription should consult it and
+  // route ENROLL_REQUIRED/CHALLENGE_REQUIRED to /auth/mfa?mode=... instead of blindly redirecting
+  // to `next`. Until then the current redirect is kept.
   useEffect(() => {
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) window.location.href = nextDestination();
     });
     return () => subscription.subscription.unsubscribe();
   }, []);
+
+  // The gateway sign-in can come back "MFA required" (no session issued — see ROUTE GAP 1 in
+  // src/lib/auth/authGateway.js). That outcome is not an error message; it redirects to the MFA
+  // ceremony per the route's authoritative next hint.
+  async function submitSignIn(event) {
+    event.preventDefault();
+    const outcome = await signIn();
+    if (outcome && outcome.mfaNext) {
+      const params = new URLSearchParams({ mode: outcome.mfaNext, next: nextDestination() });
+      window.location.href = `/auth/mfa?${params.toString()}`;
+    }
+  }
 
   async function signOut() {
     if (authActionPending) return;
@@ -113,10 +138,7 @@ export default function AuthPage() {
              (Sign In), the way users expect. The other buttons stay type="button" so Enter
              never fires Create Account, Forgot password, or Sign Out by accident. */}
           <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              signIn();
-            }}
+            onSubmit={submitSignIn}
           >
             <input
               className="w-full truncate border rounded-xl px-4 py-4 mb-4 disabled:bg-gray-100 disabled:text-gray-600"

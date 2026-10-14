@@ -15,6 +15,32 @@
 //   - Preview start/end are audited (log_team_audit); the session cookie is httpOnly and
 //     expires after 4 hours.
 //   - An unresolvable preview cookie fails closed (403), never silently ignored.
+//
+// Layer 2 (MFA/rate-limit) server-guard hook point — NOT YET WIRED (inert until activation):
+//   Once Layer 2 activates, requireRentalPermission and requireTeamManager must AND the
+//   server-side requireSecurityAssurance() result (src/lib/auth/requireSecurityAssurance.js)
+//   with the rental authorization computed below:
+//
+//     const assurance = await requireSecurityAssurance({
+//       supabaseAdmin,                       // service-role client (serverAuthTransport.js)
+//       user: { id: authenticated.user.id }, // re-validated against the session token
+//       session: <the request's session>,    // access_token validated server-side
+//     });
+//     // AND semantics: allow ONLY when assurance.authorized AND the existing
+//     // rental permission/preview checks below pass. A deny from EITHER side
+//     // is a 403. The security guard never replaces the workspace ownership
+//     // predicates and never reuses the rental missing-membership fallback
+//     // (securityPolicy.js resolves actual owned workspaces / active
+//     // memberships only — see its header).
+//
+//   Wiring checklist (for the activation PR, not this one):
+//   - requireRentalPermission: after the preview read-only check and the
+//     hasRentalPermission check pass, AND assurance.authorized.
+//   - requireTeamManager: after the role check passes, AND assurance.authorized.
+//   - getActorRentalAuthorization's missing-membership => primary_owner fallback
+//     is RENTAL-context behavior and MUST NOT change here; the security layer
+//     performs its own strict cohort resolution independently.
+//   - SECURITY_ASSURANCE_HOOK.status flips to "wired" when the AND is live.
 
 import { NextResponse } from "next/server";
 import {
@@ -24,6 +50,17 @@ import {
   isFullAccessRole,
   resolveEffectivePermissions,
 } from "./permissions";
+
+// Documents where the Layer 2 server guard ANDs into the rental gates.
+// status "not-wired": the gates below behave EXACTLY as before Layer 2 —
+// this constant is the hook point, not an enforcement change.
+export const SECURITY_ASSURANCE_HOOK = Object.freeze({
+  status: "not-wired",
+  guardModule: "@/lib/auth/requireSecurityAssurance.js",
+  adminTransport: "@/lib/auth/serverAuthTransport.js",
+  andSemantics: "deny-unless-both-assurance-and-rental-checks-pass",
+  wirePoints: Object.freeze(["requireRentalPermission", "requireTeamManager"]),
+});
 
 export const PREVIEW_COOKIE_NAME = "forge_rental_preview_as";
 export const PREVIEW_COOKIE_MAX_AGE_SECONDS = 4 * 60 * 60;

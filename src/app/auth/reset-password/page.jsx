@@ -25,6 +25,10 @@ export default function ResetPasswordPage() {
 
     setSaving(true);
     setMessage("");
+    // Password update ONLY: this call rotates the password and nothing else. It must never
+    // enroll, verify, or delete MFA factors, and it must never clear the recovery latch —
+    // Layer 2 invariant: "Password reset never clears MFA." Factor management lives
+    // exclusively in the /auth/mfa and /auth/recovery flows (server-side).
     const { error } = await supabase.auth.updateUser({ password });
     setSaving(false);
 

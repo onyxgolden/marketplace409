@@ -1,6 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { isMfaLayer2Activated } from "./securityPolicy.js";
+import {
+  gatewayErrorMessage,
+  gatewayResetPassword,
+  gatewaySignIn,
+  gatewaySignUp,
+  newOperationId,
+} from "./authGateway.js";
 
 // Deliberately the SAME response regardless of whether this email is new, already confirmed, or
 // already registered-but-unconfirmed -- showing a different message per case (as an earlier version
@@ -23,6 +31,15 @@ export const SIGNUP_SUBMITTED_MESSAGE =
 // a user could start Sign In, then, while it's still in flight, also click Create Account, racing two
 // Supabase auth calls against the same client/session. `authAction` being non-null makes a second
 // action structurally impossible to start until the first has cleared.
+
+// Idempotency key for the gateway's failed-attempt recording: one UUID per
+// attempt, so a retried request is recorded once. The gateway 400s on a
+// malformed id, so this must be UUID-shaped (see newOperationId in
+// authGateway.js). Only used on the gateway path; the direct-Supabase path is
+// byte-for-byte the pre-Layer-2 behavior.
+function newAttemptId() {
+  return newOperationId();
+}
 export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = "" } = {}) {
   const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
@@ -39,11 +56,29 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
     // instead of evaluating them during render, which would break server-side rendering of the
     // "use client" component that owns this hook.
     const resolvedEmailRedirectTo = typeof emailRedirectTo === "function" ? emailRedirectTo() : emailRedirectTo;
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      ...(resolvedEmailRedirectTo ? { options: { emailRedirectTo: resolvedEmailRedirectTo } } : {}),
-    });
+    // Layer 2 active: the gateway route applies admission limits and returns
+    // generic anti-enumeration errors. Layer 2 inactive: the EXACT pre-Layer-2
+    // direct Supabase call below — no behavior change while disabled.
+    let error;
+    if (isMfaLayer2Activated()) {
+      // Gateway contract: { status:'ok', message } | { error }. The route
+      // returns SIGNUP_SUBMITTED_MESSAGE verbatim on success; the hook keeps
+      // its own copy as the single source of truth for this message (see the
+      // header comment) and only uses the gateway for transport + limits.
+      const result = await gatewaySignUp({
+        operationId: newAttemptId(),
+        email,
+        password,
+        ...(resolvedEmailRedirectTo ? { emailRedirectTo: resolvedEmailRedirectTo } : {}),
+      });
+      error = result.status === "ok" ? null : { message: gatewayErrorMessage(result) };
+    } else {
+      ({ error } = await supabase.auth.signUp({
+        email,
+        password,
+        ...(resolvedEmailRedirectTo ? { options: { emailRedirectTo: resolvedEmailRedirectTo } } : {}),
+      }));
+    }
     setAuthAction(null);
 
     if (error) {
@@ -55,18 +90,47 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
   }
 
   async function signIn() {
-    if (authActionPending) return;
+    if (authActionPending) return {};
     setMessage("");
     setAuthAction("signIn");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setAuthAction(null);
-
-    if (error) {
-      setMessage(error.message);
-      return;
+    // Gateway path when Layer 2 is active; the EXACT pre-Layer-2 direct call
+    // otherwise (see signUp for the rationale).
+    //
+    // Gateway contract: { status:'ok', session } -> the browser establishes
+    // the session via setSession, then the caller's onAuthStateChange
+    // subscription drives the redirect (MFA-aware when enabled).
+    // { status:'mfa_required', next } -> no session is issued (ROUTE GAP 1);
+    // the caller redirects to the MFA ceremony per the route's authoritative
+    // next hint ('enroll' | 'challenge').
+    // { error } -> generic message shown verbatim (covers 401/429/503).
+    let outcome = {};
+    if (isMfaLayer2Activated()) {
+      const result = await gatewaySignIn({ operationId: newAttemptId(), email, password });
+      if (result.status === "ok" && result.session?.access_token) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: result.session.access_token,
+          refresh_token: result.session.refresh_token,
+        });
+        if (sessionError) {
+          setMessage(sessionError.message);
+        }
+        // On success the message stays clear and onAuthStateChange redirects.
+      } else if (result.status === "mfa_required") {
+        outcome = { mfaNext: result.next === "enroll" ? "enroll" : "challenge" };
+      } else {
+        setMessage(gatewayErrorMessage(result));
+      }
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setMessage(error.message);
+      }
     }
-    // The caller's own onAuthStateChange subscription handles what happens next (redirect, refresh,
-    // etc.) once the session lands -- this hook only knows how to attempt the sign-in itself.
+    setAuthAction(null);
+    // On success the caller's own onAuthStateChange subscription handles what happens next
+    // (redirect, refresh, etc.) once the session lands -- this hook only knows how to attempt
+    // the sign-in itself. On mfa_required the caller redirects to the MFA ceremony.
+    return outcome;
   }
 
   async function resetPassword({ redirectTo } = {}) {
@@ -78,7 +142,21 @@ export function useCredentialAuth({ supabase, emailRedirectTo, initialEmail = ""
 
     setMessage("");
     setAuthAction("resetPassword");
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+    // Gateway path when Layer 2 is active; the EXACT pre-Layer-2 direct call
+    // otherwise (see signUp for the rationale).
+    let error;
+    if (isMfaLayer2Activated()) {
+      // Gateway contract: { status:'ok', message } | { error }. The route uses
+      // a server-side redirectTo and applies the reset-request admission
+      // bucket; the hook keeps its own verbatim success message (see signUp).
+      const result = await gatewayResetPassword({
+        operationId: newAttemptId(),
+        email: email.trim(),
+      });
+      error = result.status === "ok" ? null : { message: gatewayErrorMessage(result) };
+    } else {
+      ({ error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo }));
+    }
     setAuthAction(null);
 
     if (error) {
