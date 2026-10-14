@@ -1,8 +1,9 @@
 /**
  * index.js — public entry for the CI comparison core.
  *
- * Orchestrates: validate input -> run comparison -> gate artifacts ->
- * structured output. Still read-only: no network, no writes, no publication.
+ * Orchestrates: verify corpus -> validate input -> admit against trusted
+ * context -> run comparison -> gate artifacts -> structured output.
+ * Still read-only: no network, no writes, no publication.
  */
 
 import { runComparison } from "./compare.js";
@@ -10,20 +11,56 @@ import { gateArtifacts } from "./publish.js";
 import { refusal } from "./schemas.js";
 
 export { runComparison } from "./compare.js";
-export { evaluateCell, scanForInjection } from "./cells.js";
-export { scoreComparison, scoreWithDifference } from "./rubric.js";
-export { TrialLedger } from "./ledger.js";
+export { evaluateCell, scanForInjection, validateCell, CELL_KEYS } from "./cells.js";
+export { scoreComparison, scoreWithDifference, scopesComparable } from "./rubric.js";
+export {
+  TrialLedger,
+  createLedgerStore,
+  validateCancellationEvidence,
+  validateCleanupEvidence,
+  checkNoSecrets,
+} from "./ledger.js";
 export { EvaluationInterlock } from "./interlock.js";
-export { CardRegistry } from "./card.js";
-export { classifyChallenge, attemptAllowed, makeChallengeRecord } from "./challenges.js";
+export {
+  CardRegistry,
+  createIssuanceStore,
+  createCardStore,
+  validateIssuance,
+  validateCardCancellation,
+  AGGREGATE_CAP_CENTS,
+} from "./card.js";
+export {
+  classifyChallenge,
+  attemptAllowed,
+  makeChallengeRecord,
+  createWorkflowRegistry,
+  createChallengeHistory,
+  PERMITTED_PHASE,
+} from "./challenges.js";
 export { forgeEvidence, classifyForgeFinding, snapshotPin } from "./inventory.js";
+export {
+  createTrustedContext,
+  validateTrustedContext,
+  confirmedSetDigest,
+  admitSubject,
+  admitForgePin,
+  resolveCitation,
+  sourceFreshness,
+  verifyCorpusManifest,
+  manifestDigest,
+  canonicalize,
+  sha256Hex,
+  APPROVED_ROOT_DIGEST,
+} from "./trust.js";
+export { TAXONOMY_DIGEST } from "./taxonomy.js";
 
 /**
  * Full pipeline: comparison + artifact gate.
- * Returns the comparison output, or a refusal if artifacts fail the gate.
+ * trusted: REQUIRED trusted admission context.
+ * Returns the comparison output, or a refusal if inputs/artifacts fail.
  */
-export function runPipeline(input, cellsBySubject) {
-  const result = runComparison(input, cellsBySubject);
+export function runPipeline(input, cellsBySubject, trusted = null) {
+  const result = runComparison(input, cellsBySubject, trusted);
   if (result.status === "REFUSED" || result.status === "BLOCKED") return result;
   const violations = gateArtifacts(result);
   if (violations.length > 0) {

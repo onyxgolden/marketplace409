@@ -4,15 +4,24 @@
  * State machine:
  *   PLANNED -> RESERVED -> SIGNED_UP -> EVALUATING -> CANCEL_REQUESTED
  *     -> CANCEL_VERIFIED -> CLEANED -> CLOSED
- * Exceptions: BLOCKED, EXPIRY_UNKNOWN, CANCEL_FAILED, CHARGE_DETECTED,
- *   RECOVERY_REQUIRED.
+ * Exceptions: BLOCKED (pre-account safe skip, terminal, no obligations),
+ *   BLOCKED_UNRESOLVED (post-account block — obligations persist until the
+ *   account is cancelled/closed with bound evidence), EXPIRY_UNKNOWN,
+ *   CANCEL_FAILED, CHARGE_DETECTED, RECOVERY_REQUIRED.
  *
- * Rules enforced here (pure logic over a provided record list):
- * - Append-only: transitions are new entries, never edits.
- * - One trial per service across all time (service_id registry).
- * - CLOSED requires cancellation evidence (CANCEL_VERIFIED first).
- * - Cancellation evidence must identify account/service, state/time, outcome.
+ * Rules enforced here (pure logic over a host-provided record store):
+ * - Append-only: transitions are new frozen entries, never edits.
+ * - One trial per service while obligations are outstanding.
+ * - Trial/service identity is immutable once PLANNED.
+ * - SIGNED_UP registers the account identity; cancellation and cleanup
+ *   evidence must bind to that same account/service or it is refused.
+ * - CLOSED requires CANCEL_VERIFIED then CLEANED (with cleanup receipt).
+ * - BLOCKED_UNRESOLVED keeps the trial in outstanding() — a new
+ *   reservation or interlock release cannot proceed past it.
  * - No secrets in the ledger (validated: rejects password/token/card fields).
+ * - Durability: the host supplies a store (createLedgerStore); two ledger
+ *   instances over one store share state, so restarts cannot forget history
+ *   and parallel instances cannot double-reserve.
  */
 
 export const TRIAL_STATES = [
@@ -28,6 +37,7 @@ export const TRIAL_STATES = [
 
 export const TRIAL_EXCEPTIONS = [
   "BLOCKED",
+  "BLOCKED_UNRESOLVED",
   "EXPIRY_UNKNOWN",
   "CANCEL_FAILED",
   "CHARGE_DETECTED",
@@ -37,18 +47,21 @@ export const TRIAL_EXCEPTIONS = [
 const LEGAL_TRANSITIONS = {
   PLANNED: ["RESERVED", "BLOCKED"],
   RESERVED: ["SIGNED_UP", "BLOCKED", "EXPIRY_UNKNOWN"],
-  SIGNED_UP: ["EVALUATING", "BLOCKED", "CANCEL_REQUESTED"],
-  EVALUATING: ["CANCEL_REQUESTED", "CANCEL_FAILED", "CHARGE_DETECTED", "RECOVERY_REQUIRED"],
-  CANCEL_REQUESTED: ["CANCEL_VERIFIED", "CANCEL_FAILED", "RECOVERY_REQUIRED"],
+  SIGNED_UP: ["EVALUATING", "CANCEL_REQUESTED", "BLOCKED_UNRESOLVED"],
+  EVALUATING: ["CANCEL_REQUESTED", "CANCEL_FAILED", "CHARGE_DETECTED", "RECOVERY_REQUIRED", "BLOCKED_UNRESOLVED"],
+  CANCEL_REQUESTED: ["CANCEL_VERIFIED", "CANCEL_FAILED", "RECOVERY_REQUIRED", "BLOCKED_UNRESOLVED"],
   CANCEL_VERIFIED: ["CLEANED"],
   CLEANED: ["CLOSED"],
   CLOSED: [],
   BLOCKED: [],
+  BLOCKED_UNRESOLVED: ["CANCEL_REQUESTED"],
   EXPIRY_UNKNOWN: ["BLOCKED", "CANCEL_REQUESTED"],
   CANCEL_FAILED: ["CANCEL_REQUESTED", "RECOVERY_REQUIRED"],
   CHARGE_DETECTED: ["RECOVERY_REQUIRED"],
   RECOVERY_REQUIRED: ["CANCEL_REQUESTED", "CANCEL_FAILED"],
 };
+
+const CANCEL_OUTCOMES = ["cancelled", "closed", "deleted", "no_billing"];
 
 const SECRET_FIELDS = ["password", "card_number", "cvv", "token", "secret", "recovery_code", "api_key"];
 
@@ -67,38 +80,138 @@ export function checkNoSecrets(entry) {
   return found;
 }
 
-/** Cancellation evidence must meet the minimum administrative-receipt bar. */
-export function validateCancellationEvidence(ev) {
+function deepFreeze(v) {
+  if (v && typeof v === "object" && !Object.isFrozen(v)) {
+    for (const k of Object.keys(v)) deepFreeze(v[k]);
+    Object.freeze(v);
+  }
+  return v;
+}
+
+/**
+ * Cancellation evidence must bind to THIS trial: the receipt's account
+ * identity and service must match what SIGNED_UP registered. Truthy fields
+ * alone are not evidence.
+ */
+export function validateCancellationEvidence(ev, binding = null) {
   const errors = [];
   if (!ev || typeof ev !== "object") return ["evidence must be an object"];
-  for (const k of ["account_identity", "cancelled_at", "outcome", "evidence_hash", "issuer"]) {
+  for (const k of ["account_identity", "service_id", "cancelled_at", "outcome", "evidence_hash", "issuer"]) {
     if (!ev[k]) errors.push(`missing ${k}`);
   }
-  if (ev.outcome && !["cancelled", "closed", "deleted", "no_billing"].includes(ev.outcome)) {
+  if (ev.outcome && !CANCEL_OUTCOMES.includes(ev.outcome)) {
     errors.push(`invalid outcome: ${ev.outcome}`);
+  }
+  if (ev.cancelled_at && Number.isNaN(Date.parse(ev.cancelled_at))) errors.push("cancelled_at must be ISO date-time");
+  if (binding) {
+    if (ev.account_identity !== binding.account_identity) errors.push("account_identity does not match the registered trial account");
+    if (ev.service_id !== binding.service_id) errors.push("service_id does not match the trial service");
   }
   return errors;
 }
 
+/** Cleanup evidence must bind to the trial and confirm cleanup happened. */
+export function validateCleanupEvidence(ev, binding = null) {
+  const errors = [];
+  if (!ev || typeof ev !== "object") return ["cleanup evidence must be an object"];
+  for (const k of ["account_identity", "service_id", "cleanup_receipt", "cleaned_at"]) {
+    if (!ev[k]) errors.push(`missing ${k}`);
+  }
+  if (ev.cleaned_at && Number.isNaN(Date.parse(ev.cleaned_at))) errors.push("cleaned_at must be ISO date-time");
+  if (binding) {
+    if (ev.account_identity !== binding.account_identity) errors.push("account_identity does not match the registered trial account");
+    if (ev.service_id !== binding.service_id) errors.push("service_id does not match the trial service");
+  }
+  return errors;
+}
+
+/**
+ * Durable append-only record store (fixture implementation of the host-store
+ * contract). All entries are frozen on append; load() returns the live frozen
+ * entries. Two ledgers sharing one store see the same history.
+ */
+export function createLedgerStore(initialRecords = []) {
+  const records = [];
+  const store = {
+    append(entry) {
+      const frozen = Object.freeze({ ...deepFreeze({ ...entry }), seq: records.length });
+      records.push(frozen);
+      return frozen;
+    },
+    load() {
+      return [...records];
+    },
+  };
+  for (const r of initialRecords) store.append(r);
+  return store;
+}
+
 export class TrialLedger {
-  /** records: array of existing ledger entries (append-only log). */
-  constructor(records = []) {
-    this.records = [...records];
+  /**
+   * storeOrRecords: a store from createLedgerStore(), or a plain array of
+   * existing entries (wrapped in a private store).
+   */
+  constructor(storeOrRecords = []) {
+    this.store =
+      storeOrRecords && typeof storeOrRecords.append === "function" && typeof storeOrRecords.load === "function"
+        ? storeOrRecords
+        : createLedgerStore(storeOrRecords);
+  }
+
+  get records() {
+    return this.store.load();
+  }
+
+  _trialRecords(trial_id) {
+    return this.records.filter((r) => r.trial_id === trial_id);
   }
 
   currentState(trial_id) {
-    const recs = this.records.filter((r) => r.trial_id === trial_id);
+    const recs = this._trialRecords(trial_id);
     if (recs.length === 0) return null;
     return recs[recs.length - 1].to_state;
   }
 
-  serviceHasTrial(service_id) {
-    return this.records.some((r) => r.service_id === service_id && r.to_state !== "BLOCKED");
+  /** evaluation_id bound at PLANNED (binds the interlock lease). */
+  evaluationOf(trial_id) {
+    const recs = this._trialRecords(trial_id);
+    return recs.length === 0 ? null : recs[0].evaluation_id || null;
   }
 
-  transition({ trial_id, service_id, to_state, actor, evidence = null, note = null, at = null }) {
+  /** account identity registered at SIGNED_UP. */
+  accountOf(trial_id) {
+    const rec = this._trialRecords(trial_id).find((r) => r.to_state === "SIGNED_UP");
+    return rec?.evidence?.account_identity || null;
+  }
+
+  /** True when the trial ended as a pre-account safe skip (no obligations). */
+  isPreAccountSkip(trial_id) {
+    const recs = this._trialRecords(trial_id);
+    if (recs.length === 0 || recs[recs.length - 1].to_state !== "BLOCKED") return false;
+    return recs.every((r) => ["PLANNED", "RESERVED", "BLOCKED"].includes(r.to_state));
+  }
+
+  _latestByTrial() {
+    const byTrial = new Map();
+    for (const r of this.records) byTrial.set(r.trial_id, r);
+    return byTrial;
+  }
+
+  /** A service has an outstanding trial unless every trial is CLOSED or a pre-account skip. */
+  serviceHasOutstandingTrial(service_id) {
+    for (const [, r] of this._latestByTrial()) {
+      if (r.service_id !== service_id) continue;
+      if (r.to_state === "CLOSED") continue;
+      if (r.to_state === "BLOCKED" && this.isPreAccountSkip(r.trial_id)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  transition({ trial_id, service_id, to_state, actor, evidence = null, note = null, at = null, evaluation_id = null }) {
     const errors = [];
-    const from_state = this.currentState(trial_id);
+    const trialRecs = this._trialRecords(trial_id);
+    const from_state = trialRecs.length === 0 ? null : trialRecs[trialRecs.length - 1].to_state;
 
     if (!TRIAL_STATES.includes(to_state) && !TRIAL_EXCEPTIONS.includes(to_state)) {
       errors.push(`unknown state: ${to_state}`);
@@ -109,11 +222,32 @@ export class TrialLedger {
     if (from_state !== null && !LEGAL_TRANSITIONS[from_state]?.includes(to_state)) {
       errors.push(`illegal transition ${from_state} -> ${to_state}`);
     }
-    if (to_state === "PLANNED" && this.serviceHasTrial(service_id)) {
-      errors.push(`one trial per service: ${service_id} already has a trial`);
+    // Identity is immutable once PLANNED.
+    const expectedService = trialRecs.length === 0 ? null : trialRecs[0].service_id;
+    if (expectedService !== null && service_id !== expectedService) {
+      errors.push(`service identity is immutable: ${expectedService} != ${service_id}`);
     }
+    const expectedEval = trialRecs.length === 0 ? null : trialRecs[0].evaluation_id || null;
+    if (expectedEval !== null && evaluation_id !== null && evaluation_id !== expectedEval) {
+      errors.push(`evaluation identity is immutable: ${expectedEval} != ${evaluation_id}`);
+    }
+    if (to_state === "PLANNED" && this.serviceHasOutstandingTrial(service_id)) {
+      errors.push(`one trial per service: ${service_id} has an outstanding trial`);
+    }
+    if (to_state === "SIGNED_UP") {
+      if (!evidence || typeof evidence.account_identity !== "string" || !evidence.account_identity) {
+        errors.push("SIGNED_UP requires evidence.account_identity (account registration)");
+      }
+    }
+    const binding =
+      expectedService !== null
+        ? { account_identity: this.accountOf(trial_id), service_id: expectedService }
+        : null;
     if (to_state === "CANCEL_VERIFIED") {
-      errors.push(...validateCancellationEvidence(evidence).map((e) => `cancellation evidence: ${e}`));
+      errors.push(...validateCancellationEvidence(evidence, binding).map((e) => `cancellation evidence: ${e}`));
+    }
+    if (to_state === "CLEANED") {
+      errors.push(...validateCleanupEvidence(evidence, binding).map((e) => `cleanup evidence: ${e}`));
     }
     if (to_state === "CLOSED" && from_state !== "CLEANED") {
       errors.push("CLOSED requires CLEANED (cancellation evidence verified first)");
@@ -123,18 +257,17 @@ export class TrialLedger {
 
     if (errors.length > 0) return { ok: false, errors };
 
-    const entry = {
-      seq: this.records.length,
+    const entry = this.store.append({
       trial_id,
-      service_id,
+      service_id: expectedService || service_id,
       from_state,
       to_state,
       actor,
       at: at || new Date().toISOString(),
-      evidence,
+      evidence: evidence ? JSON.parse(JSON.stringify(evidence)) : null,
       note,
-    };
-    this.records.push(entry);
+      evaluation_id: expectedEval || evaluation_id || null,
+    });
     return { ok: true, entry };
   }
 
@@ -143,14 +276,21 @@ export class TrialLedger {
     return this.currentState(trial_id) === "CLOSED";
   }
 
-  /** Trials with outstanding obligations (account open, card held, etc.). */
+  /**
+   * Trials with outstanding obligations. A post-account BLOCKED_UNRESOLVED
+   * stays outstanding — the account was never cancelled.
+   */
   outstanding() {
-    const byTrial = new Map();
-    for (const r of this.records) {
-      byTrial.set(r.trial_id, r.to_state);
+    const out = [];
+    for (const [trial_id, r] of this._latestByTrial()) {
+      if (r.to_state === "CLOSED") continue;
+      if (r.to_state === "BLOCKED" && this.isPreAccountSkip(trial_id)) continue;
+      out.push({
+        trial_id,
+        state: r.to_state,
+        obligation: r.to_state === "BLOCKED_UNRESOLVED" ? "account_closure_required" : "completion_required",
+      });
     }
-    return [...byTrial.entries()]
-      .filter(([, s]) => s !== "CLOSED" && s !== "BLOCKED")
-      .map(([trial_id, state]) => ({ trial_id, state }));
+    return out;
   }
 }

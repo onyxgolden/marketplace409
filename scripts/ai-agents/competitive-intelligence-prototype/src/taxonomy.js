@@ -126,6 +126,21 @@ export const PROPOSITIONS = Object.freeze(
 
 export const PROPOSITION_IDS = Object.freeze(Object.keys(PROPOSITIONS));
 
+/**
+ * Canonical digest of the taxonomy. Admission (compare.js) requires the
+ * caller's feature_taxonomy_ref.digest to match exactly — the comparison
+ * must run against this taxonomy, not a caller-substituted one.
+ */
+import { createHash as __createHash } from "node:crypto";
+export const TAXONOMY_DIGEST = __createHash("sha256")
+  .update(
+    JSON.stringify(
+      PROPOSITION_IDS.map((id) => [id, PROPOSITIONS[id].text]),
+    ),
+    "utf8",
+  )
+  .digest("hex");
+
 /** Known synonym map — preserves the source's weaker exact meaning (§5). */
 export const SYNONYM_MAP = Object.freeze({
   "rbac": ["role-based access control", "user roles", "permission levels"],
