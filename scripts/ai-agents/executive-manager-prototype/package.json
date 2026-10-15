@@ -1,0 +1,13 @@
+{
+  "description": "Executive Manager Agent Phase 2 slice 1 synthetic prototype: inert DRAFT executive rollup over synthetic status-report fixtures (source-label-faithful derived statements on two independent axes, dedup-exact-identity-value metric totals with disjoint-population sum gating, header-claim comparisons at their own grain, full-quotation contradictions). Advisory only; no task assignment, no tracker writes, no approvals, no network, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "executive-manager-prototype",
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
