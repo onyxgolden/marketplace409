@@ -1,0 +1,133 @@
+{
+  "corpus_digest": "fbe0ecf1be3f2be33a11f04884190da8d6943d707561e7479266687dc3eb1e7e",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "b3753552cec9ed635945513e3bed7c04619c3f776d7ec808525fa0232b3a5995"
+    },
+    {
+      "path": "corpus/battery.json",
+      "sha256": "6fc70fea4e9cde03d9b7e366f25ea469a43eea464d5ee1cef522bd035a8e2bc8"
+    },
+    {
+      "path": "corpus/freeze-corpus.js",
+      "sha256": "79e36b1b90dca3ad171edea904473d522800d516f119c0db85351b6dbbca7305"
+    },
+    {
+      "path": "corpus/make-battery.js",
+      "sha256": "58809f3acdda3a7ed7ee3f90a58fe42f5f23661df0a49abf75a09671810b6aa0"
+    },
+    {
+      "path": "fixtures/make-fixtures.js",
+      "sha256": "5a66b9658eba4fb554848fe2259f4a3dd897c84933ff2ad7313a0a65461068de"
+    },
+    {
+      "path": "fixtures/store.json",
+      "sha256": "bc336f83012bc7ecb8ca59f63c865baddaaea5c6b13efa8887f95ccfad79f60e"
+    },
+    {
+      "path": "package.json",
+      "sha256": "a7f87aaf0c884e2fdfbce3800420b8f971fe92700d1e38d49d21b5b1ebe33588"
+    },
+    {
+      "path": "runner/run-manual.js",
+      "sha256": "da97feaf0be823edd88f715d18c5b3e9b0a05108f664b93cc5bd220e54af0a3f"
+    },
+    {
+      "path": "src/canonical.js",
+      "sha256": "e453659aa11d17e057ed53f6d34ed7158d0226c2fb739eb38731a1e9adeb2f8c"
+    },
+    {
+      "path": "src/drafts.js",
+      "sha256": "19477fdeb708e83b940304fbaeb6e1a4df445b2a75579a62276475dda74a8622"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "eff256fcc14cdd333e8210d12416b717f1469f57f46b27f3cd3aa4f98c0cb7fa"
+    },
+    {
+      "path": "src/injection.js",
+      "sha256": "94fe257935d8f16da01657c308837cbac99fa681e598f437b4bdc49e560fc44d"
+    },
+    {
+      "path": "src/markdown.js",
+      "sha256": "a0bf81c0a62c61be60c3bc13cf790a1528a8fe2678679383efaaabc470065b82"
+    },
+    {
+      "path": "src/metrics.js",
+      "sha256": "5141ed7878dff49db9cedd5f139c4e3088f0db20dd3e634c0698773c564d2bf0"
+    },
+    {
+      "path": "src/resolver.js",
+      "sha256": "5008ce98bd72620d2d8f03572a0d262f16a926d6f9331c2a1de382469de19131"
+    },
+    {
+      "path": "src/schemas.js",
+      "sha256": "a3437ca2b3c2826f9f3c6c30dda9c21eed0c411b9b4e798f2f5e10e62474cf57"
+    },
+    {
+      "path": "src/taxonomy.js",
+      "sha256": "49249b3efd8b4d3f1b34f215911b96ea22e4298b30bab61d6feddda6c4b26b88"
+    },
+    {
+      "path": "tests/battery.test.js",
+      "sha256": "034343d2d64cd1ef1b76c5ef4eb1bcdba2b4671ff98da87f2741a197a02ac766"
+    },
+    {
+      "path": "tests/budgets.test.js",
+      "sha256": "19494771dc7e839a78f5d944cacaf00887efc0aa58332bd1d082e8cf2ad17012"
+    },
+    {
+      "path": "tests/case-worker.js",
+      "sha256": "eea342cc81a65e27899ded95ab05c39d3fb65aa67411346d0060f345caf113f2"
+    },
+    {
+      "path": "tests/determinism.test.js",
+      "sha256": "e5560280424566ff48d57d4cda22ecdd0fdef59f330a619e3ca798ecbb5019d2"
+    },
+    {
+      "path": "tests/drafts.test.js",
+      "sha256": "5955481d9db10b367038bf2a718909623d1db8f46d6edb428a71acd4cd822aa8"
+    },
+    {
+      "path": "tests/harness.js",
+      "sha256": "b0f426cb8b0012947eb94c755785017b8379a0a6b7953337282f5c717c02d451"
+    },
+    {
+      "path": "tests/injection.test.js",
+      "sha256": "438da6aca625785d90b8e93b10dd1d6e389f95ec250f4778448e848a7a0c7420"
+    },
+    {
+      "path": "tests/metrics.test.js",
+      "sha256": "9ecf1b7e40598b7405ee1322b4ea22c4aa4905d58f6f85813d55b045015ba0c9"
+    },
+    {
+      "path": "tests/mutation.test.js",
+      "sha256": "b7675db4531b0401def81c6d0e4e5d7b02d9f03718bf3d196ed8164f691e57d2"
+    },
+    {
+      "path": "tests/run-battery.js",
+      "sha256": "ba08bec45130fbda94bcdd2cc4e176fdce1ee871a1473310f0aa87a6cd1e4e12"
+    },
+    {
+      "path": "tests/run-tests.js",
+      "sha256": "7ce0f3f43685327cec3cd290874a8dbd27c07d17adc90d684e113be8bf700eb5"
+    },
+    {
+      "path": "tests/schemas.test.js",
+      "sha256": "f175ac8e22e2fc414abf3c2f34a820bf68ec9978d1b3c0b2ab6b05a17698c1ca"
+    },
+    {
+      "path": "tests/taxonomy.test.js",
+      "sha256": "9120409312c412b61ec43af229c6ba130ac5b522dcfdb9c3999e0568a848bf7f"
+    },
+    {
+      "path": "tests/watchdog.js",
+      "sha256": "dbb7cc5016ca3963910d11624af21a806f327095645f12696d713fd89641f453"
+    },
+    {
+      "path": "tests/zerotools.test.js",
+      "sha256": "d3a8fe4382c8212edc6a6b21c95bebec8082354a9518e2ab347d4c26d347050d"
+    }
+  ]
+}
