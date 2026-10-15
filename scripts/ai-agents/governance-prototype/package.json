@@ -1,0 +1,13 @@
+{
+  "description": "Governance agent Phase 2 slice 1 synthetic prototype: deterministic policy applicability and gate-evidence checklist over fixture registrations only. Advisory only; no authorization, execution, merge, deploy, activation, writes, model calls or live data.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "governance-prototype",
+  "scripts": {
+    "battery": "GOV_APPROVED_ROOT=406783ecd0ed48c8c663ea5e916d0eec67d33a94c231de27c8984a5a7a1ff4ce node tests/run-battery.js",
+    "test": "GOV_APPROVED_ROOT=406783ecd0ed48c8c663ea5e916d0eec67d33a94c231de27c8984a5a7a1ff4ce node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

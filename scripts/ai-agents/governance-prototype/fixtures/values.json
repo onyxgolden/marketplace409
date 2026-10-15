@@ -1,0 +1,133 @@
+{
+  "repo": "onyxgolden/marketplace409",
+  "clock": 1792011600000,
+  "clockFreeze": 1791961200000,
+  "heads": {
+    "pr:623": "9e74afdbc7ce6d90ff1ae22b4b8acc7d49e7d230",
+    "pr:700": "ff5338ac8c7ca6b4b483a4f6f4e8c73368e48595",
+    "pr:701": "6043976e1615d914e258ec786c749e127ca25b68",
+    "pr:705": "29cac311d48ab23b3468650af19ef84d7d56209a",
+    "pr:706": "5e3088b0185bc82a8faa77b2c03077d729b684e9",
+    "pr:707": "79ef63465f310ae878ad4af6d9215375b1224a8d",
+    "svc:forge-web": "c2316234c3d7098a3a9e5ec69d2a6098edaa0187",
+    "doc:onboarding-guide": "ab9ccd136f0644b4aa1922b3c07b9f2d3ad49744",
+    "ledger:tenant-accounts": "5d8eccaef0247c629cfc9c359705840a4586f2f6"
+  },
+  "policyIds": [
+    "policy:merge-gate@2",
+    "policy:merge-gate@1",
+    "policy:freeze-window@1",
+    "policy:propose-open@1",
+    "policy:read-docs@1",
+    "policy:tenant-finance-block@1",
+    "policy:jason-restricted@1",
+    "policy:merge-open@1"
+  ],
+  "registrationIds": [
+    "reg:merge-gate-v2",
+    "reg:merge-gate-v1",
+    "reg:freeze-window-v1",
+    "reg:propose-open-v1",
+    "reg:read-docs-v1",
+    "reg:tenant-finance-block-v1",
+    "reg:jason-restricted-v1"
+  ],
+  "verdictIds": [
+    "verdict:chatgpt-go-623",
+    "verdict:chatgpt-go-700",
+    "verdict:chatgpt-go-706-old",
+    "verdict:chatgpt-nogo-706",
+    "verdict:chatgpt-go-707",
+    "verdict:claude-note-701"
+  ],
+  "agreementIds": [
+    "agreement:muse-623",
+    "agreement:muse-707"
+  ],
+  "relayIds": [
+    "relay:jason-via-muse"
+  ],
+  "evidenceIds": [
+    "ev:clean-note-1",
+    "ev:clean-note-2",
+    "ev:directive-1",
+    "ev:directive-2",
+    "ev:policy-claim-merge-v99",
+    "ev:policy-claim-merge-v2",
+    "ev:tampered-1"
+  ],
+  "headSourceRefs": {
+    "pr:623": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/pr-623.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "44d624a4f0f9865ba77afe74eebbc08072d3dd50",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "pr:700": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/pr-700.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "fb3b884a443fc3f408ecf27d5f0df398dd2f6280",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "pr:701": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/pr-701.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "86f5bf79762bc817709175a692455d9aae37ece6",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "pr:705": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/pr-705.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "96d3d7381202d86947b41d703f3f4dd26cd882f2",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "pr:706": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/pr-706.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "93f39e5428cce292c308c966689d6806171da54e",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "pr:707": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/pr-707.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "426c1b17a00810e4440c8551c10e0710f4963718",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "svc:forge-web": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/svc-forge-web.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "de9714b9f81905fbdc7c9d49c1a16e10e5b6bda0",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "doc:onboarding-guide": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/doc-onboarding-guide.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "29741ff2a3a112c3751d6bac752f247bc6c7aaf3",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "ledger:tenant-accounts": {
+      "repo": "onyxgolden/marketplace409",
+      "path": "targets/ledger-tenant-accounts.md",
+      "commit": "776f64e5300dcbf55aec291a7046ff7274948cdc",
+      "blob": "057cac17f98f36b648643f2ec2bc1603aec464de",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    }
+  }
+}
