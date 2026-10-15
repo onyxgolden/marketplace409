@@ -8,10 +8,17 @@
  * canonical JSON bytes of the fixture content (Git blob header, not plain
  * SHA-1). Refs outside the approved fixture roots (e.g. a live-ledger
  * probe) are refused as ACTION_DENIED before any read.
+ *
+ * FM-005 (round 5): resolveRef performs the registry lookup ONLY. It must
+ * not traverse fixture content — no depth measurement, no canonicalization,
+ * no blob-pin check. Those integrity traversals inspect candidate records
+ * and therefore run in run() AFTER the consultation budget gate, which
+ * refuses BUDGET_EXCEEDED before over-budget candidates are ever read.
+ * The blob pin is verified by run() after the gate, over the bounded
+ * candidate set.
  */
 
 import { createHash } from "node:crypto";
-import { canonicalBytes, measureDepth } from "./canonical.js";
 
 export function gitBlobSha1(bytes) {
   const header = Buffer.from(`blob ${bytes.length}\0`, "utf8");
@@ -55,25 +62,8 @@ export function resolveRef(ref, store, approvedRepos) {
       reason: `no registered fixture for ${ref.repo} ${ref.path} @ ${ref.commit.slice(0, 12)}`,
     };
   }
-  // FM-005: bound traversal depth BEFORE recursive canonicalization.
-  // A pathologically nested fixture would otherwise throw RangeError
-  // (stack exhaustion) instead of producing a named refusal.
-  const depth = measureDepth(found.fixture.content);
-  if (!depth.ok) {
-    return {
-      ok: false,
-      code: "INPUT_TOO_DEEP",
-      reason: `fixture ${found.id} refused before traversal: ${depth.reason}`,
-    };
-  }
-  const bytes = canonicalBytes(found.fixture.content);
-  const recomputed = gitBlobSha1(bytes);
-  if (recomputed !== ref.blob) {
-    return {
-      ok: false,
-      code: "HASH_MISMATCH",
-      reason: `blob pin mismatch for fixture ${found.id}: expected ${ref.blob.slice(0, 12)}, recomputed ${recomputed.slice(0, 12)}`,
-    };
-  }
+  // FM-005 (round 5): return the fixture WITHOUT traversing its content.
+  // Depth, byte-cap and blob-pin integrity checks are enforced by run()
+  // after the consultation budget gate, over the bounded candidate set.
   return { ok: true, fixture: found.fixture, fixtureId: found.id, sourceRef: ref };
 }

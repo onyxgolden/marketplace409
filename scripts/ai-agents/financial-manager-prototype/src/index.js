@@ -12,7 +12,7 @@
  */
 
 import { validateTask, validateSection, validateClock } from "./schemas.js";
-import { resolveRef } from "./resolver.js";
+import { resolveRef, gitBlobSha1 } from "./resolver.js";
 import { scanInjection } from "./injection.js";
 import { canonicalBytes, measureDepth } from "./canonical.js";
 import {
@@ -907,7 +907,11 @@ export function run(task, context) {
   }
   const approvedRepos = Array.isArray(ctx.approvedRepos) ? ctx.approvedRepos : ["forge-ai-drop-fixtures"];
 
-  // 5. resolve bundle_refs through the scoped fixture resolver
+  // 5. resolve bundle_refs through the scoped fixture resolver.
+  //    FM-005 (round 5): the resolver performs the registry lookup ONLY —
+  //    it must not traverse fixture content. Every content traversal
+  //    (depth, byte cap, blob pin) inspects candidate records, so all of
+  //    them run AFTER the consultation budget gate in 5b.
   const resolved = [];
   for (const ref of task.bundle_refs) {
     const r = resolveRef(ref, ctx.fixtureStore, approvedRepos);
@@ -917,13 +921,29 @@ export function run(task, context) {
     resolved.push(r);
   }
 
-  // 5b. FM-005: the input byte cap covers the task envelope AND the exact
-  // registered fixture bytes actually consulted (canonical pinned bytes),
-  // charged BEFORE any schema traversal, dedup, arithmetic, injection
-  // scanning or rendering. A tiny task referencing a huge fixture is
-  // INPUT_LIMIT, not ordinary processing. Depth is bounded iteratively
-  // before the recursive canonicalizer runs, so adversarial nesting
-  // refuses by name instead of throwing RangeError.
+  // 5b. FM-005 (round 5): the consultation budget gate runs BEFORE any
+  //    integrity/depth/serialization traversal. planConsultations()
+  //    charges the single consultation budget INCREMENTALLY before each
+  //    candidate object is inspected; the 65th charge refuses
+  //    BUDGET_EXCEEDED immediately, before that candidate or anything
+  //    after it is touched. No public-path traversal may inspect
+  //    candidate records before this gate.
+  const planned = planConsultations(resolved, task, taskId);
+  if (!planned.ok) {
+    return planned.refusal;
+  }
+  const sections = planned.sections;
+
+  // 5c. FM-005 (round 5): integrity traversals, preserved but AFTER the
+  //    budget gate. The gate above already bounded the candidate set to
+  //    within-budget records, so depth measurement, canonicalization
+  //    (byte cap) and the blob-pin check can only inspect records the
+  //    budget has already authorized. Hash validation and the byte/depth
+  //    limits are kept — only their position moved, so no unchecked
+  //    object traversal precedes the consultation limit.
+  //    Depth is bounded iteratively before the recursive canonicalizer
+  //    runs, so adversarial nesting refuses by name (INPUT_TOO_DEEP)
+  //    instead of throwing RangeError.
   let fixtureBytes = 0;
   for (const r of resolved) {
     const depth = measureDepth(r.fixture.content);
@@ -932,7 +952,12 @@ export function run(task, context) {
         sourceRefs: task.bundle_refs,
       });
     }
-    fixtureBytes += canonicalBytes(r.fixture.content).length;
+    const bytes = canonicalBytes(r.fixture.content);
+    const recomputed = gitBlobSha1(bytes);
+    if (recomputed !== r.sourceRef.blob) {
+      return refused(taskId, "HASH_MISMATCH", "error", `blob pin mismatch for fixture ${r.fixtureId}: expected ${r.sourceRef.blob.slice(0, 12)}, recomputed ${recomputed.slice(0, 12)}`);
+    }
+    fixtureBytes += bytes.length;
   }
   const totalInputBytes = inputBytes + fixtureBytes;
   if (totalInputBytes > INPUT_BYTE_LIMIT) {
@@ -943,16 +968,6 @@ export function run(task, context) {
       `input ${totalInputBytes} bytes (task ${inputBytes} + resolved fixtures ${fixtureBytes}) exceeds ${INPUT_BYTE_LIMIT}`
     );
   }
-
-  // 5c. FM-005 (round 4): SINGLE consultation budget, charged
-  // INCREMENTALLY before each candidate object is inspected — see
-  // planConsultations(). The 65th charge refuses immediately, before the
-  // item or anything after it is touched.
-  const planned = planConsultations(resolved, task, taskId);
-  if (!planned.ok) {
-    return planned.refusal;
-  }
-  const sections = planned.sections;
 
   // 6. validate sections (malformed tables deny the whole task).
   //    Array shapes were confirmed in 5c; this is deep field validation,

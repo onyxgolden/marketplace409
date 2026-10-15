@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "5e79ee3a2053d9e6a5acda69bc4d5dcb112536d8dab968e1b30b0580ac2e8be5",
+  "corpus_digest": "a3b687c8c46fd63b9b87bbfa54a147b700d08719d16feb2edd3bcc692442c772",
   "files": [
     {
       "path": "README.md",
@@ -51,7 +51,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "4aa4da73209b75316a270500601501b7b10fa50c128f1425c9aabe066e3aedbd"
+      "sha256": "e3418688575e660eddff393ba0a900f8223e76215396a986641c1e6639acb555"
     },
     {
       "path": "src/injection.js",
@@ -67,7 +67,7 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "a5f12fcc394021d0859d62c05945e10469a509900d55226a722464119fac98b0"
+      "sha256": "93bd24a7ae755991826405c02ac3f1eb747806b06c8b30b6523200d9a7d6eb63"
     },
     {
       "path": "src/schemas.js",
@@ -96,6 +96,10 @@
     {
       "path": "tests/fm-findings4.test.js",
       "sha256": "9a9c899e2d05a28dcb9c501d785e0d41641587c2a5a19b491754237b45446cc4"
+    },
+    {
+      "path": "tests/fm-findings5.test.js",
+      "sha256": "50dbb577ab64f5b7927f380523a16f0e1796fcf1415ca241f7e5b83139b226b6"
     },
     {
       "path": "tests/harness.js",
