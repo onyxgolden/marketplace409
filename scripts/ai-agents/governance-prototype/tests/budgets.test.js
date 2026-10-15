@@ -147,7 +147,7 @@ test("GOV-002: non-serializable context fails closed as invalid input, never thr
   assert.equal(r.status, "REFUSED");
 });
 
-test("GOV-003: grounded outputs cite the exact consulted SourceRefs", () => {
+test("GOV-003: grounded outputs cite the exact consulted SourceRefs", async () => {
   const context = buildContext(ROOT, { contextOverrides: null });
   const h = context.heads.find((x) => x.resource_id === "doc:onboarding-guide");
   const targetSourceRef = JSON.parse(JSON.stringify(h.source_ref));
@@ -170,25 +170,28 @@ test("GOV-003: grounded outputs cite the exact consulted SourceRefs", () => {
   assert.equal(r.status, "CLASSIFIED");
   assert.equal(r.validity, "GROUNDED");
   assert.ok(Array.isArray(r.source_refs) && r.source_refs.length > 0, "GROUNDED output must list consulted sources");
+  // GOV-003 residual (round 2): every listed item must be a VALID exact
+  // SourceRef through the shared schema validator — not just four fields.
+  const { validateSourceRef } = await import("../src/schemas.js");
   for (const s of r.source_refs) {
-    assert.ok(typeof s.repo === "string" && s.repo.length > 0);
-    assert.ok(typeof s.path === "string" && s.path.length > 0);
-    assert.ok(/^[0-9a-f]{40}$/.test(s.commit), "commit must be 40-hex");
-    assert.ok(/^[0-9a-f]{40}$/.test(s.blob), "blob must be 40-hex git sha1");
+    const v = validateSourceRef(s, "envelope.source_refs");
+    assert.equal(v.algorithm, "git-sha1");
+    assert.ok(typeof v.revision === "string" && v.revision.length > 0, "revision binding must be preserved");
+    assert.deepEqual(Object.keys(s).sort(), ["algorithm", "blob", "commit", "path", "repo", "revision"]);
   }
-  const keys = r.source_refs.map((s) => `${s.repo}|${s.path}|${s.commit}|${s.blob}`);
+  const keys = r.source_refs.map((s) => `${s.repo}|${s.path}|${s.commit}|${s.blob}|${s.algorithm}|${s.revision}`);
   assert.deepEqual(keys, [...keys].sort(), "source_refs must be deterministically ordered");
   assert.equal(new Set(keys).size, keys.length, "source_refs must not duplicate");
-  const tkey = `${targetSourceRef.repo}|${targetSourceRef.path}|${targetSourceRef.commit}|${targetSourceRef.blob}`;
-  assert.ok(keys.includes(tkey), "target source_ref must be cited");
-  const hkey = `${h.source_ref.repo}|${h.source_ref.path}|${h.source_ref.commit}|${h.source_ref.blob}`;
-  assert.ok(keys.includes(hkey), "head-registry source_ref must be cited");
+  const tkey = `${targetSourceRef.repo}|${targetSourceRef.path}|${targetSourceRef.commit}|${targetSourceRef.blob}|${targetSourceRef.algorithm}|${targetSourceRef.revision}`;
+  assert.ok(keys.includes(tkey), "target source_ref must be cited with full six-field identity");
+  const hkey = `${h.source_ref.repo}|${h.source_ref.path}|${h.source_ref.commit}|${h.source_ref.blob}|${h.source_ref.algorithm}|${h.source_ref.revision}`;
+  assert.ok(keys.includes(hkey), "head-registry source_ref must be cited with full six-field identity");
 });
 
 test("GOV-003: quarantined sources are dropped from the consulted list", async () => {
   const { makeBudget } = await import("../src/resolver.js");
   const b = makeBudget();
-  const sr = { repo: "r", path: "p", commit: "a".repeat(40), blob: "b".repeat(40) };
+  const sr = { repo: "r", path: "p", commit: "a".repeat(40), blob: "b".repeat(40), algorithm: "git-sha1", revision: "v1" };
   b.noteSourceRef(sr);
   b.noteSourceRef(sr); // idempotent
   assert.equal(b.listedSourceRefs().length, 1);

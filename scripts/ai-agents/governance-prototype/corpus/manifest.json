@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "cb66eeaad35cf36fb134b4a49082e85c99be09af34858dfc85226ff95c24dc8c",
+  "corpus_digest": "2bcef007d597a4c3334ce7bb52deb719c0d4b38389e58eaa78f44c1ce54d618b",
   "files": [
     {
       "path": "README.md",
@@ -67,7 +67,7 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "f8dc08fed4630fca2cf0a3953ac046db510e09259dcdd1abd596b35c755e51c6"
+      "sha256": "e7962f88a79a0d778a8fb498b12c1a7dde2b93046d5801faa4ce726f92d021e6"
     },
     {
       "path": "src/schemas.js",
@@ -83,7 +83,7 @@
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "d0fb344f9623d7d504e9d13a9373b82d28c327ba93594d895c2ce5bab0d601cc"
+      "sha256": "2b3f797e1f71987b86880e0a8df6106a241f163421f320ec8901f0cd7d0f2bb8"
     },
     {
       "path": "tests/case-worker.js",
@@ -120,6 +120,10 @@
     {
       "path": "tests/simulation.test.js",
       "sha256": "74146deeee698f190adef6a601ede079391c5c6e261f19ca815d32c2950d990e"
+    },
+    {
+      "path": "tests/sourceref.test.js",
+      "sha256": "3d61092ca570aa835abbb18d943a283c66b8fc275c071e5b703ccd9c718510b6"
     },
     {
       "path": "tests/watchdog.js",
