@@ -34,23 +34,31 @@ export function makeBudget() {
     spans: 0,
     // GOV-003: every SourceRef verified through resolveSourceRef is recorded
     // here so the output envelope can cite the exact consulted sources.
-    // Quarantined sources are dropped and never listed.
+    // Quarantined sources are dropped and never listed. The full six-field
+    // common SourceRef identity {repo,path,commit,blob,algorithm,revision}
+    // is preserved — truncating to four fields breaks the fixture
+    // revision/algorithm binding required by the provenance contract.
     sourceRefs: new Map(),
     noteSourceRef(sr) {
-      const key = `${sr.repo}|${sr.path}|${sr.commit}|${sr.blob}`;
+      const key = `${sr.repo}|${sr.path}|${sr.commit}|${sr.blob}|${sr.algorithm}|${sr.revision}`;
       if (!this.sourceRefs.has(key)) {
-        this.sourceRefs.set(key, { repo: sr.repo, path: sr.path, commit: sr.commit, blob: sr.blob });
+        this.sourceRefs.set(key, {
+          repo: sr.repo, path: sr.path, commit: sr.commit,
+          blob: sr.blob, algorithm: sr.algorithm, revision: sr.revision,
+        });
       }
     },
     dropSourceRef(sr) {
-      this.sourceRefs.delete(`${sr.repo}|${sr.path}|${sr.commit}|${sr.blob}`);
+      this.sourceRefs.delete(`${sr.repo}|${sr.path}|${sr.commit}|${sr.blob}|${sr.algorithm}|${sr.revision}`);
     },
     listedSourceRefs() {
       return [...this.sourceRefs.values()].sort((a, b) =>
         a.repo < b.repo ? -1 : a.repo > b.repo ? 1 :
         a.path < b.path ? -1 : a.path > b.path ? 1 :
         a.commit < b.commit ? -1 : a.commit > b.commit ? 1 :
-        a.blob < b.blob ? -1 : a.blob > b.blob ? 1 : 0
+        a.blob < b.blob ? -1 : a.blob > b.blob ? 1 :
+        a.algorithm < b.algorithm ? -1 : a.algorithm > b.algorithm ? 1 :
+        a.revision < b.revision ? -1 : a.revision > b.revision ? 1 : 0
       );
     },
     countPayload(value, label) {
