@@ -123,11 +123,31 @@ function relayBinding(c, tp, policyEntry, claimedIds) {
   let satisfied = false;
   const diags = [];
   const amount = Number(c.facts?.amount_usd ?? 0);
+  // PM-002: authority comes ONLY from a valid principal-authority
+  // registration — never from a display name or boolean field.
+  const authorityPrincipals = new Set();
+  for (const reg of trust.registrations ?? []) {
+    if (reg.kind === "principal-authority" && reg.pinned === true && reg.revoked !== true &&
+        Number.isFinite(reg.valid_from) && Number.isFinite(reg.expires_at) &&
+        reg.valid_from <= CLOCK && CLOCK < reg.expires_at &&
+        reg.authority === "escalation" && trust.principals[reg.subject_id]) {
+      authorityPrincipals.add(reg.subject_id);
+    }
+  }
+  // A relay record is usable only through a valid relay-record registration.
+  const registeredRecords = new Set();
+  for (const reg of trust.registrations ?? []) {
+    if (reg.kind === "relay-record" && reg.pinned === true && reg.revoked !== true &&
+        Number.isFinite(reg.valid_from) && Number.isFinite(reg.expires_at) &&
+        reg.valid_from <= CLOCK && CLOCK < reg.expires_at) {
+      registeredRecords.add(reg.subject_id);
+    }
+  }
   for (const rec of trust.relay_records) {
+    if (!registeredRecords.has(rec.record_id)) continue;
     if (rec.revoked === true) continue;
     if (!(rec.valid_from <= CLOCK && CLOCK < rec.expires_at)) continue;
-    const issuer = trust.principals[rec.issuer];
-    if (!issuer || issuer.authorizes_escalation !== true) continue;
+    if (!authorityPrincipals.has(rec.issuer)) continue;
     if (rec.resource !== c.case_id && !(rec.scope_ids ?? []).includes(c.property_fixture_id)) continue;
     if (!(rec.action_ids ?? []).includes(policyEntry.required_action)) continue;
     if (tp === "money" && Number.isFinite(rec.amount_limit_usd) && amount > rec.amount_limit_usd) continue;
@@ -141,15 +161,13 @@ function relayBinding(c, tp, policyEntry, claimedIds) {
       diags.push("AUTH_UNVERIFIED");
       continue;
     }
-    if (rec.revoked === true) diags.push("AUTH_UNVERIFIED");
+    if (!registeredRecords.has(claimed)) diags.push("AUTH_UNVERIFIED");
+    else if (rec.revoked === true) diags.push("AUTH_UNVERIFIED");
     else if (!(rec.valid_from <= CLOCK && CLOCK < rec.expires_at)) diags.push("STALE_EVIDENCE");
     else if (rec.resource !== c.case_id && !(rec.scope_ids ?? []).includes(c.property_fixture_id)) diags.push("TARGET_MISMATCH");
     else if (!(rec.action_ids ?? []).includes(policyEntry.required_action)) diags.push("TARGET_MISMATCH");
     else if (tp === "money" && Number.isFinite(rec.amount_limit_usd) && amount > rec.amount_limit_usd) diags.push("AUTH_UNVERIFIED");
-    else {
-      const issuer = trust.principals[rec.issuer];
-      if (!issuer || issuer.authorizes_escalation !== true) diags.push("AUTH_UNVERIFIED");
-    }
+    else if (!authorityPrincipals.has(rec.issuer)) diags.push("AUTH_UNVERIFIED");
   }
   return { evidence_ids: [...evidence].sort(), satisfied, diags };
 }

@@ -5402,7 +5402,7 @@
     }
   ],
   "note_texts": {
-    "SYN-NOTE-001": "Synthetic maintenance intake SYN-CASE-001 for SYN-PROP-01. Reported issue: dripping fixture at sink shutoff valve. Vendor estimate 0 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-001": "Café façade — naïve résumé: ¾″ pipe, 20°C ambient. Synthetic maintenance intake SYN-CASE-001 for SYN-PROP-01. Reported issue: dripping fixture at sink shutoff valve. Vendor estimate 0 USD. No safety flags. Fixture record only; no tenant PII.",
     "SYN-NOTE-002": "Synthetic maintenance intake SYN-CASE-002 for SYN-PROP-02. Reported issue: HVAC filter replacement due. Vendor estimate 45 USD. No safety flags. Fixture record only; no tenant PII.",
     "SYN-NOTE-003": "Synthetic maintenance intake SYN-CASE-003 for SYN-PROP-03. Reported issue: water heater pilot inspection. Vendor estimate 150 USD. Condition flags: emergency_safety. Fixture record only; no tenant PII.",
     "SYN-NOTE-004": "Synthetic maintenance intake SYN-CASE-004 for SYN-PROP-04. Reported issue: garage door spring wear noted. Vendor estimate 300 USD. No safety flags. Fixture record only; no tenant PII.",
@@ -5508,5 +5508,5 @@
     "SYN-NOTE-104": "Synthetic maintenance intake SYN-CASE-099 for SYN-PROP-06. Permission evidence for this case is absent in the trusted registry; the recommendation must stay UNGROUNDED.",
     "SYN-NOTE-105": "Synthetic maintenance intake SYN-CASE-100 for SYN-PROP-01. The fixture urgency configuration lists both an after-hours hold rule and an after-hours dispatch rule for this case; the agent must block rather than guess priority or authority."
   },
-  "commit_id": "ab0c315ce76ff708b14aa018434b9309dd4bb155"
+  "commit_id": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2"
 }

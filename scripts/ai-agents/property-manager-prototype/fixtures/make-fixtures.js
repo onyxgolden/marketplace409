@@ -110,7 +110,9 @@ for (let i = 0; i < 20; i++) {
   const tenantImpact = i % 3 === 0;
   const touchpoints = tenantImpact ? ["money", "tenant"] : ["money"];
   const noteA = addNote(
-    `Synthetic maintenance intake ${pad3(n)} for ${prop}. Reported issue: ${MAINT_ISSUES[i]}. ` +
+    // Non-ASCII fixture content (PM-001): citation byte spans must round-trip exactly.
+    (n === 1 ? `Café façade — naïve résumé: ¾″ pipe, 20°C ambient. ` : "") +
+      `Synthetic maintenance intake ${pad3(n)} for ${prop}. Reported issue: ${MAINT_ISSUES[i]}. ` +
       `Vendor estimate ${amount} USD. ${flags.length ? `Condition flags: ${flags.join(", ")}.` : "No safety flags."} ` +
       `Fixture record only; no tenant PII.`
   );
@@ -559,13 +561,37 @@ const store = {
 for (const c of cases) c.fixture_urgency = { table: urgency_table };
 store.commit_id = sha1(Buffer.from(`pm-fixture-commit-v1|${canonical({ ...store, commit_id: undefined })}`, "utf8"));
 
-const trust = {
-  principals: {
-    "SYN-ISSUER-JASON": { display: "Jason", authorizes_escalation: true },
-    "SYN-ISSUER-MUSE-RELAY": { display: "Muse (authorized relay)", authorizes_escalation: true },
-    "SYN-ISSUER-OPERATOR": { display: "property operator", authorizes_escalation: false },
-  },
-  relay_records: [
+const trustRepo = store.repo;
+const trustCommit = store.commit_id;
+const sourceRefFor = (path, objWithoutRef) => {
+  const bytes = Buffer.from(canonical(objWithoutRef), "utf8");
+  return {
+    repo: trustRepo,
+    path,
+    commit: trustCommit,
+    blob: gitBlobId(bytes),
+    algorithm: "git-sha1",
+    revision: "v1",
+  };
+};
+const stripRef = (obj) => {
+  const { source_ref, ...rest } = obj;
+  return rest;
+};
+
+const principals = {
+  "SYN-ISSUER-JASON": { display: "Jason" },
+  "SYN-ISSUER-MUSE-RELAY": { display: "Muse (authorized relay)" },
+  "SYN-ISSUER-OPERATOR": { display: "property operator" },
+};
+// Pin each principal's source bytes. Authority is conferred ONLY by a
+// valid principal-authority registration below — never by a display
+// name or a boolean field.
+for (const [pid, p] of Object.entries(principals)) {
+  p.source_ref = sourceRefFor(`principals/${pid}.json`, p);
+}
+
+const relay_records = [
     {
       record_id: "SYN-RELAY-001",
       issuer: "SYN-ISSUER-JASON",
@@ -698,8 +724,52 @@ const trust = {
       revoked: true,
       nonce: "nonce-relay-008",
     },
-  ],
-  registrations: [{ registration_id: "SYN-REG-001", store_id: "pm-fixtures-v1", pinned: true }],
+];
+// Pin each relay record's source bytes (blob covers the record WITHOUT
+// its own source_ref, avoiding circularity).
+for (const rec of relay_records) {
+  rec.source_ref = sourceRefFor(`relay-records/${rec.record_id}.json`, stripRef(rec));
+}
+
+// Pinned registrations: the separately injected authority set. A
+// principal confers escalation authority ONLY through a valid
+// principal-authority registration; a relay record is usable ONLY
+// through a valid relay-record registration. Display names and boolean
+// fields never create authority.
+const registrations = [];
+for (const pid of ["SYN-ISSUER-JASON", "SYN-ISSUER-MUSE-RELAY"]) {
+  registrations.push({
+    registration_id: `SYN-REG-AUTH-${pid.replace("SYN-ISSUER-", "")}`,
+    kind: "principal-authority",
+    subject_id: pid,
+    authority: "escalation",
+    source_ref: sourceRefFor(
+      `principals/${pid}.json`,
+      stripRef(principals[pid])
+    ),
+    pinned: true,
+    revoked: false,
+    valid_from: VALID_FROM,
+    expires_at: EXPIRES_AT,
+  });
+}
+for (const rec of relay_records) {
+  registrations.push({
+    registration_id: `SYN-REG-${rec.record_id.replace("SYN-RELAY-", "RELAY-")}`,
+    kind: "relay-record",
+    subject_id: rec.record_id,
+    source_ref: rec.source_ref,
+    pinned: true,
+    revoked: false,
+    valid_from: VALID_FROM,
+    expires_at: EXPIRES_AT,
+  });
+}
+
+const trust = {
+  principals,
+  relay_records,
+  registrations,
 };
 
 writeFileSync(join(ROOT, "fixtures", "store.json"), JSON.stringify(store, null, 2) + "\n");

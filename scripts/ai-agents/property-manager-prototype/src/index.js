@@ -15,7 +15,7 @@
  * false.
  */
 
-import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
+import { canonicalJson, sha256HexUtf8, canonicalByteLength, gitBlobId } from "./canonical.js";
 import { validateTask, validateContext, SchemaError, PROHIBITED_ACTIONS } from "./schemas.js";
 import { makeBudget, BudgetError, BUDGET_LIMITS } from "./resolver.js";
 import { scanRealIdentifiers } from "./injection.js";
@@ -26,6 +26,7 @@ import {
   checkScope,
   screenNote,
   buildAdvisory,
+  validateTrustRegistry,
 } from "./engine.js";
 
 export const AGENT_ID = "property-manager";
@@ -39,14 +40,47 @@ function taskIdOf(task) {
   }
 }
 
-function baseDenial(task, status, code, severity, reason, quarantine = []) {
+/**
+ * PM-004: bounded preflight byte/shape check before deep validation.
+ * Walks the submitted context with explicit depth, breadth, and node
+ * caps so an oversized or deeply nested structure is rejected with
+ * INPUT_LIMIT before it is ever traversed.
+ */
+function preflightContext(context, budget) {
+  const MAX_DEPTH = 10;
+  const MAX_NODES = 50000;
+  const MAX_BREADTH = 8192;
+  let nodes = 0;
+  const walk = (v, depth) => {
+    nodes += 1;
+    if (nodes > MAX_NODES) throw new BudgetError("INPUT_LIMIT", "context exceeds preflight node cap");
+    if (depth > MAX_DEPTH) throw new BudgetError("INPUT_LIMIT", "context exceeds preflight depth cap");
+    if (Array.isArray(v)) {
+      if (v.length > MAX_BREADTH) throw new BudgetError("INPUT_LIMIT", "context array exceeds preflight breadth cap");
+      for (const el of v) walk(el, depth + 1);
+    } else if (v !== null && typeof v === "object") {
+      const keys = Object.keys(v);
+      if (keys.length > MAX_BREADTH) throw new BudgetError("INPUT_LIMIT", "context object exceeds preflight breadth cap");
+      for (const k of keys) {
+        if (k.length > 512) throw new BudgetError("INPUT_LIMIT", "context key exceeds preflight length cap");
+        walk(v[k], depth + 1);
+      }
+    } else if (typeof v === "string" && v.length > 262144) {
+      throw new BudgetError("INPUT_LIMIT", "context string exceeds preflight length cap");
+    }
+  };
+  walk(context, 0);
+}
+
+function baseDenial(task, status, code, severity, reason, quarantine = [], budget = null) {
   return {
     schema_version: SCHEMA_VERSION,
     agent: AGENT_ID,
     task_id: taskIdOf(task),
     advisory: true,
     fixture_only: true,
-    source_refs: [],
+    // PM-005: every consulted source is identified, even on denial.
+    source_refs: budget ? budget.sourceRefs() : [],
     status,
     diagnostics: [{ code, severity, source_ref: null, record_id: null, reason }],
     quarantined_sources: quarantine,
@@ -58,15 +92,24 @@ function baseDenial(task, status, code, severity, reason, quarantine = []) {
   };
 }
 
-function envelope(task, payload) {
+function envelope(task, payload, budget) {
+  // PM-005: revalidate every consulted source at emission; a failed
+  // binding means the result cannot be complete.
+  let complete = payload.complete;
+  try {
+    budget.revalidateSources(gitBlobId);
+  } catch {
+    complete = false;
+  }
   return {
     schema_version: SCHEMA_VERSION,
     agent: AGENT_ID,
     task_id: taskIdOf(task),
     advisory: true,
     fixture_only: true,
-    source_refs: [],
+    source_refs: budget.sourceRefs(),
     ...payload,
+    complete,
   };
 }
 
@@ -102,9 +145,12 @@ export function run(task, context) {
   let budget;
   try {
     budget = makeBudget();
-    budget.countPayload(canonicalByteLength(task), "task payload");
+    // PM-004: charge the task envelope against the cumulative input budget,
+    // then run the bounded preflight before any deep validation/traversal.
+    budget.countInputBytes(canonicalByteLength(task), "task payload");
+    preflightContext(context, budget);
   } catch (e) {
-    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", e.message);
+    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", e.message, [], budget);
     throw e;
   }
 
@@ -120,7 +166,9 @@ export function run(task, context) {
       "REFUSED",
       "INVALID_INPUT",
       "critical",
-      `task carries unregistered identifier content (${realId.kind}); fixture cases use invented SYN-* IDs only`
+      `task carries unregistered identifier content (${realId.kind}); fixture cases use invented SYN-* IDs only`,
+      [],
+      budget
     );
   }
 
@@ -131,19 +179,24 @@ export function run(task, context) {
       "REFUSED",
       "ACTION_DENIED",
       "critical",
-      `prohibited action '${validated.requested_action}': this agent proposes recommendations only; it cannot charge, message, waive, edit, dispatch or advise legally`
+      `prohibited action '${validated.requested_action}': this agent proposes recommendations only; it cannot charge, message, waive, edit, dispatch or advise legally`,
+      [],
+      budget
     );
   }
   if (validated.requested_action !== "recommend") {
-    return baseDenial(task, "REFUSED", "UNSUPPORTED_TASK", "error", `unsupported requested_action '${validated.requested_action}': this agent only recommends`);
+    return baseDenial(task, "REFUSED", "UNSUPPORTED_TASK", "error", `unsupported requested_action '${validated.requested_action}': this agent only recommends`, [], budget);
   }
 
   let ctx;
   try {
     ctx = validateContext(context, budget);
+    // PM-002: resolve trust through pinned registrations before any use.
+    ctx.trustIndex = validateTrustRegistry(ctx.trustRegistry, ctx.clock, budget, ctx.caseStore.commit_id);
   } catch (e) {
-    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", `context: ${e.message}`);
-    if (e instanceof SchemaError) return baseDenial(task, "REFUSED", "INVALID_INPUT", "error", `context: ${e.message}`);
+    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", `context: ${e.message}`, [], budget);
+    if (e instanceof SchemaError) return baseDenial(task, "REFUSED", "INVALID_INPUT", "error", `context: ${e.message}`, [], budget);
+    if (e instanceof EngineRefusal) return baseDenial(task, e.status, e.code, e.severity, e.reason, e.quarantine, budget);
     throw e;
   }
 
@@ -162,19 +215,20 @@ export function run(task, context) {
       recommendations: advisory.recommendations,
       escalation_triggers: advisory.escalation_triggers,
       contradictions: advisory.contradictions,
-    });
+    }, budget);
     if (!finalEnvelopeWithinBudget(result)) {
-      return baseDenial(task, "REFUSED", "OUTPUT_LIMIT", "error", `final output envelope exceeds ${BUDGET_LIMITS.maxOutputBytes} bytes`);
+      return baseDenial(task, "REFUSED", "OUTPUT_LIMIT", "error", `final output envelope exceeds ${BUDGET_LIMITS.maxOutputBytes} bytes`, [], budget);
     }
     return result;
   } catch (e) {
     if (e instanceof EngineRefusal) {
-      return baseDenial(task, e.status, e.code, e.severity, e.reason, e.quarantine);
+      return baseDenial(task, e.status, e.code, e.severity, e.reason, e.quarantine, budget);
     }
-    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", e.message);
-    if (e instanceof SchemaError) return baseDenial(task, "REFUSED", "INVALID_INPUT", "error", e.message);
+    if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", e.message, [], budget);
+    if (e instanceof SchemaError) return baseDenial(task, "REFUSED", "INVALID_INPUT", "error", e.message, [], budget);
     throw e;
   }
 }
 
 export { validateTask, validateContext, BUDGET_LIMITS, canonicalJson, sha256HexUtf8, makeBudget };
+export { utf8ByteSlice, validateTrustRegistry } from "./engine.js";

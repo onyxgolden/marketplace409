@@ -111,3 +111,27 @@ test("re-pinned manifest with tampered content still fails against the original 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("PM-003: candidate tree carries no embedded approval root", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const blob = JSON.stringify(pkg.scripts);
+  assert.ok(!/PM_APPROVED_ROOT=[0-9a-f]{64}/.test(blob), "package.json scripts must not embed a digest root");
+  assert.ok(!/PM_APPROVED_ROOT=__DIGEST__/.test(blob), "package.json scripts must not embed a digest placeholder");
+  // freeze-corpus must not write the digest back into package.json.
+  const before = readFileSync(join(ROOT, "package.json"), "utf8");
+  const freeze = spawnSync(process.execPath, [join(ROOT, "corpus", "freeze-corpus.js")], { encoding: "utf8", timeout: 30000 });
+  assert.equal(freeze.status, 0, `freeze failed: ${freeze.stderr}`);
+  const after = readFileSync(join(ROOT, "package.json"), "utf8");
+  assert.equal(after, before, "freeze-corpus must not modify package.json");
+});
+
+test("PM-003: launchers fail closed when the approval root is absent", () => {
+  for (const launcher of ["tests/run-tests.js", "tests/run-battery.js"]) {
+    const child = spawnSync(process.execPath, [join(ROOT, launcher)], {
+      env: { ...process.env, PM_APPROVED_ROOT: "" },
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    assert.equal(child.status, 3, `${launcher} must exit 3 without a root`);
+  }
+});

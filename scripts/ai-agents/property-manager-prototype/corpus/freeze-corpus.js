@@ -3,14 +3,18 @@
  * freeze-corpus.js — AUTHORING TOOL (not part of the scored path).
  *
  * Recomputes corpus/manifest.json (sorted per-file SHA-256 pins) and the
- * corpus digest, writes corpus/corpus_digest.txt, and records the digest
- * as the separately trusted root in package.json's npm scripts. The
- * digest covers every pinned file EXCEPT package.json, which carries the
- * separately trusted root in its npm scripts (self-carry circularity);
- * package.json is still hash-pinned in the manifest.
+ * corpus digest, and writes corpus/corpus_digest.txt.
  *
- * Run after any corpus-affecting change, then record the new digest as
- * the reviewed root (package.json scripts + corpus_digest.txt).
+ * PM-003: the digest is NO LONGER recorded in package.json's npm
+ * scripts. The separately trusted approval root is a reviewer/host
+ * input (PM_APPROVED_ROOT env) supplied on the command line:
+ *   PM_APPROVED_ROOT=$(cat corpus/corpus_digest.txt) npm test
+ * The launchers fail closed (exit 3) when the root is absent. The
+ * digest covers every pinned file EXCEPT package.json (self-carry
+ * circularity); package.json is still hash-pinned in the manifest.
+ *
+ * Run after any corpus-affecting change, then communicate the new
+ * digest as the reviewed root through the normal review channel.
  */
 
 import { createHash } from "node:crypto";
@@ -37,25 +41,18 @@ for (const dir of ["corpus", "src", "runner", "fixtures", "tests"]) {
 }
 files.sort();
 
-// The digest covers every pinned file EXCEPT package.json (it carries the
-// separately trusted root in its npm scripts — self-carry circularity).
-// Compute the digest first, record it in package.json's scripts, and only
-// then hash package.json for its manifest pin, so the pin matches the
-// file the verifier will read.
+// The digest covers every pinned file EXCEPT package.json (self-carry
+// circularity). Compute the digest, then hash package.json for its
+// manifest pin, so the pin matches the file the verifier will read.
+// PM-003: the digest is NOT written into package.json; it travels to
+// reviewers through the normal review channel as PM_APPROVED_ROOT.
 const preEntries = files
   .filter((p) => p !== "package.json")
   .map((p) => ({ path: p, sha256: sha(readFileSync(join(ROOT, p))) }));
 const canonical = JSON.stringify(preEntries);
 const digest = sha(Buffer.from(canonical, "utf8"));
 
-// Record the digest as the separately trusted root in package.json scripts.
 const pkgPath = join(ROOT, "package.json");
-const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-for (const k of Object.keys(pkg.scripts ?? {})) {
-  pkg.scripts[k] = pkg.scripts[k].replace(/PM_APPROVED_ROOT=[0-9a-f]{64}|PM_APPROVED_ROOT=__DIGEST__/, `PM_APPROVED_ROOT=${digest}`);
-}
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-
 const entries = [...preEntries, { path: "package.json", sha256: sha(readFileSync(pkgPath)) }];
 entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 

@@ -5,8 +5,8 @@
   },
   "name": "property-manager-prototype",
   "scripts": {
-    "battery": "PM_APPROVED_ROOT=19ef9eacde70d506d989d4d1c1ece85ec9b0b6819af99c4b975676c0605c2858 node tests/run-battery.js",
-    "test": "PM_APPROVED_ROOT=19ef9eacde70d506d989d4d1c1ece85ec9b0b6819af99c4b975676c0605c2858 node tests/run-tests.js"
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
   },
   "type": "module",
   "version": "0.1.0"

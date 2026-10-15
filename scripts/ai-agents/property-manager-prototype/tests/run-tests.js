@@ -21,11 +21,13 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, dirname, normalize } from "node:path";
+import { join, dirname } from "node:path";
+import { isCleanRelPath } from "./cleanpath.js";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
 
 // 1. Separately trusted approval root: host input, never the candidate tree.
 const APPROVED_ROOT = process.env.PM_APPROVED_ROOT;
@@ -51,7 +53,7 @@ if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) 
       const p = e?.path;
       if (
         typeof p !== "string" || p.length === 0 || p.startsWith("/") || p.includes("\\") ||
-        normalize(p) !== p || p.startsWith("..") || p.includes("../") || seen.has(p)
+        !isCleanRelPath(p) || seen.has(p)
       ) { bad = `bad manifest entry: ${String(p)}`; break; }
       seen.add(p);
       let bytes;

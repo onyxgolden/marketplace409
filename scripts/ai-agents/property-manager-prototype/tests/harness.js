@@ -12,9 +12,11 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, normalize } from "node:path";
+import { join } from "node:path";
+import { isCleanRelPath } from "./cleanpath.js";
 import { pathToFileURL } from "node:url";
 import { runCaseWithWatchdog, watchdogRefusal } from "./watchdog.js";
+
 
 export class ManifestError extends Error {
   constructor(reason) {
@@ -39,7 +41,7 @@ export async function verifyManifest(root) {
     const p = e?.path;
     if (
       typeof p !== "string" || p.length === 0 || p.startsWith("/") || p.includes("\\") ||
-      normalize(p) !== p || p.startsWith("..") || p.includes("../") || seen.has(p)
+      !isCleanRelPath(p) || seen.has(p)
     ) {
       throw new ManifestError(`bad manifest entry: ${String(p)}`);
     }
