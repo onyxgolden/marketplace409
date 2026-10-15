@@ -181,7 +181,13 @@ export async function buildFixtureReport({ repo, handoffs, fixture, now, fixture
   }
 
   // 4. Pure projection over the ledger snapshot with the injected now.
-  const queue = projectQueue({ obligations: await repo.queueSnapshot(), now });
+  // Trusted Jason authorization records are injected by the host (here, the
+  // synthetic fixture); overrides resolve their authorityRef against them.
+  const queue = projectQueue({
+    obligations: await repo.queueSnapshot(),
+    now,
+    trustedAuthorizations: fixture.trustedAuthorizations || [],
+  });
 
   // 5. Deterministic report. Counts only — no PGlite internals, no wall clock.
   const obligationRows = await repo.listObligations();

@@ -110,3 +110,44 @@ export function assertUniqueStringArray(value, fieldName) {
   }
   return value;
 }
+
+// Structural validation for a priority override. This checks the SHAPE only:
+// required attribution fields, a non-empty authorityRef, no free-text
+// authority (caller self-attestation is rejected here, never honored), and a
+// well-formed rank. Trust resolution (is the authorityRef a real, Jason,
+// item-bound, unrevoked grant?) happens in the queue projection against
+// host-injected trusted records, and at the ledger write boundary the shape
+// alone is enforced so malformed overrides can never be persisted.
+export function assertOverrideStructure(override, id) {
+  if (override == null) return null;
+  if (typeof override !== "object" || Array.isArray(override)) {
+    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} must be an object`, { id });
+  }
+  const { rank = 0, actor, recordedAt, reason, authorityRef, authority } = override;
+  if (authority !== undefined) {
+    fail(
+      CODES.INVALID_OVERRIDE,
+      `Priority override for ${id} rejected: free-text authority is caller self-attestation; supply authorityRef`,
+      { id },
+    );
+  }
+  const missing = [];
+  if (typeof actor !== "string" || actor.trim() === "") missing.push("actor");
+  if (typeof recordedAt !== "string" || recordedAt.trim() === "") missing.push("recordedAt");
+  if (typeof reason !== "string" || reason.trim() === "") missing.push("reason");
+  if (typeof authorityRef !== "string" || authorityRef.trim() === "") missing.push("authorityRef");
+  if (missing.length > 0) {
+    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} rejected: missing ${missing.join(", ")}`, {
+      id,
+      missing,
+    });
+  }
+  assertUtcIso(recordedAt, `override.recordedAt for ${id}`);
+  if (!Number.isInteger(rank) || rank < 0) {
+    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} rejected: rank must be a non-negative integer`, {
+      id,
+      rank,
+    });
+  }
+  return { rank, actor, recordedAt, reason, authorityRef };
+}

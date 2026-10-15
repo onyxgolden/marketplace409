@@ -3,9 +3,10 @@
 Generated from `migrations/001_team_brain_schema.sql`. Do not hand-edit;
 regenerate with `node scripts/team-brain/report/generateSchemaSnapshot.mjs` (local only).
 
-## tables (5)
+## tables (6)
 - team_brain_handoff_events
 - team_brain_handoffs
+- team_brain_obligation_dependencies
 - team_brain_obligation_events
 - team_brain_obligations
 - team_brain_schema_version
@@ -32,6 +33,7 @@ constraints:
 - team_brain_handoff_events_handoff_id_not_null: CHECK check(handoff_id IS NOT NULL)
 - team_brain_handoff_events_pkey: PRIMARY KEY
 - team_brain_handoff_events_reason_not_null: CHECK check(reason IS NOT NULL)
+- team_brain_handoff_events_recorded_at_check: CHECK check(team_brain_is_valid_utc_iso(recorded_at))
 - team_brain_handoff_events_recorded_at_not_null: CHECK check(recorded_at IS NOT NULL)
 - team_brain_handoff_events_seq_not_null: CHECK check(seq IS NOT NULL)
 - team_brain_handoff_events_to_state_not_null: CHECK check(to_state IS NOT NULL)
@@ -56,14 +58,31 @@ columns:
 - created_at: text nullable=NO default=none
 - updated_at: text nullable=NO default=none
 constraints:
+- team_brain_handoffs_created_at_check: CHECK check(team_brain_is_valid_utc_iso(created_at))
 - team_brain_handoffs_created_at_not_null: CHECK check(created_at IS NOT NULL)
 - team_brain_handoffs_handoff_id_not_null: CHECK check(handoff_id IS NOT NULL)
 - team_brain_handoffs_pkey: PRIMARY KEY
 - team_brain_handoffs_state_check: CHECK check((state = ANY (ARRAY['OPEN'::text, 'OUTCOME_WRITTEN'::text, 'READBACK_VERIFIED'::text, 'QUEUE_UPDATED'::text, 'COMPLETE'::text])))
 - team_brain_handoffs_state_not_null: CHECK check(state IS NOT NULL)
+- team_brain_handoffs_updated_at_check: CHECK check(team_brain_is_valid_utc_iso(updated_at))
 - team_brain_handoffs_updated_at_not_null: CHECK check(updated_at IS NOT NULL)
 indexes:
 - team_brain_handoffs_pkey
+
+## team_brain_obligation_dependencies
+
+columns:
+- obligation_id: text nullable=NO default=none
+- depends_on_id: text nullable=NO default=none
+constraints:
+- team_brain_obligation_dependencies_check: CHECK check((obligation_id <> depends_on_id))
+- team_brain_obligation_dependencies_depends_on_id_fkey: FOREIGN KEY
+- team_brain_obligation_dependencies_depends_on_id_not_null: CHECK check(depends_on_id IS NOT NULL)
+- team_brain_obligation_dependencies_obligation_id_fkey: FOREIGN KEY
+- team_brain_obligation_dependencies_obligation_id_not_null: CHECK check(obligation_id IS NOT NULL)
+- team_brain_obligation_dependencies_pkey: PRIMARY KEY
+indexes:
+- team_brain_obligation_dependencies_pkey
 
 ## team_brain_obligation_events
 
@@ -85,6 +104,7 @@ constraints:
 - team_brain_obligation_events_obligation_id_not_null: CHECK check(obligation_id IS NOT NULL)
 - team_brain_obligation_events_pkey: PRIMARY KEY
 - team_brain_obligation_events_reason_not_null: CHECK check(reason IS NOT NULL)
+- team_brain_obligation_events_recorded_at_check: CHECK check(team_brain_is_valid_utc_iso(recorded_at))
 - team_brain_obligation_events_recorded_at_not_null: CHECK check(recorded_at IS NOT NULL)
 - team_brain_obligation_events_seq_not_null: CHECK check(seq IS NOT NULL)
 indexes:
@@ -104,7 +124,6 @@ columns:
 - source_head: text nullable=YES default=none
 - state: text nullable=NO default='OPEN'::text
 - retention_disposition: text nullable=NO default=none
-- dependencies: text nullable=NO default='[]'::text
 - supersedes: text nullable=YES default=none
 - superseded_by: text nullable=YES default=none
 - priority_override: text nullable=YES default=none
@@ -112,8 +131,9 @@ columns:
 constraints:
 - team_brain_obligations_check: CHECK check(((supersedes IS NULL) OR (supersedes <> obligation_id)))
 - team_brain_obligations_check1: CHECK check(((superseded_by IS NULL) OR (superseded_by <> obligation_id)))
+- team_brain_obligations_created_at_check: CHECK check(team_brain_is_valid_utc_iso(created_at))
 - team_brain_obligations_created_at_not_null: CHECK check(created_at IS NOT NULL)
-- team_brain_obligations_dependencies_not_null: CHECK check(dependencies IS NOT NULL)
+- team_brain_obligations_filed_at_check: CHECK check(team_brain_is_valid_utc_iso(filed_at))
 - team_brain_obligations_filed_at_not_null: CHECK check(filed_at IS NOT NULL)
 - team_brain_obligations_kind_check: CHECK check((kind = ANY (ARRAY['TASK'::text, 'AUTHORIZATION'::text, 'VERDICT'::text, 'EVIDENCE'::text])))
 - team_brain_obligations_kind_not_null: CHECK check(kind IS NOT NULL)

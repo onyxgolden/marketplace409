@@ -3,6 +3,29 @@
 -- migrations/schema.snapshot.md is generated from it and verified by test.
 -- No production migration, no Supabase table, no live adapter belongs here.
 
+-- Strict UTC ISO-8601 timestamp guard, enforced at the schema boundary.
+-- Accepts YYYY-MM-DDTHH:MM:SS[.sss]Z only; rejects malformed strings and
+-- nonexistent calendar times (e.g. 2026-02-30) via a real timestamptz parse.
+create or replace function team_brain_is_valid_utc_iso(value text) returns boolean
+language plpgsql immutable as $$
+declare
+  parsed timestamptz;
+begin
+  if value is null then
+    return false;
+  end if;
+  if value !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$' then
+    return false;
+  end if;
+  begin
+    parsed := value::timestamptz;
+  exception when others then
+    return false;
+  end;
+  return true;
+end;
+$$;
+
 -- Migration bookkeeping.
 create table if not exists team_brain_schema_version (
   version integer primary key,
@@ -11,10 +34,14 @@ create table if not exists team_brain_schema_version (
 
 -- Obligations: tasks, authorizations, verdicts, evidence.
 -- Retention guard: there is no delete path and no TTL in this schema or its API.
+-- Timestamps are TEXT with a schema-level ISO-8601 + calendar validity check.
+-- Dependencies live in the normalized team_brain_obligation_dependencies
+-- edge table (real foreign keys, self-link refusal); there is no JSON
+-- dependencies column to drift out of sync.
 create table if not exists team_brain_obligations (
   obligation_id text primary key,
   kind text not null check (kind in ('TASK', 'AUTHORIZATION', 'VERDICT', 'EVIDENCE')),
-  filed_at text not null,
+  filed_at text not null check (team_brain_is_valid_utc_iso(filed_at)),
   source_repo text not null,
   source_path text not null,
   source_commit text,
@@ -23,13 +50,25 @@ create table if not exists team_brain_obligations (
   state text not null default 'OPEN'
     check (state in ('OPEN', 'IN_PROGRESS', 'CLOSED', 'REVOKED', 'SUPERSEDED')),
   retention_disposition text not null,
-  dependencies text not null default '[]',
   supersedes text references team_brain_obligations (obligation_id),
   superseded_by text references team_brain_obligations (obligation_id),
   priority_override text,
-  created_at text not null,
+  created_at text not null check (team_brain_is_valid_utc_iso(created_at)),
   check (supersedes is null or supersedes <> obligation_id),
   check (superseded_by is null or superseded_by <> obligation_id)
+);
+
+-- Dependency edges: durable referential integrity. Both ends must name
+-- existing obligations; self-links are refused by CHECK. The depends_on_id
+-- reference is DEFERRABLE so a validated atomic batch can file forward
+-- references (A depends on B filed later in the same transaction); the
+-- integrity check lands at commit. Single filings with unknown dependencies
+-- fail.
+create table if not exists team_brain_obligation_dependencies (
+  obligation_id text not null references team_brain_obligations (obligation_id),
+  depends_on_id text not null references team_brain_obligations (obligation_id) deferrable initially deferred,
+  primary key (obligation_id, depends_on_id),
+  check (obligation_id <> depends_on_id)
 );
 
 -- Append-only event history. Rows are never updated or deleted.
@@ -37,7 +76,7 @@ create table if not exists team_brain_obligation_events (
   seq integer generated always as identity primary key,
   obligation_id text not null references team_brain_obligations (obligation_id),
   actor text not null,
-  recorded_at text not null,
+  recorded_at text not null check (team_brain_is_valid_utc_iso(recorded_at)),
   event_type text not null,
   reason text not null,
   evidence_refs text not null default '[]',
@@ -61,8 +100,8 @@ create table if not exists team_brain_handoffs (
   queue_path text,
   queue_commit text,
   queue_blob text,
-  created_at text not null,
-  updated_at text not null
+  created_at text not null check (team_brain_is_valid_utc_iso(created_at)),
+  updated_at text not null check (team_brain_is_valid_utc_iso(updated_at))
 );
 
 create table if not exists team_brain_handoff_events (
@@ -71,7 +110,7 @@ create table if not exists team_brain_handoff_events (
   from_state text not null,
   to_state text not null,
   actor text not null,
-  recorded_at text not null,
+  recorded_at text not null check (team_brain_is_valid_utc_iso(recorded_at)),
   reason text not null,
   artifact_commit text,
   artifact_blob text,

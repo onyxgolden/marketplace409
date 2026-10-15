@@ -85,22 +85,71 @@ describe("queue semantics", () => {
     expect(err1.message).toBe(err2.message);
   });
 
-  it("AC-11: unattributed, partially attributed, and non-Jason overrides are rejected", () => {
+  it("AC-11: unattributed, self-attested, unknown, non-Jason, wrong-item, and revoked overrides are rejected", () => {
     const base = [item("a", "2026-10-14T10:00:00Z"), item("b", "2026-10-14T11:00:00Z")];
+    const trusted = [
+      { id: "authz-b", granter: "Jason", itemId: "b", revoked: false },
+      { id: "authz-revoked", granter: "Jason", itemId: "b", revoked: true },
+      { id: "authz-other", granter: "ChatGPT", itemId: "b", revoked: false },
+      { id: "authz-wrong-item", granter: "Jason", itemId: "a", revoked: false },
+    ];
     const cases = [
-      ["unattributed", { rank: 0, recordedAt: NOW, reason: "why", authority: "Jason" }, CODES.INVALID_OVERRIDE],
-      ["partially attributed", { rank: 0, actor: "Muse", recordedAt: NOW, authority: "Jason" }, CODES.INVALID_OVERRIDE],
-      ["non-Jason authority", { rank: 0, actor: "Muse", recordedAt: NOW, reason: "why", authority: "ChatGPT" }, CODES.INVALID_OVERRIDE],
-      ["malformed time", { rank: 0, actor: "Muse", recordedAt: "yesterday", reason: "why", authority: "Jason" }, CODES.MALFORMED_TIMESTAMP],
+      ["unattributed", { rank: 0, recordedAt: NOW, reason: "why", authorityRef: "authz-b" }, CODES.INVALID_OVERRIDE],
+      ["partially attributed", { rank: 0, actor: "Muse", recordedAt: NOW, authorityRef: "authz-b" }, CODES.INVALID_OVERRIDE],
+      [
+        "free-text self-attestation",
+        { rank: 0, actor: "Muse", recordedAt: NOW, reason: "why", authority: "Jason" },
+        CODES.INVALID_OVERRIDE,
+      ],
+      [
+        "forged Jason-prefix text",
+        { rank: 0, actor: "attacker", recordedAt: NOW, reason: "self-pin", authority: "Jason never authorized this" },
+        CODES.INVALID_OVERRIDE,
+      ],
+      [
+        "unknown authority ref",
+        { rank: 0, actor: "Muse", recordedAt: NOW, reason: "why", authorityRef: "authz-nope" },
+        CODES.UNKNOWN_AUTHORITY,
+      ],
+      [
+        "non-Jason granter",
+        { rank: 0, actor: "Muse", recordedAt: NOW, reason: "why", authorityRef: "authz-other" },
+        CODES.INVALID_OVERRIDE,
+      ],
+      [
+        "wrong-item authority",
+        { rank: 0, actor: "Muse", recordedAt: NOW, reason: "why", authorityRef: "authz-wrong-item" },
+        CODES.INVALID_OVERRIDE,
+      ],
+      [
+        "revoked authority",
+        { rank: 0, actor: "Muse", recordedAt: NOW, reason: "why", authorityRef: "authz-revoked" },
+        CODES.INVALID_OVERRIDE,
+      ],
+      [
+        "malformed time",
+        { rank: 0, actor: "Muse", recordedAt: "yesterday", reason: "why", authorityRef: "authz-b" },
+        CODES.MALFORMED_TIMESTAMP,
+      ],
     ];
     for (const [label, override, code] of cases) {
-      expect(() => projectQueue({ obligations: [base[0], { ...base[1], override }], now: NOW }), label).toThrowError(
-        expect.objectContaining({ code }),
-      );
+      expect(
+        () =>
+          projectQueue({
+            obligations: [base[0], { ...base[1], override }],
+            now: NOW,
+            trustedAuthorizations: trusted,
+          }),
+        label,
+      ).toThrowError(expect.objectContaining({ code }));
     }
   });
 
-  it("AC-12: a valid override records who/when/why/authority and reorders per the documented comparator", () => {
+  it("AC-12: a valid override records who/when/why/authorityRef and reorders per the documented comparator", () => {
+    const trusted = [
+      { id: "authz-new", granter: "Jason", itemId: "new", revoked: false },
+      { id: "authz-mid", granter: "Jason", itemId: "mid", revoked: false },
+    ];
     const obligations = [
       item("old", "2026-10-14T08:00:00Z"),
       item("new", "2026-10-14T15:00:00Z", {
@@ -109,7 +158,7 @@ describe("queue semantics", () => {
           actor: "Muse",
           recordedAt: "2026-10-14T16:00:00Z",
           reason: "Jason pinned this to the front",
-          authority: "Jason Morgan (direct word)",
+          authorityRef: "authz-new",
         },
       }),
       item("mid", "2026-10-14T12:00:00Z", {
@@ -118,11 +167,11 @@ describe("queue semantics", () => {
           actor: "Muse",
           recordedAt: "2026-10-14T16:05:00Z",
           reason: "Jason second priority",
-          authority: "Jason",
+          authorityRef: "authz-mid",
         },
       }),
     ];
-    const r = projectQueue({ obligations, now: NOW });
+    const r = projectQueue({ obligations, now: NOW, trustedAuthorizations: trusted });
     expect(r.ordered).toEqual(["new", "mid", "old"]);
     expect(r.overrides).toEqual([
       {
@@ -130,7 +179,7 @@ describe("queue semantics", () => {
         actor: "Muse",
         recordedAt: "2026-10-14T16:00:00Z",
         reason: "Jason pinned this to the front",
-        authority: "Jason Morgan (direct word)",
+        authorityRef: "authz-new",
         rank: 0,
       },
       {
@@ -138,10 +187,38 @@ describe("queue semantics", () => {
         actor: "Muse",
         recordedAt: "2026-10-14T16:05:00Z",
         reason: "Jason second priority",
-        authority: "Jason",
+        authorityRef: "authz-mid",
         rank: 1,
       },
     ]);
+  });
+
+  it("TB-005: override times compare by instant, not lexical string order", () => {
+    // '2026-10-14T16:00:00.001Z' sorts AFTER '2026-10-14T16:00:00Z' lexically
+    // ('.' < 'Z'), but it is 1ms LATER. Equal-rank overrides must order by
+    // epoch milliseconds, with equivalent representations tying.
+    const trusted = [
+      { id: "authz-a", granter: "Jason", itemId: "a", revoked: false },
+      { id: "authz-b", granter: "Jason", itemId: "b", revoked: false },
+      { id: "authz-c", granter: "Jason", itemId: "c", revoked: false },
+    ];
+    const mk = () => [
+      item("a", "2026-10-14T10:00:00Z", {
+        override: { rank: 0, actor: "Muse", recordedAt: "2026-10-14T16:00:00.001Z", reason: "r", authorityRef: "authz-a" },
+      }),
+      item("b", "2026-10-14T10:00:00Z", {
+        override: { rank: 0, actor: "Muse", recordedAt: "2026-10-14T16:00:00Z", reason: "r", authorityRef: "authz-b" },
+      }),
+      item("c", "2026-10-14T10:00:00Z", {
+        override: { rank: 0, actor: "Muse", recordedAt: "2026-10-14T16:00:00.000Z", reason: "r", authorityRef: "authz-c" },
+      }),
+    ];
+    const r1 = projectQueue({ obligations: mk(), now: NOW, trustedAuthorizations: trusted });
+    // b (16:00:00.000) and c (16:00:00.000, equivalent rep) tie -> id order; a (16:00:00.001) last.
+    expect(r1.ordered).toEqual(["b", "c", "a"]);
+    // Shuffled input yields the identical order (deterministic).
+    const r2 = projectQueue({ obligations: [...mk()].reverse(), now: NOW, trustedAuthorizations: trusted });
+    expect(r2.ordered).toEqual(r1.ordered);
   });
 
   it("AC-13: at exactly four hours no action is due; just after, one re-ping is due", () => {

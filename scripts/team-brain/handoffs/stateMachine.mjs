@@ -13,7 +13,12 @@
 // no live GitHub result and no live tracker.
 
 import { CODES, fail } from "../ledger/errors.mjs";
-import { artifactBindingsEqual, assertArtifactBinding, assertNonEmptyString, assertUtcIso } from "../ledger/validation.mjs";
+import {
+  artifactBindingsEqual,
+  assertArtifactBinding,
+  assertNonEmptyString,
+  assertUtcIso,
+} from "../ledger/validation.mjs";
 
 const STATES = ["OPEN", "OUTCOME_WRITTEN", "READBACK_VERIFIED", "QUEUE_UPDATED", "COMPLETE"];
 const NEXT = {
@@ -93,9 +98,41 @@ export function createHandoffMachine(db) {
     );
   }
 
+  // Does a committed step event exactly match the requested step identity?
+  // A step's identity is its target state plus the complete transition
+  // bindings (artifact and queue, where supplied) and the recorded
+  // attribution. Anything less is not an exact replay.
+  function stepEventMatches(ev, { actor, artifact, queue }) {
+    if (ev.actor !== actor) return false;
+    if (artifact) {
+      if (
+        ev.artifact_commit !== artifact.commit ||
+        ev.artifact_blob !== artifact.blob ||
+        ev.artifact_head !== artifact.head
+      ) {
+        return false;
+      }
+    }
+    if (queue) {
+      if (ev.queue_commit !== queue.commit || ev.queue_blob !== queue.blob) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // Core guarded transition. `apply` mutates the row columns for the step.
-  // Idempotent replay: if the row is already in `to` AND the step's bindings
-  // match what was recorded, return the existing state without a new event.
+  //
+  // Idempotent replay: if the requested step (target state + bindings +
+  // attribution) exactly matches a committed step event, the current state is
+  // returned without appending a second event — even when later transitions
+  // have since advanced the handoff. A retry after subsequent committed
+  // progress is recognized from history, never mistaken for a new transition.
+  //
+  // Conflicting replay: if the step was committed with different bindings or
+  // attribution, the replay is rejected. The queue binding is compared as
+  // well as the artifact binding, so a queue update that claims a new
+  // tracker commit cannot masquerade as idempotent.
   async function transition(id, to, { actor, recordedAt, reason, artifact, queue, apply }) {
     assertNonEmptyString(actor, "actor");
     assertUtcIso(recordedAt, "recordedAt");
@@ -103,15 +140,28 @@ export function createHandoffMachine(db) {
     return tx(async (t) => {
       const handoff = await requireHandoff(t, id);
       const from = handoff.state;
-      if (from === to) {
-        // Replay: bindings must agree exactly or it is a conflicting replay.
-        if (artifact && !artifactBindingsEqual(handoff.artifact, artifact)) {
-          fail(CODES.CONFLICTING_REPLAY, `Conflicting replay of ${id}: artifact binding changed since ${to}`, {
-            id,
-            to,
-          });
+      const stepEvents = await t.query(
+        "select * from team_brain_handoff_events where handoff_id = $1 and to_state = $2 order by seq asc",
+        [id, to],
+      );
+      let exactReplay = false;
+      let conflictingReplay = false;
+      for (const ev of stepEvents.rows) {
+        if (stepEventMatches(ev, { actor, artifact, queue })) {
+          exactReplay = true;
+          break;
         }
+        conflictingReplay = true;
+      }
+      if (exactReplay) {
         return handoff; // idempotent: no second event appended
+      }
+      if (conflictingReplay) {
+        fail(
+          CODES.CONFLICTING_REPLAY,
+          `Conflicting replay of ${id} step ${to}: bindings or attribution differ from the committed step`,
+          { id, to },
+        );
       }
       if (NEXT[from] !== to) {
         fail(CODES.SKIPPED_TRANSITION, `Handoff ${id} cannot move ${from} -> ${to}; expected ${NEXT[from]}`, {

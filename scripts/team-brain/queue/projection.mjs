@@ -6,44 +6,60 @@
 // REPORT_TO_JASON_SENT events before the next projection can advance.
 
 import { CODES, fail } from "../ledger/errors.mjs";
-import { utcIsoToMs } from "../ledger/validation.mjs";
+import { assertOverrideStructure, utcIsoToMs } from "../ledger/validation.mjs";
 
 export const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 
 const TERMINAL_STATES = new Set(["CLOSED", "REVOKED", "SUPERSEDED"]);
 
-// An override is valid only with full attribution AND a Jason authority
-// binding. Missing or malformed attribution is REJECTED, never ignored.
-const JASON_AUTHORITY_RE = /^\s*jason\b/i;
-
-export function validateOverride(id, override) {
-  if (override == null) return null;
-  const { rank = 0, actor, recordedAt, reason, authority } = override;
-  const missing = [];
-  if (typeof actor !== "string" || actor.trim() === "") missing.push("actor");
-  if (typeof recordedAt !== "string" || recordedAt.trim() === "") missing.push("recordedAt");
-  if (typeof reason !== "string" || reason.trim() === "") missing.push("reason");
-  if (typeof authority !== "string" || authority.trim() === "") missing.push("authority");
-  if (missing.length > 0) {
-    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} rejected: missing ${missing.join(", ")}`, {
+// An override is valid only when its authorityRef resolves against
+// host-injected trusted Jason authorization records. Each record binds a
+// grant to a specific obligation item; the projection rejects unknown refs,
+// non-Jason granters, wrong-item bindings, and revoked grants. Text that
+// merely begins with "Jason" is content, not authority, and is rejected at
+// the structural layer (see assertOverrideStructure).
+export function validateOverride(id, override, { trustedAuthorizations = [] } = {}) {
+  const structural = assertOverrideStructure(override, id);
+  if (structural == null) return null;
+  const { authorityRef } = structural;
+  const record = trustedAuthorizations.find((r) => r != null && r.id === authorityRef);
+  if (!record) {
+    fail(CODES.UNKNOWN_AUTHORITY, `Priority override for ${id} rejected: unknown authority reference ${authorityRef}`, {
       id,
-      missing,
+      authorityRef,
     });
   }
-  utcIsoToMs(recordedAt, `override.recordedAt for ${id}`);
-  if (!JASON_AUTHORITY_RE.test(authority)) {
-    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} rejected: authority does not bind Jason`, {
+  if (record.granter !== "Jason") {
+    fail(
+      CODES.INVALID_OVERRIDE,
+      `Priority override for ${id} rejected: authority ${authorityRef} is not a Jason grant`,
+      { id, authorityRef, granter: record.granter },
+    );
+  }
+  if (record.itemId !== id) {
+    fail(
+      CODES.INVALID_OVERRIDE,
+      `Priority override for ${id} rejected: authority ${authorityRef} binds item ${record.itemId}`,
+      { id, authorityRef, boundItem: record.itemId },
+    );
+  }
+  if (record.revoked) {
+    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} rejected: authority ${authorityRef} is revoked`, {
       id,
-      authority,
+      authorityRef,
     });
   }
-  if (!Number.isInteger(rank) || rank < 0) {
-    fail(CODES.INVALID_OVERRIDE, `Priority override for ${id} rejected: rank must be a non-negative integer`, {
-      id,
-      rank,
-    });
+  if (record.rank !== undefined && record.rank !== structural.rank) {
+    fail(
+      CODES.INVALID_OVERRIDE,
+      `Priority override for ${id} rejected: authority ${authorityRef} permits rank ${record.rank}`,
+      { id, authorityRef, permittedRank: record.rank, rank: structural.rank },
+    );
   }
-  return { rank, actor, recordedAt, reason, authority };
+  return {
+    ...structural,
+    recordedAtMs: utcIsoToMs(structural.recordedAt, `override.recordedAt for ${id}`),
+  };
 }
 
 // Deterministic cycle detection over the known-id graph. Fails closed with a
@@ -79,7 +95,7 @@ function detectCycle(items) {
   }
 }
 
-export function projectQueue({ obligations, now }) {
+export function projectQueue({ obligations, now, trustedAuthorizations = [] }) {
   const nowMs = utcIsoToMs(now, "now");
   const items = (obligations || []).map((o) => ({
     id: o.id,
@@ -90,7 +106,7 @@ export function projectQueue({ obligations, now }) {
     deps: [...(o.deps || [])],
     repingSent: !!o.repingSent,
     reportSent: !!o.reportSent,
-    override: validateOverride(o.id, o.override ?? null),
+    override: validateOverride(o.id, o.override ?? null, { trustedAuthorizations }),
   }));
 
   detectCycle(items);
@@ -167,9 +183,9 @@ export function projectQueue({ obligations, now }) {
   const byEffectiveAgeThenId = (a, b) =>
     a.effectiveFiledAtMs - b.effectiveFiledAtMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-  // Overrides reorder: override rank, override time, effective age, then id.
-  // Non-overridden items keep plain oldest-first order and always sort after
-  // overridden ones.
+  // Overrides reorder: override rank, override time (by instant, not lexical
+  // string order), effective age, then id. Non-overridden items keep plain
+  // oldest-first order and always sort after overridden ones.
   const overridden = [];
   const plain = [];
   for (const entry of actionable) {
@@ -179,8 +195,8 @@ export function projectQueue({ obligations, now }) {
   }
   overridden.sort((a, b) => {
     if (a.override.rank !== b.override.rank) return a.override.rank - b.override.rank;
-    if (a.override.recordedAt !== b.override.recordedAt) {
-      return a.override.recordedAt < b.override.recordedAt ? -1 : 1;
+    if (a.override.recordedAtMs !== b.override.recordedAtMs) {
+      return a.override.recordedAtMs - b.override.recordedAtMs;
     }
     return byEffectiveAgeThenId(a, b);
   });
@@ -226,7 +242,7 @@ export function projectQueue({ obligations, now }) {
       actor: e.override.actor,
       recordedAt: e.override.recordedAt,
       reason: e.override.reason,
-      authority: e.override.authority,
+      authorityRef: e.override.authorityRef,
       rank: e.override.rank,
     })),
   };

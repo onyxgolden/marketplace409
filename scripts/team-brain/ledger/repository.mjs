@@ -19,10 +19,12 @@ import { fileURLToPath } from "node:url";
 import { CODES, fail, TeamBrainError } from "./errors.mjs";
 import {
   assertNonEmptyString,
+  assertOverrideStructure,
   assertSourceBinding,
   assertStringArray,
   assertUniqueStringArray,
   assertUtcIso,
+  utcIsoToMs,
 } from "./validation.mjs";
 
 const KINDS = ["TASK", "AUTHORIZATION", "VERDICT", "EVIDENCE"];
@@ -37,7 +39,7 @@ function migrationSql() {
   return readFileSync(join(here, "..", "migrations", "001_team_brain_schema.sql"), "utf8");
 }
 
-function rowToObligation(row) {
+function rowToObligation(row, dependencies) {
   return {
     id: row.obligation_id,
     kind: row.kind,
@@ -51,7 +53,7 @@ function rowToObligation(row) {
     },
     state: row.state,
     retentionDisposition: row.retention_disposition,
-    dependencies: JSON.parse(row.dependencies || "[]"),
+    dependencies: dependencies || [],
     supersedes: row.supersedes,
     supersededBy: row.superseded_by,
     priorityOverride: row.priority_override ? JSON.parse(row.priority_override) : null,
@@ -82,7 +84,26 @@ export function createRepository(db) {
     if (!row) {
       fail(CODES.UNKNOWN_OBLIGATION, `Unknown obligation: ${id}`, { id });
     }
-    return rowToObligation(row);
+    return rowToObligation(row, await getDependencyIds(runner, id));
+  }
+
+  // Dependency edges live in the normalized table; the FKs enforce
+  // referential integrity and the CHECK refuses self-links at the schema.
+  async function getDependencyIds(runner, id) {
+    const res = await runner.query(
+      "select depends_on_id from team_brain_obligation_dependencies where obligation_id = $1 order by depends_on_id asc",
+      [id],
+    );
+    return res.rows.map((r) => r.depends_on_id);
+  }
+
+  async function insertDependencyEdges(runner, id, dependencies) {
+    for (const dep of dependencies) {
+      await runner.query(
+        "insert into team_brain_obligation_dependencies (obligation_id, depends_on_id) values ($1, $2)",
+        [id, dep],
+      );
+    }
   }
 
   function requireKind(obligation, kind, code) {
@@ -124,15 +145,7 @@ export function createRepository(db) {
     );
   }
 
-  async function hasEventType(runner, obligationId, eventType) {
-    const res = await runner.query(
-      "select 1 from team_brain_obligation_events where obligation_id = $1 and event_type = $2 limit 1",
-      [obligationId, eventType],
-    );
-    return res.rows.length > 0;
-  }
-
-  async function fileObligationRow(runner, record, createdAt) {
+  async function fileObligationRow(runner, record, createdAt, internal = {}) {
     const {
       id,
       kind,
@@ -148,7 +161,9 @@ export function createRepository(db) {
       fail(CODES.INVALID_KIND, `Invalid obligation kind: ${JSON.stringify(kind)}`, { kind });
     }
     assertUtcIso(filedAt, "filedAt");
-    assertSourceBinding(source);
+    // Every verdict must bind an exact reviewed head; a verdict without one
+    // is not a verdict the ledger can reason about.
+    assertSourceBinding(source, { requireHead: kind === "VERDICT" });
     assertNonEmptyString(retentionDisposition, "retentionDisposition");
     assertUniqueStringArray(dependencies, "dependencies");
     if (dependencies.includes(id)) {
@@ -159,21 +174,35 @@ export function createRepository(db) {
       if (supersedes === id) {
         fail(CODES.SELF_SUPERSESSION, `Obligation ${id} may not supersede itself`, { id });
       }
+      // Verdict supersession links are only creatable through the guarded
+      // supersedeVerdict transaction. A generic filing that smuggles one in
+      // would leave both records OPEN with a contradictory link.
+      if (kind === "VERDICT" && !internal.verdictSupersession) {
+        fail(
+          CODES.UNGUARDED_VERDICT_SUPERSESSION,
+          `Verdict ${id} may not be filed with a supersession link; use supersedeVerdict`,
+          { id, supersedes },
+        );
+      }
       // The superseded record must exist (referential integrity of the link).
       const target = await getRaw(runner, supersedes);
       if (!target) {
         fail(CODES.UNKNOWN_OBLIGATION, `Supersession target does not exist: ${supersedes}`, { id: supersedes });
       }
     }
-    if (priorityOverride !== null && typeof priorityOverride !== "object") {
-      fail(CODES.INVALID_FIELD, "priorityOverride must be an object when present", { id });
+    // Write-boundary override validation: malformed overrides (including
+    // free-text self-attested authority) are rejected here so they can never
+    // be persisted to poison later queue reads. Trust resolution against
+    // Jason authorization records happens in the queue projection.
+    if (priorityOverride !== null) {
+      assertOverrideStructure(priorityOverride, id);
     }
     try {
       await runner.query(
         `insert into team_brain_obligations
            (obligation_id, kind, filed_at, source_repo, source_path, source_commit, source_blob,
-            source_head, state, retention_disposition, dependencies, supersedes, priority_override, created_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,'OPEN',$9,$10,$11,$12,$13)`,
+            source_head, state, retention_disposition, supersedes, priority_override, created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'OPEN',$9,$10,$11,$12)`,
         [
           id,
           kind,
@@ -184,7 +213,6 @@ export function createRepository(db) {
           source.blob ?? null,
           source.head ?? null,
           retentionDisposition,
-          JSON.stringify(dependencies),
           supersedes,
           priorityOverride ? JSON.stringify(priorityOverride) : null,
           createdAt,
@@ -197,6 +225,23 @@ export function createRepository(db) {
       }
       throw err;
     }
+    // Dependency edges: the FK to team_brain_obligations enforces that every
+    // dependency names a real obligation; the CHECK refuses self-links. For a
+    // single filing, unknown dependencies are rejected here with a typed
+    // error. A batch filing (allowForwardRefs) may reference obligations
+    // filed later in the same transaction; the deferred FK lands at commit.
+    if (!internal.allowForwardRefs) {
+      for (const dep of dependencies) {
+        const target = await getRaw(runner, dep);
+        if (!target) {
+          fail(CODES.UNKNOWN_OBLIGATION, `Unknown dependency ${dep} for obligation ${id}`, {
+            id,
+            dependency: dep,
+          });
+        }
+      }
+    }
+    await insertDependencyEdges(runner, id, dependencies);
     await insertEvent(runner, id, {
       actor: record.filedBy || "system",
       recordedAt: filedAt,
@@ -219,15 +264,40 @@ export function createRepository(db) {
       return tx((t) => fileObligationRow(t, record, createdAt || record.filedAt));
     },
 
+    // File multiple obligations atomically. Forward references (A depends on
+    // B filed later in the same batch) are permitted; the deferred FK
+    // validates the complete graph at commit. A single filing with an unknown
+    // dependency still fails.
+    async fileObligationBatch(records, createdAt) {
+      if (!Array.isArray(records) || records.length === 0) {
+        fail(CODES.INVALID_FIELD, "fileObligationBatch requires a non-empty array of records", {});
+      }
+      return tx(async (t) => {
+        const created = [];
+        for (const record of records) {
+          created.push(
+            await fileObligationRow(t, record, createdAt || record.filedAt, { allowForwardRefs: true }),
+          );
+        }
+        return created;
+      });
+    },
+
     async getObligation(id) {
       return tx((t) => requireObligation(t, id));
     },
 
     async listObligations() {
-      const res = await db.query(
-        "select * from team_brain_obligations order by filed_at asc, obligation_id asc",
+      const res = await db.query("select * from team_brain_obligations order by filed_at asc, obligation_id asc");
+      const depRes = await db.query(
+        "select obligation_id, depends_on_id from team_brain_obligation_dependencies order by obligation_id asc, depends_on_id asc",
       );
-      return res.rows.map(rowToObligation);
+      const depMap = new Map();
+      for (const r of depRes.rows) {
+        if (!depMap.has(r.obligation_id)) depMap.set(r.obligation_id, []);
+        depMap.get(r.obligation_id).push(r.depends_on_id);
+      }
+      return res.rows.map((row) => rowToObligation(row, depMap.get(row.obligation_id) || []));
     },
 
     async getEvents(id) {
@@ -285,11 +355,16 @@ export function createRepository(db) {
       });
     },
 
-    // Verification step for a task. Distinct from close: close requires a
-    // prior VERIFICATION event, so "evidence but no verification" is rejected.
+    // Verification step for a task. Binds the verified evidence references;
+    // empty evidence is rejected here so an empty verification can never
+    // satisfy a close. Distinct from close: close requires the closing
+    // evidence to be covered by recorded VERIFICATION events.
     async recordVerification(id, { verifier, verifiedAt, reason, evidenceRefs = [] }) {
       assertNonEmptyString(verifier, "verifier");
       assertStringArray(evidenceRefs, "evidenceRefs");
+      if (evidenceRefs.length === 0) {
+        fail(CODES.MISSING_EVIDENCE, `Verification for task ${id} requires non-empty evidence references`, { id });
+      }
       return tx(async (t) => {
         const ob = await requireObligation(t, id);
         requireKind(ob, "TASK", CODES.NOT_A_TASK);
@@ -305,8 +380,11 @@ export function createRepository(db) {
       });
     },
 
-    // Close a task: requires >=1 completion-evidence reference AND a prior
-    // VERIFICATION event. Atomic: state change and event in one transaction.
+    // Close a task: requires >=1 completion-evidence reference AND every
+    // closing reference to be covered by a recorded VERIFICATION event's
+    // evidence. The coverage check is atomic with the state change: a
+    // verification for evidence-A cannot close evidence-B, and an empty
+    // verification can never satisfy a close.
     async closeTask(id, { actor, recordedAt, reason, evidenceRefs = [] }) {
       assertStringArray(evidenceRefs, "evidenceRefs");
       return tx(async (t) => {
@@ -316,8 +394,24 @@ export function createRepository(db) {
         if (evidenceRefs.length === 0) {
           fail(CODES.MISSING_EVIDENCE, `Task ${id} cannot close without completion-evidence references`, { id });
         }
-        if (!(await hasEventType(t, id, "VERIFICATION"))) {
+        const verRes = await t.query(
+          "select evidence_refs from team_brain_obligation_events where obligation_id = $1 and event_type = 'VERIFICATION'",
+          [id],
+        );
+        if (verRes.rows.length === 0) {
           fail(CODES.NO_VERIFICATION, `Task ${id} cannot close without a recorded verification event`, { id });
+        }
+        const verified = new Set();
+        for (const r of verRes.rows) {
+          for (const ref of JSON.parse(r.evidence_refs || "[]")) verified.add(ref);
+        }
+        const uncovered = evidenceRefs.filter((ref) => !verified.has(ref));
+        if (uncovered.length > 0) {
+          fail(
+            CODES.UNVERIFIED_EVIDENCE,
+            `Task ${id} cannot close: evidence not covered by a recorded verification: ${uncovered.join(", ")}`,
+            { id, uncovered },
+          );
         }
         await t.query("update team_brain_obligations set state = 'CLOSED' where obligation_id = $1", [id]);
         await insertEvent(t, id, {
@@ -350,8 +444,9 @@ export function createRepository(db) {
       });
     },
 
-    // Supersede a verdict with a newer verdict at a NEW head. Same-head
-    // "supersession" is rejected; the old record is never rewritten.
+    // Supersede a verdict with a NEWER verdict at a NEW head. Same-head
+    // "supersession" is rejected, and so is a superseding verdict that is not
+    // strictly newer by filed time. The old record is never rewritten.
     async supersedeVerdict(oldId, newRecord, { actor, recordedAt, reason }) {
       return tx(async (t) => {
         const old = await requireObligation(t, oldId);
@@ -368,7 +463,20 @@ export function createRepository(db) {
             head: oldHead,
           });
         }
-        const created = await fileObligationRow(t, { ...newRecord, kind: "VERDICT", supersedes: oldId }, recordedAt);
+        assertUtcIso(newRecord.filedAt, "newRecord.filedAt");
+        if (utcIsoToMs(newRecord.filedAt, "newRecord.filedAt") <= utcIsoToMs(old.filedAt, "old filedAt")) {
+          fail(
+            CODES.STALE_VERDICT_SUPERSESSION,
+            `Verdict ${oldId} cannot be superseded by a verdict that is not strictly newer`,
+            { oldId, oldFiledAt: old.filedAt, newFiledAt: newRecord.filedAt },
+          );
+        }
+        const created = await fileObligationRow(
+          t,
+          { ...newRecord, kind: "VERDICT", supersedes: oldId },
+          recordedAt,
+          { verdictSupersession: true },
+        );
         await t.query(
           "update team_brain_obligations set state = 'SUPERSEDED', superseded_by = $1 where obligation_id = $2",
           [created.id, oldId],

@@ -7,7 +7,15 @@
 import { CODES, fail } from "../ledger/errors.mjs";
 import { assertNonEmptyString, assertStringArray, assertUtcIso } from "../ledger/validation.mjs";
 
-const TOP_LEVEL_KEYS = new Set(["synthetic", "schemaVersion", "description", "obligations", "lifecycle", "handoffs"]);
+const TOP_LEVEL_KEYS = new Set([
+  "synthetic",
+  "schemaVersion",
+  "description",
+  "obligations",
+  "lifecycle",
+  "handoffs",
+  "trustedAuthorizations",
+]);
 
 export function validateFixture(fixture) {
   if (!fixture || typeof fixture !== "object" || Array.isArray(fixture)) {
@@ -29,13 +37,31 @@ export function validateFixture(fixture) {
   const obligations = fixture.obligations || [];
   const lifecycle = fixture.lifecycle || [];
   const handoffs = fixture.handoffs || [];
+  const trustedAuthorizations = fixture.trustedAuthorizations || [];
   if (!Array.isArray(obligations) || !Array.isArray(lifecycle) || !Array.isArray(handoffs)) {
     fail(CODES.INVALID_FIXTURE, "Fixture obligations/lifecycle/handoffs must be arrays");
+  }
+  if (!Array.isArray(trustedAuthorizations)) {
+    fail(CODES.INVALID_FIXTURE, "Fixture trustedAuthorizations must be an array");
   }
   for (const o of obligations) validateObligationEntry(o);
   for (const op of lifecycle) validateLifecycleOp(op);
   for (const h of handoffs) validateHandoffEntry(h);
-  return { obligations, lifecycle, handoffs, description: fixture.description || "" };
+  for (const a of trustedAuthorizations) validateAuthorizationRecord(a);
+  return { obligations, lifecycle, handoffs, trustedAuthorizations, description: fixture.description || "" };
+}
+
+function validateAuthorizationRecord(a) {
+  if (!a || typeof a !== "object") fail(CODES.INVALID_FIXTURE, "Authorization record must be an object");
+  assertNonEmptyString(a.id, "trustedAuthorizations.id");
+  assertNonEmptyString(a.granter, "trustedAuthorizations.granter");
+  assertNonEmptyString(a.itemId, "trustedAuthorizations.itemId");
+  if (a.revoked !== undefined && typeof a.revoked !== "boolean") {
+    fail(CODES.INVALID_FIXTURE, "trustedAuthorizations.revoked must be a boolean", { id: a.id });
+  }
+  if (a.rank !== undefined && (!Number.isInteger(a.rank) || a.rank < 0)) {
+    fail(CODES.INVALID_FIXTURE, "trustedAuthorizations.rank must be a non-negative integer", { id: a.id });
+  }
 }
 
 function validateObligationEntry(o) {
