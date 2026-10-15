@@ -1,0 +1,13 @@
+{
+  "description": "Financial Manager agent Phase 2 slice 1 synthetic prototype: draft summary reporting assembler with exact variance recomputation (BigInt/exact rational, no float money) and evidence-label-preserving narrative checks. Advisory only; no live ledger access, no issuance, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "financial-manager-prototype",
+  "scripts": {
+    "battery": "node --test tests/battery.test.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
