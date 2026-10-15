@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { getChartAccounts, isChartTableMissing } from "@/application/rental/chartOfAccounts";
 import { MANUAL_FINANCIAL_EVENT_CATEGORIES } from "@/application/financial/manualFinancialEventCategories";
 import {
@@ -16,7 +16,9 @@ import {
 // R17: changing vendor bills needs vendor_bills.manage (was: read_only-only check).
 // Voiding a bill is bill management, not a payment void -- it stays under this permission.
 async function requireBillManager(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_bills.manage" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_bills.manage",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 

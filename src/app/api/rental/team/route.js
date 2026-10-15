@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireTeamManager } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireTeamManager } from "@/lib/rental/teamAuthorization";
 import {
   RENTAL_PERMISSIONS,
   resolveEffectivePermissions,
@@ -32,7 +32,9 @@ export async function GET(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const gate = await requireTeamManager({ authenticated, request });
+    const gate = await requireTeamManager({ authenticated, request,
+      security: await buildSecurityContext(authenticated),
+    });
     if (gate.response) return gate.response;
 
     const { data, error } = await authenticated.supabaseClient.rpc("get_workspace_team");
@@ -59,7 +61,9 @@ export async function POST(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const gate = await requireTeamManager({ authenticated, request });
+    const gate = await requireTeamManager({ authenticated, request,
+      security: await buildSecurityContext(authenticated),
+    });
     if (gate.response) return gate.response;
 
     const body = await request.json();
@@ -91,7 +95,9 @@ export async function PATCH(request) {
   try {
     const authenticated = await createAuthenticatedRentalManagerApplication();
     if (authenticated.response) return authenticated.response;
-    const gate = await requireTeamManager({ authenticated, request });
+    const gate = await requireTeamManager({ authenticated, request,
+      security: await buildSecurityContext(authenticated),
+    });
     if (gate.response) return gate.response;
 
     const body = await request.json();

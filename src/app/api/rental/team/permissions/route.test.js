@@ -6,6 +6,7 @@ vi.mock("@/lib/supabase/createAuthenticatedRentalManagerApplication", () => ({
 vi.mock("@/lib/rental/teamAuthorization", () => ({
   getActorRentalAuthorization: vi.fn(),
   requireTeamManager: vi.fn(),
+  buildSecurityContext: vi.fn(async () => null),
 }));
 
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";

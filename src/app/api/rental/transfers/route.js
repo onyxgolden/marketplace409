@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import { createFundTransfer, validateFundTransferInput } from "@/application/rental/fundTransfers";
 
 // R17: moving funds needs transfers.record (was: read_only-only check).
 async function requireTransferRecorder(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "transfers.record" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "transfers.record",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 

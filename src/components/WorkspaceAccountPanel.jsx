@@ -120,9 +120,16 @@ export default function WorkspaceAccountPanel({ initialUser = undefined }) {
       {/* Real <form> so Enter submits the primary action (Sign In). Create Account and
          Forgot password? stay type="button" so Enter never fires them by accident. */}
       <form
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          signIn();
+          // Layer 2: the gateway sign-in can come back "MFA required" (no
+          // session issued); that outcome redirects to the MFA ceremony per
+          // the route's authoritative next hint, mirroring src/app/auth/page.jsx.
+          const outcome = await signIn();
+          if (outcome && outcome.mfaNext) {
+            const params = new URLSearchParams({ mode: outcome.mfaNext, next: window.location.pathname });
+            window.location.href = `/auth/mfa?${params.toString()}`;
+          }
         }}
       >
         <div className="flex flex-wrap items-end gap-3">

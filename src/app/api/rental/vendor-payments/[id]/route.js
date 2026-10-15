@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { requireRentalPermission } from "@/lib/rental/teamAuthorization";
+import { buildSecurityContext, requireRentalPermission } from "@/lib/rental/teamAuthorization";
 import {
   canEditPayment,
   canVoidPayment,
@@ -12,12 +12,16 @@ import {
 // R17: editing a vendor payment needs vendor_payments.record; voiding needs
 // payments.void_refund (was: read_only-only check for both).
 async function requireVendorPaymentRecorder(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_payments.record" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "vendor_payments.record",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 
 async function requireVoidRefund(authenticated, request) {
-  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.void_refund" });
+  const gate = await requireRentalPermission({ authenticated, request, permission: "payments.void_refund",
+      security: await buildSecurityContext(authenticated),
+    });
   return gate.response;
 }
 
