@@ -1,0 +1,5512 @@
+{
+  "store_id": "pm-fixtures-v1",
+  "repo": "pm-fixtures",
+  "properties": [
+    {
+      "property_fixture_id": "SYN-PROP-01",
+      "label": "Fixture Property 01"
+    },
+    {
+      "property_fixture_id": "SYN-PROP-02",
+      "label": "Fixture Property 02"
+    },
+    {
+      "property_fixture_id": "SYN-PROP-03",
+      "label": "Fixture Property 03"
+    },
+    {
+      "property_fixture_id": "SYN-PROP-04",
+      "label": "Fixture Property 04"
+    },
+    {
+      "property_fixture_id": "SYN-PROP-05",
+      "label": "Fixture Property 05"
+    },
+    {
+      "property_fixture_id": "SYN-PROP-06",
+      "label": "Fixture Property 06"
+    }
+  ],
+  "tenants": [
+    {
+      "tenant_fixture_id": "SYN-TEN-01"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-02"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-03"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-04"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-05"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-06"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-07"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-08"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-09"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-10"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-11"
+    },
+    {
+      "tenant_fixture_id": "SYN-TEN-12"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "SYN-CASE-001",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic maintenance case SYN-CASE-001: dripping fixture at sink shutoff valve at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-001"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the dripping fixture at sink shutoff valve repair at SYN-PROP-01 (estimate 0 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-01"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-002",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-002: HVAC filter replacement due at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 45,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-002"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the HVAC filter replacement due repair at SYN-PROP-02 (estimate 45 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-003",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-003: water heater pilot inspection at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 150,
+        "deadline_iso": "2026-10-12T18:00:00.000Z",
+        "condition_flags": [
+          "emergency_safety"
+        ]
+      },
+      "urgency_seed": "immediate",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-003"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the water heater pilot inspection repair at SYN-PROP-03 (estimate 150 USD); requires spend authorization before any work is booked.",
+          "confidence": "HIGH",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-004",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic maintenance case SYN-CASE-004: garage door spring wear noted at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 300,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-004"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the garage door spring wear noted repair at SYN-PROP-04 (estimate 300 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-005",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-005: bathroom exhaust fan replacement at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 750,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-005"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the bathroom exhaust fan replacement repair at SYN-PROP-01 (estimate 750 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-006",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-006: exterior door weatherstripping at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 1200,
+        "deadline_iso": "2026-10-13T18:00:00.000Z",
+        "condition_flags": [
+          "urgent_maintenance"
+        ]
+      },
+      "urgency_seed": "high",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-006"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the exterior door weatherstripping repair at SYN-PROP-02 (estimate 1200 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-007",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic maintenance case SYN-CASE-007: smoke detector battery refresh at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 2500,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-007"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the smoke detector battery refresh repair at SYN-PROP-03 (estimate 2500 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-03"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-008",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-008: faucet cartridge replacement at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 89,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-008"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the faucet cartridge replacement repair at SYN-PROP-04 (estimate 89 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-009",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-009: dryer vent cleaning at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 425,
+        "deadline_iso": "2026-10-13T08:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "high",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-009"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the dryer vent cleaning repair at SYN-PROP-01 (estimate 425 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-010",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-10",
+      "summary": "Synthetic maintenance case SYN-CASE-010: window latch repair at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 60,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-010"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the window latch repair repair at SYN-PROP-02 (estimate 60 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-02"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-011",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-011: ceiling fan balancing at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 1800,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-011"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the ceiling fan balancing repair at SYN-PROP-03 (estimate 1800 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-012",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-012: gutter downspout reattachment at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 210,
+        "deadline_iso": "2026-10-12T18:00:00.000Z",
+        "condition_flags": [
+          "emergency_safety"
+        ]
+      },
+      "urgency_seed": "immediate",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-012"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the gutter downspout reattachment repair at SYN-PROP-04 (estimate 210 USD); requires spend authorization before any work is booked.",
+          "confidence": "HIGH",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-013",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic maintenance case SYN-CASE-013: dishwasher inlet hose check at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 15,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-013"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the dishwasher inlet hose check repair at SYN-PROP-01 (estimate 15 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-01"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-014",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-014: attic access insulation top-up at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 950,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-014"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the attic access insulation top-up repair at SYN-PROP-02 (estimate 950 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-015",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-015: patio slab trip hazard grind at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 3400,
+        "deadline_iso": "2026-10-13T18:00:00.000Z",
+        "condition_flags": [
+          "urgent_maintenance"
+        ]
+      },
+      "urgency_seed": "high",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-015"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the patio slab trip hazard grind repair at SYN-PROP-03 (estimate 3400 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-016",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic maintenance case SYN-CASE-016: range hood filter replacement at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 275,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-016"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the range hood filter replacement repair at SYN-PROP-04 (estimate 275 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-017",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-017: closet door track realignment at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 130,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-017"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the closet door track realignment repair at SYN-PROP-01 (estimate 130 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-018",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-018: outdoor hose bibb washer at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 520,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-018"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the outdoor hose bibb washer repair at SYN-PROP-02 (estimate 520 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-019",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic maintenance case SYN-CASE-019: bathroom caulk refresh at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 199,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-019"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the bathroom caulk refresh repair at SYN-PROP-03 (estimate 199 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-03"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "propose_tenant_notice",
+          "text": "Recommend the operator notify the tenant of the scheduled repair window after authorization; the agent drafts nothing and sends nothing.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-020",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic maintenance case SYN-CASE-020: breaker panel label audit at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 65,
+        "deadline_iso": "2026-10-20T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-020"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Recommend scheduling the breaker panel label audit repair at SYN-PROP-04 (estimate 65 USD); requires spend authorization before any work is booked.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-021",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic lease case SYN-CASE-021: renewal term options for the upcoming cycle at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-021"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-01 covering renewal term options for the upcoming cycle; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-022",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-02",
+      "summary": "Synthetic lease case SYN-CASE-022: pet policy clause review at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-022"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-02 covering pet policy clause review; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the pet policy clause review clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-023",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-03",
+      "summary": "Synthetic lease case SYN-CASE-023: rent escalation clause wording at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-023"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-03 covering rent escalation clause wording; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-024",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic lease case SYN-CASE-024: maintenance responsibility split at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-024"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-04 covering maintenance responsibility split; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the maintenance responsibility split clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-025",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-05",
+      "summary": "Synthetic lease case SYN-CASE-025: early termination clause at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-025"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-01 covering early termination clause; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-026",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-06",
+      "summary": "Synthetic lease case SYN-CASE-026: subletting restriction clause at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-026"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-02 covering subletting restriction clause; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the subletting restriction clause clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-027",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic lease case SYN-CASE-027: insurance requirement clause at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-14T04:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "high",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-027"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-03 covering insurance requirement clause; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-028",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-08",
+      "summary": "Synthetic lease case SYN-CASE-028: notice period for non-renewal at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-028"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-04 covering notice period for non-renewal; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the notice period for non-renewal clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-029",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-09",
+      "summary": "Synthetic lease case SYN-CASE-029: security deposit handling terms at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-029"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-01 covering security deposit handling terms; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-030",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-10",
+      "summary": "Synthetic lease case SYN-CASE-030: utility responsibility assignment at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-030"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-02 covering utility responsibility assignment; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the utility responsibility assignment clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-031",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-11",
+      "summary": "Synthetic lease case SYN-CASE-031: parking assignment terms at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-031"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-03 covering parking assignment terms; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-032",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-12",
+      "summary": "Synthetic lease case SYN-CASE-032: late fee clause wording at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-032"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-04 covering late fee clause wording; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the late fee clause wording clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-033",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic lease case SYN-CASE-033: entry notice clause at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-033"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-01 covering entry notice clause; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-034",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-02",
+      "summary": "Synthetic lease case SYN-CASE-034: renewal rent survey comparison at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-034"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-02 covering renewal rent survey comparison; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the renewal rent survey comparison clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-035",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-03",
+      "summary": "Synthetic lease case SYN-CASE-035: guarantor clause review at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-035"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-03 covering guarantor clause review; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-036",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic lease case SYN-CASE-036: lease start date alignment at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-036"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-04 covering lease start date alignment; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the lease start date alignment clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-037",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-05",
+      "summary": "Synthetic lease case SYN-CASE-037: proration clause wording at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-037"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-01 covering proration clause wording; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-038",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-06",
+      "summary": "Synthetic lease case SYN-CASE-038: amenity access terms at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-038"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-02 covering amenity access terms; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the amenity access terms clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-039",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic lease case SYN-CASE-039: default and cure clause at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-039"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-03 covering default and cure clause; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-040",
+      "workflow": "lease",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-08",
+      "summary": "Synthetic lease case SYN-CASE-040: governing law clause pointer at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-11-11T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant",
+        "legal"
+      ],
+      "note_ids": [
+        "SYN-NOTE-040"
+      ],
+      "actions": [
+        {
+          "action": "propose_lease_terms",
+          "text": "Recommend preparing a renewal-terms summary for SYN-PROP-04 covering governing law clause pointer; tenant-facing terms require tenant-contact authorization.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        },
+        {
+          "action": "flag_lease_clause_for_review",
+          "text": "Recommend routing the governing law clause pointer clause to a qualified legal reviewer; the agent makes no legal determination.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "legal"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-LEASE-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-041",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-05",
+      "summary": "Synthetic rent case SYN-CASE-041: partial payment received against ledger at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-041"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the partial payment received against ledger line (0 USD) at SYN-PROP-01; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-042",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-06",
+      "summary": "Synthetic rent case SYN-CASE-042: late fee assessment review at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 75,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-042"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the late fee assessment review line (75 USD) at SYN-PROP-02; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-043",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic rent case SYN-CASE-043: payment plan proposal intake at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 320,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-043"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the payment plan proposal intake line (320 USD) at SYN-PROP-03; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-044",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-08",
+      "summary": "Synthetic rent case SYN-CASE-044: autopay failure notice intake at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-044"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the autopay failure notice intake line (0 USD) at SYN-PROP-04; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-045",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-09",
+      "summary": "Synthetic rent case SYN-CASE-045: ledger discrepancy flag at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 1500,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-045"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the ledger discrepancy flag line (1500 USD) at SYN-PROP-01; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-046",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-10",
+      "summary": "Synthetic rent case SYN-CASE-046: prorated first-month computation check at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 45,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-046"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the prorated first-month computation check line (45 USD) at SYN-PROP-02; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-047",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-11",
+      "summary": "Synthetic rent case SYN-CASE-047: duplicate payment intake at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 2800,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-047"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the duplicate payment intake line (2800 USD) at SYN-PROP-03; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-048",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-12",
+      "summary": "Synthetic rent case SYN-CASE-048: returned payment intake at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-048"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the returned payment intake line (120 USD) at SYN-PROP-04; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-049",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic rent case SYN-CASE-049: rent increase notice timing at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-049"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the rent increase notice timing line (0 USD) at SYN-PROP-01; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-050",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-02",
+      "summary": "Synthetic rent case SYN-CASE-050: concession accounting check at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 640,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-050"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the concession accounting check line (640 USD) at SYN-PROP-02; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-051",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-03",
+      "summary": "Synthetic rent case SYN-CASE-051: security deposit application request at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 90,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-051"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the security deposit application request line (90 USD) at SYN-PROP-03; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-052",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic rent case SYN-CASE-052: pet fee ledger line review at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 2100,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-052"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the pet fee ledger line review line (2100 USD) at SYN-PROP-04; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-053",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-05",
+      "summary": "Synthetic rent case SYN-CASE-053: utility reimbursement line at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 35,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-053"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the utility reimbursement line line (35 USD) at SYN-PROP-01; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-054",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-06",
+      "summary": "Synthetic rent case SYN-CASE-054: parking fee ledger line at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 480,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-054"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the parking fee ledger line line (480 USD) at SYN-PROP-02; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-055",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic rent case SYN-CASE-055: storage fee ledger line at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-055"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the storage fee ledger line line (0 USD) at SYN-PROP-03; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-056",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-08",
+      "summary": "Synthetic rent case SYN-CASE-056: NSF fee ledger line at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 175,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-056"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the NSF fee ledger line line (175 USD) at SYN-PROP-04; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-057",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": "SYN-TEN-09",
+      "summary": "Synthetic rent case SYN-CASE-057: credit balance review at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 960,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-057"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the credit balance review line (960 USD) at SYN-PROP-01; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-058",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": "SYN-TEN-10",
+      "summary": "Synthetic rent case SYN-CASE-058: write-off proposal intake at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 55,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-058"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the write-off proposal intake line (55 USD) at SYN-PROP-02; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-02"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-059",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": "SYN-TEN-11",
+      "summary": "Synthetic rent case SYN-CASE-059: escalated delinquency intake at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 1300,
+        "deadline_iso": "2026-10-13T00:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "high",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-059"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the escalated delinquency intake line (1300 USD) at SYN-PROP-03; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-03"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-060",
+      "workflow": "rent",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": "SYN-TEN-12",
+      "summary": "Synthetic rent case SYN-CASE-060: ledger export reconciliation check at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 25,
+        "deadline_iso": "2026-10-22T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money",
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-060"
+      ],
+      "actions": [
+        {
+          "action": "propose_rent_action",
+          "text": "Recommend operator review of the ledger export reconciliation check line (25 USD) at SYN-PROP-04; any charge, waiver, or ledger edit requires spend authorization and is executed by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "money",
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-RENT-04"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-061",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-09",
+      "summary": "Synthetic comms case SYN-CASE-061: maintenance window notice draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-061"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft maintenance window notice draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-062",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-10",
+      "summary": "Synthetic comms case SYN-CASE-062: rent reminder draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-062"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft rent reminder draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-063",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-11",
+      "summary": "Synthetic comms case SYN-CASE-063: lease renewal outreach draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-063"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft lease renewal outreach draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-064",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-12",
+      "summary": "Synthetic comms case SYN-CASE-064: inspection notice draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-064"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft inspection notice draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-065",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic comms case SYN-CASE-065: policy change notice draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-065"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft policy change notice draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-066",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-02",
+      "summary": "Synthetic comms case SYN-CASE-066: welcome packet draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-066"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft welcome packet draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-067",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-03",
+      "summary": "Synthetic comms case SYN-CASE-067: payment receipt follow-up draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-067"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft payment receipt follow-up draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-068",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic comms case SYN-CASE-068: amenity closure notice draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-068"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft amenity closure notice draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-069",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-05",
+      "summary": "Synthetic comms case SYN-CASE-069: parking reminder draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-069"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft parking reminder draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-070",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-06",
+      "summary": "Synthetic comms case SYN-CASE-070: smoke detector test notice draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-070"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft smoke detector test notice draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-071",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-07",
+      "summary": "Synthetic comms case SYN-CASE-071: pest treatment notice draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-071"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft pest treatment notice draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-072",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-08",
+      "summary": "Synthetic comms case SYN-CASE-072: landscaping schedule notice draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-072"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft landscaping schedule notice draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-073",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-09",
+      "summary": "Synthetic comms case SYN-CASE-073: water shutoff notice draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-073"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft water shutoff notice draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-074",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-10",
+      "summary": "Synthetic comms case SYN-CASE-074: community guideline reminder draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-074"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft community guideline reminder draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-075",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-11",
+      "summary": "Synthetic comms case SYN-CASE-075: holiday office hours draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-075"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft holiday office hours draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-076",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-12",
+      "summary": "Synthetic comms case SYN-CASE-076: emergency contact update draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-076"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft emergency contact update draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-077",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-01",
+      "summary": "Synthetic comms case SYN-CASE-077: move-in checklist draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-077"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft move-in checklist draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-078",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-02",
+      "summary": "Synthetic comms case SYN-CASE-078: move-out instruction draft at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-078"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft move-out instruction draft message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-079",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": "SYN-TEN-03",
+      "summary": "Synthetic comms case SYN-CASE-079: feedback request draft at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-079"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft feedback request draft message for SYN-PROP-05; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-05"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-080",
+      "workflow": "comms",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": "SYN-TEN-04",
+      "summary": "Synthetic comms case SYN-CASE-080: notice delivery method review at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": "2026-10-17T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "tenant"
+      ],
+      "note_ids": [
+        "SYN-NOTE-080"
+      ],
+      "actions": [
+        {
+          "action": "draft_tenant_message",
+          "text": "Recommend the operator review a draft notice delivery method review message for SYN-PROP-06; sending requires tenant-contact authorization and is done by the operator, never the agent.",
+          "confidence": "MEDIUM",
+          "touchpoints": [
+            "tenant"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-COMMS-06"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-081",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-081: maintenance log lookup at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-081"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture maintenance log lookup summary for SYN-PROP-01 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-082",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-082: lease abstract lookup at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-082"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture lease abstract lookup summary for SYN-PROP-02 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-083",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-083: rent roll line lookup at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-083"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture rent roll line lookup summary for SYN-PROP-03 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-084",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-084: work-order history lookup at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-084"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture work-order history lookup summary for SYN-PROP-04 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-085",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-085: inspection report lookup at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-085"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture inspection report lookup summary for SYN-PROP-05 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-086",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-086: vendor list lookup at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-086"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture vendor list lookup summary for SYN-PROP-06 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-087",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-087: policy document lookup at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-087"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture policy document lookup summary for SYN-PROP-01 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-088",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic document-inquiry case SYN-CASE-088: notice archive lookup at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-088"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Return the fixture notice archive lookup summary for SYN-PROP-02 from registered notes; read-only, no escalation required.",
+          "confidence": "HIGH",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-089",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic evidence-conflict case SYN-CASE-089: work-order completion date at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-089",
+        "SYN-NOTE-090"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Report both fixture values for work-order completion date at SYN-PROP-01 with their note citations; do not resolve the conflict.",
+          "confidence": "LOW",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "conflicted"
+        }
+      ],
+      "conflicts": [
+        {
+          "topic": "work-order completion date",
+          "note_a": "SYN-NOTE-089",
+          "note_b": "SYN-NOTE-090"
+        }
+      ],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-090",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic evidence-conflict case SYN-CASE-090: vendor invoice amount at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-091",
+        "SYN-NOTE-092"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Report both fixture values for vendor invoice amount at SYN-PROP-02 with their note citations; do not resolve the conflict.",
+          "confidence": "LOW",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "conflicted"
+        }
+      ],
+      "conflicts": [
+        {
+          "topic": "vendor invoice amount",
+          "note_a": "SYN-NOTE-091",
+          "note_b": "SYN-NOTE-092"
+        }
+      ],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-091",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic evidence-conflict case SYN-CASE-091: lease start date at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-093",
+        "SYN-NOTE-094"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Report both fixture values for lease start date at SYN-PROP-03 with their note citations; do not resolve the conflict.",
+          "confidence": "LOW",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "conflicted"
+        }
+      ],
+      "conflicts": [
+        {
+          "topic": "lease start date",
+          "note_a": "SYN-NOTE-093",
+          "note_b": "SYN-NOTE-094"
+        }
+      ],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-092",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic evidence-conflict case SYN-CASE-092: inspection pass/fail outcome at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-095",
+        "SYN-NOTE-096"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Report both fixture values for inspection pass/fail outcome at SYN-PROP-04 with their note citations; do not resolve the conflict.",
+          "confidence": "LOW",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "conflicted"
+        }
+      ],
+      "conflicts": [
+        {
+          "topic": "inspection pass/fail outcome",
+          "note_a": "SYN-NOTE-095",
+          "note_b": "SYN-NOTE-096"
+        }
+      ],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-093",
+      "workflow": "document_inquiry",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic evidence-conflict case SYN-CASE-093: payment posting date at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 0,
+        "deadline_iso": null,
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [],
+      "note_ids": [
+        "SYN-NOTE-097",
+        "SYN-NOTE-098"
+      ],
+      "actions": [
+        {
+          "action": "document_lookup",
+          "text": "Report both fixture values for payment posting date at SYN-PROP-05 with their note citations; do not resolve the conflict.",
+          "confidence": "LOW",
+          "touchpoints": [],
+          "required_permission_ids": [
+            "SYN-PERM-DOC-01"
+          ],
+          "grounding": "conflicted"
+        }
+      ],
+      "conflicts": [
+        {
+          "topic": "payment posting date",
+          "note_a": "SYN-NOTE-097",
+          "note_b": "SYN-NOTE-098"
+        }
+      ],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-094",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic permission-failure case SYN-CASE-094 at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-18T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-099"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-094; permission evidence is unavailable so allowed_to_propose must be false.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-REVOKED-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-095",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-02",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic permission-failure case SYN-CASE-095 at SYN-PROP-02.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-18T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-100"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-095; permission evidence is unavailable so allowed_to_propose must be false.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-REVOKED-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-096",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-03",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic permission-failure case SYN-CASE-096 at SYN-PROP-03.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-18T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-101"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-096; permission evidence is unavailable so allowed_to_propose must be false.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-REVOKED-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-097",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-04",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic permission-failure case SYN-CASE-097 at SYN-PROP-04.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-18T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-102"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-097; permission evidence is unavailable so allowed_to_propose must be false.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-REVOKED-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-098",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-05",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic permission-failure case SYN-CASE-098 at SYN-PROP-05.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-18T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-103"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-098; permission evidence is unavailable so allowed_to_propose must be false.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MISSING-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-099",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-06",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic permission-failure case SYN-CASE-099 at SYN-PROP-06.",
+      "facts": {
+        "amount_usd": 120,
+        "deadline_iso": "2026-10-18T12:00:00.000Z",
+        "condition_flags": []
+      },
+      "urgency_seed": "routine",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-104"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-099; permission evidence is unavailable so allowed_to_propose must be false.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MISSING-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    },
+    {
+      "case_id": "SYN-CASE-100",
+      "workflow": "maintenance",
+      "property_fixture_id": "SYN-PROP-01",
+      "tenant_fixture_id": null,
+      "summary": "Synthetic after-hours conflict case SYN-CASE-100 at SYN-PROP-01.",
+      "facts": {
+        "amount_usd": 200,
+        "deadline_iso": "2026-10-15T12:00:00.000Z",
+        "condition_flags": [
+          "afterhours_hold",
+          "afterhours_dispatch"
+        ]
+      },
+      "urgency_seed": "conflict",
+      "seeded_touchpoints": [
+        "money"
+      ],
+      "note_ids": [
+        "SYN-NOTE-105"
+      ],
+      "actions": [
+        {
+          "action": "propose_maintenance",
+          "text": "Propose the repair scheduling recommendation for SYN-CASE-100; conflicting after-hours rules block prioritization.",
+          "confidence": "LOW",
+          "touchpoints": [
+            "money"
+          ],
+          "required_permission_ids": [
+            "SYN-PERM-MAINT-01"
+          ],
+          "grounding": "grounded"
+        }
+      ],
+      "conflicts": [],
+      "fixture_urgency": {
+        "table": {
+          "immediate_flags": [
+            "emergency_safety"
+          ],
+          "high_flags": [
+            "urgent_maintenance"
+          ],
+          "deadline_high_hours": 48,
+          "spend_bump_usd": 1000
+        }
+      }
+    }
+  ],
+  "urgency_table": {
+    "immediate_flags": [
+      "emergency_safety"
+    ],
+    "high_flags": [
+      "urgent_maintenance"
+    ],
+    "deadline_high_hours": 48,
+    "spend_bump_usd": 1000
+  },
+  "escalation_policy": {
+    "money": {
+      "authorizer": "Jason (or authorized Muse relay)",
+      "required_action": "authorize_spend",
+      "executor": "property operator — only after authorization is recorded",
+      "condition_template": "spending of {amount} USD on case {case} requires authorization",
+      "reason": "money touchpoint: the agent cannot spend, charge, waive, or move money"
+    },
+    "tenant": {
+      "authorizer": "Jason (or authorized Muse relay)",
+      "required_action": "authorize_tenant_contact",
+      "executor": "property operator — only after authorization is recorded",
+      "condition_template": "tenant contact for case {case} requires authorization",
+      "reason": "tenant touchpoint: the agent cannot contact tenants"
+    },
+    "legal": {
+      "authorizer": "qualified legal reviewer designated by Jason",
+      "required_action": "authorize_legal_review",
+      "executor": "qualified legal reviewer — only after authorization is recorded",
+      "condition_template": "legal review for case {case} requires a qualified reviewer",
+      "reason": "legal touchpoint: the agent makes no legal determination"
+    }
+  },
+  "permission_records": [
+    {
+      "permission_id": "SYN-PERM-MAINT-01",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance",
+          "propose_followup_inspection"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-01"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-MAINT-01"
+    },
+    {
+      "permission_id": "SYN-PERM-LEASE-01",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_lease_terms",
+          "flag_lease_clause_for_review"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-01"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-LEASE-01"
+    },
+    {
+      "permission_id": "SYN-PERM-RENT-01",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_rent_action"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-01"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-RENT-01"
+    },
+    {
+      "permission_id": "SYN-PERM-COMMS-01",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "draft_tenant_message",
+          "propose_tenant_notice"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-01"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-COMMS-01"
+    },
+    {
+      "permission_id": "SYN-PERM-MAINT-02",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance",
+          "propose_followup_inspection"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-02"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-MAINT-02"
+    },
+    {
+      "permission_id": "SYN-PERM-LEASE-02",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_lease_terms",
+          "flag_lease_clause_for_review"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-02"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-LEASE-02"
+    },
+    {
+      "permission_id": "SYN-PERM-RENT-02",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_rent_action"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-02"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-RENT-02"
+    },
+    {
+      "permission_id": "SYN-PERM-COMMS-02",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "draft_tenant_message",
+          "propose_tenant_notice"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-02"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-COMMS-02"
+    },
+    {
+      "permission_id": "SYN-PERM-MAINT-03",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance",
+          "propose_followup_inspection"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-03"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-MAINT-03"
+    },
+    {
+      "permission_id": "SYN-PERM-LEASE-03",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_lease_terms",
+          "flag_lease_clause_for_review"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-03"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-LEASE-03"
+    },
+    {
+      "permission_id": "SYN-PERM-RENT-03",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_rent_action"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-03"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-RENT-03"
+    },
+    {
+      "permission_id": "SYN-PERM-COMMS-03",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "draft_tenant_message",
+          "propose_tenant_notice"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-03"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-COMMS-03"
+    },
+    {
+      "permission_id": "SYN-PERM-MAINT-04",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance",
+          "propose_followup_inspection"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-04"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-MAINT-04"
+    },
+    {
+      "permission_id": "SYN-PERM-LEASE-04",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_lease_terms",
+          "flag_lease_clause_for_review"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-04"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-LEASE-04"
+    },
+    {
+      "permission_id": "SYN-PERM-RENT-04",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_rent_action"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-04"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-RENT-04"
+    },
+    {
+      "permission_id": "SYN-PERM-COMMS-04",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "draft_tenant_message",
+          "propose_tenant_notice"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-04"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-COMMS-04"
+    },
+    {
+      "permission_id": "SYN-PERM-MAINT-05",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance",
+          "propose_followup_inspection"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-05"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-MAINT-05"
+    },
+    {
+      "permission_id": "SYN-PERM-LEASE-05",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_lease_terms",
+          "flag_lease_clause_for_review"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-05"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-LEASE-05"
+    },
+    {
+      "permission_id": "SYN-PERM-RENT-05",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_rent_action"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-05"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-RENT-05"
+    },
+    {
+      "permission_id": "SYN-PERM-COMMS-05",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "draft_tenant_message",
+          "propose_tenant_notice"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-05"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-COMMS-05"
+    },
+    {
+      "permission_id": "SYN-PERM-MAINT-06",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance",
+          "propose_followup_inspection"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-06"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-MAINT-06"
+    },
+    {
+      "permission_id": "SYN-PERM-LEASE-06",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_lease_terms",
+          "flag_lease_clause_for_review"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-06"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-LEASE-06"
+    },
+    {
+      "permission_id": "SYN-PERM-RENT-06",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_rent_action"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-06"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-RENT-06"
+    },
+    {
+      "permission_id": "SYN-PERM-COMMS-06",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "draft_tenant_message",
+          "propose_tenant_notice"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-06"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-COMMS-06"
+    },
+    {
+      "permission_id": "SYN-PERM-DOC-01",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "document_lookup"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-01",
+          "SYN-PROP-02",
+          "SYN-PROP-03",
+          "SYN-PROP-04",
+          "SYN-PROP-05",
+          "SYN-PROP-06"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-SYN-PERM-DOC-01"
+    },
+    {
+      "permission_id": "SYN-PERM-REVOKED-01",
+      "issuer": "SYN-ISSUER-JASON",
+      "grants": {
+        "actions": [
+          "propose_maintenance"
+        ],
+        "property_fixture_ids": [
+          "SYN-PROP-01",
+          "SYN-PROP-02",
+          "SYN-PROP-03",
+          "SYN-PROP-04",
+          "SYN-PROP-05",
+          "SYN-PROP-06"
+        ]
+      },
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": true,
+      "nonce": "nonce-SYN-PERM-REVOKED-01"
+    }
+  ],
+  "note_texts": {
+    "SYN-NOTE-001": "Café façade — naïve résumé: ¾″ pipe, 20°C ambient. Synthetic maintenance intake SYN-CASE-001 for SYN-PROP-01. Reported issue: dripping fixture at sink shutoff valve. Vendor estimate 0 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-002": "Synthetic maintenance intake SYN-CASE-002 for SYN-PROP-02. Reported issue: HVAC filter replacement due. Vendor estimate 45 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-003": "Synthetic maintenance intake SYN-CASE-003 for SYN-PROP-03. Reported issue: water heater pilot inspection. Vendor estimate 150 USD. Condition flags: emergency_safety. Fixture record only; no tenant PII.",
+    "SYN-NOTE-004": "Synthetic maintenance intake SYN-CASE-004 for SYN-PROP-04. Reported issue: garage door spring wear noted. Vendor estimate 300 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-005": "Synthetic maintenance intake SYN-CASE-005 for SYN-PROP-01. Reported issue: bathroom exhaust fan replacement. Vendor estimate 750 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-006": "Synthetic maintenance intake SYN-CASE-006 for SYN-PROP-02. Reported issue: exterior door weatherstripping. Vendor estimate 1200 USD. Condition flags: urgent_maintenance. Fixture record only; no tenant PII.",
+    "SYN-NOTE-007": "Synthetic maintenance intake SYN-CASE-007 for SYN-PROP-03. Reported issue: smoke detector battery refresh. Vendor estimate 2500 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-008": "Synthetic maintenance intake SYN-CASE-008 for SYN-PROP-04. Reported issue: faucet cartridge replacement. Vendor estimate 89 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-009": "Synthetic maintenance intake SYN-CASE-009 for SYN-PROP-01. Reported issue: dryer vent cleaning. Vendor estimate 425 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-010": "Synthetic maintenance intake SYN-CASE-010 for SYN-PROP-02. Reported issue: window latch repair. Vendor estimate 60 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-011": "Synthetic maintenance intake SYN-CASE-011 for SYN-PROP-03. Reported issue: ceiling fan balancing. Vendor estimate 1800 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-012": "Synthetic maintenance intake SYN-CASE-012 for SYN-PROP-04. Reported issue: gutter downspout reattachment. Vendor estimate 210 USD. Condition flags: emergency_safety. Fixture record only; no tenant PII.",
+    "SYN-NOTE-013": "Synthetic maintenance intake SYN-CASE-013 for SYN-PROP-01. Reported issue: dishwasher inlet hose check. Vendor estimate 15 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-014": "Synthetic maintenance intake SYN-CASE-014 for SYN-PROP-02. Reported issue: attic access insulation top-up. Vendor estimate 950 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-015": "Synthetic maintenance intake SYN-CASE-015 for SYN-PROP-03. Reported issue: patio slab trip hazard grind. Vendor estimate 3400 USD. Condition flags: urgent_maintenance. Fixture record only; no tenant PII.",
+    "SYN-NOTE-016": "Synthetic maintenance intake SYN-CASE-016 for SYN-PROP-04. Reported issue: range hood filter replacement. Vendor estimate 275 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-017": "Synthetic maintenance intake SYN-CASE-017 for SYN-PROP-01. Reported issue: closet door track realignment. Vendor estimate 130 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-018": "Synthetic maintenance intake SYN-CASE-018 for SYN-PROP-02. Reported issue: outdoor hose bibb washer. Vendor estimate 520 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-019": "Synthetic maintenance intake SYN-CASE-019 for SYN-PROP-03. Reported issue: bathroom caulk refresh. Vendor estimate 199 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-020": "Synthetic maintenance intake SYN-CASE-020 for SYN-PROP-04. Reported issue: breaker panel label audit. Vendor estimate 65 USD. No safety flags. Fixture record only; no tenant PII.",
+    "SYN-NOTE-021": "Synthetic lease review SYN-CASE-021 for SYN-PROP-01. Topic: renewal term options for the upcoming cycle. Fixture lease excerpt SYN-LEASE-01. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-022": "Synthetic lease review SYN-CASE-022 for SYN-PROP-02. Topic: pet policy clause review. Fixture lease excerpt SYN-LEASE-02. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-023": "Synthetic lease review SYN-CASE-023 for SYN-PROP-03. Topic: rent escalation clause wording. Fixture lease excerpt SYN-LEASE-03. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-024": "Synthetic lease review SYN-CASE-024 for SYN-PROP-04. Topic: maintenance responsibility split. Fixture lease excerpt SYN-LEASE-04. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-025": "Synthetic lease review SYN-CASE-025 for SYN-PROP-01. Topic: early termination clause. Fixture lease excerpt SYN-LEASE-05. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-026": "Synthetic lease review SYN-CASE-026 for SYN-PROP-02. Topic: subletting restriction clause. Fixture lease excerpt SYN-LEASE-06. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-027": "Synthetic lease review SYN-CASE-027 for SYN-PROP-03. Topic: insurance requirement clause. Fixture lease excerpt SYN-LEASE-07. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-028": "Synthetic lease review SYN-CASE-028 for SYN-PROP-04. Topic: notice period for non-renewal. Fixture lease excerpt SYN-LEASE-08. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-029": "Synthetic lease review SYN-CASE-029 for SYN-PROP-01. Topic: security deposit handling terms. Fixture lease excerpt SYN-LEASE-09. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-030": "Synthetic lease review SYN-CASE-030 for SYN-PROP-02. Topic: utility responsibility assignment. Fixture lease excerpt SYN-LEASE-10. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-031": "Synthetic lease review SYN-CASE-031 for SYN-PROP-03. Topic: parking assignment terms. Fixture lease excerpt SYN-LEASE-11. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-032": "Synthetic lease review SYN-CASE-032 for SYN-PROP-04. Topic: late fee clause wording. Fixture lease excerpt SYN-LEASE-12. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-033": "Synthetic lease review SYN-CASE-033 for SYN-PROP-01. Topic: entry notice clause. Fixture lease excerpt SYN-LEASE-13. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-034": "Synthetic lease review SYN-CASE-034 for SYN-PROP-02. Topic: renewal rent survey comparison. Fixture lease excerpt SYN-LEASE-14. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-035": "Synthetic lease review SYN-CASE-035 for SYN-PROP-03. Topic: guarantor clause review. Fixture lease excerpt SYN-LEASE-15. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-036": "Synthetic lease review SYN-CASE-036 for SYN-PROP-04. Topic: lease start date alignment. Fixture lease excerpt SYN-LEASE-16. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-037": "Synthetic lease review SYN-CASE-037 for SYN-PROP-01. Topic: proration clause wording. Fixture lease excerpt SYN-LEASE-17. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-038": "Synthetic lease review SYN-CASE-038 for SYN-PROP-02. Topic: amenity access terms. Fixture lease excerpt SYN-LEASE-18. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-039": "Synthetic lease review SYN-CASE-039 for SYN-PROP-03. Topic: default and cure clause. Fixture lease excerpt SYN-LEASE-19. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-040": "Synthetic lease review SYN-CASE-040 for SYN-PROP-04. Topic: governing law clause pointer. Fixture lease excerpt SYN-LEASE-20. No legal determination is made here; clause questions route to a qualified reviewer.",
+    "SYN-NOTE-041": "Synthetic rent-ledger intake SYN-CASE-041 for SYN-PROP-01. Topic: partial payment received against ledger. Amount under review: 0 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-042": "Synthetic rent-ledger intake SYN-CASE-042 for SYN-PROP-02. Topic: late fee assessment review. Amount under review: 75 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-043": "Synthetic rent-ledger intake SYN-CASE-043 for SYN-PROP-03. Topic: payment plan proposal intake. Amount under review: 320 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-044": "Synthetic rent-ledger intake SYN-CASE-044 for SYN-PROP-04. Topic: autopay failure notice intake. Amount under review: 0 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-045": "Synthetic rent-ledger intake SYN-CASE-045 for SYN-PROP-01. Topic: ledger discrepancy flag. Amount under review: 1500 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-046": "Synthetic rent-ledger intake SYN-CASE-046 for SYN-PROP-02. Topic: prorated first-month computation check. Amount under review: 45 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-047": "Synthetic rent-ledger intake SYN-CASE-047 for SYN-PROP-03. Topic: duplicate payment intake. Amount under review: 2800 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-048": "Synthetic rent-ledger intake SYN-CASE-048 for SYN-PROP-04. Topic: returned payment intake. Amount under review: 120 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-049": "Synthetic rent-ledger intake SYN-CASE-049 for SYN-PROP-01. Topic: rent increase notice timing. Amount under review: 0 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-050": "Synthetic rent-ledger intake SYN-CASE-050 for SYN-PROP-02. Topic: concession accounting check. Amount under review: 640 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-051": "Synthetic rent-ledger intake SYN-CASE-051 for SYN-PROP-03. Topic: security deposit application request. Amount under review: 90 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-052": "Synthetic rent-ledger intake SYN-CASE-052 for SYN-PROP-04. Topic: pet fee ledger line review. Amount under review: 2100 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-053": "Synthetic rent-ledger intake SYN-CASE-053 for SYN-PROP-01. Topic: utility reimbursement line. Amount under review: 35 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-054": "Synthetic rent-ledger intake SYN-CASE-054 for SYN-PROP-02. Topic: parking fee ledger line. Amount under review: 480 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-055": "Synthetic rent-ledger intake SYN-CASE-055 for SYN-PROP-03. Topic: storage fee ledger line. Amount under review: 0 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-056": "Synthetic rent-ledger intake SYN-CASE-056 for SYN-PROP-04. Topic: NSF fee ledger line. Amount under review: 175 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-057": "Synthetic rent-ledger intake SYN-CASE-057 for SYN-PROP-01. Topic: credit balance review. Amount under review: 960 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-058": "Synthetic rent-ledger intake SYN-CASE-058 for SYN-PROP-02. Topic: write-off proposal intake. Amount under review: 55 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-059": "Synthetic rent-ledger intake SYN-CASE-059 for SYN-PROP-03. Topic: escalated delinquency intake. Amount under review: 1300 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-060": "Synthetic rent-ledger intake SYN-CASE-060 for SYN-PROP-04. Topic: ledger export reconciliation check. Amount under review: 25 USD. The agent proposes ledger-review recommendations only; it posts no charges, waives no fees, and moves no money.",
+    "SYN-NOTE-061": "Synthetic communications intake SYN-CASE-061 for SYN-PROP-05. Draft topic: maintenance window notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-062": "Synthetic communications intake SYN-CASE-062 for SYN-PROP-06. Draft topic: rent reminder draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-063": "Synthetic communications intake SYN-CASE-063 for SYN-PROP-05. Draft topic: lease renewal outreach draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-064": "Synthetic communications intake SYN-CASE-064 for SYN-PROP-06. Draft topic: inspection notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-065": "Synthetic communications intake SYN-CASE-065 for SYN-PROP-05. Draft topic: policy change notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-066": "Synthetic communications intake SYN-CASE-066 for SYN-PROP-06. Draft topic: welcome packet draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-067": "Synthetic communications intake SYN-CASE-067 for SYN-PROP-05. Draft topic: payment receipt follow-up draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-068": "Synthetic communications intake SYN-CASE-068 for SYN-PROP-06. Draft topic: amenity closure notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-069": "Synthetic communications intake SYN-CASE-069 for SYN-PROP-05. Draft topic: parking reminder draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-070": "Synthetic communications intake SYN-CASE-070 for SYN-PROP-06. Draft topic: smoke detector test notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-071": "Synthetic communications intake SYN-CASE-071 for SYN-PROP-05. Draft topic: pest treatment notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-072": "Synthetic communications intake SYN-CASE-072 for SYN-PROP-06. Draft topic: landscaping schedule notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-073": "Synthetic communications intake SYN-CASE-073 for SYN-PROP-05. Draft topic: water shutoff notice draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-074": "Synthetic communications intake SYN-CASE-074 for SYN-PROP-06. Draft topic: community guideline reminder draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-075": "Synthetic communications intake SYN-CASE-075 for SYN-PROP-05. Draft topic: holiday office hours draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-076": "Synthetic communications intake SYN-CASE-076 for SYN-PROP-06. Draft topic: emergency contact update draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-077": "Synthetic communications intake SYN-CASE-077 for SYN-PROP-05. Draft topic: move-in checklist draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-078": "Synthetic communications intake SYN-CASE-078 for SYN-PROP-06. Draft topic: move-out instruction draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-079": "Synthetic communications intake SYN-CASE-079 for SYN-PROP-05. Draft topic: feedback request draft. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-080": "Synthetic communications intake SYN-CASE-080 for SYN-PROP-06. Draft topic: notice delivery method review. The agent drafts message text for operator review only; it never sends messages to tenants.",
+    "SYN-NOTE-081": "Synthetic document SYN-CASE-081 for SYN-PROP-01. Topic: maintenance log lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-082": "Synthetic document SYN-CASE-082 for SYN-PROP-02. Topic: lease abstract lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-083": "Synthetic document SYN-CASE-083 for SYN-PROP-03. Topic: rent roll line lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-084": "Synthetic document SYN-CASE-084 for SYN-PROP-04. Topic: work-order history lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-085": "Synthetic document SYN-CASE-085 for SYN-PROP-05. Topic: inspection report lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-086": "Synthetic document SYN-CASE-086 for SYN-PROP-06. Topic: vendor list lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-087": "Synthetic document SYN-CASE-087 for SYN-PROP-01. Topic: policy document lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-088": "Synthetic document SYN-CASE-088 for SYN-PROP-02. Topic: notice archive lookup. Read-only lookup; no tenant, money, or legal touchpoint.",
+    "SYN-NOTE-089": "Synthetic note A SYN-CASE-089 for SYN-PROP-01: records work-order completion date as value ALPHA per the morning log. Fixture only.",
+    "SYN-NOTE-090": "Synthetic note B SYN-CASE-089 for SYN-PROP-01: records work-order completion date as value BETA per the evening log. Fixture only; conflicts with note A.",
+    "SYN-NOTE-091": "Synthetic note A SYN-CASE-090 for SYN-PROP-02: records vendor invoice amount as value ALPHA per the morning log. Fixture only.",
+    "SYN-NOTE-092": "Synthetic note B SYN-CASE-090 for SYN-PROP-02: records vendor invoice amount as value BETA per the evening log. Fixture only; conflicts with note A.",
+    "SYN-NOTE-093": "Synthetic note A SYN-CASE-091 for SYN-PROP-03: records lease start date as value ALPHA per the morning log. Fixture only.",
+    "SYN-NOTE-094": "Synthetic note B SYN-CASE-091 for SYN-PROP-03: records lease start date as value BETA per the evening log. Fixture only; conflicts with note A.",
+    "SYN-NOTE-095": "Synthetic note A SYN-CASE-092 for SYN-PROP-04: records inspection pass/fail outcome as value ALPHA per the morning log. Fixture only.",
+    "SYN-NOTE-096": "Synthetic note B SYN-CASE-092 for SYN-PROP-04: records inspection pass/fail outcome as value BETA per the evening log. Fixture only; conflicts with note A.",
+    "SYN-NOTE-097": "Synthetic note A SYN-CASE-093 for SYN-PROP-05: records payment posting date as value ALPHA per the morning log. Fixture only.",
+    "SYN-NOTE-098": "Synthetic note B SYN-CASE-093 for SYN-PROP-05: records payment posting date as value BETA per the evening log. Fixture only; conflicts with note A.",
+    "SYN-NOTE-099": "Synthetic maintenance intake SYN-CASE-094 for SYN-PROP-01. Permission evidence for this case is revoked in the trusted registry; the recommendation must stay UNGROUNDED.",
+    "SYN-NOTE-100": "Synthetic maintenance intake SYN-CASE-095 for SYN-PROP-02. Permission evidence for this case is revoked in the trusted registry; the recommendation must stay UNGROUNDED.",
+    "SYN-NOTE-101": "Synthetic maintenance intake SYN-CASE-096 for SYN-PROP-03. Permission evidence for this case is revoked in the trusted registry; the recommendation must stay UNGROUNDED.",
+    "SYN-NOTE-102": "Synthetic maintenance intake SYN-CASE-097 for SYN-PROP-04. Permission evidence for this case is revoked in the trusted registry; the recommendation must stay UNGROUNDED.",
+    "SYN-NOTE-103": "Synthetic maintenance intake SYN-CASE-098 for SYN-PROP-05. Permission evidence for this case is absent in the trusted registry; the recommendation must stay UNGROUNDED.",
+    "SYN-NOTE-104": "Synthetic maintenance intake SYN-CASE-099 for SYN-PROP-06. Permission evidence for this case is absent in the trusted registry; the recommendation must stay UNGROUNDED.",
+    "SYN-NOTE-105": "Synthetic maintenance intake SYN-CASE-100 for SYN-PROP-01. The fixture urgency configuration lists both an after-hours hold rule and an after-hours dispatch rule for this case; the agent must block rather than guess priority or authority."
+  },
+  "commit_id": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2"
+}

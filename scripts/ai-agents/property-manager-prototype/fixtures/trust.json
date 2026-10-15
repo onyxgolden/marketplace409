@@ -1,0 +1,493 @@
+{
+  "principals": {
+    "SYN-ISSUER-JASON": {
+      "display": "Jason",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "principals/SYN-ISSUER-JASON.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "fd66de562e7bfd13192d68647cd0cdb0f5a6513c",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    "SYN-ISSUER-MUSE-RELAY": {
+      "display": "Muse (authorized relay)",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "principals/SYN-ISSUER-MUSE-RELAY.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "b3ac681ffc43327bfde309437385fbfbe67b49ad",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    "SYN-ISSUER-OPERATOR": {
+      "display": "property operator",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "principals/SYN-ISSUER-OPERATOR.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "42ce064533be1f6af553d529fa0834f6c65a88a2",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    }
+  },
+  "relay_records": [
+    {
+      "record_id": "SYN-RELAY-001",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-003",
+      "scope_ids": [
+        "maintenance"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 1000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-001",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-001.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "4ad7bcff62e1c74b3d14dfe8b27ded3db02fd487",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-002",
+      "issuer": "SYN-ISSUER-MUSE-RELAY",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-025",
+      "scope_ids": [
+        "lease"
+      ],
+      "action_ids": [
+        "authorize_tenant_contact"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-002",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-002.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "d025df57e21bb0d95802e2cc6fcc2e693cfa57b6",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-009",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-048",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-009",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-009.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "0f838b7d1b066aa5d871c91e971811b5916dc161",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-010",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-030",
+      "scope_ids": [
+        "lease"
+      ],
+      "action_ids": [
+        "authorize_legal_review"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-010",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-010.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "321029c6f2c5cd98509cf88e1c5f04e307044f13",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-003",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-045",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 500,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-003",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-003.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "6ffb1ac17fbe15befe271edad2eddf3e028e4a8f",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-004",
+      "issuer": "SYN-ISSUER-OPERATOR",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-065",
+      "scope_ids": [
+        "comms"
+      ],
+      "action_ids": [
+        "authorize_tenant_contact"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-004",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-004.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "86769faf15f5899edfa6956ad5a89c5a7693f860",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-005",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-099",
+      "scope_ids": [
+        "maintenance"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-005",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-005.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "5fc575ae481e7368541ae3b16e222bd733d4f4e9",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-006",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-050",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_tenant_contact"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-006",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-006.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "c7b93fd55681e8e65b243121efb0b0fe3753bdcf",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-007",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-052",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1704067200000,
+      "expires_at": 1735689600000,
+      "revoked": false,
+      "nonce": "nonce-relay-007",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-007.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "c1435e0f1705aa74e57a8a18f065b47197285ebf",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    },
+    {
+      "record_id": "SYN-RELAY-008",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-055",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": true,
+      "nonce": "nonce-relay-008",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-008.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "46d6760711b88da8079e806aeddd1d9e57db7b31",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      }
+    }
+  ],
+  "registrations": [
+    {
+      "registration_id": "SYN-REG-AUTH-JASON",
+      "kind": "principal-authority",
+      "subject_id": "SYN-ISSUER-JASON",
+      "authority": "escalation",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "principals/SYN-ISSUER-JASON.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "fd66de562e7bfd13192d68647cd0cdb0f5a6513c",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-AUTH-MUSE-RELAY",
+      "kind": "principal-authority",
+      "subject_id": "SYN-ISSUER-MUSE-RELAY",
+      "authority": "escalation",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "principals/SYN-ISSUER-MUSE-RELAY.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "b3ac681ffc43327bfde309437385fbfbe67b49ad",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-001",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-001",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-001.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "4ad7bcff62e1c74b3d14dfe8b27ded3db02fd487",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-002",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-002",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-002.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "d025df57e21bb0d95802e2cc6fcc2e693cfa57b6",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-009",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-009",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-009.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "0f838b7d1b066aa5d871c91e971811b5916dc161",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-010",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-010",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-010.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "321029c6f2c5cd98509cf88e1c5f04e307044f13",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-003",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-003",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-003.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "6ffb1ac17fbe15befe271edad2eddf3e028e4a8f",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-004",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-004",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-004.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "86769faf15f5899edfa6956ad5a89c5a7693f860",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-005",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-005",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-005.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "5fc575ae481e7368541ae3b16e222bd733d4f4e9",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-006",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-006",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-006.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "c7b93fd55681e8e65b243121efb0b0fe3753bdcf",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-007",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-007",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-007.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "c1435e0f1705aa74e57a8a18f065b47197285ebf",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    },
+    {
+      "registration_id": "SYN-REG-RELAY-008",
+      "kind": "relay-record",
+      "subject_id": "SYN-RELAY-008",
+      "source_ref": {
+        "repo": "pm-fixtures",
+        "path": "relay-records/SYN-RELAY-008.json",
+        "commit": "429abd8ca5c9f4a256d101177d5df7fd5f14bda2",
+        "blob": "46d6760711b88da8079e806aeddd1d9e57db7b31",
+        "algorithm": "git-sha1",
+        "revision": "v1"
+      },
+      "pinned": true,
+      "revoked": false,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000
+    }
+  ]
+}
