@@ -1,0 +1,13 @@
+{
+  "description": "Property Manager agent Phase 2 slice 1 synthetic prototype: JSON exception dashboard with deterministic recommendations and escalation records from fixture cases only. Advisory only; no live activation, no charges, no messages, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "property-manager-prototype",
+  "scripts": {
+    "battery": "PM_APPROVED_ROOT=19ef9eacde70d506d989d4d1c1ece85ec9b0b6819af99c4b975676c0605c2858 node tests/run-battery.js",
+    "test": "PM_APPROVED_ROOT=19ef9eacde70d506d989d4d1c1ece85ec9b0b6819af99c4b975676c0605c2858 node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

@@ -1,0 +1,191 @@
+{
+  "principals": {
+    "SYN-ISSUER-JASON": {
+      "display": "Jason",
+      "authorizes_escalation": true
+    },
+    "SYN-ISSUER-MUSE-RELAY": {
+      "display": "Muse (authorized relay)",
+      "authorizes_escalation": true
+    },
+    "SYN-ISSUER-OPERATOR": {
+      "display": "property operator",
+      "authorizes_escalation": false
+    }
+  },
+  "relay_records": [
+    {
+      "record_id": "SYN-RELAY-001",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-003",
+      "scope_ids": [
+        "maintenance"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 1000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-001"
+    },
+    {
+      "record_id": "SYN-RELAY-002",
+      "issuer": "SYN-ISSUER-MUSE-RELAY",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-025",
+      "scope_ids": [
+        "lease"
+      ],
+      "action_ids": [
+        "authorize_tenant_contact"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-002"
+    },
+    {
+      "record_id": "SYN-RELAY-009",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-048",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-009"
+    },
+    {
+      "record_id": "SYN-RELAY-010",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-030",
+      "scope_ids": [
+        "lease"
+      ],
+      "action_ids": [
+        "authorize_legal_review"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-010"
+    },
+    {
+      "record_id": "SYN-RELAY-003",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-045",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 500,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-003"
+    },
+    {
+      "record_id": "SYN-RELAY-004",
+      "issuer": "SYN-ISSUER-OPERATOR",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-065",
+      "scope_ids": [
+        "comms"
+      ],
+      "action_ids": [
+        "authorize_tenant_contact"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-004"
+    },
+    {
+      "record_id": "SYN-RELAY-005",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-099",
+      "scope_ids": [
+        "maintenance"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-005"
+    },
+    {
+      "record_id": "SYN-RELAY-006",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-050",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_tenant_contact"
+      ],
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": false,
+      "nonce": "nonce-relay-006"
+    },
+    {
+      "record_id": "SYN-RELAY-007",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-052",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1704067200000,
+      "expires_at": 1735689600000,
+      "revoked": false,
+      "nonce": "nonce-relay-007"
+    },
+    {
+      "record_id": "SYN-RELAY-008",
+      "issuer": "SYN-ISSUER-JASON",
+      "subject_ref": "SYN-PRINCIPAL-OPERATOR",
+      "resource": "SYN-CASE-055",
+      "scope_ids": [
+        "rent"
+      ],
+      "action_ids": [
+        "authorize_spend"
+      ],
+      "amount_limit_usd": 5000,
+      "valid_from": 1767225600000,
+      "expires_at": 1798761600000,
+      "revoked": true,
+      "nonce": "nonce-relay-008"
+    }
+  ],
+  "registrations": [
+    {
+      "registration_id": "SYN-REG-001",
+      "store_id": "pm-fixtures-v1",
+      "pinned": true
+    }
+  ]
+}
