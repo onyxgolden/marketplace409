@@ -395,6 +395,22 @@ export function validateTrustRegistry(trust, clock, budget, expectedCommit) {
     return Buffer.from(canonicalJson(rest), "utf8");
   };
 
+  // PM-R2-001: the complete canonical SourceRef identity is all six
+  // fields. Comparing only blob+commit lets a registration move to a
+  // different repo/path/revision while retaining the same blob and
+  // commit and still confer authority — every field must agree.
+  const sameSourceRef = (a, b) =>
+    a &&
+    b &&
+    typeof a === "object" &&
+    typeof b === "object" &&
+    a.repo === b.repo &&
+    a.path === b.path &&
+    a.commit === b.commit &&
+    a.blob === b.blob &&
+    a.algorithm === b.algorithm &&
+    a.revision === b.revision;
+
   const seenRegIds = new Set();
   const seenSubjects = new Map(); // kind -> Set(subject_id)
   const authorityPrincipals = new Set();
@@ -426,6 +442,12 @@ export function validateTrustRegistry(trust, clock, budget, expectedCommit) {
       if (!p || typeof p !== "object") fail(`principal-authority registration for unknown principal ${subject_id}`);
       const expected = gitBlobId(pinnedBytes(p));
       if (reg.source_ref.blob !== expected) fail(`principal-authority registration ${registration_id} source binding mismatch`);
+      // PM-R2-001: the registration's source_ref must equal the principal's
+      // own embedded source_ref on ALL six identity fields — a blob match
+      // alone does not bind repo/path/revision.
+      if (!validSourceRef(p.source_ref) || !sameSourceRef(reg.source_ref, p.source_ref)) {
+        fail(`principal-authority registration ${registration_id} does not bind the principal's full source identity`);
+      }
       if (reg.authority !== "escalation") fail(`registration ${registration_id} does not grant escalation authority`);
       authorityPrincipals.add(subject_id);
       budget.addSource(reg.source_ref, pinnedBytes(p));
@@ -434,8 +456,10 @@ export function validateTrustRegistry(trust, clock, budget, expectedCommit) {
       if (!rec) fail(`relay-record registration for unknown record ${subject_id}`);
       const expected = gitBlobId(pinnedBytes(rec));
       if (reg.source_ref.blob !== expected) fail(`relay-record registration ${registration_id} source binding mismatch`);
-      // The record's own embedded source_ref must agree with the registration.
-      if (!validSourceRef(rec.source_ref) || rec.source_ref.blob !== expected || rec.source_ref.commit !== expectedCommit) {
+      // The record's own embedded source_ref must agree with the registration
+      // on the FULL six-field identity — blob+commit alone leave
+      // repo/path/algorithm/revision unauthenticated (PM-R2-001).
+      if (!validSourceRef(rec.source_ref) || !sameSourceRef(rec.source_ref, reg.source_ref)) {
         recordProblems.set(rec.record_id, "source binding mismatch");
         continue;
       }

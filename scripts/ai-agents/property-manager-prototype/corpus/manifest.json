@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "agent": "property-manager",
-  "corpus_digest": "e41350c7f845b9b9c252c0c7453bae20a4f433e0ab8fbc8e936a5afc1c8d0031",
+  "corpus_digest": "6e1b6025e81dfef0ddc448c5ac133ee839f489b55e161279db431ce46ad7e5a9",
   "files": [
     {
       "path": "README.md",
@@ -45,7 +45,7 @@
     },
     {
       "path": "src/engine.js",
-      "sha256": "1a5cc828735cd4bdd610c8a16357cd7fdfbd0c146c732defaf39ddaf46abd6cb"
+      "sha256": "07cc5f95148cd0566d16f9d8d749caed9aa8233d10abd56b78a295ce89094152"
     },
     {
       "path": "src/index.js",
@@ -142,6 +142,10 @@
     {
       "path": "tests/schemas.test.js",
       "sha256": "6dc0fa8cadc053d053c74eecc93471a9cf3c8bbf163c5234c567f1136702aa7a"
+    },
+    {
+      "path": "tests/sourceref-identity.test.js",
+      "sha256": "a1743ced26f96c2049053198e7f3875f98c93b5a429ebe4597c0adc38d7517f9"
     },
     {
       "path": "tests/testutil.js",
