@@ -1,0 +1,31 @@
+{
+  "frozen_note": "Authenticated corpus: scorer + verifier (src, including trust.js), fixtures + expected oracles (tests), official runner (runner). No exemptions. The approved root digest is trusted HOST input (CI_APPROVED_ROOT_DIGEST), not corpus content. Re-run freeze.js after any corpus change and update the host digest.",
+  "files": {
+    "runner/launch.js": "3c5bcd4727f6a2eea0db508ea048c55d5dfa185dd3ace26b5e90b69624c13bf7",
+    "runner/run-manual.js": "f744a7646204c8b00f6c6f3068f18e26bc6ace479524acedbcbc785557600c0f",
+    "src/card.js": "fc152aaa03368b81b99be2595743fef8925a867f048736f8daad584f7c467688",
+    "src/cells.js": "e27db40469873cdc6ec9f3f27a4afe35b9585058bcf950cdea36392e989fdda6",
+    "src/challenges.js": "17db095749d7f9adbdeb4745bca2e173ad0f69a525d3963040a6e5b58df4281d",
+    "src/compare.js": "639c27a3f9512f061483d707de08adbe6dc4aabbf2f942b3eeaa76cd8a9ad6ab",
+    "src/index.js": "1c8de0890fc4a38da4243c08c509db56424fcb90f6532b1ddf03d20c3b99b9a7",
+    "src/interlock.js": "d3930f411ca4c451085b15c8738f2e2a7a86e412a1e47685557573c848652036",
+    "src/inventory.js": "3fe170d12cbe4080dd45d21652c4ef0c2d5785f0e33ae796573fe99dcfc44383",
+    "src/ledger.js": "9237d62e87802228b552f2515c86fe0adcc6ae49fbe5ec91a76eb43993e0b12d",
+    "src/publish.js": "29f13f3e3caab69a63b15b3614a3c8356767b7bf3db3768a36802fa35c6d6812",
+    "src/rubric.js": "a7b4739af8726f01575bee15c680eed08e85bc0a383a4dfd0bc0b5d6c01d33be",
+    "src/schemas.js": "186e7c0f4fb08ef6df5653406a57edd28364d50573cfe01b7d653234bb2b45cd",
+    "src/taxonomy.js": "af8dcaf67c9f4c378f9a7068182a8f3616a6a6fbde0975a52284ee4f6c79a1c7",
+    "src/trust.js": "e3961e78e2fb51b9756d17c51140359d5547430bf72c867f2c1289f960d6fb11",
+    "tests/adversarial-regressions.test.js": "4f7741e7f3d941544f4330f67a62bc332bd98e696701864aa4957c4af6d356f7",
+    "tests/cells.test.js": "304aa9142bcc837fc0b16c679b1b4b4d1721089de5d2b01758119b6f8abe0580",
+    "tests/challenges.test.js": "74d260ebd2036662da23a94890cf6e4781ffdda042ca31ceb964775e23eb8ce6",
+    "tests/compare.test.js": "fe0b7ed3d77bbca9a7119d466e1c70ecb9983a905ae47a61cfb829b8ed951c4b",
+    "tests/helpers.js": "dfc266559fadb3808225e352d6664a583b51706dd0c504ff78dd9bcd0aa73376",
+    "tests/interlock-card.test.js": "5208a56b97b5e5fac68d400950e05f8bc8625e72b708b288454917b2e6da1917",
+    "tests/launch.test.js": "b46cc2a180ef925019883fceab6a2fc9732d5f9f9068bb1d728cf57bb634ebc0",
+    "tests/ledger.test.js": "30a3261910b386e1c4d8b5bb6de10235d3672e35cb64c025675d6f407584ad28",
+    "tests/publish.test.js": "3c5134e3ad7e2c4c7a628544273069eb449425c31410f95d576f0153a9e60e82",
+    "tests/rubric.test.js": "2c1d1a45b0b46d08543741dffcfc4745077fabe5735c95fcfea8d12040701823",
+    "tests/trust.test.js": "5afd17b0c792e6b1bc3fbf7a2f9be24713adf993968c74e902a4d76947527c22"
+  }
+}
