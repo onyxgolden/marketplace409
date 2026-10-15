@@ -154,14 +154,7 @@ export function run(task, context) {
   // Resolve the trusted checklist document FIRST: nothing can be checked
   // without it, and task content never supplies required sections or
   // companions.
-  let checklistGranted;
-  try {
-    checklistGranted = hasReadGrant(ctx.criteria.checklist_ref, ctx.readGrants, budget, "checklist read grant");
-  } catch (e) {
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-    throw e;
-  }
-  if (!checklistGranted) {
+  if (!hasReadGrant(ctx.criteria.checklist_ref, ctx.readGrants)) {
     return refused(task, "READ_DENIED", "error", `read grant missing for checklist source ${ctx.criteria.checklist_ref.repo}/${ctx.criteria.checklist_ref.path}`);
   }
   let checklistResolved;
@@ -180,14 +173,7 @@ export function run(task, context) {
   }
 
   // Resolve the document-set bundle.
-  let documentSetGranted;
-  try {
-    documentSetGranted = hasReadGrant(validatedTask.document_set_ref, ctx.readGrants, budget, "document set read grant");
-  } catch (e) {
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-    throw e;
-  }
-  if (!documentSetGranted) {
+  if (!hasReadGrant(validatedTask.document_set_ref, ctx.readGrants)) {
     return refused(task, "READ_DENIED", "error", `read grant missing for document set ${validatedTask.document_set_ref.repo}/${validatedTask.document_set_ref.path}`);
   }
   let bundleResolved;
@@ -305,14 +291,7 @@ export function run(task, context) {
     const key = fullSourceRefKey(doc.content_ref);
     let resolved = contentCache.get(key);
     if (!resolved) {
-      let contentGranted;
-      try {
-        contentGranted = hasReadGrant(doc.content_ref, ctx.readGrants, budget, `content read grant for ${doc.doc_id}`);
-      } catch (e) {
-        if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-        throw e;
-      }
-      if (!contentGranted) {
+      if (!hasReadGrant(doc.content_ref, ctx.readGrants)) {
         return refused(task, "READ_DENIED", "error", `read grant missing for document ${doc.doc_id} content ${doc.content_ref.repo}/${doc.content_ref.path}`);
       }
       try {

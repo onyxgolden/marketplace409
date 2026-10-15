@@ -131,16 +131,73 @@ export function structuralOf(result) {
   };
 }
 
-/** Context for one case: base fixture store + named principal/criteria +
- *  clock + optional overrides (for permission/mutation/tamper cases). */
+/**
+ * Minimal source/grant registry containing ONLY the given refs — not
+ * the whole shared fixture store. DOC-002R fix: context validation is
+ * now itself object-charged (one charge per registered source, per
+ * revision, per read grant, plus the principal and criteria records),
+ * so an always-identical dump of every fixture document-set ever
+ * authored for the whole battery would exhaust the 64-object budget
+ * before a single document is ever reached. A real host scopes context
+ * to what one request needs; this mirrors that. (Same pattern as this
+ * program's Customer Success CS-001 fix in the same review wave.)
+ */
+export function minimalRegistry(store, refs) {
+  const sources = {};
+  const readGrants = [];
+  const seen = new Set();
+  for (const ref of refs) {
+    if (!ref) continue;
+    const key = `${ref.repo}|${ref.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const entry = store.sources[key];
+    if (entry) sources[key] = entry;
+    readGrants.push({ repo: ref.repo, path: ref.path });
+  }
+  return { sources, readGrants };
+}
+
+/**
+ * Discover the per-document content SourceRefs a document-set actually
+ * names, by reading the document-set's OWN registered bytes directly
+ * from the store (a plain dict lookup — this is test-harness setup, not
+ * the scored agent path, so it is not itself budget-charged). Returns
+ * [] if the document-set isn't resolvable or isn't valid JSON — in
+ * that case the task will refuse before ever reaching per-document
+ * content resolution anyway, so no content refs are needed in context.
+ */
+function discoverContentRefs(store, documentSetRef) {
+  if (!documentSetRef) return [];
+  const key = `${documentSetRef.repo}|${documentSetRef.path}`;
+  const rev = store.sources[key]?.revisions?.[documentSetRef.commit];
+  if (!rev || typeof rev.text !== "string") return [];
+  try {
+    const parsed = JSON.parse(rev.text);
+    const docs = Array.isArray(parsed.documents) ? parsed.documents : [];
+    return docs.map((d) => d && typeof d === "object" && d.content_ref).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Context for one case: minimal registry for the task's own checklist +
+ *  document-set + each referenced document's content (plus any
+ *  case-declared `extraRefs`), named principal/criteria, clock, and
+ *  optional overrides (for permission/mutation/tamper/budget cases). */
 export function buildContext(root, c) {
   const store = JSON.parse(readFileSync(join(root, "fixtures", "store.json"), "utf8"));
+  const criteria = store.criteria[c.criteria ?? "standard"];
+  const documentSetRef = c.task?.fixture_refs?.document_set ?? c.documentSetRef ?? null;
+  const contentRefs = discoverContentRefs(store, documentSetRef);
+  const neededRefs = [criteria.checklist_ref, documentSetRef, ...contentRefs, ...(c.extraRefs ?? [])];
+  const { sources, readGrants } = minimalRegistry(store, neededRefs);
   const context = {
     clock: Date.parse(c.clock),
-    sources: store.sources,
-    readGrants: store.readGrants,
+    sources,
+    readGrants,
     principal: store.principals[c.principal ?? "jasonActive"],
-    criteria: store.criteria[c.criteria ?? "standard"],
+    criteria,
   };
   const ov = c.contextOverrides;
   if (ov) {
@@ -151,6 +208,8 @@ export function buildContext(root, c) {
     if (ov.removeGrants) {
       context.readGrants = context.readGrants.filter((g) => !ov.removeGrants.includes(`${g.repo}|${g.path}`));
     }
+    if (ov.addSources) context.sources = { ...context.sources, ...ov.addSources };
+    if (ov.addReadGrants) context.readGrants = [...context.readGrants, ...ov.addReadGrants];
   }
   return context;
 }

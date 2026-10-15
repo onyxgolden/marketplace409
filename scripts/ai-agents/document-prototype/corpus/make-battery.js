@@ -593,10 +593,16 @@ addHandCase(
 );
 
 // ===================== budget/replay/mutation (10) =====================
-addHandCase("bud-001-objects-exceeded-documents", "budget_replay_mutation", taskFor("sixty-five-documents", { declared_total: 65 }), refusedExpected("BUDGET_EXCEEDED"));
-addHandCase("bud-002-content-phase-exceeded", "budget_replay_mutation", taskFor("sixty-two-documents", { declared_total: 62 }), refusedExpected("BUDGET_EXCEEDED"));
+// 65 distinct-content documents means a 67-entry source catalog (2
+// fixed refs + 65 content refs), which now fails the schema-level
+// 1..64-entry catalog cap (INVALID_INPUT) before any object-budget
+// charging is even reached — not BUDGET_EXCEEDED. Both are correct
+// fail-closed outcomes; this fixture now demonstrates the catalog-size
+// gate specifically.
+addHandCase("bud-001-objects-exceeded-documents", "budget_replay_mutation", taskFor("sixty-five-documents", { declared_total: 65 }), refusedExpected("INVALID_INPUT"));
+addHandCase("bud-002-content-phase-exceeded", "budget_replay_mutation", taskFor("eleven-documents-distinct-content", { declared_total: 11 }), refusedExpected("BUDGET_EXCEEDED"));
 addHandCase("bud-003-assertions-exceeded", "budget_replay_mutation", taskFor("sixty-five-assertions", { declared_total: 1 }), refusedExpected("BUDGET_EXCEEDED"));
-addDomainCase("bud-004-exact-boundary-success-61-shared", "budget_replay_mutation", "sixty-one-documents-shared-content");
+addDomainCase("bud-004-exact-boundary-success-50-shared", "budget_replay_mutation", "fifty-documents-shared-content");
 addHandCase("bud-005-poisoned-tail-sentinel", "budget_replay_mutation", taskFor("sixty-five-documents-poisoned-tail", { declared_total: 65 }), refusedExpected("BUDGET_EXCEEDED"));
 addHandCase("bud-006-input-payload-too-large", "budget_replay_mutation", taskFor("oversized-document-set-text", { declared_total: 900 }), refusedExpected("INPUT_LIMIT"));
 addHandCase("bud-007-duplicate-primary-id-again", "budget_replay_mutation", taskFor("duplicate-primary-id", { declared_total: 2 }), refusedExpected("INVALID_INPUT"));

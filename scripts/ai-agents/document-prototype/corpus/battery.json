@@ -2497,7 +2497,7 @@
           "repo": "edu-sources",
           "path": "document-sets/two-documents-mixed.json",
           "commit": "8ec96f7e4ff348813427edbd597c6b207f1b79c8",
-          "blob": "eff23e1e3493e7dfb4f1adb06d2e115d812e6a0a",
+          "blob": "1d5911eff7f0104d5f380985fedcbbdb30498588",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2625,7 +2625,7 @@
           "repo": "edu-sources",
           "path": "document-sets/two-documents-mixed.json",
           "commit": "8ec96f7e4ff348813427edbd597c6b207f1b79c8",
-          "blob": "eff23e1e3493e7dfb4f1adb06d2e115d812e6a0a",
+          "blob": "1d5911eff7f0104d5f380985fedcbbdb30498588",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2753,7 +2753,7 @@
           "repo": "edu-sources",
           "path": "document-sets/two-documents-mixed.json",
           "commit": "8ec96f7e4ff348813427edbd597c6b207f1b79c8",
-          "blob": "eff23e1e3493e7dfb4f1adb06d2e115d812e6a0a",
+          "blob": "1d5911eff7f0104d5f380985fedcbbdb30498588",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7618,7 +7618,7 @@
           "repo": "edu-sources",
           "path": "document-sets/assertion-span-mismatch.json",
           "commit": "4fd706ef8632685d76b9d1d82c4c67f829c0e613",
-          "blob": "bc55c04ba3b967dfb5ff9801f7be72bca15fa7f5",
+          "blob": "ed61342252aa8d4cf9cfac9c8127dc49256d273f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7726,7 +7726,7 @@
           "repo": "edu-sources",
           "path": "document-sets/assertion-owner-not-admitted.json",
           "commit": "9c2a62655d1b319cc88ba6cf54f29d023ac34946",
-          "blob": "d9d2ac07d5286c31f40e50eeb6971b6522445cbe",
+          "blob": "9d0d2a0588d9396c35a5805144dc3eda9d2fd6fc",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -11670,7 +11670,7 @@
       "status": "REFUSED",
       "complete": false,
       "diagnostic_codes": [
-        "BUDGET_EXCEEDED"
+        "INVALID_INPUT"
       ],
       "quarantined_doc_ids": [],
       "inventory": [],
@@ -11709,21 +11709,21 @@
     "clock": "2026-07-01T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "t-sixty-two-documents-62-true",
+      "task_id": "t-eleven-documents-distinct-content-11-true",
       "operation": "analyze",
       "fixture_refs": {
         "document_set": {
           "repo": "edu-sources",
-          "path": "document-sets/sixty-two-documents.json",
-          "commit": "7650810121b804b002475b84accf41c30eabc196",
-          "blob": "a4b2bb575f18619e0e2f170677a0f8b15d98a037",
+          "path": "document-sets/eleven-documents-distinct-content.json",
+          "commit": "e2c4a7aee95da45a63766f70f466f873d0a9ec4b",
+          "blob": "96274b0f552f947b834b0ef0126281d714f00622",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 62,
+          "declared_total": 11,
           "complete": true
         }
       }
@@ -11778,7 +11778,7 @@
           "repo": "edu-sources",
           "path": "document-sets/sixty-five-assertions.json",
           "commit": "7a178f964872b34ccd4259e744e31731163a10ff",
-          "blob": "4e8518350ba310637dee051a88dd2c8ecd91cf97",
+          "blob": "98b01b8ea9a0892c744322a5ead88705b556c7a1",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -11826,28 +11826,28 @@
     }
   },
   {
-    "case_id": "bud-004-exact-boundary-success-61-shared",
+    "case_id": "bud-004-exact-boundary-success-50-shared",
     "category": "budget_replay_mutation",
     "principal": "jasonActive",
     "criteria": "standard",
     "clock": "2026-07-01T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "t-sixty-one-documents-shared-content-56-true",
+      "task_id": "t-fifty-documents-shared-content-50-true",
       "operation": "analyze",
       "fixture_refs": {
         "document_set": {
           "repo": "edu-sources",
-          "path": "document-sets/sixty-one-documents-shared-content.json",
-          "commit": "ebd610fd61020f022c5da4249aa56b038e32e09e",
-          "blob": "a6feaf9b40b9ebf97767583579431b51c4373a4d",
+          "path": "document-sets/fifty-documents-shared-content.json",
+          "commit": "de6d21aef879583aa18bbce9fc5a201f7d993092",
+          "blob": "721290ac5a4d82946c9e6324ce36af739c0490b1",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 56,
+          "declared_total": 50,
           "complete": true
         }
       }
@@ -13107,156 +13107,6 @@
               "evidence_state": "unverifiable"
             }
           ]
-        },
-        {
-          "doc_id": "d-shb-50",
-          "logical_id": "shb-50",
-          "revision": 1,
-          "quarantined": false,
-          "content_sha256": "49866c95868d4d4a730dc29e14d8cc13989abfb162102e5b6a3d3d25583d9404",
-          "metadata_verification": [
-            {
-              "key": "author",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "date",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "id",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "status",
-              "evidence_state": "unverifiable"
-            }
-          ]
-        },
-        {
-          "doc_id": "d-shb-51",
-          "logical_id": "shb-51",
-          "revision": 1,
-          "quarantined": false,
-          "content_sha256": "49866c95868d4d4a730dc29e14d8cc13989abfb162102e5b6a3d3d25583d9404",
-          "metadata_verification": [
-            {
-              "key": "author",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "date",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "id",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "status",
-              "evidence_state": "unverifiable"
-            }
-          ]
-        },
-        {
-          "doc_id": "d-shb-52",
-          "logical_id": "shb-52",
-          "revision": 1,
-          "quarantined": false,
-          "content_sha256": "49866c95868d4d4a730dc29e14d8cc13989abfb162102e5b6a3d3d25583d9404",
-          "metadata_verification": [
-            {
-              "key": "author",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "date",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "id",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "status",
-              "evidence_state": "unverifiable"
-            }
-          ]
-        },
-        {
-          "doc_id": "d-shb-53",
-          "logical_id": "shb-53",
-          "revision": 1,
-          "quarantined": false,
-          "content_sha256": "49866c95868d4d4a730dc29e14d8cc13989abfb162102e5b6a3d3d25583d9404",
-          "metadata_verification": [
-            {
-              "key": "author",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "date",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "id",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "status",
-              "evidence_state": "unverifiable"
-            }
-          ]
-        },
-        {
-          "doc_id": "d-shb-54",
-          "logical_id": "shb-54",
-          "revision": 1,
-          "quarantined": false,
-          "content_sha256": "49866c95868d4d4a730dc29e14d8cc13989abfb162102e5b6a3d3d25583d9404",
-          "metadata_verification": [
-            {
-              "key": "author",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "date",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "id",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "status",
-              "evidence_state": "unverifiable"
-            }
-          ]
-        },
-        {
-          "doc_id": "d-shb-55",
-          "logical_id": "shb-55",
-          "revision": 1,
-          "quarantined": false,
-          "content_sha256": "49866c95868d4d4a730dc29e14d8cc13989abfb162102e5b6a3d3d25583d9404",
-          "metadata_verification": [
-            {
-              "key": "author",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "date",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "id",
-              "evidence_state": "unverifiable"
-            },
-            {
-              "key": "status",
-              "evidence_state": "unverifiable"
-            }
-          ]
         }
       ],
       "duplicate_groups": [
@@ -13312,13 +13162,7 @@
             "d-shb-46",
             "d-shb-47",
             "d-shb-48",
-            "d-shb-49",
-            "d-shb-50",
-            "d-shb-51",
-            "d-shb-52",
-            "d-shb-53",
-            "d-shb-54",
-            "d-shb-55"
+            "d-shb-49"
           ]
         }
       ],
@@ -13352,13 +13196,13 @@
       "excluded_assertions": [],
       "coverage": {
         "state": "COMPLETE",
-        "admitted_count": 56,
+        "admitted_count": 50,
         "excluded_count": 0
       },
       "population": {
-        "declared_total": 56,
+        "declared_total": 50,
         "complete": true,
-        "actual_total": 56,
+        "actual_total": 50,
         "evidence_state": "verified"
       },
       "quarantined_other": [],
@@ -13566,7 +13410,7 @@
           "repo": "edu-sources",
           "path": "document-sets/assertion-span-mismatch.json",
           "commit": "4fd706ef8632685d76b9d1d82c4c67f829c0e613",
-          "blob": "bc55c04ba3b967dfb5ff9801f7be72bca15fa7f5",
+          "blob": "ed61342252aa8d4cf9cfac9c8127dc49256d273f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -13674,7 +13518,7 @@
           "repo": "edu-sources",
           "path": "document-sets/assertion-owner-not-admitted.json",
           "commit": "9c2a62655d1b319cc88ba6cf54f29d023ac34946",
-          "blob": "d9d2ac07d5286c31f40e50eeb6971b6522445cbe",
+          "blob": "9d0d2a0588d9396c35a5805144dc3eda9d2fd6fc",
           "algorithm": "git-sha1",
           "revision": "v1"
         }

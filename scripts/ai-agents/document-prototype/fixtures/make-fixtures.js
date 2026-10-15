@@ -377,30 +377,35 @@ addSet(
   )
 );
 
-// Exact-boundary success: shared content means only ONE content
-// resolution (plus its one read-grant check) is charged regardless of
-// document count. 6 fixed charges (checklist read-grant + checklist
-// resolution + document-set read-grant + document-set resolution +
-// principal + criteria) + 56 document records + 1 shared-content
-// read-grant + 1 shared-content resolution = 64 exactly — the full
-// budget, fully admitted, no refusal. (Empirically verified via a
-// standalone probe script against the real run() function, not just
-// hand-derived — this exact count matters and is easy to get wrong by
-// forgetting the principal/criteria charges.)
+// Exact-boundary success: shared content means only ONE content catalog
+// entry (and its one resolution) is charged regardless of document
+// count — unlike distinct content below, where EACH document's content
+// ref is its own charged catalog entry. DOC-002R fix: context
+// validation now object-charges every registered source/revision/grant
+// (minimal per-task registry, built by tests/harness.js's
+// minimalRegistry — not the whole shared fixture store), so the real
+// boundary is 50 documents, empirically verified via a standalone probe
+// script against the real run() + buildContext functions (not
+// hand-derived — this count is sensitive to exactly how many catalog
+// entries the minimal-registry context ends up carrying, which isn't
+// safe to hand-compute).
 const sharedBulkContent = "Shared bulk content for the exact-boundary success case.\n";
 const sharedBulkRef = contentRef(sharedBulkContent, "shared-bulk");
 addSet(
-  "sixty-one-documents-shared-content",
-  Array.from({ length: 56 }, (_, i) => doc({ doc_id: `d-shb-${String(i).padStart(2, "0")}`, logical_id: `shb-${i}`, declared_date: "2026-01-01", content: sharedBulkContent, sharedContentRef: sharedBulkRef }))
+  "fifty-documents-shared-content",
+  Array.from({ length: 50 }, (_, i) => doc({ doc_id: `d-shb-${String(i).padStart(2, "0")}`, logical_id: `shb-${i}`, declared_date: "2026-01-01", content: sharedBulkContent, sharedContentRef: sharedBulkRef }))
 );
 
-// 6 fixed charges (see above) + 58 document records = 64 exactly, so all
-// 58 document records charge successfully; the FIRST per-document
-// content read-grant check (distinct content per document, so each
-// needs its own) is charge #65 and refuses there.
+// Distinct content: each document's content ref is its OWN catalog
+// entry (2 charges: source + revision) plus its own grant (1 charge),
+// so this boundary is far smaller than the shared-content case above.
+// 10 documents (all distinct content) succeed fully; 11 is the real
+// empirically-verified point where the 11th document's content
+// resolution overflows the cap, after all 11 document records
+// themselves charged successfully.
 addSet(
-  "sixty-two-documents",
-  Array.from({ length: 58 }, (_, i) => doc({ doc_id: `d-bulk62-${String(i).padStart(2, "0")}`, logical_id: `bulk62-${i}`, declared_date: "2026-01-01", content: `Bulk62 doc ${i}.\n`, contentTag: `bulk62-${i}` }))
+  "eleven-documents-distinct-content",
+  Array.from({ length: 11 }, (_, i) => doc({ doc_id: `d-elv-${String(i).padStart(2, "0")}`, logical_id: `elv-${i}`, declared_date: "2026-01-01", content: `Distinct-content doc ${i}.\n`, contentTag: `elv-${i}` }))
 );
 
 addSet(

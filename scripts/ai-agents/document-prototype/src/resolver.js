@@ -117,17 +117,12 @@ export function resolveSourceRef(ref, sources, budget, what) {
   return { bytes, text: rev.text };
 }
 
-/**
- * Exact read-grant check: grants are exact repo+path, never prefixes.
- * Charged with budget.countObject() ONCE PER CALL — i.e., once per ref a
- * task actually needs a grant decision for (checklist, document-set,
- * each document's content) — not once per entry in the host's full
- * readGrants catalog, which (like context.sources) is explicitly a large
- * registry distinct from the strict per-task budget. This is DOC-002(a)'s
- * grant-charging requirement, applied at the point of actual consultation.
- */
-export function hasReadGrant(ref, readGrants, budget, what) {
-  budget.countObject(what ?? `read grant check for ${ref.repo}/${ref.path}`);
+/** Exact read-grant check: grants are exact repo+path, never prefixes.
+ *  Grants are object-charged up front in validateContext() (each entry
+ *  in context.readGrants is its own charged candidate) — by the time
+ *  this runs, readGrants is already a small, already-charged array, so
+ *  this check itself needs no separate charge. */
+export function hasReadGrant(ref, readGrants) {
   return readGrants.some((g) => g.repo === ref.repo && g.path === ref.path);
 }
 

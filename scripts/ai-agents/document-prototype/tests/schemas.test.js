@@ -148,34 +148,32 @@ test("validateContext rejects out-of-range source catalog size and malformed pri
   assert.throws(() => validateContext({ ...ctx, principal: { ...ctx.principal, registered_by: "someone-else" } }, makeBudget()), SchemaError);
 });
 
-test("validateContext charges principal and criteria as per-task candidates (DOC-002a, scoped)", () => {
+test("validateContext charges every source entry, revision, grant, principal and criteria before reading their fields (DOC-002a/DOC-002R)", () => {
   const ctx = {
     clock: Date.now(),
     sources: { "edu-sources|content/x.txt": { revisions: { [REF.commit]: { text: "hi", blob: REF.blob } } } },
-    readGrants: [],
+    readGrants: [{ repo: "edu-sources", path: "content/x.txt" }],
     principal: { principal_id: "p1", role: "JASON", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
     criteria: { checklist_version: "v1", required_sections: [], required_companions: [], checklist_ref: REF },
   };
-  // principal + criteria = 2 objects charged, regardless of catalog size
-  // below — context.sources/readGrants are the host's large registered
-  // catalog (the common contract's own explicit distinction from the
-  // strict per-task budget), not per-task candidates in their own right.
+  // 1 source entry + 1 revision + 1 grant + 1 principal + 1 criteria = 5.
   const budget = makeBudget();
   validateContext(ctx, budget);
-  assert.equal(budget.used.objects, 2);
+  assert.equal(budget.used.objects, 5);
 
-  // A large catalog — even one carrying an unused, oversized revision
-  // nothing ever reads — must NOT by itself exhaust a task's budget: only
-  // entries actually consulted (via resolveSourceRef, elsewhere) are
-  // charged. This is the deliberate, documented resolution of DOC-002a's
-  // literal "unused 300,000-byte revision" reproduction: catalog presence
-  // alone costs nothing; actual consultation is what's bounded (and
-  // already was, correctly, via resolveSourceRef's own charging).
-  const bigCatalog = { ...ctx, sources: { ...ctx.sources } };
-  for (let i = 0; i < 200; i++) {
-    bigCatalog.sources[`edu-sources|content/extra-${i}.txt`] = { revisions: { [REF.commit]: { text: i === 100 ? "x".repeat(300000) : "small", blob: REF.blob } } };
-  }
-  const budget2 = makeBudget();
-  assert.doesNotThrow(() => validateContext(bigCatalog, budget2));
-  assert.equal(budget2.used.objects, 2);
+  // An unused, oversized revision now IS charged just by being present
+  // in the catalog — this is the exact DOC-002a/DOC-002R reproduction
+  // (an unused 300,000-byte revision must not slip through uncharged).
+  // The catalog's own schema-level sanity cap is tied to the same
+  // 64-object task limit (see validateContext's doc comment) — a real
+  // host must supply a per-task-scoped context, which is what
+  // tests/harness.js's minimalRegistry()/buildContext() now do.
+  const bloated = {
+    ...ctx,
+    sources: {
+      ...ctx.sources,
+      "edu-sources|content/unused.txt": { revisions: { [REF.commit]: { text: "x".repeat(300000), blob: REF.blob } } },
+    },
+  };
+  assert.throws(() => validateContext(bloated, makeBudget()), (e) => e.code === "INPUT_LIMIT");
 });

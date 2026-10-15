@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "80354173ac0c2b4be134feca7942767467da4dc3816c09c1d5ac9769a4943a70",
+  "corpus_digest": "8fb8e0ecca3d524a194dcdef45da3519ef020f9ecb865ef310e57ea95499d055",
   "files": [
     {
       "path": "README.md",
@@ -7,7 +7,7 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "28a2eeb8d46113ae0e080dbce1d2d1e52bebd464fa8a96b8b5dc427290258a04"
+      "sha256": "ca1bea3275858ac5d2bc2d49052fcec679ce3cbdb2a5a0c97ff68c65e9a44dd2"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,15 +15,15 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "051e95a6c4bd408b423dc9fe648c16847d2eb318d5ec229fca824ca6614420f8"
+      "sha256": "18882056ed9b74d41430cf52d83dc60b5dc40d6da531a7201038e9cc2fc61c29"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "02b26e19e8d14c41c4f4c650a56b8f528581320ff68f0ed7be35da10506a116a"
+      "sha256": "21a8022f11d2435740dd14726a112d7dbdb236793f6b9a3256f73e9173adf177"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "ad2c168dbd0bcd3b5b94b173cbc997197ca56e08f82ae6a0a06dca9f71f22d52"
+      "sha256": "842e54c1d9d8512a82d8f607c1d9805263172430319e33dbad630878b06cd3ec"
     },
     {
       "path": "package.json",
@@ -39,7 +39,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "3a2c576273fdfba85ef209c7f369d176b938cb31829ec71e35891e201ea9da05"
+      "sha256": "d56dec82c936df6705d92c4d4f522933374278b3dd0be0890760a605d8706252"
     },
     {
       "path": "src/injection.js",
@@ -51,15 +51,15 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "370a015e4db417cc356e3abb94423cd37b1581c441842b6a58a89766b6c62421"
+      "sha256": "6d2b6f0e599b2ed1c3cf6b4f15a7683caa9b20811fae3caba76c0a0095b8cce3"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "bc77270eec5a9b6b27dc07a04c45b9b00e86118d3f294512504d742309ba6d25"
+      "sha256": "7926325b328195e4984762cff9da8df4c0527e218b139dad82792bf965f2e29c"
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "dec77093fc95aa206c7ab79cd4fc6d8c9245dba6ca16852ffe136376a5f91f3a"
+      "sha256": "629212c24c72b8b285ba385b8ffb096bb5ed2a1e31ccf2f423f6384a008bc6b7"
     },
     {
       "path": "tests/case-worker.js",
@@ -67,11 +67,11 @@
     },
     {
       "path": "tests/determinism.test.js",
-      "sha256": "78c1e9ded2ea2bca9a2ec7b5fcdfcf5712e2d6c64ee7ad839fa033cf268b3a6e"
+      "sha256": "8933d00e78c54cb50bc631634df214f9a47b3cdaadf9ef9af02e765f7f9a4761"
     },
     {
       "path": "tests/harness.js",
-      "sha256": "bdbb911c29bf936db90b07109e98e26e59ee2c3bfc83405dd9e0a27f37f88a24"
+      "sha256": "6a87a81218f64a8bae2a1f4f30767795a8f68fd05dc22517624091e6b4c7f1a7"
     },
     {
       "path": "tests/injection.test.js",
@@ -99,7 +99,7 @@
     },
     {
       "path": "tests/schemas.test.js",
-      "sha256": "bbe25dbea154726479a33fbb9b2511825ad337d542ef9006bf12e5fa29a251e9"
+      "sha256": "c76139f516006f6cf85f6842eaea2a33ec5d84a6cfc1114d1eeb7d6a5f6220fe"
     },
     {
       "path": "tests/watchdog.js",

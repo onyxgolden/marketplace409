@@ -31,19 +31,20 @@ const CASES = [
   ["injected-content", 1],
 ];
 
+function ctxFor(setName) {
+  return buildContext(ROOT, { clock: "2026-07-01T00:00:00Z", documentSetRef: store.documentSetRefs[setName] });
+}
+
 for (const [setName, declared] of CASES) {
   test(`run() is byte-identical across three separate calls — ${setName}`, () => {
-    const outputs = [1, 2, 3].map(() => {
-      const context = buildContext(ROOT, { clock: "2026-07-01T00:00:00Z" });
-      return canonicalJson(run(taskFor(setName, declared), context));
-    });
+    const outputs = [1, 2, 3].map(() => canonicalJson(run(taskFor(setName, declared), ctxFor(setName))));
     assert.equal(outputs[0], outputs[1]);
     assert.equal(outputs[1], outputs[2]);
   });
 }
 
 test("detached snapshot: caller mutation of the returned result cannot affect a subsequent run", () => {
-  const context = buildContext(ROOT, { clock: "2026-07-01T00:00:00Z" });
+  const context = ctxFor("single-nominal");
   const r1 = run(taskFor("single-nominal", 1), context);
   r1.report.inventory.push({ doc_id: "INJECTED", logical_id: "x", revision: 1 });
   r1.source_refs.length = 0;
@@ -54,7 +55,7 @@ test("detached snapshot: caller mutation of the returned result cannot affect a 
 });
 
 test("input/store ordering permutation does not change the semantic result (duplicate-group membership is order-independent)", () => {
-  const context = buildContext(ROOT, { clock: "2026-07-01T00:00:00Z" });
+  const context = ctxFor("three-way-duplicates");
   const r = run(taskFor("three-way-duplicates", 3), context);
   assert.deepEqual(
     [...r.report.duplicate_groups[0].doc_ids].sort(),

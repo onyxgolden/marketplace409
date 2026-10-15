@@ -153,38 +153,30 @@ export function validateReadGrant(value, where) {
 }
 
 /**
- * Validate the host-injected trusted context. `budget` is REQUIRED.
- *
- * `context.sources` and `context.readGrants` are the host's *registered
- * catalog* — the common contract explicitly distinguishes this from the
- * strict 64-object/256 KiB per-TASK consultation budget ("This bounds the
- * host's total registered source catalog... NOT the per-task consultation
- * budget"). This prototype's own fixture architecture relies on that
- * distinction: a single shared catalog (hundreds of entries) is reused
- * across every test case, with each task only ever consulting the
- * handful of entries its own refs name. Charging every catalog entry
- * against the per-task budget here — rather than at the point a specific
- * entry is actually consulted — would make EVERY task fail regardless of
- * its own complexity, which contradicts that distinction. So: this
- * function's catalog-shape check stays purely structural (type/hex-format
- * only, no byte-length read of `rev.text`) — it does not "deeply read" an
- * entry's content, so an unused revision sitting in the catalog is never
- * actually traversed by this function. Real consultation — and the
- * correct charge-before-read discipline, including the payload-byte
- * charge for whatever text is actually read — happens where a specific
- * SourceRef is resolved (resolveSourceRef in resolver.js, unchanged, and
- * already compliant: it charges countObject then countPayload before any
- * caller sees the resolved bytes).
- *
- * What WAS missing, and is fixed here: `principal` and `criteria` are
- * each a single, per-task-scoped candidate (not a large shared catalog)
- * — each now costs one budget.countObject() charge, before its own
- * fields are read. Read-grant checks are charged at resolver.js's
- * hasReadGrant() — once per actual consultation call (one per ref a task
- * needs a grant for), not once per catalog entry, for the same
- * catalog-vs-budget reason as sources above.
+ * validateContext(context, budget) — DOC-002a fix: the injected trusted
+ * context is itself a candidate population, not a free pre-pass. Every
+ * registered source, every revision within it, every read grant, the
+ * principal record and the criteria record are each object-charged via
+ * budget.countObject() as the FIRST statement before any of that
+ * candidate's own fields are read — exactly the same charge-before-read
+ * discipline src/index.js already applies to documents/assertions. A
+ * revision's text bytes are payload-charged (budget.countPayload) before
+ * being accepted, whether or not that revision is ever later resolved/
+ * used — an unused oversized revision must still count against the
+ * total input budget, not be traversed for free outside it. `budget` is
+ * REQUIRED: this function must never be called without the caller's
+ * live monotonic budget, or validation becomes an unbudgeted side
+ * channel again. The sources catalog's schema-level sanity cap is tied
+ * to the same 64-object task limit (not a separate, much looser
+ * ceiling) — a context this small is only realistic when the host
+ * builds it per-task-scoped, which is exactly what the real registered
+ * fixture host must do once source presence itself is charged. (Same
+ * resolution as this program's Customer Success CS-001 fix in the same
+ * review wave — see tests/harness.js's minimalRegistry() for the
+ * corresponding per-task-scoped context builder.)
  */
 export function validateContext(context, budget) {
+  if (!budget || typeof budget.countObject !== "function") fail("context", "internal: validateContext requires a live budget");
   if (!isPlainObject(context)) fail("context", "must be an object");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria"], "context");
   const clock = context.clock;
@@ -192,27 +184,28 @@ export function validateContext(context, budget) {
 
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
   const sourceKeys = Object.keys(context.sources);
-  // This bounds the host's total registered source catalog available in
-  // context (a schema-level sanity cap this prototype chooses), NOT the
-  // per-task consultation budget — that is separately and strictly
-  // enforced at 64 objects by resolver.js's BUDGET_LIMITS regardless of
-  // how large the registered catalog is. See the function doc comment.
-  if (sourceKeys.length === 0 || sourceKeys.length > 4096) fail("context", "sources must have 1..4096 entries");
+  if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
   for (const sk of sourceKeys) {
+    budget.countObject(`context.sources[${sk}]`);
     const entry = context.sources[sk];
     if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
     const revs = entry.revisions;
     if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
     for (const commit of Object.keys(revs)) {
+      budget.countObject(`context.sources[${sk}]@${commit}`);
       const rev = revs[commit];
       if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
       if (typeof rev.text !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
+      budget.countPayload(rev.text, `context source ${sk}@${commit}`);
       if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
     }
   }
 
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
-  const readGrants = context.readGrants.map((g, i) => validateReadGrant(g, `context.readGrants[${i}]`));
+  const readGrants = context.readGrants.map((g, i) => {
+    budget.countObject(`context.readGrants[${i}]`);
+    return validateReadGrant(g, `context.readGrants[${i}]`);
+  });
 
   budget.countObject("context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
