@@ -96,7 +96,7 @@ test("mutation: re-pinned manifest after tamper still rejected (root fixed)", ()
       e.sha256 = sha(readFileSync(join(dir, e.path)));
     }
     const canonical = JSON.stringify(
-      manifest.files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+      manifest.files.map((e) => ({ path: e.path, sha256: e.sha256 }))
     );
     manifest.corpus_digest = sha(Buffer.from(canonical, "utf8"));
     writeFileSync(join(dir, "corpus", "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");

@@ -1,11 +1,18 @@
 /**
  * verify-corpus.js — builtins-only trust authentication (node:fs / node:crypto
  * only; never imports scored code). Verifies the pinned manifest against the
- * separately trusted approval root BEFORE any scored test/helper is imported.
+ * separately trusted approval root.
  *
- * Returns {ok:true} or {ok:false, reason}. run-tests.js refuses (exit 3) on
- * any mismatch: no test file is imported, no helper executes, no canary can
- * fire. Mutation tests reuse this module against tampered copies.
+ * NOTE: tests/run-tests.js inlines this same logic with node builtins only
+ * and never imports this module before authentication (FM-004: a tampered
+ * copy of this file must not execute pre-verification). Keep the two in
+ * sync; the mutation tests exercise this module directly against tampered
+ * copies of the pristine tree.
+ *
+ * The digest covers EVERY pinned file including package.json (package.json
+ * carries no embedded root, so there is no self-carry circularity).
+ *
+ * Returns {ok:true} or {ok:false, reason}.
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -73,9 +80,10 @@ export function verifyCorpus(rootDir, approvedRoot) {
   for (const p of want.sort()) {
     if (!seen.has(p)) return { ok: false, reason: `unlisted file: ${p}` };
   }
-  // digest chain: digest covers every pinned file except package.json
+  // digest chain: the digest covers EVERY pinned file, including
+  // package.json (no embedded root, no circularity exclusion).
   const canonical = JSON.stringify(
-    files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+    files.map((e) => ({ path: e.path, sha256: e.sha256 }))
   );
   const digest = sha(Buffer.from(canonical, "utf8"));
   if (digest !== manifest.corpus_digest) return { ok: false, reason: "manifest corpus_digest does not match recomputed digest" };

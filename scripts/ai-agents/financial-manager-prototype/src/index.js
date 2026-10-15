@@ -14,7 +14,7 @@
 import { validateTask, validateSection, validateClock } from "./schemas.js";
 import { resolveRef } from "./resolver.js";
 import { scanInjection } from "./injection.js";
-import { canonicalBytes } from "./canonical.js";
+import { canonicalBytes, measureDepth } from "./canonical.js";
 import {
   parseAmount,
   addR,
@@ -195,7 +195,13 @@ function dedupLines(sec) {
  *
  * - Identical cross-section copies merge into the first section (bundle
  *   order) with the union of verbatim labels/flags and minimum support
- *   rank; later copies are dropped.
+ *   rank; later copies are NOT deleted — they are marked with
+ *   `_dedupedTo` naming the canonical (counting) section. processSection
+ *   excludes marked lines from amount counting but preserves each
+ *   section's own source labels, weakest support and flags in its
+ *   evidence projection, with explicit dedup_links. Canonical amount
+ *   counting and per-section evidence projection are separate concerns:
+ *   dedup must never fabricate verified empty section evidence.
  * - Conflicting cross-section copies become contradictions (returned per
  *   section index); the involved sections report CONTRADICTION with
  *   alternatives and no aggregate.
@@ -240,16 +246,17 @@ export function bundleDedup(working) {
     }
     // identical: merge into the first section in bundle order
     const first = copies[0];
+    const canonicalSid = working[first.si].sec.section_id;
     first.line.source_labels = unionVerbatim(copies.map((c) => c.line.source_labels));
     first.line.flags = unionVerbatim(copies.map((c) => c.line.flags));
     let rank = 2;
     for (const c of copies) rank = Math.min(rank, lineSupportRank(c.line.support_strength));
     first.line.support_strength = rank === 2 ? "verified" : rank === 1 ? "attributed" : null;
+    // Mark later copies as non-counting duplicates. They stay in their
+    // section so its evidence projection keeps its own labels/flags/
+    // support; processSection excludes them from amount counting.
     for (let n = 1; n < copies.length; n++) {
-      const { si, line } = copies[n];
-      const arr = working[si].sec.lines;
-      const at = arr.indexOf(line);
-      if (at >= 0) arr.splice(at, 1);
+      copies[n].line._dedupedTo = canonicalSid;
     }
   }
   return perSection;
@@ -389,9 +396,28 @@ function processSection(sec, sourceRef, externalContradictions = []) {
   const flags = new Set();
   const sid = sec.section_id;
 
-  const { merged, contradictions: internalContradictions } = dedupLines(sec);
+  // FM-001: lines marked _dedupedTo by bundleDedup are non-counting
+  // duplicates whose canonical amounts live in another section. They are
+  // excluded from amount counting, but this section's evidence projection
+  // keeps its OWN source labels, weakest support and flags — dedup never
+  // upgrades support, clears flags/labels, or fabricates verified empty
+  // section evidence.
+  const deduped = sec.lines.filter((l) => l._dedupedTo);
+  const own = sec.lines.filter((l) => !l._dedupedTo);
+
+  const { merged, contradictions: internalContradictions } = dedupLines({ ...sec, lines: own });
   // FM-001: cross-section contradictions found by bundleDedup block here too.
   const contradictions = internalContradictions.concat(externalContradictions);
+
+  // Evidence projection (separate from canonical amount counting).
+  const evidenceLines = merged.concat(deduped);
+  const evidenceLabels = unionVerbatim(evidenceLines.map((l) => l.source_labels));
+  const evidenceFlags = unionVerbatim(evidenceLines.map((l) => l.flags));
+  let evidenceRank = 2;
+  for (const l of evidenceLines) evidenceRank = Math.min(evidenceRank, lineSupportRank(l.support_strength));
+  const dedupLinks = deduped
+    .map((l) => ({ line_id: l.line_id, counted_in_section: l._dedupedTo }))
+    .sort((a, b) => (a.line_id < b.line_id ? -1 : a.line_id > b.line_id ? 1 : 0));
 
   const blockedSection = (code, severity, reason, recordId, exceptions) => ({
     section_id: sid,
@@ -399,11 +425,12 @@ function processSection(sec, sourceRef, externalContradictions = []) {
     amounts: null,
     variances: null,
     claimed_vs_recomputed: [],
-    source_labels: unionVerbatim(merged.map((l) => l.source_labels)),
+    source_labels: evidenceLabels,
     support_strength: "unverifiable",
-    flags: [...new Set([...flags, ...unionVerbatim(merged.map((l) => l.flags))])].sort(),
+    flags: [...new Set([...flags, ...evidenceFlags])].sort(),
     narrative_results: [],
     diagnostics: sortDiagnostics(diagnostics.concat(diag(code, severity, reason, sourceRef, recordId || sid))),
+    ...(dedupLinks.length > 0 ? { dedup_links: dedupLinks } : {}),
     _exceptions: exceptions || [],
     _lineResults: [],
   });
@@ -447,8 +474,9 @@ function processSection(sec, sourceRef, externalContradictions = []) {
   // are included exactly once in the section totals.
   const counted = merged;
 
-  // Missing labels block the section.
-  const unlabeled = merged.filter((l) => l.source_labels.length === 0).map((l) => l.line_id);
+  // Missing labels block the section (evidence-wide discipline: counted
+  // lines and deduplicated-elsewhere lines alike).
+  const unlabeled = evidenceLines.filter((l) => l.source_labels.length === 0).map((l) => l.line_id);
   if (unlabeled.length > 0) {
     return blockedSection(
       "MISSING_LABELS",
@@ -461,6 +489,12 @@ function processSection(sec, sourceRef, externalContradictions = []) {
   const scale = sec.minor_unit_scale;
   const lineResults = counted.map((l) => buildLineResult(l, scale));
   const lineMap = new Map(lineResults.map((lr) => [lr.line_id, lr]));
+  // FM-001: narrative claims and claimed totals may reference lines whose
+  // amounts are canonically counted in another section; their arithmetic
+  // verifies against this section's own carried copy.
+  for (const l of deduped) {
+    if (!lineMap.has(l.line_id)) lineMap.set(l.line_id, buildLineResult(l, scale));
+  }
 
   const byCat = (cat) => lineResults.filter((lr) => lr.category === cat);
   const revT = sumTotals(byCat("revenue"));
@@ -567,7 +601,7 @@ function processSection(sec, sourceRef, externalContradictions = []) {
   // narrative checks
   const narrativeResults = [];
   let worstRank = 2;
-  for (const l of merged) worstRank = Math.min(worstRank, lineSupportRank(l.support_strength));
+  for (const l of evidenceLines) worstRank = Math.min(worstRank, lineSupportRank(l.support_strength));
   for (const claim of sec.narrative_claims) {
     const nr = evaluateNarrativeClaim(claim, lineMap, scale);
     const { claim_support, ...publicNr } = nr;
@@ -591,7 +625,7 @@ function processSection(sec, sourceRef, externalContradictions = []) {
     }
   }
 
-  for (const l of merged) for (const f of l.flags) flags.add(f);
+  for (const l of evidenceLines) for (const f of l.flags) flags.add(f);
 
   return {
     section_id: sid,
@@ -599,11 +633,12 @@ function processSection(sec, sourceRef, externalContradictions = []) {
     amounts,
     variances,
     claimed_vs_recomputed: claimedVs,
-    source_labels: unionVerbatim(merged.map((l) => l.source_labels)),
+    source_labels: evidenceLabels,
     support_strength: rankToSupport(worstRank),
     flags: [...flags].sort(),
     narrative_results: narrativeResults,
     diagnostics: sortDiagnostics(diagnostics),
+    ...(dedupLinks.length > 0 ? { dedup_links: dedupLinks } : {}),
     _exceptions: [],
     _lineResults: lineResults,
   };
@@ -718,7 +753,13 @@ export function run(task, context) {
   }
   const taskId = task.task_id;
 
-  // 2. input budget
+  // 2. input budget. FM-005: bound depth before JSON.stringify so a
+  // pathologically nested task envelope refuses by name instead of
+  // throwing RangeError from the serializer.
+  const taskDepth = measureDepth(task);
+  if (!taskDepth.ok) {
+    return refused(taskId, "INPUT_TOO_DEEP", "error", `task envelope refused before traversal: ${taskDepth.reason}`);
+  }
   const inputBytes = Buffer.byteLength(JSON.stringify(task), "utf8");
   if (inputBytes > INPUT_BYTE_LIMIT) {
     return refused(taskId, "INPUT_LIMIT", "error", `input ${inputBytes} bytes exceeds ${INPUT_BYTE_LIMIT}`);
@@ -752,9 +793,17 @@ export function run(task, context) {
   // registered fixture bytes actually consulted (canonical pinned bytes),
   // charged BEFORE any schema traversal, dedup, arithmetic, injection
   // scanning or rendering. A tiny task referencing a huge fixture is
-  // INPUT_LIMIT, not ordinary processing.
+  // INPUT_LIMIT, not ordinary processing. Depth is bounded iteratively
+  // before the recursive canonicalizer runs, so adversarial nesting
+  // refuses by name instead of throwing RangeError.
   let fixtureBytes = 0;
   for (const r of resolved) {
+    const depth = measureDepth(r.fixture.content);
+    if (!depth.ok) {
+      return refused(taskId, "INPUT_TOO_DEEP", "error", `fixture ${r.fixtureId} refused before traversal: ${depth.reason}`, {
+        sourceRefs: task.bundle_refs,
+      });
+    }
     fixtureBytes += canonicalBytes(r.fixture.content).length;
   }
   const totalInputBytes = inputBytes + fixtureBytes;
@@ -805,8 +854,27 @@ export function run(task, context) {
     });
   }
 
-  // 6b. FM-001: bundle-wide dedup BEFORE any section/rollup totals, budgets,
-  // or scans. Work on copies so the shared fixture store is never mutated.
+  // 6b. FM-005: operation budgets are charged on the RESOLVED pre-dedup
+  // content, BEFORE any inspection or processing. Every consulted source
+  // object and span counts — including duplicates that bundleDedup later
+  // merges for money totals, and metadata (claims, claimed totals).
+  // Deduplication reduces money totals; it never refunds the cost of
+  // reads already performed.
+  let resolutions = task.bundle_refs.length;
+  let spans = 0;
+  for (const { sec } of sections) {
+    resolutions += sec.lines.length + sec.narrative_claims.length + sec.claimed_totals.length;
+    for (const l of sec.lines) spans += l.source_labels.length;
+    spans += sec.narrative_claims.length; // one quoted span per claim
+  }
+  if (resolutions > MAX_RESOLUTIONS || spans > MAX_SPANS) {
+    return refused(taskId, "BUDGET_EXCEEDED", "error", `budget exceeded: ${resolutions} resolutions / ${spans} spans`, {
+      sourceRefs: task.bundle_refs,
+    });
+  }
+
+  // 6c. FM-001: bundle-wide dedup BEFORE any section/rollup totals or
+  // scans. Work on copies so the shared fixture store is never mutated.
   const working = sections.map(({ sec, sourceRef }) => ({
     sec: {
       ...sec,
@@ -820,21 +888,7 @@ export function run(task, context) {
   }));
   const bundleContradictions = bundleDedup(working);
 
-  // 7. operation budgets
-  let resolutions = task.bundle_refs.length;
-  let spans = 0;
-  for (const { sec } of working) {
-    resolutions += sec.lines.length + sec.narrative_claims.length + sec.claimed_totals.length;
-    for (const l of sec.lines) spans += l.source_labels.length;
-    spans += sec.narrative_claims.length; // one quoted span per claim
-  }
-  if (resolutions > MAX_RESOLUTIONS || spans > MAX_SPANS) {
-    return refused(taskId, "BUDGET_EXCEEDED", "error", `budget exceeded: ${resolutions} resolutions / ${spans} spans`, {
-      sourceRefs: task.bundle_refs,
-    });
-  }
-
-  // 8. injection scan over every narrative quoted_text BEFORE any assembly.
+  // 7. injection scan over every narrative quoted_text BEFORE any assembly.
   //    Quarantine exposes IDs and family only — never the raw payload.
   const quarantined = [];
   for (const { sec } of working) {
@@ -857,12 +911,12 @@ export function run(task, context) {
     });
   }
 
-  // 9. assemble sections (bundle dedup already applied in 6b)
+  // 8. assemble sections (bundle dedup already applied in 6c)
   const sectionResults = working.map(({ sec, sourceRef }, i) =>
     processSection(sec, sourceRef, bundleContradictions.get(i) || [])
   );
 
-  // 10. cross-section rollup
+  // 9. cross-section rollup
   const rollup = computeRollup(
     working.map((s) => s.sec),
     sectionResults
@@ -873,7 +927,7 @@ export function run(task, context) {
     completeCount === sectionResults.length ? "ASSEMBLED" : completeCount > 0 ? "PARTIAL" : "BLOCKED";
   const packageComplete = status === "ASSEMBLED";
 
-  // 11. output budget
+  // 10. output budget
   let outputRecords = 1; // rollup record
   for (const r of sectionResults) {
     outputRecords += 1 + r._lineResults.length + r.narrative_results.length + r.claimed_vs_recomputed.length;
