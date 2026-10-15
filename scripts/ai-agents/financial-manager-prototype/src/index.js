@@ -742,6 +742,134 @@ function computeRollup(sectionInputs, sectionResults) {
 }
 
 // ---------------------------------------------------------------------------
+// 5c. FM-005 (round 4): SINGLE consultation budget, charged INCREMENTALLY.
+// Every consulted object is charged BEFORE it is inspected, in a fixed
+// deterministic order:
+//   1. each bundle ref (charged on resolution, before this loop)
+//   2. per section: the section metadata object
+//   3. per section: each line
+//   4. per section: each narrative claim
+//   5. per section: each claimed total
+//   6. per section: each nested basis record (in claim order)
+// The 65th charge refuses immediately (BUDGET_EXCEEDED) BEFORE the item
+// is inspected and before anything after it is touched — no candidate
+// object past the cap is ever dereferenced. Span counting follows the
+// same early-stop rule: a line's label count / a claim's quoted span is
+// added right after that item is read, and exceeding MAX_SPANS refuses
+// at once. Deduplication (6c) merges money totals later; it never refunds
+// the cost of reads already performed.
+//
+// Returns { ok: true, sections } or { ok: false, refusal } where the
+// refusal is the fail-closed empty result envelope (no partial domain
+// output). Exported so the round-4 spy probe can demonstrate directly
+// that records past the cap are never inspected.
+// ---------------------------------------------------------------------------
+export function planConsultations(resolved, task, taskId) {
+  const sections = [];
+  let consultations = task.bundle_refs.length; // bundle refs already resolved
+  let spans = 0;
+
+  const budgetRefused = () =>
+    refused(taskId, "BUDGET_EXCEEDED", "error",
+      `consultation budget exceeded: ${consultations} consulted objects / ${spans} evidence spans (caps ${MAX_RESOLUTIONS} resolutions / ${MAX_SPANS} spans)`, {
+      sourceRefs: task.bundle_refs,
+    });
+  const invalidRefused = (reason) =>
+    refused(taskId, "INVALID_INPUT", "error", reason, {
+      sourceRefs: task.bundle_refs,
+    });
+
+  // Charge for one candidate object. Returns a refusal the moment the 65th
+  // consultation is attempted — the caller must return it BEFORE inspecting
+  // the item or touching anything after it.
+  const charge = () => {
+    consultations += 1;
+    if (consultations > MAX_RESOLUTIONS) return budgetRefused();
+    return null;
+  };
+  // Same early-stop rule for evidence spans.
+  const chargeSpans = (n) => {
+    spans += n;
+    if (spans > MAX_SPANS) return budgetRefused();
+    return null;
+  };
+
+  // Bundle refs alone can already exceed the budget (e.g. 70 refs, no
+  // sections): refuse before any fixture content is touched.
+  if (consultations > MAX_RESOLUTIONS) {
+    return { ok: false, refusal: budgetRefused() };
+  }
+
+  for (const r of resolved) {
+    const content = r.fixture.content;
+    if (!content || !Array.isArray(content.sections)) {
+      return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId} content.sections must be an array`) };
+    }
+    for (const s of content.sections) {
+      let hit = charge();
+      if (hit) return { ok: false, refusal: hit };
+      if (s === null || typeof s !== "object" || Array.isArray(s)) {
+        return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId}: section must be an object`) };
+      }
+      // Shallow reads of the already-charged section object only.
+      const lines = Array.isArray(s.lines) ? s.lines : null;
+      const claims = Array.isArray(s.narrative_claims) ? s.narrative_claims : null;
+      const totals = Array.isArray(s.claimed_totals) ? s.claimed_totals : null;
+      if (!lines || !claims || !totals) {
+        return {
+          ok: false,
+          refusal: invalidRefused(
+            `fixture ${r.fixtureId} section ${JSON.stringify(s.section_id)}: lines, claimed_totals and narrative_claims must be arrays`
+          ),
+        };
+      }
+      for (const l of lines) {
+        hit = charge();
+        if (hit) return { ok: false, refusal: hit };
+        if (l === null || typeof l !== "object" || Array.isArray(l)) {
+          return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId}: line must be an object`) };
+        }
+        const labels = Array.isArray(l.source_labels) ? l.source_labels : null;
+        if (!labels) {
+          return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId}: line source_labels must be an array`) };
+        }
+        hit = chargeSpans(labels.length);
+        if (hit) return { ok: false, refusal: hit };
+      }
+      for (const c of claims) {
+        hit = charge();
+        if (hit) return { ok: false, refusal: hit };
+        if (c === null || typeof c !== "object" || Array.isArray(c)) {
+          return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId}: narrative claim must be an object`) };
+        }
+        hit = chargeSpans(1); // one quoted span per narrative claim
+        if (hit) return { ok: false, refusal: hit };
+      }
+      for (const t of totals) {
+        hit = charge();
+        if (hit) return { ok: false, refusal: hit };
+        if (t === null || typeof t !== "object" || Array.isArray(t)) {
+          return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId}: claimed total must be an object`) };
+        }
+      }
+      // Nested basis records: charged per record BEFORE the record is read.
+      for (const c of claims) {
+        const bases = Array.isArray(c.basis_refs) ? c.basis_refs : [];
+        for (const b of bases) {
+          hit = charge();
+          if (hit) return { ok: false, refusal: hit };
+          if (b === null || typeof b !== "object" || Array.isArray(b)) {
+            return { ok: false, refusal: invalidRefused(`fixture ${r.fixtureId}: basis record must be an object`) };
+          }
+        }
+      }
+      sections.push({ sec: s, sourceRef: r.sourceRef });
+    }
+  }
+  return { ok: true, sections };
+}
+
+// ---------------------------------------------------------------------------
 // run
 // ---------------------------------------------------------------------------
 
@@ -816,61 +944,15 @@ export function run(task, context) {
     );
   }
 
-  // 5c. FM-005 (round 3): SINGLE consultation budget, charged BEFORE
-  // section validation traverses anything. Every consulted object counts:
-  // 1 per bundle ref, 1 per section metadata object, 1 per line,
-  // 1 per narrative claim, 1 per claimed total, 1 per nested basis record.
-  // Only shallow array-length reads happen here — no element inspection —
-  // so no deep traversal occurs before the budget is enforced.
-  // Deduplication (6c) merges money totals later; it never refunds the
-  // cost of reads already performed.
-  const sections = [];
-  let consultations = task.bundle_refs.length;
-  let spans = 0;
-  for (const r of resolved) {
-    const content = r.fixture.content;
-    if (!content || !Array.isArray(content.sections)) {
-      return refused(taskId, "INVALID_INPUT", "error", `fixture ${r.fixtureId} content.sections must be an array`, {
-        sourceRefs: task.bundle_refs,
-      });
-    }
-    for (const s of content.sections) {
-      if (s === null || typeof s !== "object" || Array.isArray(s)) {
-        return refused(taskId, "INVALID_INPUT", "error", `fixture ${r.fixtureId}: section must be an object`, {
-          sourceRefs: task.bundle_refs,
-        });
-      }
-      consultations += 1; // the section metadata object itself
-      const lines = Array.isArray(s.lines) ? s.lines : null;
-      const claims = Array.isArray(s.narrative_claims) ? s.narrative_claims : null;
-      const totals = Array.isArray(s.claimed_totals) ? s.claimed_totals : null;
-      if (!lines || !claims || !totals) {
-        return refused(taskId, "INVALID_INPUT", "error",
-          `fixture ${r.fixtureId} section ${JSON.stringify(s.section_id)}: lines, claimed_totals and narrative_claims must be arrays`, {
-          sourceRefs: task.bundle_refs,
-        });
-      }
-      consultations += lines.length + claims.length + totals.length;
-      for (const l of lines) {
-        if (l !== null && typeof l === "object" && !Array.isArray(l) && Array.isArray(l.source_labels)) {
-          spans += l.source_labels.length;
-        }
-      }
-      spans += claims.length; // one quoted span per narrative claim
-      for (const c of claims) {
-        if (c !== null && typeof c === "object" && !Array.isArray(c) && Array.isArray(c.basis_refs)) {
-          consultations += c.basis_refs.length;
-        }
-      }
-      sections.push({ sec: s, sourceRef: r.sourceRef });
-    }
+  // 5c. FM-005 (round 4): SINGLE consultation budget, charged
+  // INCREMENTALLY before each candidate object is inspected — see
+  // planConsultations(). The 65th charge refuses immediately, before the
+  // item or anything after it is touched.
+  const planned = planConsultations(resolved, task, taskId);
+  if (!planned.ok) {
+    return planned.refusal;
   }
-  if (consultations > MAX_RESOLUTIONS || spans > MAX_SPANS) {
-    return refused(taskId, "BUDGET_EXCEEDED", "error",
-      `consultation budget exceeded: ${consultations} consulted objects / ${spans} evidence spans (caps ${MAX_RESOLUTIONS} / ${MAX_SPANS})`, {
-      sourceRefs: task.bundle_refs,
-    });
-  }
+  const sections = planned.sections;
 
   // 6. validate sections (malformed tables deny the whole task).
   //    Array shapes were confirmed in 5c; this is deep field validation,
