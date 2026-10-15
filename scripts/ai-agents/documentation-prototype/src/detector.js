@@ -58,7 +58,7 @@ function proposalIdOf(task) {
   return `doc-${sha256HexUtf8(canonicalJson(core)).slice(0, 16)}`;
 }
 
-export { proposalIdOf };
+export { proposalIdOf, buildDiff };
 
 /**
  * Byte range of a claim phrase within the document.
@@ -78,7 +78,11 @@ function phraseByteRange(docSpanAbs, quotedText, phraseStart, phrase) {
 /**
  * Build the inert proposed_diff for drifted claims: hunks over the pinned
  * doc lines, before/after as exact line arrays. Claims sharing a doc line
- * merge into one hunk; replacements apply in descending byte order.
+ * merge into one hunk; replacement operations are normalized before
+ * mutation (DOC-004): identical ranges with identical bytes coalesce to
+ * one application, conflicting or partially overlapping ranges fail
+ * closed, and only provably disjoint operations are applied in descending
+ * byte order.
  *
  * Replacements are applied over Buffer byte ranges, never String slice
  * indexes: JavaScript string indexes are UTF-16 code units, not UTF-8
@@ -103,25 +107,60 @@ function buildDiff(docRef, docText, driftedClaims) {
     if (lineBuf.length !== line.end_byte - line.start_byte) {
       throw new Error(`buildDiff: line ${li} byte length mismatch`);
     }
+    // DOC-004: normalize replacement operations BEFORE mutation.
+    // Every range is validated against the ORIGINAL line bytes first.
+    // Identical ranges with identical replacement bytes coalesce to a
+    // single application (duplicate claims are permitted by the schema).
+    // A conflicting same-range replacement or any partial overlap fails
+    // closed — the emitted diff must equal exactly the claimed corrections.
+    const raw = claims.map((c) => {
+      const { startByte, endByte } = phraseByteRange(c.docSpanAbs, c.before, c.docPhrase.phrase_start, c.docPhrase.phrase);
+      const relStart = startByte - line.start_byte;
+      const relEnd = endByte - line.start_byte;
+      // Fail closed: the phrase byte range must lie wholly within this line.
+      if (relStart < 0 || relEnd > lineBuf.length || relStart > relEnd) {
+        throw new Error(`buildDiff: phrase byte range [${startByte},${endByte}) outside line ${li} byte range`);
+      }
+      return { absStart: startByte, absEnd: endByte, relStart, relEnd, after: c.afterPhrase, claim_id: c.claim_id };
+    });
+    const byRange = new Map();
+    for (const r of raw) {
+      const key = `${r.absStart}:${r.absEnd}`;
+      if (!byRange.has(key)) byRange.set(key, []);
+      byRange.get(key).push(r);
+    }
+    const reps = [];
+    for (const [key, group] of byRange) {
+      const afters = new Set(group.map((g) => g.after));
+      if (afters.size > 1) {
+        throw new Error(
+          `buildDiff: conflicting replacements for identical byte range ${key} ` +
+          `(claims ${group.map((g) => g.claim_id).join(",")}): refusing corrupt diff`
+        );
+      }
+      reps.push(group[0]);
+    }
+    // Only disjoint operations may be applied: sort by start and reject
+    // any partial overlap (adjacent ranges, where one ends exactly where
+    // the next begins, are disjoint and permitted).
+    reps.sort((a, b) => a.absStart - b.absStart);
+    for (let i = 1; i < reps.length; i++) {
+      if (reps[i].absStart < reps[i - 1].absEnd) {
+        throw new Error(
+          `buildDiff: overlapping replacement ranges ` +
+          `[${reps[i - 1].absStart},${reps[i - 1].absEnd}) and [${reps[i].absStart},${reps[i].absEnd}) ` +
+          `(claims ${reps[i - 1].claim_id},${reps[i].claim_id}): refusing corrupt diff`
+        );
+      }
+    }
     // Apply replacements in descending absolute byte order so offsets stay valid.
-    const reps = claims
-      .map((c) => {
-        const { startByte, endByte } = phraseByteRange(c.docSpanAbs, c.before, c.docPhrase.phrase_start, c.docPhrase.phrase);
-        return { absStart: startByte, absEnd: endByte, after: c.afterPhrase };
-      })
-      .sort((a, b) => b.absStart - a.absStart);
+    reps.sort((a, b) => b.absStart - a.absStart);
     let newBuf = lineBuf;
     for (const r of reps) {
-      const relStart = r.absStart - line.start_byte;
-      const relEnd = r.absEnd - line.start_byte;
-      // Fail closed: the phrase byte range must lie wholly within this line.
-      if (relStart < 0 || relEnd > newBuf.length || relStart > relEnd) {
-        throw new Error(`buildDiff: phrase byte range [${r.absStart},${r.absEnd}) outside line ${li} byte range`);
-      }
       newBuf = Buffer.concat([
-        newBuf.subarray(0, relStart),
+        newBuf.subarray(0, r.relStart),
         Buffer.from(r.after, "utf8"),
-        newBuf.subarray(relEnd),
+        newBuf.subarray(r.relEnd),
       ]);
     }
     hunks.push({
@@ -246,10 +285,15 @@ export function detectDrift(task, ctx, budget) {
   // DOC-003: track verified sources for the envelope's source_refs.
   // Deterministic order: verified doc first, then non-quarantined code
   // refs in task order. Denial paths report only what was verified.
+  // DOC-003 residual: a quarantined doc stays identifiable in
+  // quarantined_sources but must never appear in the verified provenance
+  // projection. docQuarantined is set by the injection scan below; this
+  // closure reads it at call time, so every post-scan path — including
+  // all early returns — filters the quarantined doc ref.
   let verifiedDocRef = null;
   const verifiedCodeRefs = [];
   const sourceRefs = () => [
-    ...(verifiedDocRef ? [verifiedDocRef] : []),
+    ...(verifiedDocRef && !docQuarantined ? [verifiedDocRef] : []),
     ...verifiedCodeRefs,
   ];
   if (!hasReadGrant(task.doc_ref, ctx.readGrants)) {
