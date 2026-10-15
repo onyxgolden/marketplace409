@@ -3,14 +3,18 @@
  * freeze-corpus.js — AUTHORING TOOL (not part of the scored path).
  *
  * Recomputes corpus/manifest.json (sorted per-file SHA-256 pins) and the
- * corpus digest, writes corpus/corpus_digest.txt, and records the digest
- * as the separately trusted root in package.json's npm scripts. The
- * digest covers every pinned file EXCEPT package.json, which carries the
- * separately trusted root in its npm scripts (self-carry circularity);
- * package.json is still hash-pinned in the manifest.
+ * corpus digest, writes corpus/corpus_digest.txt. The digest covers every
+ * pinned file INCLUDING package.json.
+ *
+ * DOC-002: the separately trusted approval root is NEVER stored in the
+ * candidate tree. The reviewer/CI supplies it via the DOC_APPROVED_ROOT
+ * environment variable. After running this tool, record the printed
+ * digest externally as the new trusted root; the scored entrypoints
+ * (tests/run-tests.js, tests/run-battery.js) fail closed when the env
+ * var is absent or does not match.
  *
  * Run after any corpus-affecting change, then record the new digest as
- * the reviewed root (package.json scripts + corpus_digest.txt).
+ * the reviewed root outside the tree.
  */
 
 import { createHash } from "node:crypto";
@@ -37,27 +41,18 @@ for (const dir of ["corpus", "src", "runner", "fixtures", "tests"]) {
 }
 files.sort();
 
-// The digest covers every pinned file EXCEPT package.json (it carries the
-// separately trusted root in its npm scripts — self-carry circularity).
-// Compute the digest first, record it in package.json's scripts, and only
-// then hash package.json for its manifest pin, so the pin matches the
-// file the verifier will read.
-const preEntries = files
-  .filter((p) => p !== "package.json")
+// DOC-002: the digest covers EVERY pinned file including package.json.
+// package.json no longer carries the approval root (self-carry circularity
+// removed), so there is no exclusion. The separately trusted root is
+// supplied by the reviewer/CI via the DOC_APPROVED_ROOT environment
+// variable — never from the candidate tree. This tool only records the
+// digest as the authoring record in corpus_digest.txt; the reviewer
+// records the new digest externally as the trusted root.
+const entries = files
   .map((p) => ({ path: p, sha256: sha(readFileSync(join(ROOT, p))) }));
-const canonical = JSON.stringify(preEntries);
-const digest = sha(Buffer.from(canonical, "utf8"));
-
-// Record the digest as the separately trusted root in package.json scripts.
-const pkgPath = join(ROOT, "package.json");
-const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-for (const k of Object.keys(pkg.scripts ?? {})) {
-  pkg.scripts[k] = pkg.scripts[k].replace(/DOC_APPROVED_ROOT=[0-9a-f]{64}|DOC_APPROVED_ROOT=__DIGEST__/, `DOC_APPROVED_ROOT=${digest}`);
-}
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-
-const entries = [...preEntries, { path: "package.json", sha256: sha(readFileSync(pkgPath)) }];
 entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+const canonical = JSON.stringify(entries);
+const digest = sha(Buffer.from(canonical, "utf8"));
 
 const manifest = {
   corpus_digest: digest,

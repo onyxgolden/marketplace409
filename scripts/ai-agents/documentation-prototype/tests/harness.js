@@ -78,7 +78,7 @@ export async function verifyManifest(root) {
     if (!seen.has(p)) throw new ManifestError(`unlisted file: ${p}`);
   }
   const canonical = JSON.stringify(
-    files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+    files.map((e) => ({ path: e.path, sha256: e.sha256 }))
   );
   const digest = sha(Buffer.from(canonical, "utf8"));
   if (digest !== manifest.corpus_digest) throw new ManifestError("manifest corpus_digest does not match recomputed digest");
