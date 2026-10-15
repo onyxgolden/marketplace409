@@ -1,13 +1,9 @@
 {
-  "corpus_digest": "406783ecd0ed48c8c663ea5e916d0eec67d33a94c231de27c8984a5a7a1ff4ce",
+  "corpus_digest": "cb66eeaad35cf36fb134b4a49082e85c99be09af34858dfc85226ff95c24dc8c",
   "files": [
     {
-      "path": "package.json",
-      "sha256": "862b613565df4e3ae1620cbd3155d4c28241e27d908bc1b70f40855656fe117e"
-    },
-    {
       "path": "README.md",
-      "sha256": "a66166e665571a3bdbae1752ced7f8ccb8b5d0556c652341f6e4126f53ed4a0b"
+      "sha256": "948b07148c570e08e70c1b54d6b28fbd6fcc83159269896a49640f8ea6584781"
     },
     {
       "path": "corpus/battery.json",
@@ -15,7 +11,7 @@
     },
     {
       "path": "corpus/freeze-corpus.js",
-      "sha256": "993261251b9d5ceb137da37c33e94a04b627ccb75cf6bf2c74044acfaad8cbcd"
+      "sha256": "7b02dd97fb1026e8c4a287d28fb11a22adbe2a2588766016969b44864908563c"
     },
     {
       "path": "corpus/make-battery.js",
@@ -38,6 +34,10 @@
       "sha256": "187a8165aae007b15db823d7dc08b6d6e8c182c21f267e79dbd100430251c6ce"
     },
     {
+      "path": "package.json",
+      "sha256": "05084fa611c37c24458fe95125dd1b9ec72638dd0171c381dec094f2eee36c1c"
+    },
+    {
       "path": "runner/run-manual.js",
       "sha256": "bbc23b62aa7fe8b288412b108d09e64c52631b80580be5a554f332dec4b544d4"
     },
@@ -51,11 +51,11 @@
     },
     {
       "path": "src/evaluate.js",
-      "sha256": "0d7197142c2eb10d05f10685bb9b4d5c5790584890b24162a3287d296c01de11"
+      "sha256": "4e80abd03fbd1f679522dd6250c176ced91e5d23e1ece934a64495a67ca0affe"
     },
     {
       "path": "src/index.js",
-      "sha256": "fa718daec1c79d42a61eccb838f3cccfab6a0047651d55078e7bd8c2fbc4774f"
+      "sha256": "84c38962c2ee87c058ae48f719ff3b49a280aff89e0d582a059d960c717b6c2e"
     },
     {
       "path": "src/injection.js",
@@ -67,7 +67,7 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "2ff5cf6aea60f90a3145e9a28de2e2b5e2a044aaa18697eccce65e2187cdc643"
+      "sha256": "f8dc08fed4630fca2cf0a3953ac046db510e09259dcdd1abd596b35c755e51c6"
     },
     {
       "path": "src/schemas.js",
@@ -83,7 +83,7 @@
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "3545759c1163a686eb27b5398fb53bf99da71ad2be7fa6f04ad5e7f2cdc601da"
+      "sha256": "d0fb344f9623d7d504e9d13a9373b82d28c327ba93594d895c2ce5bab0d601cc"
     },
     {
       "path": "tests/case-worker.js",
@@ -95,7 +95,7 @@
     },
     {
       "path": "tests/harness.js",
-      "sha256": "89c72ce51cfaea5deb4d49ed2b2f297c1b2ff836da2be594facc73572e702bb8"
+      "sha256": "50e5a834bef43a5ed5fa28bd1c93602492977013b1635e998a52b02bb78d3c0a"
     },
     {
       "path": "tests/markdown.test.js",
@@ -103,7 +103,7 @@
     },
     {
       "path": "tests/mutation.test.js",
-      "sha256": "ab700d67c749037679876266e52298dbe057e1f584afa9fefc4fd61ca3137108"
+      "sha256": "1f36cbd7d2b26dbeade8d761e0d53d4c5c5ea6227ef9edcf9cdf4eafb81fc87e"
     },
     {
       "path": "tests/run-battery.js",
@@ -111,7 +111,7 @@
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "c83a8dd7481da4daf74957d7579ea5dc12fb211c89b5eee49e2ed820714efa1b"
+      "sha256": "8db1f931c1109e70f2b6eaff22f9f135a28a1453b975dd8c2a446d7b30812b6f"
     },
     {
       "path": "tests/schemas.test.js",

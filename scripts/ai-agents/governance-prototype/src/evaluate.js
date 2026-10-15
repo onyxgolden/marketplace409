@@ -469,6 +469,8 @@ function citeRule(ctx, budget, policy, rule, diags, quarantined) {
   if (!res.ok) return { ok: false, code: res.code, reason: res.reason };
   const directives = findDirectives(span.quoted_text);
   if (directives.length > 0) {
+    // GOV-003: quarantined sources are dropped from the consulted list.
+    budget.dropSourceRef(policy.citation_doc);
     quarantined.push({ repo: policy.citation_doc.repo, path: policy.citation_doc.path, reason: `seeded directive pattern in cited span: ${directives.join(", ")}` });
     diags.push(diag("INSTRUCTION_INJECTION", "critical", `policy source for ${policy.policy_id} carries seeded directive content; quarantined`, null, policy.citation_doc));
     return { ok: false, code: "INSTRUCTION_INJECTION", reason: `cited policy source for ${policy.policy_id} quarantined` };

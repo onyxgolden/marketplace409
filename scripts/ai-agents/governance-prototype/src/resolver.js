@@ -32,6 +32,27 @@ export function makeBudget() {
     objects: 0,
     contextObjects: 0,
     spans: 0,
+    // GOV-003: every SourceRef verified through resolveSourceRef is recorded
+    // here so the output envelope can cite the exact consulted sources.
+    // Quarantined sources are dropped and never listed.
+    sourceRefs: new Map(),
+    noteSourceRef(sr) {
+      const key = `${sr.repo}|${sr.path}|${sr.commit}|${sr.blob}`;
+      if (!this.sourceRefs.has(key)) {
+        this.sourceRefs.set(key, { repo: sr.repo, path: sr.path, commit: sr.commit, blob: sr.blob });
+      }
+    },
+    dropSourceRef(sr) {
+      this.sourceRefs.delete(`${sr.repo}|${sr.path}|${sr.commit}|${sr.blob}`);
+    },
+    listedSourceRefs() {
+      return [...this.sourceRefs.values()].sort((a, b) =>
+        a.repo < b.repo ? -1 : a.repo > b.repo ? 1 :
+        a.path < b.path ? -1 : a.path > b.path ? 1 :
+        a.commit < b.commit ? -1 : a.commit > b.commit ? 1 :
+        a.blob < b.blob ? -1 : a.blob > b.blob ? 1 : 0
+      );
+    },
     countPayload(value, label) {
       const n = canonicalByteLength(value);
       this.bytesIn += n;
@@ -95,6 +116,8 @@ export function resolveSourceRef(ctx, budget, sr) {
   if (recomputed !== sr.blob) {
     return { ok: false, code: "HASH_MISMATCH", reason: `blob SHA-1 mismatch for ${sr.repo}/${sr.path}@${sr.commit.slice(0, 8)}` };
   }
+  // GOV-003: record the verified source so the envelope cites it.
+  budget.noteSourceRef(sr);
   return { ok: true, content: entry.content };
 }
 
