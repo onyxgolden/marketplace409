@@ -10,9 +10,71 @@ vi.mock("@/infrastructure/notifications/ResendRentalEmailProvider", () => ({
 let DB;
 let upsertCalls;
 let updateCalls;
+let ledgerCalls;
 let eventLog;
 
+function ledgerChainable() {
+  if (!DB.scheduled_send_ledger) DB.scheduled_send_ledger = [];
+  const rows = DB.scheduled_send_ledger;
+  const keyOf = (r) => `${r.schedule_name}|${r.scheduled_slot}|${r.recipient_allowlist_id}`;
+  const matches = (filters) => (r) => filters.every(([c, v]) => r[c] === v);
+  const obj = {
+    select() {
+      return obj;
+    },
+    eq(col, val) {
+      obj._filters.push([col, val]);
+      return obj;
+    },
+    order() {
+      return obj;
+    },
+    async maybeSingle() {
+      return { data: rows.find(matches(obj._filters)) ?? null, error: null };
+    },
+    upsert(row, options) {
+      ledgerCalls.push({ op: "upsert", row, options });
+      const exists = rows.some((r) => keyOf(r) === keyOf(row));
+      return {
+        select: () => ({
+          then: (resolve) => {
+            if (exists && options?.ignoreDuplicates) return resolve({ data: [], error: null });
+            const inserted = { id: `ledger_${rows.length + 1}`, ...row };
+            rows.push(inserted);
+            resolve({ data: [inserted], error: null });
+          },
+        }),
+      };
+    },
+    update(patch) {
+      ledgerCalls.push({ op: "update", patch });
+      const updFilters = [];
+      const upd = {
+        eq(col, val) {
+          updFilters.push([col, val]);
+          return upd;
+        },
+        select: () => ({
+          then: (resolve) => {
+            const idx = rows.findIndex(matches(updFilters));
+            if (idx === -1) return resolve({ data: [], error: null });
+            rows[idx] = { ...rows[idx], ...patch };
+            resolve({ data: [rows[idx]], error: null });
+          },
+        }),
+      };
+      return upd;
+    },
+    then(resolve) {
+      resolve({ data: rows.filter(matches(obj._filters)), error: null });
+    },
+  };
+  obj._filters = [];
+  return obj;
+}
+
 function chainable(table) {
+  if (table === "scheduled_send_ledger") return ledgerChainable();
   const rows = DB[table] ?? [];
   const obj = {
     select: () => obj,
@@ -71,6 +133,7 @@ beforeEach(() => {
   });
   upsertCalls = [];
   updateCalls = [];
+  ledgerCalls = [];
   eventLog = [];
   seedDefaultDb();
 });
@@ -157,5 +220,356 @@ describe("tenant-invite cron route", () => {
     expect(res.status).toBe(422);
     expect(mocks.send).not.toHaveBeenCalled();
     expect(upsertCalls).toEqual([]);
+  });
+
+  it("live run writes a claimed-then-provider_accepted ledger row before/after the send", async () => {
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    const rows = DB.scheduled_send_ledger;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      schedule_name: "tenant_invite",
+      recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+      state: "provider_accepted",
+      provider_message_id: "resend_msg_1",
+    });
+    expect(rows[0].scheduled_slot).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Claim happened before the send: the upsert op precedes the send call.
+    const ops = ledgerCalls.map((c) => c.op);
+    expect(ops[0]).toBe("upsert");
+    expect(ops).toContain("update");
+  });
+
+  it("provider failure records provider_failed in the ledger and returns 500", async () => {
+    mocks.send.mockRejectedValueOnce(new Error("Resend rejected email delivery (500)."));
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(500);
+    const rows = DB.scheduled_send_ledger;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].state).toBe("provider_failed");
+    expect(rows[0].failure_reason).toContain("500");
+  });
+
+  it("refire with a terminal ledger row reconciles instead of re-sending", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_accepted",
+        provider_message_id: "resend_msg_0",
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, action: "already_sent", reconciled: true });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(DB.scheduled_send_ledger).toHaveLength(1);
+  });
+
+  it("already_claimed records a no_op ledger row", async () => {
+    DB.rental_tenants[0].auth_user_id = "75f6fe34-0000-4000-8000-000000000000";
+    const res = await GET(authedRequest());
+    expect((await res.json()).action).toBe("already_claimed");
+    const rows = DB.scheduled_send_ledger;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].state).toBe("no_op");
+  });
+
+  it("refire with a provider_failed ledger row retries under the stable identity", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_failed",
+        failure_reason: "Resend rejected email delivery (500).",
+        send_attempts: 1,
+        claimed_at: "2026-10-12T15:00:00.000Z",
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    // RDL-001: a failed row is retried, NOT reconciled as sent.
+    expect(body).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+    expect(body.reconciled).toBeUndefined();
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    // Stable provider idempotency: same key the failed run used.
+    const payload = mocks.send.mock.calls[0][0];
+    expect(payload.id).toMatch(/^tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
+    const row = DB.scheduled_send_ledger[0];
+    expect(row.state).toBe("provider_accepted");
+    expect(row.send_attempts).toBe(2);
+    expect(row.run_id).not.toBe("earlier_run");
+    // Billing order preserved: invite sent and stamped before billing.
+    expect(eventLog).toEqual(["invite-sent", "invited_at-stamped", "billing-enabled"]);
+  });
+
+  it("refire with exhausted send attempts fails closed without billing or send", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_failed",
+        failure_reason: "Resend rejected email delivery (500).",
+        send_attempts: 3,
+        claimed_at: "2026-10-12T15:00:00.000Z",
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // RDL-001/RDL-002A: explicit exhausted failure; billing stays off.
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ success: false, action: "blocked_attempts_exhausted", billingEnabled: false });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+
+  it("refire with provider_accepted but a lost invited_at stamp reconciles and stamps", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "earlier_run",
+        state: "provider_accepted",
+        provider_message_id: "resend_msg_0",
+        send_attempts: 1,
+        claimed_at: "2026-10-12T15:00:00.000Z",
+      },
+    ];
+    // Provider accepted, but the local stamp never landed (pre-cutoff).
+    DB.rental_tenants[0].invited_at = "2026-09-01T00:33:55.808Z";
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, action: "already_sent", reconciled: true, billingEnabled: true });
+    expect(mocks.send).not.toHaveBeenCalled();
+    // The lost stamp is repaired idempotently; billing still goes last.
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe("rental_tenants");
+    expect(updateCalls[0].patch.invited_at).toBeTruthy();
+    expect(eventLog).toEqual(["invited_at-stamped", "billing-enabled"]);
+  });
+
+  it("a fresh claim held by another run defers with 409 and never sends", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "other_live_run",
+        state: "claimed",
+        send_attempts: 1,
+        claimed_at: new Date().toISOString(),
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // RDL-002: the loser defers; it must not send on a claim it did not win.
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({ success: false, action: "deferred_claim_held", billingEnabled: false });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+    expect(DB.scheduled_send_ledger[0].run_id).toBe("other_live_run");
+  });
+
+  it("a stale claimed row is taken over and sent", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "crashed_run",
+        state: "claimed",
+        send_attempts: 1,
+        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    const row = DB.scheduled_send_ledger[0];
+    expect(row.run_id).not.toBe("crashed_run");
+    expect(row.state).toBe("provider_accepted");
+  });
+
+  it("dry run writes no ledger rows", async () => {
+    await GET(authedRequest("/api/rental/cron/tenant-invite?dryRun=true"));
+    expect(DB.scheduled_send_ledger ?? []).toEqual([]);
+  });
+
+  it("refire with exhausted attempts on a STALE claimed row is blocked_attempts_exhausted (RDL-002A)", async () => {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "crashed_run",
+        state: "claimed",
+        send_attempts: 3,
+        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
+      },
+    ];
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    // RDL-002A: stale is not unlimited — explicit exhausted, no send, no billing.
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ success: false, action: "blocked_attempts_exhausted", billingEnabled: false });
+    expect(body.sendAttempts).toBe(3);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+});
+
+describe("tenant-invite provider key pinning (RDL-002B)", () => {
+  async function currentFingerprint() {
+    const { buildTenantInviteEmail, fingerprintString } = await import(
+      "@/domains/rental-tenant/tenantInviteEmail.js"
+    );
+    const rendered = buildTenantInviteEmail({
+      tenantName: "Eric Carrillo",
+      tenantEmail: "eric.carillo5@yahoo.com",
+      leaseSummary: { unitLabel: "308 PAULA", monthlyRentCents: 160000, startDate: "2026-08-29" },
+      portalUrl: "https://marketplace409.vercel.app/forge/rental/portal",
+    });
+    return fingerprintString(`${rendered.subject}\n${rendered.bodyText}`);
+  }
+
+  async function seedStaleClaimedRow(overrides = {}) {
+    const { chicagoSlotFor } = await import("@/application/notifications/scheduledSendLedger.js");
+    DB.scheduled_send_ledger = [
+      {
+        id: "ledger_1",
+        schedule_name: "tenant_invite",
+        scheduled_slot: chicagoSlotFor(),
+        recipient_allowlist_id: "rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea",
+        run_id: "crashed_run",
+        state: "claimed",
+        send_attempts: 1,
+        claimed_at: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
+        ...overrides,
+      },
+    ];
+  }
+
+  it("an ambiguous transport failure retries under the SAME stored provider key", async () => {
+    // First run: claim persists key+digest, then the provider call throws
+    // an ambiguous transport timeout (outcome unknown).
+    mocks.send.mockRejectedValueOnce(new Error("socket timeout reading response"));
+    const r1 = await GET(authedRequest());
+    expect(r1.status).toBe(500);
+    const stored = DB.scheduled_send_ledger[0];
+    expect(stored.state).toBe("provider_failed");
+    expect(stored.provider_request_key).toMatch(/^tenant-invite-/);
+    expect(stored.payload_digest).toMatch(/^[0-9a-f]{8}$/);
+
+    // Refire with the identical payload: takeover, then the provider call
+    // reuses the STORED key — one logical send, one idempotency key.
+    const r2 = await GET(authedRequest());
+    const body2 = await r2.json();
+    expect(r2.status).toBe(200);
+    expect(body2).toMatchObject({ success: true, action: "sent", billingEnabled: true });
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.send.mock.calls[1][0].id).toBe(stored.provider_request_key);
+    expect(DB.scheduled_send_ledger[0].send_attempts).toBe(2);
+    expect(DB.scheduled_send_ledger[0].state).toBe("provider_accepted");
+  });
+
+  it("a refire uses the pinned key even when recomputation would differ", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({
+      provider_request_key: "pinned-key-from-first-run",
+      payload_digest: fp,
+    });
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.send.mock.calls[0][0].id).toBe("pinned-key-from-first-run");
+  });
+
+  it("a UTC date rollover between claim and refire does not rotate the provider key", async () => {
+    const fp = await currentFingerprint();
+    const yesterdayKey = `tenant-invite-rental_tenant_a5822588-f661-4346-b6cc-f914aa22ffea-2026-10-11-${fp}`;
+    await seedStaleClaimedRow({ provider_request_key: yesterdayKey, payload_digest: fp });
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    // The stale slot's key is honored; today's recomputed key is not used.
+    expect(mocks.send.mock.calls[0][0].id).toBe(yesterdayKey);
+  });
+
+  it("a changed payload under an ambiguous send fails closed as blocked_payload_changed", async () => {
+    await seedStaleClaimedRow({
+      provider_request_key: "pinned-key-from-first-run",
+      payload_digest: "deadbeef",
+    });
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body).toMatchObject({ success: false, action: "blocked_payload_changed", billingEnabled: false });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+
+  it("a changed recipient email after the claim fails closed (mutable boundary)", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
+    DB.rental_tenants[0].email = "eric.newaddress@yahoo.com";
+    const res = await GET(authedRequest());
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body.action).toBe("blocked_payload_changed");
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(upsertCalls).toEqual([]);
+  });
+
+  it("a changed unit label after the claim fails closed (mutable boundary)", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
+    DB.rental_units[0].label = "308 PAULA RENAMED";
+    const res = await GET(authedRequest());
+    expect((await res.json()).action).toBe("blocked_payload_changed");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a changed site URL after the claim fails closed (mutable boundary)", async () => {
+    const fp = await currentFingerprint();
+    await seedStaleClaimedRow({ provider_request_key: "pinned-key-1", payload_digest: fp });
+    process.env.NEXT_PUBLIC_SITE_URL = "https://409marketplace.online";
+    const res = await GET(authedRequest());
+    expect((await res.json()).action).toBe("blocked_payload_changed");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("a fresh claim persists the provider key, digest, and claim token", async () => {
+    const res = await GET(authedRequest());
+    expect(res.status).toBe(200);
+    const row = DB.scheduled_send_ledger[0];
+    expect(row.provider_request_key).toBe(mocks.send.mock.calls[0][0].id);
+    expect(row.payload_digest).toMatch(/^[0-9a-f]{8}$/);
+    expect(row.claim_token).toBeTruthy();
+    expect(row.summary_version).toBe(0);
   });
 });

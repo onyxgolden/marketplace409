@@ -11,6 +11,14 @@ import {
   buildTenantReceiptDeliveryRow,
   queueTenantPaymentReceiptForWebhookEvent,
 } from "@/application/rental/queueTenantPaymentReceipt";
+import {
+  claimLedgerRow,
+  recordDeliveryAttempt,
+  recordLedgerOutcome,
+  chicagoSlotFor,
+  SCHEDULE_NAMES,
+  LEDGER_STATES,
+} from "@/application/notifications/scheduledSendLedger";
 import { resolvePropertyLabel } from "@/application/rental/queueOwnerPaymentNotification";
 import {
   isOwnerNotificationAllowed,
@@ -290,6 +298,9 @@ export async function GET(request) {
 
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
   const config = resolveRentalNotificationConfig();
+  // Confirmation-ledger slot (America/Chicago date) and run provenance.
+  const slot = chicagoSlotFor();
+  const runId = `tenant_payment_receipts_${randomUUID()}`;
 
   try {
     const db = createRentalWebhookClient();
@@ -301,6 +312,8 @@ export async function GET(request) {
     let deferredQuietHours = 0;
     let skippedDisabled = 0;
     let skippedNotAllowlisted = 0;
+    let ledgerClaims = 0;
+    let ledgerErrors = 0;
     const wouldSend = [];
 
     const inQuietHours = quietHoursNow(config);
@@ -374,6 +387,63 @@ export async function GET(request) {
           wouldSend.push({ to: recipient, subject: email.subject });
           continue;
         }
+
+        // Confirmation ledger: durable pre-send claim per
+        // (schedule, slot, recipient), written BEFORE the provider call.
+        // The delivery table remains the per-payment idempotency authority
+        // (dedup key + claim token + provider idempotency key); the ledger
+        // is the watchdog's schedule-slot evidence. RDL-004: every provider
+        // attempt is recorded per DELIVERY id (insert-only), and the
+        // per-recipient summary state is derived from the latest attempt
+        // per delivery — a failed individual delivery is never masked by a
+        // later success to the same recipient. Attempt-write failures are
+        // counted loudly, never ignored.
+        const ledgerKey = {
+          scheduleName: SCHEDULE_NAMES.TENANT_PAYMENT_RECEIPTS,
+          scheduledSlot: slot,
+          recipientAllowlistId: row.tenant_id,
+          runId,
+        };
+        const ledgerClaim = await claimLedgerRow(db, ledgerKey);
+        ledgerClaims += 1;
+        const ledgerRow = ledgerClaim.row ?? ledgerClaim.existing ?? null;
+        const noteLedgerAttempt = async (state, providerMessageId, failureReason) => {
+          if (!ledgerRow) {
+            console.error("Tenant receipt ledger row missing after claim; attempt unrecorded", {
+              deliveryId: row.id,
+              recipient: ledgerKey.recipientAllowlistId,
+            });
+            ledgerErrors += 1;
+            return;
+          }
+          try {
+            const attempt = await recordDeliveryAttempt(db, {
+              ledgerId: ledgerRow.id,
+              deliveryId: row.id,
+              state,
+              providerMessageId: providerMessageId ?? null,
+              failureReason: failureReason ?? null,
+              runId,
+              // RDL-004A: bind the attempt to the ledger row's claim
+              // generation; a stale generation's write is refused.
+              claimToken: ledgerRow.claim_token ?? null,
+            });
+            if (!attempt.recorded) {
+              console.error("Tenant receipt ledger attempt refused", {
+                deliveryId: row.id,
+                state,
+              });
+              ledgerErrors += 1;
+            }
+          } catch (ledgerError) {
+            console.error("Tenant receipt ledger attempt write failed", {
+              deliveryId: row.id,
+              state,
+              error: ledgerError?.message || "unknown",
+            });
+            ledgerErrors += 1;
+          }
+        };
         try {
           const result = await emailProvider.send({
             id: row.idempotency_key || buildTenantReceiptProviderIdempotencyKey(row.id),
@@ -383,6 +453,11 @@ export async function GET(request) {
             subject: email.subject,
             bodyText: email.bodyText,
           });
+          await noteLedgerAttempt(
+            LEDGER_STATES.PROVIDER_ACCEPTED,
+            result?.messageId ?? result?.id ?? null,
+            null,
+          );
           if (await recordOutcome(db, row, { status: "sent", providerMessageId: result.messageId }, claimToken))
             sent += 1;
         } catch (deliveryError) {
@@ -390,6 +465,11 @@ export async function GET(request) {
             deliveryId: row.id,
             code: deliveryError?.name || "unknown",
           });
+          await noteLedgerAttempt(
+            LEDGER_STATES.PROVIDER_FAILED,
+            null,
+            deliveryError?.message?.slice(0, 500) || "unknown",
+          );
           if (
             await recordOutcome(
               db,
@@ -403,6 +483,26 @@ export async function GET(request) {
       }
     }
 
+    // Run-level evidence: if the sweep wrote no per-recipient ledger rows
+    // (nothing to send, or the whole run deferred), record a synthetic
+    // '_sweep' no_op row so the watchdog can distinguish "ran, nothing to
+    // do" from "never ran". Past the grace window, zero rows for
+    // (schedule, slot) unambiguously means the sweep did not run.
+    if (!dryRun && ledgerClaims === 0) {
+      const sweepKey = {
+        scheduleName: SCHEDULE_NAMES.TENANT_PAYMENT_RECEIPTS,
+        scheduledSlot: slot,
+        recipientAllowlistId: "_sweep",
+        runId,
+      };
+      await claimLedgerRow(db, sweepKey);
+      await recordLedgerOutcome(db, {
+        ...sweepKey,
+        state: LEDGER_STATES.NO_OP,
+        failureReason: inQuietHours ? "whole_run_deferred_quiet_hours" : "no_recipients_to_send",
+      });
+    }
+
     return NextResponse.json({
       success: true,
       dryRun,
@@ -414,6 +514,7 @@ export async function GET(request) {
       failed,
       skippedDisabled,
       skippedNotAllowlisted,
+      ledgerErrors,
       deferredQuietHours: inQuietHours ? "whole_run_deferred" : deferredQuietHours,
       wouldSend,
     });

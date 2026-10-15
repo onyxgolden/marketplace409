@@ -1,7 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createRentalWebhookClient } from "@/lib/supabase/createRentalWebhookClient";
 import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
 import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
+import {
+  claimLedgerRow,
+  recordLedgerOutcome,
+  takeoverLedgerRow,
+  chicagoSlotFor,
+  SCHEDULE_NAMES,
+  LEDGER_STATES,
+  isPositiveSendEvidence,
+  CLAIM_TAKEOVER_STALE_MINUTES,
+  MAX_LEDGER_SEND_ATTEMPTS,
+} from "@/application/notifications/scheduledSendLedger";
 
 export const runtime = "nodejs";
 
@@ -29,6 +41,32 @@ function todayISODate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Ledger helpers (receipt-delivery confirmation ledger). Every write is
+// gated on !dryRun by the callers. A refire that finds a terminal ledger row
+// for (schedule, slot, recipient) reconciles -- it skips the send instead of
+// duplicating it.
+//
+// RDL-002B: the scheduled slot is frozen ONCE per run (a run straddling a
+// Chicago-midnight boundary must not claim one slot and reconcile
+// another), and the initial logical provider key + payload digest are
+// persisted on the claim row BEFORE the first provider call. Retries
+// reconcile/retry THAT request under the same key; a changed payload is
+// an explicit separate logical operation, never a silent replacement of
+// an ambiguous send.
+function ledgerArgs(runId, slot) {
+  return {
+    scheduleName: SCHEDULE_NAMES.TENANT_INVITE,
+    scheduledSlot: slot,
+    recipientAllowlistId: TENANT_ID,
+    runId,
+  };
+}
+
+async function recordNoOp(db, runId, slot) {
+  await claimLedgerRow(db, ledgerArgs(runId, slot));
+  await recordLedgerOutcome(db, { ...ledgerArgs(runId, slot), state: LEDGER_STATES.NO_OP });
+}
+
 async function ensureBillingEnabled(db) {
   const { error } = await db.from("rental_billing_settings").upsert(
     { owner_id: OWNER_ID, billing_enabled: true, updated_at: new Date().toISOString() },
@@ -43,6 +81,9 @@ export async function GET(request) {
 
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "true";
   const asOfDate = todayISODate();
+  const runId = `tenant_invite_${randomUUID()}`;
+  // RDL-002B: freeze the scheduled slot once per run.
+  const slot = chicagoSlotFor();
 
   try {
     const db = createRentalWebhookClient();
@@ -56,7 +97,10 @@ export async function GET(request) {
     // Already claimed the portal: nothing to send. Billing is still ensured so
     // the "live" invariant holds either way.
     if (tenant.auth_user_id) {
-      if (!dryRun) await ensureBillingEnabled(db);
+      if (!dryRun) {
+        await ensureBillingEnabled(db);
+        await recordNoOp(db, runId, slot);
+      }
       return NextResponse.json({ success: true, action: "already_claimed", tenantId: TENANT_ID, billingEnabled: true, dryRun });
     }
 
@@ -67,7 +111,10 @@ export async function GET(request) {
     // One-shot gate: an invite recorded after the go-live cutoff means this run
     // (or a manual send) already delivered it — never send twice.
     if (tenant.invited_at && new Date(tenant.invited_at).toISOString() >= GO_LIVE_CUTOFF) {
-      if (!dryRun) await ensureBillingEnabled(db);
+      if (!dryRun) {
+        await ensureBillingEnabled(db);
+        await recordNoOp(db, runId, slot);
+      }
       return NextResponse.json({ success: true, action: "already_sent", tenantId: TENANT_ID, billingEnabled: true, dryRun });
     }
 
@@ -99,10 +146,13 @@ export async function GET(request) {
       leaseSummary,
       portalUrl: `${siteUrl}/forge/rental/portal`,
     });
+    // RDL-002B: the payload fingerprint is the logical request identity
+    // persisted on the claim row; retries must reproduce THIS request.
+    const payloadFingerprint = fingerprintString(`${rendered.subject}\n${rendered.bodyText}`);
     const idempotencyKey = buildTenantInviteIdempotencyKey({
       tenantId: TENANT_ID,
       asOfDate,
-      payloadFingerprint: fingerprintString(`${rendered.subject}\n${rendered.bodyText}`),
+      payloadFingerprint,
     });
 
     if (dryRun) {
@@ -112,14 +162,170 @@ export async function GET(request) {
       });
     }
 
-    await createResendRentalEmailProvider().send({
-      id: idempotencyKey,
-      senderName: "FORGE Rental Manager",
-      senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
-      recipient: email,
-      subject: rendered.subject,
-      bodyText: rendered.bodyText,
-    });
+    // Durable FENCED pre-send claim (confirmation ledger), RDL-001/RDL-002:
+    // the claim row is written BEFORE the provider call, and only the run
+    // that owns the claim (fresh winner, or atomic takeover of a
+    // stale/failed row) may send.
+    //   * provider_accepted/delivered are POSITIVE send evidence ->
+    //     reconcile: stamp invited_at if the local stamp was lost
+    //     (provider-accepted-before-local-stamp), enable billing, report
+    //     already_sent. provider_failed is NEVER positive evidence and
+    //     never enables billing.
+    //   * fresh claimed row held by another run -> defer (409), never send.
+    //   * stale claimed / failed-with-attempts-left -> atomic takeover,
+    //     then send under the stable identity.
+    //   * failed with attempts exhausted -> explicit blocked failure, no
+    //     billing, no send.
+    //   * missing row after a lost claim -> fail closed, never send.
+    let claimedRow = null;
+    if (!dryRun) {
+      // RDL-002B: persist the initial logical provider key + payload digest
+      // on the claim row BEFORE the first provider call, so every retry
+      // reconciles/retries THAT request under the same key.
+      const claim = await claimLedgerRow(db, {
+        ...ledgerArgs(runId, slot),
+        providerRequestKey: idempotencyKey,
+        payloadDigest: payloadFingerprint,
+      });
+      if (claim.claimed) {
+        claimedRow = claim.row;
+      } else if (claim.existing) {
+        const existingState = claim.existing.state;
+        if (isPositiveSendEvidence(existingState)) {
+          const timestamp = new Date().toISOString();
+          if (!tenant.invited_at || new Date(tenant.invited_at).toISOString() < GO_LIVE_CUTOFF) {
+            const { error: stampError } = await db.from("rental_tenants")
+              .update({ invited_at: timestamp, updated_at: timestamp })
+              .eq("owner_id", OWNER_ID).eq("id", TENANT_ID);
+            if (stampError) throw stampError;
+          }
+          await ensureBillingEnabled(db);
+          return NextResponse.json({
+            success: true,
+            action: "already_sent",
+            tenantId: TENANT_ID,
+            billingEnabled: true,
+            reconciled: true,
+            ledgerState: existingState,
+          });
+        }
+        const takeover = await takeoverLedgerRow(db, {
+          ...ledgerArgs(runId, slot),
+          staleMinutes: CLAIM_TAKEOVER_STALE_MINUTES,
+          maxAttempts: MAX_LEDGER_SEND_ATTEMPTS,
+        });
+        if (takeover.taken) {
+          claimedRow = takeover.row;
+        } else {
+          const current = takeover.existing;
+          // RDL-002A: explicit exhausted/needs-reconciliation, distinct
+          // from a live claim held by another run.
+          if (takeover.reason === "attempts_exhausted") {
+            return NextResponse.json(
+              {
+                success: false,
+                action: "blocked_attempts_exhausted",
+                tenantId: TENANT_ID,
+                billingEnabled: false,
+                ledgerState: current?.state ?? null,
+                sendAttempts: current?.send_attempts ?? null,
+                failureReason: current?.failure_reason ?? null,
+              },
+              { status: 500 },
+            );
+          }
+          if (current && current.state === LEDGER_STATES.CLAIMED) {
+            return NextResponse.json(
+              { success: false, action: "deferred_claim_held", tenantId: TENANT_ID, billingEnabled: false },
+              { status: 409 },
+            );
+          }
+          if (current && current.state === LEDGER_STATES.PROVIDER_FAILED) {
+            return NextResponse.json(
+              {
+                success: false,
+                action: "blocked_provider_failed",
+                tenantId: TENANT_ID,
+                billingEnabled: false,
+                ledgerState: current.state,
+                sendAttempts: current.send_attempts ?? null,
+                failureReason: current.failure_reason ?? null,
+              },
+              { status: 500 },
+            );
+          }
+          return NextResponse.json(
+            { success: false, action: "blocked_ledger", tenantId: TENANT_ID, billingEnabled: false },
+            { status: 500 },
+          );
+        }
+      } else {
+        return NextResponse.json(
+          { success: false, action: "blocked_ledger", tenantId: TENANT_ID, billingEnabled: false },
+          { status: 500 },
+        );
+      }
+    }
+
+    // RDL-002B: pin the provider call to the durable logical send. The
+    // claim row carries the initial provider key + payload digest from
+    // BEFORE the first provider call. A retry sends THAT request under
+    // the SAME key. If the freshly rendered payload no longer matches the
+    // persisted digest, the original provider outcome is ambiguous and the
+    // request changed underneath it — fail closed (explicit separate
+    // logical operation required), never silently replace the key.
+    let providerRequestKey = idempotencyKey;
+    if (!dryRun && claimedRow) {
+      const storedKey = claimedRow.provider_request_key ?? null;
+      const storedDigest = claimedRow.payload_digest ?? null;
+      if (storedKey) {
+        if (storedDigest && storedDigest !== payloadFingerprint) {
+          return NextResponse.json(
+            {
+              success: false,
+              action: "blocked_payload_changed",
+              tenantId: TENANT_ID,
+              billingEnabled: false,
+              ledgerState: claimedRow.state ?? null,
+            },
+            { status: 500 },
+          );
+        }
+        providerRequestKey = storedKey;
+      }
+    }
+
+    let providerMessageId = null;
+    try {
+      const result = await createResendRentalEmailProvider().send({
+        id: providerRequestKey,
+        senderName: "FORGE Rental Manager",
+        senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
+        recipient: email,
+        subject: rendered.subject,
+        bodyText: rendered.bodyText,
+      });
+      providerMessageId = result?.messageId ?? result?.id ?? null;
+    } catch (sendError) {
+      if (!dryRun && claimedRow) {
+        await recordLedgerOutcome(db, {
+          ...ledgerArgs(runId, slot),
+          state: LEDGER_STATES.PROVIDER_FAILED,
+          failureReason: sendError?.message?.slice(0, 500) || "unknown",
+        });
+      }
+      throw sendError;
+    }
+
+    // Provider accepted the send (message id returned -- acceptance, not
+    // proof of delivery; 'delivered' is reserved for delivery confirmation).
+    if (!dryRun && claimedRow) {
+      await recordLedgerOutcome(db, {
+        ...ledgerArgs(runId, slot),
+        state: LEDGER_STATES.PROVIDER_ACCEPTED,
+        providerMessageId,
+      });
+    }
 
     const timestamp = new Date().toISOString();
     const { error: updateError } = await db.from("rental_tenants")
