@@ -1,0 +1,13 @@
+{
+  "description": "Documentation agent Phase 2 slice 1 synthetic prototype: deterministic doc-vs-code drift detector with inert per-claim proposal JSON and Markdown reviewer preview. Advisory only; no live activation, no writes, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "documentation-prototype",
+  "scripts": {
+    "battery": "DOC_APPROVED_ROOT=6c66d64ac7f8d6f9a644fb9710e533eada8a74a0a9351584056e2b1e765278ed node tests/run-battery.js",
+    "test": "DOC_APPROVED_ROOT=6c66d64ac7f8d6f9a644fb9710e533eada8a74a0a9351584056e2b1e765278ed node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
