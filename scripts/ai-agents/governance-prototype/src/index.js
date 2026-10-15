@@ -123,6 +123,16 @@ export function run(task, context) {
 
   let ctx;
   try {
+    // GOV-002: charge the entire host context (every constituent byte exactly
+    // once, canonical form) BEFORE any traversal. validateContext still
+    // enforces the object-count caps afterwards. A non-serializable context
+    // fails closed as invalid input, never an exception.
+    try {
+      budget.countPayload(canonicalJson(context), "host context");
+    } catch (e) {
+      if (e instanceof BudgetError) throw e;
+      throw new SchemaError("context is not JSON-serializable");
+    }
     ctx = validateContext(context, budget);
   } catch (e) {
     if (e instanceof BudgetError) return baseDenial(task, "REFUSED", e.code, "error", `context: ${e.message}`);
@@ -132,10 +142,14 @@ export function run(task, context) {
 
   try {
     const payload = evaluate(validated, ctx, budget);
+    // GOV-003: the envelope cites every verified source consulted during
+    // evaluation, deterministically ordered. Quarantined sources were
+    // dropped at quarantine time and never appear here.
     const result = envelope(task, {
       status: payload.status,
       validity: payload.validity,
       classification: payload.classification,
+      source_refs: budget.listedSourceRefs(),
       diagnostics: payload.diagnostics,
       quarantined_sources: payload.quarantined_sources,
       routing_flags: payload.routing_flags,

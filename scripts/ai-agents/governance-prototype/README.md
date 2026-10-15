@@ -77,15 +77,24 @@ byte-identical repeat runs; mutation regressions stop before execution.
 
 ## Trust root
 
-`GOV_APPROVED_ROOT` is a separately trusted host input (pinned in the npm
-scripts at freeze time). `tests/run-tests.js` recomputes the full corpus
-digest with node builtins only and refuses (exit 3) before importing any
-scored code when the digest differs. Corpus changes require a new digest
-and a new implementation head.
+`GOV_APPROVED_ROOT` is a separately trusted host input supplied ONLY by
+external reviewer/CI configuration — it is NEVER pinned, embedded, or set
+anywhere inside the candidate tree (no `package.json` script, no manifest,
+no fixture may supply it). `tests/run-tests.js` recomputes the full corpus
+digest (including `package.json` itself) with node builtins only and refuses
+(exit 3) before importing any scored code when the env var is absent or the
+digest differs. Corpus changes require a new digest pinned in CI config
+outside this tree, and a new implementation head.
+
+```sh
+export GOV_APPROVED_ROOT=<digest pinned in reviewer/CI config>
+npm test        # trust bootstrap + full node:test suite
+```
 
 ## Running
 
 ```sh
+export GOV_APPROVED_ROOT=<digest from reviewer/CI config>  # required; npm test refuses without it
 npm test        # trust bootstrap + full node:test suite
 npm run battery # official 120-case battery report
 node runner/run-manual.js merge pr:707 principal:claude --md

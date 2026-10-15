@@ -73,8 +73,10 @@ export async function verifyManifest(root) {
   for (const p of want.sort()) {
     if (!seen.has(p)) throw new ManifestError(`unlisted file: ${p}`);
   }
+  // GOV-001: package.json is a stable pinned file (its scripts no longer
+  // carry the trust root), so the digest covers it like every other file.
   const canonical = JSON.stringify(
-    files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+    files.map((e) => ({ path: e.path, sha256: e.sha256 }))
   );
   const digest = sha(Buffer.from(canonical, "utf8"));
   if (digest !== manifest.corpus_digest) throw new ManifestError("manifest corpus_digest does not match recomputed digest");

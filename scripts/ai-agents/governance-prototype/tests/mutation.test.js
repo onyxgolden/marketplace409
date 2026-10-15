@@ -49,7 +49,7 @@ test("tampered expectation with re-pinned manifest still fails acceptance", asyn
     const manifest = JSON.parse(readFileSync(join(dir, "corpus", "manifest.json"), "utf8"));
     const entry = manifest.files.find((e) => e.path === "corpus/battery.json");
     entry.sha256 = sha(readFileSync(p));
-    const canonical = JSON.stringify(manifest.files.filter((e) => e.path !== "package.json"));
+    const canonical = JSON.stringify(manifest.files.map((e) => ({ path: e.path, sha256: e.sha256 })));
     manifest.corpus_digest = sha(Buffer.from(canonical, "utf8"));
     writeFileSync(join(dir, "corpus", "manifest.json"), JSON.stringify(manifest, null, 2));
     writeFileSync(join(dir, "corpus", "corpus_digest.txt"), manifest.corpus_digest + "\n");
@@ -120,12 +120,16 @@ test("tampered fixture bytes stop the run before any case executes", async () =>
 // ORIGINAL host-fixed root fixed — they never switch to the candidate's
 // newly edited npm root.
 
-/** The separately trusted approved root, fixed by the npm test script. */
+/** The separately trusted approved root, supplied ONLY by the external
+ * reviewer/CI host input. It is NEVER read from the candidate tree
+ * (GOV-001): a candidate-owned package.json must not pin or supply it. */
 function fixedApprovedRoot() {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-  const m = /GOV_APPROVED_ROOT=([0-9a-f]{64})/.exec(pkg.scripts?.test ?? "");
-  assert.ok(m, "npm test must pin a separately trusted GOV_APPROVED_ROOT");
-  return m[1];
+  const root = process.env.GOV_APPROVED_ROOT;
+  assert.ok(
+    /^[0-9a-f]{64}$/.test(root ?? ""),
+    "GOV_APPROVED_ROOT must be supplied externally (reviewer/CI config); refusing to read it from the candidate tree"
+  );
+  return root;
 }
 
 /** Spawn the launcher against a scratch tree with the ORIGINAL root fixed. */
@@ -150,6 +154,41 @@ function repinManifest(dir) {
     timeout: 60000,
   });
 }
+
+test("candidate package.json must not supply the trust root (GOV-001)", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  for (const [name, script] of Object.entries(pkg.scripts ?? {})) {
+    assert.ok(
+      !/GOV_APPROVED_ROOT/.test(String(script ?? "")),
+      `npm script '${name}' must not set GOV_APPROVED_ROOT — the trust root comes only from external reviewer/CI configuration, never the candidate tree`
+    );
+  }
+});
+
+test("launcher refuses (exit 3) when GOV_APPROVED_ROOT is absent (GOV-001)", () => {
+  const dir = scratchCopy();
+  try {
+    const env = { ...process.env };
+    delete env.GOV_APPROVED_ROOT;
+    let status = -1;
+    let output = "";
+    try {
+      execFileSync(process.execPath, [join(dir, "tests", "run-tests.js")], {
+        env,
+        encoding: "utf8",
+        timeout: 60000,
+      });
+    } catch (e) {
+      status = e.status ?? -1;
+      output = String(e.stdout ?? "") + String(e.stderr ?? "");
+    }
+    assert.equal(status, 3, `launcher must fail closed before imports when the external root is absent (got ${status})`);
+    assert.ok(output.includes("missing separately trusted approval root"), "refusal must name the missing external root");
+    assert.ok(!output.includes("GOV_CANARY"), "no scored code may execute");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("launcher: canary in a scored helper never executes — launcher refuses first", () => {
   const root = fixedApprovedRoot();
