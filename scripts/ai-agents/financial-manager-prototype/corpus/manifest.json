@@ -1,0 +1,121 @@
+{
+  "corpus_digest": "d725b16c7ef19e49caaf725c49d40c81e3a965b63052d56972bde804bf708bc1",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "ddb23cc8d86ab09b37e226c69ccd006d0b1f96d341f5269f313f69c9acec3606"
+    },
+    {
+      "path": "corpus/battery.json",
+      "sha256": "16ff2bfb7b9519dfb7e8a083dd4062d5ec52a5a8a0039f7d3523f3fab32176a0"
+    },
+    {
+      "path": "corpus/derivation-notes.md",
+      "sha256": "a15f51f4ba3a0af639164ee680636f36d73ab0563c000a406c2b10660620a845"
+    },
+    {
+      "path": "corpus/freeze-corpus.js",
+      "sha256": "da70d8b0650e47541e8aece4e53e4fb15d0682d7317808f35e7e54ab54ee5404"
+    },
+    {
+      "path": "corpus/make-battery.js",
+      "sha256": "22d49a9a2af7564ae7eb0fbef35fc1b57cb095cd84ee99d7ad6264375df5eb36"
+    },
+    {
+      "path": "corpus/oracle.js",
+      "sha256": "4d294ea3149d22bc9360abf04bbbd372e1dfea64c8f3b51a01a7951027fa7b47"
+    },
+    {
+      "path": "fixtures/make-fixtures.js",
+      "sha256": "7a85aba95bf3ab3a991e85d16f816727f3218a8e59bf65412d837ea2461957f5"
+    },
+    {
+      "path": "fixtures/store.json",
+      "sha256": "76eab0ca92f0600ce7179b13267fb6c4208f2de8b0f5bb9c483dce936b4879b7"
+    },
+    {
+      "path": "package.json",
+      "sha256": "016d2240578ad8da702a2a06f33de4421297584c70248214e45160f4f302486d"
+    },
+    {
+      "path": "runner/measure-latency.js",
+      "sha256": "6928fe1fdb153a3fd3f35cba2a70eb5dfaa20fdf67724641095bf42d38243eec"
+    },
+    {
+      "path": "runner/run-manual.js",
+      "sha256": "b4cdbd0e03ffcfe755dfd8f046182462727835f1a869085f4f0435e4fd3ea85c"
+    },
+    {
+      "path": "src/canonical.js",
+      "sha256": "a7036ee5166d008338834f5fdcb87bd50c892fe1819afdff1614ef5fb9e09991"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "0745e3a613300a96d34b96579b5abd4fffff299d16687c99b577350e48e2cef1"
+    },
+    {
+      "path": "src/injection.js",
+      "sha256": "571320035f402213e725a88af9062cf5c2a8ba1b88f161b357c9ee5e590bcabd"
+    },
+    {
+      "path": "src/markdown.js",
+      "sha256": "0770ec1ff3e1b186818c1100750f74eed51f7fe0a44eb88a6d28b72fbdd47a4e"
+    },
+    {
+      "path": "src/money.js",
+      "sha256": "08a2bdaea719a253484bdda387c96ad1ed165e0da34ec9f17099dded5ed642e5"
+    },
+    {
+      "path": "src/resolver.js",
+      "sha256": "8621d02f9d627819668235c0b9d85d7983aad68013c048ac1867473ce8bad682"
+    },
+    {
+      "path": "src/schemas.js",
+      "sha256": "6d3695fc8013db24471e507f59c739ba0b96283f2833cbf1261c9f449f96a20e"
+    },
+    {
+      "path": "tests/battery.test.js",
+      "sha256": "4be8ca8f221fc162b9265df3389e5392cd6209498f4e149f87f850b7f820c7fe"
+    },
+    {
+      "path": "tests/determinism.test.js",
+      "sha256": "eb8337bc394a7db0606154d866bfd858e53ff85120a7c6f1b87f40c9f9401827"
+    },
+    {
+      "path": "tests/fm-findings.test.js",
+      "sha256": "139bf903d6a02f75bdbb5b1297d42ba8b001f74243df196524a597e74ca27763"
+    },
+    {
+      "path": "tests/harness.js",
+      "sha256": "7bca8b92a0bd9cc7670a1346f61d492fc32310c0519fea777e393b9b2dde0f53"
+    },
+    {
+      "path": "tests/injection.test.js",
+      "sha256": "00f9b15a5fe4314f1920c5ab19c85818965fcc4f5a623bcd408118477a228fdf"
+    },
+    {
+      "path": "tests/limits.test.js",
+      "sha256": "c6c447a24b7c141a075dbec46918b9aabe6dd647711fe9706c3bf58bb06c6d3f"
+    },
+    {
+      "path": "tests/markdown.test.js",
+      "sha256": "250261e355884bc674853ddbd1ba308c9d0279aff0c4736a59a647fa92d8e5eb"
+    },
+    {
+      "path": "tests/mutation.test.js",
+      "sha256": "13275f951ef0c9549508d273f14d96b562af6cd4cba70745af13835284cde070"
+    },
+    {
+      "path": "tests/run-tests.js",
+      "sha256": "ece81327388f8ed9a72b752214f236edfd6f1c645f1f27c3382dd219ff74a7bf"
+    },
+    {
+      "path": "tests/schemas.test.js",
+      "sha256": "490edfce559323b587f03fcb1d78418c8be9ff655dea3186e44617d329c30633"
+    },
+    {
+      "path": "tests/verify-corpus.js",
+      "sha256": "de75ca9d46a76492fb741a9c7472da362073294700751a7481b7b563c48fa783"
+    }
+  ]
+}
