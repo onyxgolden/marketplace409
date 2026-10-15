@@ -4,7 +4,9 @@
  * BEFORE any scored test/helper is imported.
  *
  * The separately trusted approval root is a host input (TAX_APPROVED_ROOT
- * env) — never read from the candidate tree. The full corpus digest,
+ * env, supplied by the reviewer or CI pipeline at invocation time — never
+ * by this package's own scripts or any file in the candidate tree). The
+ * full corpus digest,
  * covering EVERY pinned file including the scored tests themselves, is
  * recomputed with node:fs / node:crypto ONLY and authenticated against
  * that root BEFORE the real `node --test` entrypoints are spawned.

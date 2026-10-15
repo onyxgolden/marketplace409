@@ -153,6 +153,62 @@
           "algorithm": "git-sha1"
         }
       }
+    },
+    "edu-sources|registry/recordkeeping-basics-entry.md": {
+      "repo": "edu-sources",
+      "path": "registry/recordkeeping-basics-entry.md",
+      "revisions": {
+        "555d542912c5df43993c69441958717f6f713ff1": {
+          "blob": "c79132c57ec18122e35a905182827fc8543cb84c",
+          "revision": "rev-1",
+          "text": "# Registry approval record\nRegistry approval record: topic recordkeeping-basics, entry v1, jurisdiction US-FEDERAL, scope general educational vocabulary only.\n",
+          "effective_at": "2024-01-01T00:00:00Z",
+          "verified_at": "2024-01-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      }
+    },
+    "edu-sources|registry/terminology-income-vs-expense-entry.md": {
+      "repo": "edu-sources",
+      "path": "registry/terminology-income-vs-expense-entry.md",
+      "revisions": {
+        "54970f78bb4e3f7e62b5d8ac0011ca60c2b5fc67": {
+          "blob": "a6c3c7979e9a60e4aaf0b473b0e5d0ff0213f90a",
+          "revision": "rev-1",
+          "text": "# Registry approval record\nRegistry approval record: topic terminology-income-vs-expense, entry v1, jurisdiction US-FEDERAL, scope general educational vocabulary only.\n",
+          "effective_at": "2024-01-01T00:00:00Z",
+          "verified_at": "2024-01-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      }
+    },
+    "edu-sources|registry/depreciation-concept-entry.md": {
+      "repo": "edu-sources",
+      "path": "registry/depreciation-concept-entry.md",
+      "revisions": {
+        "07ed645ee2252d5faea3999330e807c88de24ea2": {
+          "blob": "d929d0a111a7974a8b3e42e46eb7d9792c02f635",
+          "revision": "rev-1",
+          "text": "# Registry approval record\nRegistry approval record: topic depreciation-concept, entry v1, jurisdiction US-FEDERAL, scope general educational vocabulary only.\n",
+          "effective_at": "2024-01-01T00:00:00Z",
+          "verified_at": "2024-01-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      }
+    },
+    "edu-sources|registry/depreciation-concept-conflict-entry.md": {
+      "repo": "edu-sources",
+      "path": "registry/depreciation-concept-conflict-entry.md",
+      "revisions": {
+        "db7c35ca8eeec0518fd9d764dfb96295368dd1a8": {
+          "blob": "30b16166ccd6f5fea0554385b9de33a8373004b8",
+          "revision": "rev-1",
+          "text": "# Registry approval record\nRegistry approval record: topic depreciation-concept, entry v1-conflict, jurisdiction US-FEDERAL, scope general educational vocabulary only (conflict-fixture variant).\n",
+          "effective_at": "2024-01-01T00:00:00Z",
+          "verified_at": "2024-01-02T00:00:00Z",
+          "algorithm": "git-sha1"
+        }
+      }
     }
   },
   "registry": [
@@ -162,8 +218,16 @@
       "entry_version": "v1",
       "jurisdiction": "US-FEDERAL",
       "steward_id": "steward-tax-edu",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-rk-001",
       "review_record_ref": "review-rk-001",
+      "registry_ref": {
+        "repo": "edu-sources",
+        "path": "registry/recordkeeping-basics-entry.md",
+        "commit": "555d542912c5df43993c69441958717f6f713ff1",
+        "blob": "c79132c57ec18122e35a905182827fc8543cb84c",
+        "algorithm": "git-sha1",
+        "revision": "rev-1"
+      },
       "current": {
         "tax_year_from": 2024,
         "tax_year_to": 2026,
@@ -207,7 +271,8 @@
             }
           }
         ]
-      }
+      },
+      "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
     },
     {
       "topic_id": "terminology-income-vs-expense",
@@ -215,8 +280,16 @@
       "entry_version": "v1",
       "jurisdiction": "US-FEDERAL",
       "steward_id": "steward-tax-edu",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-term-001",
       "review_record_ref": "review-term-001",
+      "registry_ref": {
+        "repo": "edu-sources",
+        "path": "registry/terminology-income-vs-expense-entry.md",
+        "commit": "54970f78bb4e3f7e62b5d8ac0011ca60c2b5fc67",
+        "blob": "a6c3c7979e9a60e4aaf0b473b0e5d0ff0213f90a",
+        "algorithm": "git-sha1",
+        "revision": "rev-1"
+      },
       "current": {
         "tax_year_from": 2024,
         "tax_year_to": 2026,
@@ -260,7 +333,8 @@
             }
           }
         ]
-      }
+      },
+      "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
     },
     {
       "topic_id": "depreciation-concept",
@@ -268,8 +342,16 @@
       "entry_version": "v1",
       "jurisdiction": "US-FEDERAL",
       "steward_id": "steward-tax-edu",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-dep-001",
       "review_record_ref": "review-dep-001",
+      "registry_ref": {
+        "repo": "edu-sources",
+        "path": "registry/depreciation-concept-entry.md",
+        "commit": "07ed645ee2252d5faea3999330e807c88de24ea2",
+        "blob": "d929d0a111a7974a8b3e42e46eb7d9792c02f635",
+        "algorithm": "git-sha1",
+        "revision": "rev-1"
+      },
       "current": {
         "tax_year_from": 2024,
         "tax_year_to": 2026,
@@ -313,7 +395,8 @@
             }
           }
         ]
-      }
+      },
+      "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
     }
   ],
   "stewards": [
@@ -341,14 +424,60 @@
   ],
   "registrations": [
     {
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-rk-001",
       "steward_id": "steward-tax-edu",
       "action_ids": [
         "register_topic"
       ],
       "valid_from": "2020-01-01T00:00:00Z",
       "expires_at": "2030-01-01T00:00:00Z",
-      "revoked": false
+      "revoked": false,
+      "topic_id": "recordkeeping-basics",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+    },
+    {
+      "registration_ref": "reg-tax-term-001",
+      "steward_id": "steward-tax-edu",
+      "action_ids": [
+        "register_topic"
+      ],
+      "valid_from": "2020-01-01T00:00:00Z",
+      "expires_at": "2030-01-01T00:00:00Z",
+      "revoked": false,
+      "topic_id": "terminology-income-vs-expense",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+    },
+    {
+      "registration_ref": "reg-tax-dep-001",
+      "steward_id": "steward-tax-edu",
+      "action_ids": [
+        "register_topic"
+      ],
+      "valid_from": "2020-01-01T00:00:00Z",
+      "expires_at": "2030-01-01T00:00:00Z",
+      "revoked": false,
+      "topic_id": "depreciation-concept",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+    },
+    {
+      "registration_ref": "reg-tax-dep-conflict-001",
+      "steward_id": "steward-tax-edu",
+      "action_ids": [
+        "register_topic"
+      ],
+      "valid_from": "2020-01-01T00:00:00Z",
+      "expires_at": "2030-01-01T00:00:00Z",
+      "revoked": false,
+      "topic_id": "depreciation-concept",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
     },
     {
       "registration_ref": "reg-tax-expired",
@@ -358,7 +487,11 @@
       ],
       "valid_from": "2015-01-01T00:00:00Z",
       "expires_at": "2019-01-01T00:00:00Z",
-      "revoked": false
+      "revoked": false,
+      "topic_id": "recordkeeping-basics",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
     },
     {
       "registration_ref": "reg-tax-revoked",
@@ -368,7 +501,25 @@
       ],
       "valid_from": "2020-01-01T00:00:00Z",
       "expires_at": "2030-01-01T00:00:00Z",
-      "revoked": true
+      "revoked": true,
+      "topic_id": "recordkeeping-basics",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+    },
+    {
+      "registration_ref": "reg-tax-rk-wrong-digest",
+      "steward_id": "steward-tax-edu",
+      "action_ids": [
+        "register_topic"
+      ],
+      "valid_from": "2020-01-01T00:00:00Z",
+      "expires_at": "2030-01-01T00:00:00Z",
+      "revoked": false,
+      "topic_id": "recordkeeping-basics",
+      "entry_version": "v1",
+      "jurisdiction": "US-FEDERAL",
+      "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
     }
   ],
   "reviewRecords": [
@@ -376,7 +527,7 @@
       "review_record_ref": "review-rk-001",
       "topic_id": "recordkeeping-basics",
       "reviewer_role": "LICENSED_TAX_PROFESSIONAL",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-rk-001",
       "reviewed_through": "2026-12-31T23:59:59Z",
       "revoked": false,
       "simulated": true
@@ -385,7 +536,7 @@
       "review_record_ref": "review-term-001",
       "topic_id": "terminology-income-vs-expense",
       "reviewer_role": "LICENSED_TAX_PROFESSIONAL",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-term-001",
       "reviewed_through": "2026-12-31T23:59:59Z",
       "revoked": false,
       "simulated": true
@@ -394,7 +545,16 @@
       "review_record_ref": "review-dep-001",
       "topic_id": "depreciation-concept",
       "reviewer_role": "LICENSED_TAX_PROFESSIONAL",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-dep-001",
+      "reviewed_through": "2026-12-31T23:59:59Z",
+      "revoked": false,
+      "simulated": true
+    },
+    {
+      "review_record_ref": "review-dep-conflict-001",
+      "topic_id": "depreciation-concept",
+      "reviewer_role": "LICENSED_TAX_PROFESSIONAL",
+      "registration_ref": "reg-tax-dep-conflict-001",
       "reviewed_through": "2026-12-31T23:59:59Z",
       "revoked": false,
       "simulated": true
@@ -403,7 +563,7 @@
       "review_record_ref": "review-rk-stale",
       "topic_id": "recordkeeping-basics",
       "reviewer_role": "LICENSED_TAX_PROFESSIONAL",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-rk-001",
       "reviewed_through": "2024-06-01T00:00:00Z",
       "revoked": false,
       "simulated": true
@@ -412,7 +572,7 @@
       "review_record_ref": "review-rk-revoked",
       "topic_id": "recordkeeping-basics",
       "reviewer_role": "LICENSED_TAX_PROFESSIONAL",
-      "registration_ref": "reg-tax-001",
+      "registration_ref": "reg-tax-rk-001",
       "reviewed_through": "2026-12-31T23:59:59Z",
       "revoked": true,
       "simulated": true
@@ -467,6 +627,22 @@
     {
       "repo": "edu-sources",
       "path": "misc/personal-leak-note.md"
+    },
+    {
+      "repo": "edu-sources",
+      "path": "registry/recordkeeping-basics-entry.md"
+    },
+    {
+      "repo": "edu-sources",
+      "path": "registry/terminology-income-vs-expense-entry.md"
+    },
+    {
+      "repo": "edu-sources",
+      "path": "registry/depreciation-concept-entry.md"
+    },
+    {
+      "repo": "edu-sources",
+      "path": "registry/depreciation-concept-conflict-entry.md"
     }
   ]
 }

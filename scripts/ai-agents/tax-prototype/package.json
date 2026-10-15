@@ -5,8 +5,8 @@
   },
   "name": "tax-prototype",
   "scripts": {
-    "battery": "TAX_APPROVED_ROOT=676c5c3f2f7d478f1ed57a5a7bed35122ebd4f033fece68b57ed4f310eca3405 node tests/run-battery.js",
-    "test": "TAX_APPROVED_ROOT=676c5c3f2f7d478f1ed57a5a7bed35122ebd4f033fece68b57ed4f310eca3405 node tests/run-tests.js"
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
   },
   "type": "module",
   "version": "0.1.0"

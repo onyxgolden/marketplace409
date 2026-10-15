@@ -65,3 +65,19 @@ export function detached(value) {
 
 export const HEX40 = /^[0-9a-f]{40}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * Canonical registry-entry digest: SHA-256 of the entry's full approved
+ * content (topic identity, jurisdiction, steward/registration/review
+ * bindings, and every claim's text/template/source pin under both
+ * coverage blocks) — everything EXCEPT `entry_digest` itself (which would
+ * be self-referential) and `registry_ref` (the entry's own provenance
+ * pointer, verified separately by resolving it). Any change to scope,
+ * jurisdiction, year ranges, intervals, or any claim's source/text/
+ * template changes this digest, so the registration's bound digest
+ * commits to the exact approved entry, not just matching ID strings.
+ */
+export function registryEntryDigest(entry) {
+  const { entry_digest, registry_ref, ...content } = entry;
+  return sha256HexUtf8(content);
+}

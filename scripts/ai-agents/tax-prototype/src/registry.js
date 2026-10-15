@@ -12,6 +12,7 @@
 import { resolveSourceRef, verifySpan, hasReadGrant, ResolutionError, BudgetError } from "./resolver.js";
 import { scanSourceText } from "./injection.js";
 import { scanPersonalFacts } from "./personal.js";
+import { registryEntryDigest } from "./canonical.js";
 
 function isoNoMillis(ms) {
   const d = new Date(ms);
@@ -35,9 +36,32 @@ function diag(code, severity, reason, source_ref = null, record_id = null) {
 
 /**
  * Authenticate the steward -> registration -> review-record trust chain
- * for a registry entry. Returns {ok:true} or {ok:false, diagnostic}.
+ * for a registry entry, AND independently verify the entry's own content:
+ * its registry_ref must resolve through the same granted/hash-verified
+ * fixture store used for claims (never trusted unchecked), and its
+ * recomputed content digest must equal both the entry's own declared
+ * entry_digest and the digest the authenticated registration binds.
+ * Matching ID strings alone never authenticates an entry's content —
+ * only a syntactically-valid entry whose content digest, version,
+ * topic_id and jurisdiction are all exactly what the registration
+ * approved passes. Returns {ok:true, registrySourceRef} or
+ * {ok:false, diagnostic}.
  */
-function authenticateChain(entry, ctx, asOfMs) {
+function authenticateChain(entry, ctx, asOfMs, budget) {
+  if (!hasReadGrant(entry.registry_ref, ctx.readGrants)) {
+    return { ok: false, diagnostic: diag("READ_DENIED", "error", `read grant missing for registry source ${entry.registry_ref.repo}/${entry.registry_ref.path}`, entry.registry_ref) };
+  }
+  try {
+    resolveSourceRef(entry.registry_ref, ctx.sources, budget);
+  } catch (e) {
+    if (e instanceof ResolutionError) return { ok: false, diagnostic: diag(e.code, "error", `registry source: ${e.message}`, entry.registry_ref) };
+    throw e;
+  }
+  const recomputedDigest = registryEntryDigest(entry);
+  if (recomputedDigest !== entry.entry_digest) {
+    return { ok: false, diagnostic: diag("HASH_MISMATCH", "error", `registry entry '${entry.topic_id}' content does not match its own declared entry_digest`, entry.registry_ref, entry.topic_id) };
+  }
+
   const steward = ctx.stewards.find((s) => s.steward_id === entry.steward_id);
   if (!steward) return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `steward '${entry.steward_id}' not registered`, null, entry.steward_id) };
   if (steward.revoked) return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `steward '${steward.steward_id}' is revoked`, null, steward.steward_id) };
@@ -55,6 +79,19 @@ function authenticateChain(entry, ctx, asOfMs) {
   if (registration.revoked) return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `registration '${registration.registration_ref}' is revoked`, null, registration.registration_ref) };
   if (!registration.action_ids.includes("register_topic")) {
     return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `registration '${registration.registration_ref}' does not authorize register_topic`, null, registration.registration_ref) };
+  }
+  // The registration must bind THIS exact approved entry — its topic_id,
+  // entry_version, jurisdiction and full-content digest — not merely
+  // reference the same steward. A syntactically valid entry whose
+  // identifiers happen to match a live registration, but whose content
+  // was never what that registration actually approved, is rejected here.
+  if (
+    registration.topic_id !== entry.topic_id ||
+    registration.entry_version !== entry.entry_version ||
+    registration.jurisdiction !== entry.jurisdiction ||
+    registration.entry_digest !== entry.entry_digest
+  ) {
+    return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `registration '${registration.registration_ref}' does not bind this entry's exact topic_id/entry_version/jurisdiction/content digest`, null, registration.registration_ref) };
   }
   const regFrom = Date.parse(registration.valid_from);
   const regTo = Date.parse(registration.expires_at);
@@ -80,7 +117,7 @@ function authenticateChain(entry, ctx, asOfMs) {
     return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `review record '${review.review_record_ref}' registration '${review.registration_ref}' is not live`, null, review.review_record_ref) };
   }
 
-  return { ok: true };
+  return { ok: true, registrySourceRef: entry.registry_ref };
 }
 
 /**
@@ -189,8 +226,9 @@ export function assembleDraft({ task, entry, ctx, budget, clock }) {
     return blocked("STALE_EVIDENCE", `as_of_date is beyond the registered coverage reviewed_through (${block.reviewed_through})`);
   }
 
-  const chain = authenticateChain(entry, ctx, asOfMs);
+  const chain = authenticateChain(entry, ctx, asOfMs, budget);
   if (!chain.ok) return blockedWithDiagnostic(chain.diagnostic);
+  const registrySourceRef = chain.registrySourceRef;
 
   // Group claims by concept_key: >1 distinct text under one key is a
   // preserved, unresolved contradiction — never averaged or silently merged.
@@ -240,6 +278,7 @@ export function assembleDraft({ task, entry, ctx, budget, clock }) {
       uncertainty_flags: ["CONFLICTING_SOURCES"],
       _diagnostics: [diag("CONFLICTING_SOURCES", "error", "contradictory synthetic claims under the same concept_key; both preserved, neither selected")],
       _quarantined: [],
+      _registry_source_ref: registrySourceRef,
     };
   }
 
@@ -262,6 +301,7 @@ export function assembleDraft({ task, entry, ctx, budget, clock }) {
     _diagnostics: [],
     _quarantined: [],
     _complete: true,
+    _registry_source_ref: registrySourceRef,
   };
 
   function blocked(code, reason, extra = {}) {
@@ -286,6 +326,7 @@ export function assembleDraft({ task, entry, ctx, budget, clock }) {
       uncertainty_flags: [diagnostic.code],
       _diagnostics: [diagnostic],
       _quarantined: quarantine,
+      _registry_source_ref: null,
     };
   }
 }
@@ -318,5 +359,6 @@ export function reviewRequiredUnknownTopic(task) {
     uncertainty_flags: ["UNREGISTERED_TOPIC"],
     _diagnostics: [diag("UNSUPPORTED_TASK", "warning", `topic_id '${task.topic_id}' is not a registered approved topic; routed to review`, null)],
     _quarantined: [],
+    _registry_source_ref: null,
   };
 }

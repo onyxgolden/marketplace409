@@ -17,9 +17,25 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { registryEntryDigest } from "../src/canonical.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const store = JSON.parse(readFileSync(join(ROOT, "fixtures", "store.json"), "utf8"));
+
+/**
+ * Mutate a cloned registry entry's claim content for an "evidence"-
+ * category test, then recompute entry_digest and return a matching
+ * registrations array (TAX-002: the registration must bind whatever
+ * content the entry now actually has, or the new registry-binding check
+ * — not the claim-resolution check this case means to exercise — would
+ * reject it first). Returns {entry, registrations}.
+ */
+function withRebound(entry) {
+  const digest = registryEntryDigest(entry);
+  entry.entry_digest = digest;
+  const registrations = store.registrations.map((r) => (r.registration_ref === entry.registration_ref ? { ...r, entry_digest: digest } : r));
+  return { entry, registrations };
+}
 const conflictEntry = JSON.parse(readFileSync(join(ROOT, "fixtures", "depreciation-conflict-entry.json"), "utf8"));
 
 const TOPICS = {
@@ -447,22 +463,24 @@ const cases = [];
   for (const topicKey of ["rk", "term", "dep"]) {
     const entry = JSON.parse(JSON.stringify(entryFor(topicKey)));
     entry.current.claims[0].source_ref.blob = "0".repeat(40);
+    const { registrations } = withRebound(entry);
     cases.push(
       C(next(), "evidence",
         T({ tag: "ev", topic_id: TOPICS[topicKey].id, topic_label: TOPICS[topicKey].label }),
         EBlocked("HASH_MISMATCH", { topicKey }),
-        { replaceRegistry: [entry] })
+        { replaceRegistry: [entry], replaceRegistrations: registrations })
     );
   }
   // b) SOURCE_UNVERIFIED: commit not registered — 3
   for (const topicKey of ["rk", "term", "dep"]) {
     const entry = JSON.parse(JSON.stringify(entryFor(topicKey)));
     entry.current.claims[0].source_ref.commit = "1".repeat(40);
+    const { registrations } = withRebound(entry);
     cases.push(
       C(next(), "evidence",
         T({ tag: "ev", topic_id: TOPICS[topicKey].id, topic_label: TOPICS[topicKey].label }),
         EBlocked("SOURCE_UNVERIFIED", { topicKey }),
-        { replaceRegistry: [entry] })
+        { replaceRegistry: [entry], replaceRegistrations: registrations })
     );
   }
   // c) SOURCE_UNVERIFIED: source key not registered at all — 2.
@@ -472,11 +490,12 @@ const cases = [];
   for (const topicKey of ["dep", "rk"]) {
     const entry = JSON.parse(JSON.stringify(entryFor(topicKey)));
     entry.current.claims[0].source_ref.path = "nowhere/missing.md";
+    const { registrations } = withRebound(entry);
     cases.push(
       C(next(), "evidence",
         T({ tag: "ev", topic_id: TOPICS[topicKey].id, topic_label: TOPICS[topicKey].label }),
         EBlocked("SOURCE_UNVERIFIED", { topicKey }),
-        { replaceRegistry: [entry], replaceReadGrants: [...store.readGrants, { repo: "edu-sources", path: "nowhere/missing.md" }] })
+        { replaceRegistry: [entry], replaceRegistrations: registrations, replaceReadGrants: [...store.readGrants, { repo: "edu-sources", path: "nowhere/missing.md" }] })
     );
   }
   // d) READ_DENIED: claim points at a real, valid, but ungranted source — 2
@@ -484,22 +503,24 @@ const cases = [];
   for (const topicKey of ["term", "dep"]) {
     const entry = JSON.parse(JSON.stringify(entryFor(topicKey)));
     entry.current.claims[0].source_ref = { repo: "edu-sources", path: "misc/unregistered-note.md", commit: unreg.commit, blob: unreg.blob, algorithm: "git-sha1", revision: "rev-1" };
+    const { registrations } = withRebound(entry);
     cases.push(
       C(next(), "evidence",
         T({ tag: "ev", topic_id: TOPICS[topicKey].id, topic_label: TOPICS[topicKey].label }),
         EBlocked("READ_DENIED", { topicKey }),
-        { replaceRegistry: [entry] })
+        { replaceRegistry: [entry], replaceRegistrations: registrations })
     );
   }
   // e) SPAN_MISMATCH: declared claim text no longer appears verbatim — 2
   for (const topicKey of ["rk", "term"]) {
     const entry = JSON.parse(JSON.stringify(entryFor(topicKey)));
     entry.current.claims[0].text = `${entry.current.claims[0].text} This exact sentence was never written in the source.`;
+    const { registrations } = withRebound(entry);
     cases.push(
       C(next(), "evidence",
         T({ tag: "ev", topic_id: TOPICS[topicKey].id, topic_label: TOPICS[topicKey].label }),
         EBlocked("SPAN_MISMATCH", { topicKey }),
-        { replaceRegistry: [entry] })
+        { replaceRegistry: [entry], replaceRegistrations: registrations })
     );
   }
   // Mutate review-rk-001's own fields in place (keeping its ref) rather
@@ -550,7 +571,7 @@ const cases = [];
     C(next(), "evidence",
       T({ tag: "ev", topic_id: TOPICS.rk.id, topic_label: TOPICS.rk.label }),
       EBlocked("SOURCE_UNVERIFIED", { topicKey: "rk" }),
-      { replaceRegistrations: store.registrations.map((r) => (r.registration_ref === "reg-tax-001" ? { ...r, revoked: true } : r)) })
+      { replaceRegistrations: store.registrations.map((r) => (r.registration_ref === "reg-tax-rk-001" ? { ...r, revoked: true } : r)) })
   );
   // k) Consulted-object budget exhaustion: 4200 tiny read grants — 1.
   // (Small-schema objects so the 4096-object count limit is hit before

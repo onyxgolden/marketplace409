@@ -4,8 +4,16 @@
   "entry_version": "v1",
   "jurisdiction": "US-FEDERAL",
   "steward_id": "steward-tax-edu",
-  "registration_ref": "reg-tax-001",
+  "registration_ref": "reg-tax-dep-conflict-001",
   "review_record_ref": "review-dep-001",
+  "registry_ref": {
+    "repo": "edu-sources",
+    "path": "registry/depreciation-concept-conflict-entry.md",
+    "commit": "db7c35ca8eeec0518fd9d764dfb96295368dd1a8",
+    "blob": "30b16166ccd6f5fea0554385b9de33a8373004b8",
+    "algorithm": "git-sha1",
+    "revision": "rev-1"
+  },
   "current": {
     "tax_year_from": 2024,
     "tax_year_to": 2026,
@@ -63,5 +71,6 @@
         }
       }
     ]
-  }
+  },
+  "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
 }

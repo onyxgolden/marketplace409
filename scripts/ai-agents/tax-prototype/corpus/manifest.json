@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "676c5c3f2f7d478f1ed57a5a7bed35122ebd4f033fece68b57ed4f310eca3405",
+  "corpus_digest": "ed805071b11c3fee2be328977663376b9bbd4be759e29a4af4d4b2c48fd8d50c",
   "files": [
     {
       "path": "README.md",
@@ -7,31 +7,31 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "b9740151965c4b907dc18d5fb9b0884f09d380ff5ac17e66a30d8ce5663f00a4"
+      "sha256": "54dfb8208402f8c8f26ba87725431bd54296c7ae43c58ffb6e39dbf38e5b2caa"
     },
     {
       "path": "corpus/freeze-corpus.js",
-      "sha256": "f40b2dc04e150b78a107cc49e5316f90f469abf41f992f745dd01102aead03dc"
+      "sha256": "113667dbd44429c21d5fd6cf7205dbcdcf2d5211c3da0b81f06fac244beaa567"
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "deb9e9dce63fc14ef81a4913417dddabab742e622dff5d10a9692542544c32a0"
+      "sha256": "cefcc448b44b063466db6c769f658b85e9caef5bc17f864509227000b1ce53d1"
     },
     {
       "path": "fixtures/depreciation-conflict-entry.json",
-      "sha256": "01c6418a2bccb641cfb7f0dc0e484a1c8274d9074e75d2dfac8c2ebd9d1fdba9"
+      "sha256": "b9682d5de86d205e699b481f13fe576bff9f5f665caf3544b4ba90576152d8ad"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "81c53602d2931fe1801bfaab6598f0b520c547b97488279d6f2e6ec87b448cc5"
+      "sha256": "0b7541b89da813d5f8a3926bea2faa0ffddadc7718275079890af96c1164c6e6"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "dbabe5156c2d09d37d6b871a1d6a02527821cd3788dd4b45bbeed4c29a083c61"
+      "sha256": "637a3c407d212a129c354496b3db85327b554e80724d040d9a22754758ff614c"
     },
     {
       "path": "package.json",
-      "sha256": "fbe790010f8cedaa96b2824809b992d80f8d28f1ec44b74083aceda0f56f9803"
+      "sha256": "191234bfb551052641998b0560e8282b6f944e7c1e500fa8d0bbe4d971f146a9"
     },
     {
       "path": "runner/run-manual.js",
@@ -39,11 +39,11 @@
     },
     {
       "path": "src/canonical.js",
-      "sha256": "abe9e3b7bc3c869914bc71f9794c5aa8af590464e4fef5d7bfd9c38fa1814f9d"
+      "sha256": "db13d77e0f8e0712fcaef5eb54fd25cd38817db5027affa6f13e4446f4851f8a"
     },
     {
       "path": "src/index.js",
-      "sha256": "e8574f4660b0f3ab244e72ac51b1b61672877ddfde1e4807395c4d1db05fdda3"
+      "sha256": "1ec8b481b2c228d7908072133afd575418bc33e3834162047fa0feee20e08e7a"
     },
     {
       "path": "src/injection.js",
@@ -59,7 +59,7 @@
     },
     {
       "path": "src/registry.js",
-      "sha256": "244bec4df7548b8b130128aafcc093b2d41a0ebba86c1ce667950440bb2e1332"
+      "sha256": "be3ce9288fe4cadd2d47b505b7fb83f1aac2d48f30c700dc146062f68aac5143"
     },
     {
       "path": "src/resolver.js",
@@ -67,7 +67,7 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "44c75d6e14c217ea7a95de471d4232e595336ddd4b7e77049b550968297822cd"
+      "sha256": "4a6c95f283bc031b87c3eb7f3e04e7731e9eb613fe2ffb178b82e0d4d8fa3c23"
     },
     {
       "path": "tests/battery.test.js",
@@ -95,7 +95,7 @@
     },
     {
       "path": "tests/mutation.test.js",
-      "sha256": "c72a60d49829b7aa5bfb3e00fb4c895139bde314fecf639b3d5c4d725c726090"
+      "sha256": "b8a67ef295b00ad06f331382624adf1eb288255e4f2306560a59aea9ffe63b6e"
     },
     {
       "path": "tests/personal.test.js",
@@ -103,15 +103,19 @@
     },
     {
       "path": "tests/run-battery.js",
-      "sha256": "8a8e0eab6e0a44a89ab6fc6604ccd442356060e27fa3f1a65d49be5d2db20b79"
+      "sha256": "79c5c91cdeb1b270fa91dca53eec2f73cca1d9922ece01b78b76ccf94cbadcd7"
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "2db4199da16a8010020c990dca4c5c5b11e7052d100d6110d8fb64a3b48806f8"
+      "sha256": "57f081f36caa6211fc5ec40a3dfb9ba219b0b37caab1f6c19f3c796eac6a494c"
     },
     {
       "path": "tests/schemas.test.js",
-      "sha256": "8df1bca43108b02ac1a59b02e490ee18c370f3ddcecadb15ca568b45ac1d65eb"
+      "sha256": "7aaccb1e1774d98498e95e12888851a33b7aad55a5ea3d2cf498b409b73f38aa"
+    },
+    {
+      "path": "tests/trust-chain.test.js",
+      "sha256": "d33a0fc1e6198594bc29e743967be65c23a1a06fe552a3a7ee881b5453a4fdfe"
     },
     {
       "path": "tests/watchdog.js",

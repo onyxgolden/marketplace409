@@ -34,19 +34,38 @@ GUIDANCE / DRAFT / NOT PUBLISHED.**
 - No file-write API, no network, no tool calls. The agent returns a
   detached advisory JSON snapshot; nothing here authorizes publication,
   filing, or real CPA identity.
+- A registry entry is never trusted on matching ID strings alone. Its
+  `registry_ref` is independently resolved through the same fixture
+  Git-object store as claims (read-granted, hash-verified), and its
+  canonical content digest (`entry_digest` — topic/jurisdiction/coverage/
+  every claim's text and source pin) must equal both the entry's own
+  declared digest and the digest the authenticated registration binds.
+  Changing any part of an entry's content — including which registration
+  it points to — invalidates its own digest before the chain is even
+  checked. The common envelope's `source_refs` deterministically lists
+  the verified registry ref plus every verified supporting claim ref for
+  outcomes that actually resolved them; quarantined/denied sources never
+  appear there.
 
 ## Run
 
 ```
-npm test      # unit tests + frozen battery, trust-gated
-npm run battery   # battery only, with the acceptance summary printed
+TAX_APPROVED_ROOT=<digest> npm test      # unit tests + frozen battery, trust-gated
+TAX_APPROVED_ROOT=<digest> npm run battery   # battery only, with the acceptance summary printed
 node runner/run-manual.js recordkeeping-basics --year 2026 --as-of 2026-06-01T00:00:00Z
 ```
 
-Both npm scripts require `TAX_APPROVED_ROOT` (a 64-hex SHA-256), set by
-the script itself — the launcher authenticates every pinned file against
-that separately trusted root, with node builtins only, before any scored
-code is imported. A mismatch refuses (exit 3) before anything runs.
+Both npm scripts require `TAX_APPROVED_ROOT` (a 64-hex SHA-256) supplied
+externally by the reviewer or CI pipeline at invocation time — never by
+these scripts themselves, and never read from any file in this tree.
+`corpus/corpus_digest.txt` records the current digest as a reference for
+whoever invokes this (it is itself one of the hashed files, so it can
+never silently drift from the real corpus); it is not a trusted root on
+its own. The launcher authenticates every pinned file against whatever
+root was supplied, with node builtins only, before any scored code is
+imported. A missing or mismatched root refuses (exit 3) before anything
+runs — a candidate-controlled trust root would defeat the point of this
+gate, so this package's own tree never supplies one (see TAX-001).
 
 ## Layout
 

@@ -3,11 +3,22 @@
  * freeze-corpus.js — AUTHORING TOOL (not part of the scored path).
  *
  * Recomputes corpus/manifest.json (sorted per-file SHA-256 pins) and the
- * corpus digest, writes corpus/corpus_digest.txt, and records the digest
- * as the separately trusted root in package.json's npm scripts.
+ * corpus digest, and writes corpus/corpus_digest.txt as a recorded
+ * reference value for reviewer/CI use.
  *
- * Run after any corpus-affecting change, then record the new digest as
- * the reviewed root (package.json scripts + corpus_digest.txt).
+ * This tool NEVER writes TAX_APPROVED_ROOT anywhere in the candidate
+ * tree (package.json or otherwise) — a candidate-controlled script
+ * supplying its own "independently trusted" root is exactly the
+ * self-certification the trust model forbids (TAX-001). The approved
+ * root is a separately trusted host input: a reviewer or CI pipeline
+ * reads the digest this tool prints (or corpus_digest.txt) and supplies
+ * it externally as the TAX_APPROVED_ROOT environment variable at
+ * invocation time — `npm test`/`npm run battery` never set it
+ * themselves, and the launcher (tests/run-tests.js, tests/run-battery.js)
+ * fails closed when it is absent.
+ *
+ * Run after any corpus-affecting change, then re-record the new digest
+ * as the reviewed root wherever the reviewer/CI config stores it.
  */
 
 import { createHash } from "node:crypto";
@@ -38,13 +49,9 @@ const preEntries = files
 const canonical = JSON.stringify(preEntries);
 const digest = sha(Buffer.from(canonical, "utf8"));
 
+// package.json is hashed as-is — this tool never writes to it. The
+// candidate tree supplies no trust root of its own.
 const pkgPath = join(ROOT, "package.json");
-const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-for (const k of Object.keys(pkg.scripts ?? {})) {
-  pkg.scripts[k] = pkg.scripts[k].replace(/TAX_APPROVED_ROOT=[0-9a-f]{64}|TAX_APPROVED_ROOT=__DIGEST__/, `TAX_APPROVED_ROOT=${digest}`);
-}
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-
 const entries = [...preEntries, { path: "package.json", sha256: sha(readFileSync(pkgPath)) }];
 entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 

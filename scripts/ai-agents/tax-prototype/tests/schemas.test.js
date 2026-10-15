@@ -8,10 +8,12 @@ import {
   validateSourceRef,
   validateTask,
   validateRegistryEntry,
+  validateRegistration,
   validateContext,
   validateIsoDate,
   SchemaError,
 } from "../src/schemas.js";
+import { registryEntryDigest } from "../src/canonical.js";
 
 const goodRef = {
   repo: "edu-sources",
@@ -96,7 +98,7 @@ test("task schema: unknown top-level property rejected", () => {
   assert.throws(() => validateTask({ ...goodTask, extra: 1 }), SchemaError);
 });
 
-const goodEntry = {
+const goodEntryBase = {
   topic_id: "recordkeeping-basics",
   topic_label: "Recordkeeping Basics",
   entry_version: "v1",
@@ -104,6 +106,7 @@ const goodEntry = {
   steward_id: "steward-tax-edu",
   registration_ref: "reg-tax-001",
   review_record_ref: "review-rk-001",
+  registry_ref: { ...goodRef, path: "registry/recordkeeping-basics-entry.md" },
   current: {
     tax_year_from: 2024, tax_year_to: 2026,
     effective_from: "2024-01-01T00:00:00Z", reviewed_through: "2026-12-31T23:59:59Z",
@@ -111,9 +114,51 @@ const goodEntry = {
   },
   historical: null,
 };
+const goodEntry = { ...goodEntryBase, entry_digest: registryEntryDigest(goodEntryBase) };
 
 test("valid registry entry passes", () => {
   assert.equal(validateRegistryEntry(goodEntry, "t").topic_id, "recordkeeping-basics");
+});
+
+test("registry entry requires registry_ref and entry_digest", () => {
+  const { registry_ref, ...noRef } = goodEntry;
+  assert.throws(() => validateRegistryEntry(noRef, "t"), SchemaError);
+  const { entry_digest, ...noDigest } = goodEntry;
+  assert.throws(() => validateRegistryEntry(noDigest, "t"), SchemaError);
+});
+
+test("registry entry rejects a malformed entry_digest", () => {
+  assert.throws(() => validateRegistryEntry({ ...goodEntry, entry_digest: "not-hex" }, "t"), SchemaError);
+  assert.throws(() => validateRegistryEntry({ ...goodEntry, entry_digest: "a".repeat(63) }, "t"), SchemaError);
+});
+
+const goodRegistration = {
+  registration_ref: "reg-tax-001",
+  steward_id: "steward-tax-edu",
+  action_ids: ["register_topic"],
+  valid_from: "2020-01-01T00:00:00Z",
+  expires_at: "2030-01-01T00:00:00Z",
+  revoked: false,
+  topic_id: "recordkeeping-basics",
+  entry_version: "v1",
+  jurisdiction: "US-FEDERAL",
+  entry_digest: goodEntry.entry_digest,
+};
+
+test("valid registration passes", () => {
+  assert.equal(validateRegistration(goodRegistration, "t").entry_digest, goodEntry.entry_digest);
+});
+
+test("registration requires topic_id/entry_version/jurisdiction/entry_digest binding fields", () => {
+  for (const key of ["topic_id", "entry_version", "jurisdiction", "entry_digest"]) {
+    const { [key]: _drop, ...bad } = goodRegistration;
+    assert.throws(() => validateRegistration(bad, "t"), SchemaError, `missing ${key} must be rejected`);
+  }
+});
+
+test("registration rejects an unregistered jurisdiction or malformed digest", () => {
+  assert.throws(() => validateRegistration({ ...goodRegistration, jurisdiction: "US-CA" }, "t"), SchemaError);
+  assert.throws(() => validateRegistration({ ...goodRegistration, entry_digest: "z".repeat(64) }, "t"), SchemaError);
 });
 
 test("registry entry requires at least one coverage block", () => {

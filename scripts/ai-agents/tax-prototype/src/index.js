@@ -59,6 +59,35 @@ function baseDenial(task, status, code, severity, reason) {
   };
 }
 
+/** Stable key for deduping SourceRefs by exact identity. */
+function refKey(r) {
+  return `${r.repo}|${r.path}|${r.commit}|${r.blob}`;
+}
+
+/**
+ * Deterministic provenance list for the common envelope: the verified
+ * registry SourceRef (only present once chain authentication actually
+ * succeeded) plus every verified supporting claim's SourceRef from the
+ * outcome's own citations — never a quarantined or denied source, since
+ * those never reach `citations`/`_registry_source_ref` in the first place.
+ * Order: registry ref first (if present), then citations in their
+ * existing deterministic order; de-duplicated by exact identity.
+ */
+function sourceRefsOf(outcome) {
+  const refs = [];
+  const seen = new Set();
+  const add = (r) => {
+    if (!r) return;
+    const k = refKey(r);
+    if (seen.has(k)) return;
+    seen.add(k);
+    refs.push({ repo: r.repo, path: r.path, commit: r.commit, blob: r.blob, algorithm: r.algorithm, revision: r.revision });
+  };
+  add(outcome._registry_source_ref);
+  for (const c of outcome.citations ?? []) add(c);
+  return refs;
+}
+
 function envelope(task, outcome, extraDiagnostics = [], extraQuarantine = []) {
   const diagnostics = [...extraDiagnostics, ...(outcome._diagnostics ?? [])];
   const quarantined_sources = [...extraQuarantine, ...(outcome._quarantined ?? [])];
@@ -76,7 +105,7 @@ function envelope(task, outcome, extraDiagnostics = [], extraQuarantine = []) {
     task_id: taskIdOf(task),
     advisory: true,
     fixture_only: true,
-    source_refs: [],
+    source_refs: sourceRefsOf(outcome),
     diagnostics,
     quarantined_sources,
     routing_flags: [],

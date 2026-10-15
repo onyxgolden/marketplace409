@@ -6,7 +6,7 @@
  * malformed pins. Pure Node 24 ESM, zero dependencies.
  */
 
-import { HEX40 } from "./canonical.js";
+import { HEX40, HEX64 } from "./canonical.js";
 
 export class SchemaError extends Error {
   constructor(message) {
@@ -100,10 +100,18 @@ export function validateSteward(value, where) {
   return { steward_id, registered_by, revoked: value.revoked, valid_from: value.valid_from, expires_at: value.expires_at };
 }
 
-/** Steward action registration (what a steward may do). */
+/**
+ * Steward action registration (what a steward may do). Beyond the
+ * steward/action/validity envelope, a registration that authorizes
+ * register_topic BINDS the exact registry entry it approved: topic_id,
+ * entry_version, jurisdiction and the entry's full-content entry_digest.
+ * authenticateChain verifies this binding against the live entry before
+ * any claim/template is selected — matching ID strings alone is not
+ * enough, the registration must commit to the exact approved content.
+ */
 export function validateRegistration(value, where) {
   if (!isPlainObject(value)) fail(where, "registration must be an object");
-  exactKeys(value, ["registration_ref", "steward_id", "action_ids", "valid_from", "expires_at", "revoked"], where);
+  exactKeys(value, ["registration_ref", "steward_id", "action_ids", "valid_from", "expires_at", "revoked", "topic_id", "entry_version", "jurisdiction", "entry_digest"], where);
   const registration_ref = validateRecordId(value.registration_ref, where);
   const steward_id = validateRecordId(value.steward_id, where);
   if (!Array.isArray(value.action_ids) || value.action_ids.length === 0) fail(where, "action_ids must be a non-empty array");
@@ -113,7 +121,16 @@ export function validateRegistration(value, where) {
   validateIsoDate(value.valid_from, `${where}.valid_from`);
   validateIsoDate(value.expires_at, `${where}.expires_at`);
   if (typeof value.revoked !== "boolean") fail(where, "revoked must be a boolean");
-  return { registration_ref, steward_id, action_ids: [...value.action_ids], valid_from: value.valid_from, expires_at: value.expires_at, revoked: value.revoked };
+  const topic_id = reqStr(value, "topic_id", where);
+  if (!SLUG_RE.test(topic_id)) fail(where, `invalid topic_id '${topic_id}'`);
+  const entry_version = reqStr(value, "entry_version", where);
+  if (!JURISDICTIONS.includes(value.jurisdiction)) fail(where, `invalid jurisdiction '${value.jurisdiction}'`);
+  const entry_digest = reqStr(value, "entry_digest", where);
+  if (!HEX64.test(entry_digest)) fail(where, "entry_digest must be a 64-hex SHA-256 digest");
+  return {
+    registration_ref, steward_id, action_ids: [...value.action_ids], valid_from: value.valid_from, expires_at: value.expires_at, revoked: value.revoked,
+    topic_id, entry_version, jurisdiction: value.jurisdiction, entry_digest,
+  };
 }
 
 /** Simulated professional-review record. Never claims real CPA sign-off. */
@@ -162,10 +179,19 @@ function validateCoverageBlock(value, where) {
   return { tax_year_from: from, tax_year_to: to, effective_from: value.effective_from, reviewed_through: value.reviewed_through, claims };
 }
 
-/** TopicRegistryEntry: the approved-topic registry, injected via context only. */
+/**
+ * TopicRegistryEntry: the approved-topic registry, injected via context
+ * only. `registry_ref` independently pins where this entry's approved
+ * content is sourced from (resolved through the same fixture Git-object
+ * store as claims — a registered, read-granted, hash-verified pin, not
+ * an arbitrary unchecked pointer). `entry_digest` is the canonical
+ * content digest (see canonical.js#registryEntryDigest) that the
+ * authenticated registration must independently bind — matching ID
+ * strings alone never authenticates an entry's content.
+ */
 export function validateRegistryEntry(value, where) {
   if (!isPlainObject(value)) fail(where, "registry entry must be an object");
-  exactKeys(value, ["topic_id", "topic_label", "entry_version", "jurisdiction", "steward_id", "registration_ref", "review_record_ref", "current", "historical"], where);
+  exactKeys(value, ["topic_id", "topic_label", "entry_version", "jurisdiction", "steward_id", "registration_ref", "review_record_ref", "current", "historical", "registry_ref", "entry_digest"], where);
   const topic_id = reqStr(value, "topic_id", where);
   if (!SLUG_RE.test(topic_id)) fail(where, `invalid topic_id '${topic_id}'`);
   const topic_label = reqStr(value, "topic_label", where, { maxBytes: 256 });
@@ -179,7 +205,10 @@ export function validateRegistryEntry(value, where) {
   let historical = null;
   if (value.historical !== null && value.historical !== undefined) historical = validateCoverageBlock(value.historical, `${where}.historical`);
   if (!current && !historical) fail(where, "registry entry must declare at least one of current/historical coverage");
-  return { topic_id, topic_label, entry_version, jurisdiction: value.jurisdiction, steward_id, registration_ref, review_record_ref, current, historical };
+  const registry_ref = validateSourceRef(value.registry_ref, `${where}.registry_ref`);
+  const entry_digest = reqStr(value, "entry_digest", where);
+  if (!HEX64.test(entry_digest)) fail(where, "entry_digest must be a 64-hex SHA-256 digest");
+  return { topic_id, topic_label, entry_version, jurisdiction: value.jurisdiction, steward_id, registration_ref, review_record_ref, current, historical, registry_ref, entry_digest };
 }
 
 /** Task input schema. kind: "draft" | "prohibited". */

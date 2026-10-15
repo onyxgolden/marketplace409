@@ -5,8 +5,9 @@
  * the run before a single case executes.
  *
  * Bootstrap order: the approved root is a SEPARATELY TRUSTED host input
- * (TAX_APPROVED_ROOT env, set by the reviewed npm script) — never an
- * in-corpus anchor. The full corpus digest, covering EVERY pinned file
+ * (TAX_APPROVED_ROOT env, supplied by the reviewer or CI pipeline at
+ * invocation time — never by this package's own scripts or any file in
+ * the candidate tree) — never an in-corpus anchor. The full corpus digest, covering EVERY pinned file
  * including the reviewer itself, is recomputed with node:fs / node:crypto
  * ONLY and authenticated against that root BEFORE the reviewer module or
  * any scored code is imported. Refuse (exit 3) on any mismatch: no

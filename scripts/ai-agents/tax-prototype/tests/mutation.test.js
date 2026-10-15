@@ -97,11 +97,13 @@ test("unlisted new file is rejected", async () => {
 
 // ---------------- pre-import launcher attacks ----------------
 
+// The approved root is never read from package.json (TAX-001: that would
+// be a candidate-controlled trust root). These tests read the recorded
+// reference digest the way a reviewer/CI pipeline would — a value this
+// test file supplies externally to the launcher via env, exactly as a
+// real invocation must — never as a value the launcher finds on its own.
 function fixedApprovedRoot() {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-  const m = /TAX_APPROVED_ROOT=([0-9a-f]{64})/.exec(pkg.scripts?.test ?? "");
-  assert.ok(m, "npm test must pin a separately trusted TAX_APPROVED_ROOT");
-  return m[1];
+  return readFileSync(join(ROOT, "corpus", "corpus_digest.txt"), "utf8").trim();
 }
 
 function runLauncher(dir, root) {
@@ -166,6 +168,63 @@ test("tampered expectations with rehashed manifest fail before oracle execution"
     const r = runLauncher(dir, root);
     assert.equal(r.status, 3, `launcher must refuse before imports (got ${r.status})`);
     assert.ok(r.output.includes("trust failure"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------- TAX-001: no candidate-controlled trust root ----------------
+
+test("package.json's scored scripts never embed TAX_APPROVED_ROOT", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  for (const [name, script] of Object.entries(pkg.scripts ?? {})) {
+    assert.ok(!/TAX_APPROVED_ROOT/.test(script), `script '${name}' must not embed TAX_APPROVED_ROOT itself: ${script}`);
+  }
+});
+
+test("freeze-corpus.js never writes to package.json", () => {
+  const dir = scratchCopy();
+  try {
+    const before = readFileSync(join(dir, "package.json"), "utf8");
+    repinManifest(dir);
+    const after = readFileSync(join(dir, "package.json"), "utf8");
+    assert.equal(after, before, "freeze-corpus.js must not modify package.json");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("launcher refuses closed (exit 3) when TAX_APPROVED_ROOT is absent — plain `npm test`/`node tests/run-tests.js` with no externally-supplied root never runs a single case", () => {
+  const dir = scratchCopy();
+  try {
+    const out = execFileSync(process.execPath, [join(dir, "tests", "run-tests.js")], {
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "TAX_APPROVED_ROOT")),
+      encoding: "utf8",
+      timeout: 60000,
+    }).toString();
+    assert.fail(`expected non-zero exit, launcher printed: ${out}`);
+  } catch (e) {
+    assert.equal(e.status, 3, `must refuse closed with exit 3 (got ${e.status})`);
+    const output = String(e.stdout ?? "") + String(e.stderr ?? "");
+    assert.ok(output.includes("missing separately trusted approval root"), "refusal must name the missing root, not fail silently or fall back");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("launcher refuses closed when TAX_APPROVED_ROOT is supplied but does not match the recomputed digest (no candidate value is ever trusted, even a plausible-looking one)", () => {
+  const dir = scratchCopy();
+  try {
+    const out = execFileSync(process.execPath, [join(dir, "tests", "run-tests.js")], {
+      env: { ...process.env, TAX_APPROVED_ROOT: "f".repeat(64) },
+      encoding: "utf8",
+      timeout: 60000,
+    }).toString();
+    assert.fail(`expected non-zero exit, launcher printed: ${out}`);
+  } catch (e) {
+    assert.equal(e.status, 3, `must refuse closed with exit 3 (got ${e.status})`);
+    const output = String(e.stdout ?? "") + String(e.stderr ?? "");
+    assert.ok(output.includes("trust failure") || output.includes("not the separately trusted approved root"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
