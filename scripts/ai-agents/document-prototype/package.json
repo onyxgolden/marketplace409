@@ -1,0 +1,13 @@
+{
+  "description": "Document Agent Phase 2 slice 1 synthetic prototype: document-set integrity (inventory, exact-duplicate groups, version-conflict register, checklist coverage, cross-reference map with cycle detection, cross-document assertion conflicts) over a fixture-only document set. Advisory only; no real files, no signature/finality judgment, no edits/deletion/conflict resolution, no network fetch, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "document-prototype",
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
