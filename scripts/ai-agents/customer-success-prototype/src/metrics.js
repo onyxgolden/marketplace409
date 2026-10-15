@@ -70,14 +70,35 @@ export function meanMinutesExact(msDeltas) {
   return rDiv(sum, rational(msDeltas.length, 1));
 }
 
+/**
+ * CS-002 fix: numerator/denominator must publish the actual exact
+ * sum/count the mean was built from, not the observation count twice.
+ * Each ms delta is itself a rational (ms/60000) that need not reduce to
+ * an integer number of minutes, so the sum cannot be a bare integer
+ * without rounding — instead, numerator is the exact total elapsed
+ * milliseconds (always an integer; no rounding) and denominator is
+ * 60000*count, so numerator/denominator is EXACTLY the mean-in-minutes,
+ * unreduced, with zero precision loss for any number of fractional-
+ * minute observations. BigInt + decimal-string serialization (the same
+ * precision-safety convention rToJSON already uses) rather than a JS
+ * Number, since Σms could exceed Number.MAX_SAFE_INTEGER for adversarial
+ * timestamp ranges even though it never will for realistic fixtures.
+ * This is the SAME exact value as exact_value (just unreduced instead
+ * of reduced) — both derived from the one meanMinutesExact() call, so
+ * the two can never again diverge into incompatible ratios.
+ */
 export function timeMetric(msDeltas, pendingCount, excludedCount, totalPopulation, isPopulationVerified) {
   const exact = meanMinutesExact(msDeltas);
+  const count = msDeltas.length;
+  let sumMs = 0n;
+  for (const ms of msDeltas) sumMs += BigInt(ms);
+  const scaledDenominator = 60000n * BigInt(count);
   return {
-    numerator: msDeltas.length,
-    denominator: msDeltas.length,
+    numerator: count === 0 ? "0" : sumMs.toString(),
+    denominator: count === 0 ? "0" : scaledDenominator.toString(),
     exact_value: rToJSON(exact),
     display: exact === null ? "UNDEFINED" : rToFixed(exact, 2),
-    evidence_state: msDeltas.length === 0 ? "unverifiable" : isPopulationVerified ? "verified" : "unverifiable",
+    evidence_state: count === 0 ? "unverifiable" : isPopulationVerified ? "verified" : "unverifiable",
     pending_count: pendingCount,
     excluded_count: excludedCount,
     total_population: totalPopulation,

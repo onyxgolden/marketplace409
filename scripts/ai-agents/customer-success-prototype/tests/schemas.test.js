@@ -6,6 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateTask, validateContext, validateTicket, validateSourceRef, SchemaError } from "../src/schemas.js";
+import { makeBudget } from "../src/resolver.js";
 
 const GOOD_REF = { repo: "edu-sources", path: "policy/customer-success-policy.md", commit: "a".repeat(40), blob: "b".repeat(40), algorithm: "git-sha1", revision: "v1" };
 
@@ -138,13 +139,13 @@ test("validateContext rejects unknown top-level property", () => {
         principal: { principal_id: "p", role: "JASON", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
         criteria: { taxonomy_version: "v1", response_sla_minutes: 30, policy_ref: GOOD_REF },
         extra: true,
-      }),
+      }, makeBudget()),
     SchemaError
   );
 });
 
 test("validateContext rejects a non-finite clock", () => {
-  assert.throws(() => validateContext({ clock: NaN, sources: {}, readGrants: [], principal: {}, criteria: {} }), SchemaError);
+  assert.throws(() => validateContext({ clock: NaN, sources: {}, readGrants: [], principal: {}, criteria: {} }, makeBudget()), SchemaError);
 });
 
 test("validateContext rejects invalid principal role", () => {
@@ -156,7 +157,7 @@ test("validateContext rejects invalid principal role", () => {
         readGrants: [],
         principal: { principal_id: "p", role: "ADMIN", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
         criteria: { taxonomy_version: "v1", response_sla_minutes: 30, policy_ref: GOOD_REF },
-      }),
+      }, makeBudget()),
     SchemaError
   );
 });
@@ -170,7 +171,7 @@ test("validateContext rejects negative response_sla_minutes", () => {
         readGrants: [],
         principal: { principal_id: "p", role: "JASON", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
         criteria: { taxonomy_version: "v1", response_sla_minutes: -5, policy_ref: GOOD_REF },
-      }),
+      }, makeBudget()),
     SchemaError
   );
 });

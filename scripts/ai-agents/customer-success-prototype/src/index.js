@@ -150,8 +150,9 @@ export function run(task, context) {
 
   let ctx;
   try {
-    ctx = validateContext(context);
+    ctx = validateContext(context, budget);
   } catch (e) {
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
     if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", `context: ${e.message}`);
     throw e;
   }

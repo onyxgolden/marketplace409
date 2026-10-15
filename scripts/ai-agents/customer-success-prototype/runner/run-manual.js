@@ -30,10 +30,16 @@ const clock = clockIdx >= 0 ? args[clockIdx + 1] : "2026-07-01T00:00:00Z";
 const bundleRef = store.bundleRefs[bundleName];
 const declared_total = declaredIdx >= 0 ? Number(args[declaredIdx + 1]) : undefined;
 
+// Minimal context (policy + this one bundle only) — a real host scopes
+// context to one request's needs; the whole shared fixture store would
+// blow the 64-object budget now that context validation is itself
+// charged (CS-001 fix).
+const policyKey = `${store.criteria.standard.policy_ref.repo}|${store.criteria.standard.policy_ref.path}`;
+const bundleKey = `${bundleRef.repo}|${bundleRef.path}`;
 const context = {
   clock: Date.parse(clock),
-  sources: store.sources,
-  readGrants: store.readGrants,
+  sources: { [policyKey]: store.sources[policyKey], [bundleKey]: store.sources[bundleKey] },
+  readGrants: [{ repo: store.criteria.standard.policy_ref.repo, path: store.criteria.standard.policy_ref.path }, { repo: bundleRef.repo, path: bundleRef.path }],
   principal: store.principals.jasonActive,
   criteria: store.criteria.standard,
 };

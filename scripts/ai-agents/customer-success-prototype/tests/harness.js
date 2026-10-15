@@ -124,16 +124,48 @@ export function structuralOf(result) {
   };
 }
 
-/** Context for one case: base fixture store + named principal/criteria +
- *  clock + optional overrides (for permission/mutation/tamper cases). */
+/**
+ * Minimal source/grant registry containing ONLY the given refs — not
+ * the whole shared fixture store. CS-001 fix: context validation is
+ * now itself object-charged (one charge per registered source, per
+ * revision, per read grant, plus the principal and criteria records),
+ * so an always-identical dump of every fixture bundle ever authored for
+ * the whole battery would exhaust the 64-object budget before a task's
+ * own tickets are ever reached. A real host scopes context to what one
+ * request needs; this mirrors that, and is also just a more honest test
+ * of what the brief actually describes ("context is a separately
+ * injected host adapter," not a global registry dump).
+ */
+export function minimalRegistry(store, refs) {
+  const sources = {};
+  const readGrants = [];
+  const seen = new Set();
+  for (const ref of refs) {
+    const key = `${ref.repo}|${ref.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const entry = store.sources[key];
+    if (entry) sources[key] = entry;
+    readGrants.push({ repo: ref.repo, path: ref.path });
+  }
+  return { sources, readGrants };
+}
+
+/** Context for one case: minimal registry for the task's own policy +
+ *  ticket-bundle refs (plus any case-declared `extraRefs`), named
+ *  principal/criteria, clock, and optional overrides (for permission/
+ *  mutation/tamper/budget cases). */
 export function buildContext(root, c) {
   const store = JSON.parse(readFileSync(join(root, "fixtures", "store.json"), "utf8"));
+  const criteria = store.criteria[c.criteria ?? "standard"];
+  const neededRefs = [criteria.policy_ref, ...(c.task?.fixture_refs?.ticket_bundle ? [c.task.fixture_refs.ticket_bundle] : []), ...(c.extraRefs ?? [])];
+  const { sources, readGrants } = minimalRegistry(store, neededRefs);
   const context = {
     clock: Date.parse(c.clock),
-    sources: store.sources,
-    readGrants: store.readGrants,
+    sources,
+    readGrants,
     principal: store.principals[c.principal ?? "jasonActive"],
-    criteria: store.criteria[c.criteria ?? "standard"],
+    criteria,
   };
   const ov = c.contextOverrides;
   if (ov) {
@@ -144,6 +176,8 @@ export function buildContext(root, c) {
     if (ov.removeGrants) {
       context.readGrants = context.readGrants.filter((g) => !ov.removeGrants.includes(`${g.repo}|${g.path}`));
     }
+    if (ov.addSources) context.sources = { ...context.sources, ...ov.addSources };
+    if (ov.addReadGrants) context.readGrants = [...context.readGrants, ...ov.addReadGrants];
   }
   return context;
 }

@@ -64,7 +64,18 @@ function oracleValidity(ticket, clockIso) {
   if (ticket.status === "RESOLVED" && (frMs === null || resMs === null)) return { state: "invalid", reason: "RESOLVED_INCOMPLETE" };
   if (ticket.status === "OPEN" && resMs !== null) return { state: "invalid", reason: "STATUS_MISMATCH" };
   if (ticket.status === "OPEN" && frMs === null) return { state: "pending", reason: null };
-  return { state: "valid", reason: null, responseMin: frMs !== null ? (frMs - createdMs) / 60000 : null, resolutionMin: ticket.status === "RESOLVED" ? (resMs - createdMs) / 60000 : null };
+  return {
+    state: "valid",
+    reason: null,
+    responseMin: frMs !== null ? (frMs - createdMs) / 60000 : null,
+    resolutionMin: ticket.status === "RESOLVED" ? (resMs - createdMs) / 60000 : null,
+    // Raw integer ms deltas too (independent of the /60000 float above) —
+    // the public numerator/denominator fields publish exact sum(ms)/
+    // (60000*count), never a rounded minute value, so the oracle needs
+    // its own un-rounded sum, not a derivation of the display mean.
+    responseMs: frMs !== null ? frMs - createdMs : null,
+    resolutionMs: ticket.status === "RESOLVED" ? resMs - createdMs : null,
+  };
 }
 
 function fixed2(n) {
@@ -110,6 +121,8 @@ function oracleExpect(tickets, { clock, declared_total, complete, headerClaims =
   const pending = [];
   const responseMins = [];
   const resolutionMins = [];
+  const responseMsRaw = [];
+  const resolutionMsRaw = [];
   const ratings = [];
 
   // malformed / duplicate pass (independent re-derivation: any entry
@@ -167,7 +180,11 @@ function oracleExpect(tickets, { clock, declared_total, complete, headerClaims =
     if (validity.state === "pending") pending.push(ticket.ticket_id);
     else {
       responseMins.push(validity.responseMin);
-      if (validity.resolutionMin !== null) resolutionMins.push(validity.resolutionMin);
+      responseMsRaw.push(validity.responseMs);
+      if (validity.resolutionMin !== null) {
+        resolutionMins.push(validity.resolutionMin);
+        resolutionMsRaw.push(validity.resolutionMs);
+      }
     }
     if (ticket.rating !== null) ratings.push(ticket.rating);
     perTicket.push({
@@ -186,6 +203,21 @@ function oracleExpect(tickets, { clock, declared_total, complete, headerClaims =
   const excludedCount = excluded.length;
   const pendingCount = pending.length;
   const populationVerified = complete === true && declared_total === totalPopulation;
+
+  // CS-002: the public numerator/denominator for a time mean is the
+  // exact sum(ms)/( 60000*count ) — never the observation count twice —
+  // re-derived here independently of src/metrics.js's own BigInt
+  // arithmetic, using plain integers (every delta here is a realistic-
+  // calendar-range ms difference, far inside Number's exact-integer
+  // range, so no BigInt is needed on this side to stay exact).
+  function sumCountFields(msArr) {
+    if (msArr.length === 0) return { numerator: "0", denominator: "0" };
+    let sum = 0;
+    for (const ms of msArr) sum += ms;
+    return { numerator: String(sum), denominator: String(60000 * msArr.length) };
+  }
+  const respSumCount = sumCountFields(responseMsRaw);
+  const resSumCount = sumCountFields(resolutionMsRaw);
 
   const meanOf = (arr) => (arr.length === 0 ? null : arr.reduce((a, b) => a + b, 0) / arr.length);
   const respMean = meanOf(responseMins);
@@ -238,8 +270,8 @@ function oracleExpect(tickets, { clock, declared_total, complete, headerClaims =
       }))
       .sort((a, b) => (a.ticket_id < b.ticket_id ? -1 : a.ticket_id > b.ticket_id ? 1 : 0)),
     metrics: {
-      response_time: { numerator: responseMins.length, denominator: responseMins.length, display: respMean === null ? "UNDEFINED" : fixed2(respMean), evidence_state: metricState(responseMins.length) },
-      resolution_time: { numerator: resolutionMins.length, denominator: resolutionMins.length, display: resMean === null ? "UNDEFINED" : fixed2(resMean), evidence_state: metricState(resolutionMins.length) },
+      response_time: { numerator: respSumCount.numerator, denominator: respSumCount.denominator, display: respMean === null ? "UNDEFINED" : fixed2(respMean), evidence_state: metricState(responseMins.length) },
+      resolution_time: { numerator: resSumCount.numerator, denominator: resSumCount.denominator, display: resMean === null ? "UNDEFINED" : fixed2(resMean), evidence_state: metricState(resolutionMins.length) },
       sla_compliance: { numerator: slaCompliant, denominator: responseMins.length, display: slaRatio === null ? "UNDEFINED" : pct2(slaRatio), evidence_state: metricState(responseMins.length) },
       csat_mean: { numerator: ratedCount === 0 ? 0 : ratings.reduce((a, b) => a + b, 0), denominator: ratedCount, display: csatMean === null ? "UNDEFINED" : fixed2(csatMean), evidence_state: metricState(ratedCount) },
       csat_positive_share: { numerator: csatPositiveCount, denominator: ratedCount, display: csatPositive === null ? "UNDEFINED" : pct2(csatPositive), evidence_state: metricState(ratedCount) },
@@ -383,7 +415,7 @@ addNominal("nom-response-240-header-mismatch", "response-240-vs-5-claim", CLOCK,
 addNominal("nom-response-240-header-verified", "response-240-vs-5-claim", CLOCK, { declared_total: 1, complete: true, headerClaims: { avg_response_minutes: 240 } });
 addNominal("nom-ratings-csat-header-verified", "ratings-7x5-3x1", CLOCK, { declared_total: 10, complete: true, headerClaims: { csat_mean: 3.8, csat_positive_pct: 70 } });
 addNominal("nom-ratings-csat-header-mismatch", "ratings-7x5-3x1", CLOCK, { declared_total: 10, complete: true, headerClaims: { csat_mean: 4.0, csat_positive_pct: 50 } });
-addNominal("nom-sixty-two-boundary-success", "sixty-two-tickets", CLOCK, { declared_total: 62, complete: true });
+addNominal("nom-fifty-four-boundary-success", "fifty-four-tickets", CLOCK, { declared_total: 54, complete: true });
 addNominal("nom-empty-verified", "empty", CLOCK, { declared_total: 0, complete: true });
 addNominal("nom-empty-unknown", "empty", CLOCK, { declared_total: 0, complete: false });
 addNominal("nom-muse-relay-principal", "single-technical-outage", CLOCK, { declared_total: 1, complete: true, principal: "museRelayActive" });
@@ -449,7 +481,7 @@ addSchema("inj-prohibited-op-update-registry", { schema_version: "1", task_id: "
 addSchema("inj-prohibited-op-approve-self", { schema_version: "1", task_id: "inj-prohibited-op-approve-self", operation: "approve", fixture_refs: { ticket_bundle: store.bundleRefs["refund-and-closure"] }, options: { population: { declared_total: 2, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["ACTION_DENIED"] });
 addSchema("inj-prohibited-op-empty-string", { schema_version: "1", task_id: "inj-prohibited-op-empty-string", operation: "", fixture_refs: { ticket_bundle: store.bundleRefs["empty"] }, options: { population: { declared_total: 0, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["INVALID_INPUT"] });
 addSchema("inj-prohibited-op-delete-ticket", { schema_version: "1", task_id: "inj-prohibited-op-delete-ticket", operation: "delete_ticket", fixture_refs: { ticket_bundle: store.bundleRefs["single-feature-request"] }, options: { population: { declared_total: 1, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["ACTION_DENIED"] });
-addSchema("inj-prohibited-op-export-data", { schema_version: "1", task_id: "inj-prohibited-op-export-data", operation: "export_data", fixture_refs: { ticket_bundle: store.bundleRefs["sixty-two-tickets"] }, options: { population: { declared_total: 62, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["ACTION_DENIED"] });
+addSchema("inj-prohibited-op-export-data", { schema_version: "1", task_id: "inj-prohibited-op-export-data", operation: "export_data", fixture_refs: { ticket_bundle: store.bundleRefs["fifty-four-tickets"] }, options: { population: { declared_total: 54, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["ACTION_DENIED"] });
 // These 12 are prohibited-operation refusals, not schema/permission
 // findings — reassign to the injection_prohibited category.
 for (const id of [
@@ -472,7 +504,7 @@ addSchema("perm-tampered-blob", { schema_version: "1", task_id: "perm-tampered-b
 addSchema(
   "perm-unregistered-path",
   { schema_version: "1", task_id: "perm-unregistered-path", operation: "analyze", fixture_refs: { ticket_bundle: { ...store.bundleRefs["single-technical-outage"], path: "tickets/does-not-exist.json" } }, options: { population: { declared_total: 1, complete: true }, header_claims: HC_NULL } },
-  { contextOverrides: { replaceReadGrants: [...store.readGrants, { repo: "edu-sources", path: "tickets/does-not-exist.json" }] }, diagnosticCodes: ["SOURCE_UNVERIFIED"] }
+  { contextOverrides: { addReadGrants: [{ repo: "edu-sources", path: "tickets/does-not-exist.json" }] }, diagnosticCodes: ["SOURCE_UNVERIFIED"] }
 );
 addSchema("perm-bundle-read-grant-removed", baseTask("perm-bundle-read-grant-removed", "single-technical-outage", { declared_total: 1, complete: true }), { contextOverrides: { removeGrants: ["edu-sources|tickets/single-technical-outage.json"] }, diagnosticCodes: ["READ_DENIED"] });
 addSchema(
@@ -498,9 +530,9 @@ addSchema("perm-source-ref-short-commit", { schema_version: "1", task_id: "perm-
 addSchema("perm-oversized-task-id", { schema_version: "1", task_id: "x".repeat(3000), operation: "analyze", fixture_refs: { ticket_bundle: store.bundleRefs["empty"] }, options: { population: { declared_total: 0, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["INVALID_INPUT"] });
 
 // ---- budget / replay / mutation (>= 10) ----
-addBudget("budget-65-tickets-refused", null, {}, ["BUDGET_EXCEEDED"]);
-cases[cases.length - 1].task = { schema_version: "1", task_id: "budget-65-tickets-refused", operation: "analyze", fixture_refs: { ticket_bundle: store.bundleRefs["sixty-five-tickets"] }, options: { population: { declared_total: 65, complete: true }, header_claims: HC_NULL } };
-addBudget("budget-62-tickets-boundary-success", "sixty-two-tickets", { declared_total: 62, complete: true }, null);
+addBudget("budget-57-tickets-refused", null, {}, ["BUDGET_EXCEEDED"]);
+cases[cases.length - 1].task = { schema_version: "1", task_id: "budget-57-tickets-refused", operation: "analyze", fixture_refs: { ticket_bundle: store.bundleRefs["fifty-seven-tickets"] }, options: { population: { declared_total: 57, complete: true }, header_claims: HC_NULL } };
+addBudget("budget-54-tickets-boundary-success", "fifty-four-tickets", { declared_total: 54, complete: true }, null);
 addSchema("budget-oversized-task-id-input-limit", { schema_version: "1", task_id: "y".repeat(2049), operation: "analyze", fixture_refs: { ticket_bundle: store.bundleRefs["empty"] }, options: { population: { declared_total: 0, complete: true }, header_claims: HC_NULL } }, { diagnosticCodes: ["INVALID_INPUT"] });
 cases[cases.length - 1].category = "budget_replay_mutation";
 addNominal("budget-replay-pair-1a", "single-technical-outage", CLOCK, { declared_total: 1, complete: true });

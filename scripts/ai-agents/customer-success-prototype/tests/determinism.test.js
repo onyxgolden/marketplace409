@@ -14,11 +14,19 @@ import { run, canonicalJson } from "../src/index.js";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const store = JSON.parse(readFileSync(join(ROOT, "fixtures", "store.json"), "utf8"));
 
+const BUNDLE_REF = store.bundleRefs["multi-tag-precedence"];
+const POLICY_KEY = `${store.criteria.standard.policy_ref.repo}|${store.criteria.standard.policy_ref.path}`;
+const BUNDLE_KEY = `${BUNDLE_REF.repo}|${BUNDLE_REF.path}`;
+
+// Minimal context (policy + this one bundle only) — CS-001 fix made
+// context validation itself object-charged, so the whole shared
+// 25-bundle fixture store would blow the 64-object budget before any
+// ticket is reached (see tests/harness.js's minimalRegistry).
 function ctx() {
   return {
     clock: Date.parse("2026-07-01T00:00:00Z"),
-    sources: JSON.parse(JSON.stringify(store.sources)),
-    readGrants: store.readGrants,
+    sources: JSON.parse(JSON.stringify({ [POLICY_KEY]: store.sources[POLICY_KEY], [BUNDLE_KEY]: store.sources[BUNDLE_KEY] })),
+    readGrants: [{ repo: store.criteria.standard.policy_ref.repo, path: store.criteria.standard.policy_ref.path }, { repo: BUNDLE_REF.repo, path: BUNDLE_REF.path }],
     principal: store.principals.jasonActive,
     criteria: store.criteria.standard,
   };
@@ -27,7 +35,7 @@ const task = {
   schema_version: "1",
   task_id: "demo-determinism-1",
   operation: "analyze",
-  fixture_refs: { ticket_bundle: store.bundleRefs["multi-tag-precedence"] },
+  fixture_refs: { ticket_bundle: BUNDLE_REF },
   options: { population: { declared_total: 1, complete: true }, header_claims: { avg_response_minutes: null, avg_resolution_minutes: null, sla_compliance_pct: null, csat_mean: null, csat_positive_pct: null } },
 };
 

@@ -55,14 +55,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -161,14 +161,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -264,14 +264,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -367,14 +367,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -470,14 +470,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -575,14 +575,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -680,14 +680,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -789,14 +789,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -911,14 +911,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "600000",
+          "denominator": "120000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -1024,14 +1024,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "1800000",
+          "denominator": "120000",
           "display": "15.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -1137,14 +1137,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "3660000",
+          "denominator": "120000",
           "display": "30.50",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -1240,14 +1240,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "14400000",
+          "denominator": "60000",
           "display": "240.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -1348,14 +1348,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "14400000",
+          "denominator": "60000",
           "display": "240.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -1566,14 +1566,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 10,
-          "denominator": 10,
+          "numerator": "3000000",
+          "denominator": "600000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -1788,14 +1788,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 10,
-          "denominator": 10,
+          "numerator": "3000000",
+          "denominator": "600000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -1845,25 +1845,25 @@
     }
   },
   {
-    "case_id": "nom-sixty-two-boundary-success",
+    "case_id": "nom-fifty-four-boundary-success",
     "category": "nominal_boundary",
     "task": {
       "schema_version": "1",
-      "task_id": "nom-sixty-two-boundary-success",
+      "task_id": "nom-fifty-four-boundary-success",
       "operation": "analyze",
       "fixture_refs": {
         "ticket_bundle": {
           "repo": "edu-sources",
-          "path": "tickets/sixty-two-tickets.json",
-          "commit": "4cab2cf46d5affe698a4f48a0652a0b9e536e558",
-          "blob": "77ecf7812fa06adb6b3520afd4a8395d06426117",
+          "path": "tickets/fifty-four-tickets.json",
+          "commit": "220bb7f3c866ea0dac8213ec04851b0f5d867e66",
+          "blob": "0a5c4f22cb1a9869f47c914a02f0169ada5b254a",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 62,
+          "declared_total": 54,
           "complete": true
         },
         "header_claims": {
@@ -1888,7 +1888,7 @@
       "source_ref_count": 2,
       "ticket_results": [
         {
-          "ticket_id": "t-bulk62-00",
+          "ticket_id": "t-bulk54-00",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1900,7 +1900,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-01",
+          "ticket_id": "t-bulk54-01",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1912,7 +1912,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-02",
+          "ticket_id": "t-bulk54-02",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1924,7 +1924,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-03",
+          "ticket_id": "t-bulk54-03",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1936,7 +1936,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-04",
+          "ticket_id": "t-bulk54-04",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1948,7 +1948,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-05",
+          "ticket_id": "t-bulk54-05",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1960,7 +1960,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-06",
+          "ticket_id": "t-bulk54-06",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1972,7 +1972,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-07",
+          "ticket_id": "t-bulk54-07",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1984,7 +1984,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-08",
+          "ticket_id": "t-bulk54-08",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -1996,7 +1996,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-09",
+          "ticket_id": "t-bulk54-09",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2008,7 +2008,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-10",
+          "ticket_id": "t-bulk54-10",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2020,7 +2020,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-11",
+          "ticket_id": "t-bulk54-11",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2032,7 +2032,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-12",
+          "ticket_id": "t-bulk54-12",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2044,7 +2044,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-13",
+          "ticket_id": "t-bulk54-13",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2056,7 +2056,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-14",
+          "ticket_id": "t-bulk54-14",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2068,7 +2068,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-15",
+          "ticket_id": "t-bulk54-15",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2080,7 +2080,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-16",
+          "ticket_id": "t-bulk54-16",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2092,7 +2092,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-17",
+          "ticket_id": "t-bulk54-17",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2104,7 +2104,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-18",
+          "ticket_id": "t-bulk54-18",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2116,7 +2116,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-19",
+          "ticket_id": "t-bulk54-19",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2128,7 +2128,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-20",
+          "ticket_id": "t-bulk54-20",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2140,7 +2140,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-21",
+          "ticket_id": "t-bulk54-21",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2152,7 +2152,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-22",
+          "ticket_id": "t-bulk54-22",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2164,7 +2164,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-23",
+          "ticket_id": "t-bulk54-23",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2176,7 +2176,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-24",
+          "ticket_id": "t-bulk54-24",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2188,7 +2188,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-25",
+          "ticket_id": "t-bulk54-25",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2200,7 +2200,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-26",
+          "ticket_id": "t-bulk54-26",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2212,7 +2212,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-27",
+          "ticket_id": "t-bulk54-27",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2224,7 +2224,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-28",
+          "ticket_id": "t-bulk54-28",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2236,7 +2236,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-29",
+          "ticket_id": "t-bulk54-29",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2248,7 +2248,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-30",
+          "ticket_id": "t-bulk54-30",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2260,7 +2260,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-31",
+          "ticket_id": "t-bulk54-31",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2272,7 +2272,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-32",
+          "ticket_id": "t-bulk54-32",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2284,7 +2284,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-33",
+          "ticket_id": "t-bulk54-33",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2296,7 +2296,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-34",
+          "ticket_id": "t-bulk54-34",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2308,7 +2308,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-35",
+          "ticket_id": "t-bulk54-35",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2320,7 +2320,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-36",
+          "ticket_id": "t-bulk54-36",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2332,7 +2332,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-37",
+          "ticket_id": "t-bulk54-37",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2344,7 +2344,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-38",
+          "ticket_id": "t-bulk54-38",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2356,7 +2356,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-39",
+          "ticket_id": "t-bulk54-39",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2368,7 +2368,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-40",
+          "ticket_id": "t-bulk54-40",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2380,7 +2380,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-41",
+          "ticket_id": "t-bulk54-41",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2392,7 +2392,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-42",
+          "ticket_id": "t-bulk54-42",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2404,7 +2404,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-43",
+          "ticket_id": "t-bulk54-43",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2416,7 +2416,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-44",
+          "ticket_id": "t-bulk54-44",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2428,7 +2428,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-45",
+          "ticket_id": "t-bulk54-45",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2440,7 +2440,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-46",
+          "ticket_id": "t-bulk54-46",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2452,7 +2452,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-47",
+          "ticket_id": "t-bulk54-47",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2464,7 +2464,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-48",
+          "ticket_id": "t-bulk54-48",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2476,7 +2476,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-49",
+          "ticket_id": "t-bulk54-49",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2488,7 +2488,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-50",
+          "ticket_id": "t-bulk54-50",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2500,7 +2500,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-51",
+          "ticket_id": "t-bulk54-51",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2512,7 +2512,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-52",
+          "ticket_id": "t-bulk54-52",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2524,103 +2524,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-53",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-54",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-55",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-56",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-57",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-58",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-59",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-60",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-61",
+          "ticket_id": "t-bulk54-53",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -2634,20 +2538,20 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 62,
-          "denominator": 62,
+          "numerator": "16200000",
+          "denominator": "3240000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "sla_compliance": {
-          "numerator": 62,
-          "denominator": 62,
+          "numerator": 54,
+          "denominator": 54,
           "display": "100.00%",
           "evidence_state": "verified"
         },
@@ -2669,14 +2573,14 @@
       "excluded": [],
       "coverage": {
         "state": "COMPLETE",
-        "admitted_count": 62,
+        "admitted_count": 54,
         "excluded_count": 0,
         "pending_count": 0
       },
       "population": {
-        "declared_total": 62,
+        "declared_total": 54,
         "complete": true,
-        "actual_total": 62,
+        "actual_total": 54,
         "evidence_state": "verified"
       }
     }
@@ -2726,14 +2630,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -2818,14 +2722,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -2921,14 +2825,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -3024,14 +2928,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "unverifiable"
         },
@@ -3127,14 +3031,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "unverifiable"
         },
@@ -3240,14 +3144,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "3660000",
+          "denominator": "120000",
           "display": "30.50",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -3358,14 +3262,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "3660000",
+          "denominator": "120000",
           "display": "30.50",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -3476,14 +3380,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "1800000",
+          "denominator": "120000",
           "display": "15.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -3594,14 +3498,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "1800000",
+          "denominator": "120000",
           "display": "15.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -3712,14 +3616,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "1800000",
+          "denominator": "120000",
           "display": "15.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -3830,14 +3734,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "1800000",
+          "denominator": "120000",
           "display": "15.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -3941,14 +3845,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4052,14 +3956,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4160,14 +4064,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4268,14 +4172,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4376,14 +4280,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4484,14 +4388,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4594,14 +4498,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4704,14 +4608,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -4812,14 +4716,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -4920,14 +4824,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -5031,14 +4935,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5142,14 +5046,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5250,14 +5154,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5358,14 +5262,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5466,14 +5370,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5576,14 +5480,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5688,14 +5592,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5789,14 +5693,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5886,14 +5790,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -5998,14 +5902,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6110,14 +6014,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6222,14 +6126,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6332,14 +6236,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6442,14 +6346,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6552,14 +6456,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6664,14 +6568,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6776,14 +6680,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -6888,14 +6792,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7000,14 +6904,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7112,14 +7016,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7213,14 +7117,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7310,14 +7214,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7407,14 +7311,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7504,14 +7408,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7605,14 +7509,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7706,14 +7610,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7820,14 +7724,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -7925,14 +7829,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -8030,14 +7934,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -8135,14 +8039,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -8240,14 +8144,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -8345,14 +8249,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -9436,16 +9340,16 @@
       "fixture_refs": {
         "ticket_bundle": {
           "repo": "edu-sources",
-          "path": "tickets/sixty-two-tickets.json",
-          "commit": "4cab2cf46d5affe698a4f48a0652a0b9e536e558",
-          "blob": "77ecf7812fa06adb6b3520afd4a8395d06426117",
+          "path": "tickets/fifty-four-tickets.json",
+          "commit": "220bb7f3c866ea0dac8213ec04851b0f5d867e66",
+          "blob": "0a5c4f22cb1a9869f47c914a02f0169ada5b254a",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 62,
+          "declared_total": 54,
           "complete": true
         },
         "header_claims": {
@@ -10033,107 +9937,7 @@
     "principal": "jasonActive",
     "criteria": "standard",
     "contextOverrides": {
-      "replaceReadGrants": [
-        {
-          "repo": "edu-sources",
-          "path": "policy/customer-success-policy.md"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/empty.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-technical-outage.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-account-closure.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-billing-negative.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-billing-positive.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-feature-request.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-other-unknown.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/single-other-secondary.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/multi-tag-precedence.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/refund-and-closure.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/sla-exact-boundary.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/response-240-vs-5-claim.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/ratings-7x5-3x1.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/unresolved-vs-malformed-resolved.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/duplicates.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/malformed-entries.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/contradiction-open-with-resolution.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/future-and-negative-timestamps.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/injected-subject.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/injected-body-markup.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/clean-structured-fields-classify-despite-quarantine.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/sixty-five-tickets.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/sixty-two-tickets.json"
-        },
-        {
-          "repo": "edu-sources",
-          "path": "tickets/two-tickets-mixed.json"
-        },
+      "addReadGrants": [
         {
           "repo": "edu-sources",
           "path": "tickets/does-not-exist.json"
@@ -11583,25 +11387,25 @@
     }
   },
   {
-    "case_id": "budget-65-tickets-refused",
+    "case_id": "budget-57-tickets-refused",
     "category": "budget_replay_mutation",
     "task": {
       "schema_version": "1",
-      "task_id": "budget-65-tickets-refused",
+      "task_id": "budget-57-tickets-refused",
       "operation": "analyze",
       "fixture_refs": {
         "ticket_bundle": {
           "repo": "edu-sources",
-          "path": "tickets/sixty-five-tickets.json",
-          "commit": "15f0510248f310854a856e7c637979a943db721a",
-          "blob": "994b64a27a0a52d0dfc195adb5d29780c72af377",
+          "path": "tickets/fifty-seven-tickets.json",
+          "commit": "0d5912c54e98c63d2ad0d9f858a28422c6ef5b84",
+          "blob": "eea8717a545fbf4f0ba39489fa379b82a612a3bc",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 65,
+          "declared_total": 57,
           "complete": true
         },
         "header_claims": {
@@ -11677,25 +11481,25 @@
     }
   },
   {
-    "case_id": "budget-62-tickets-boundary-success",
+    "case_id": "budget-54-tickets-boundary-success",
     "category": "budget_replay_mutation",
     "task": {
       "schema_version": "1",
-      "task_id": "budget-62-tickets-boundary-success",
+      "task_id": "budget-54-tickets-boundary-success",
       "operation": "analyze",
       "fixture_refs": {
         "ticket_bundle": {
           "repo": "edu-sources",
-          "path": "tickets/sixty-two-tickets.json",
-          "commit": "4cab2cf46d5affe698a4f48a0652a0b9e536e558",
-          "blob": "77ecf7812fa06adb6b3520afd4a8395d06426117",
+          "path": "tickets/fifty-four-tickets.json",
+          "commit": "220bb7f3c866ea0dac8213ec04851b0f5d867e66",
+          "blob": "0a5c4f22cb1a9869f47c914a02f0169ada5b254a",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 62,
+          "declared_total": 54,
           "complete": true
         },
         "header_claims": {
@@ -11720,7 +11524,7 @@
       "source_ref_count": 2,
       "ticket_results": [
         {
-          "ticket_id": "t-bulk62-00",
+          "ticket_id": "t-bulk54-00",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11732,7 +11536,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-01",
+          "ticket_id": "t-bulk54-01",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11744,7 +11548,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-02",
+          "ticket_id": "t-bulk54-02",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11756,7 +11560,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-03",
+          "ticket_id": "t-bulk54-03",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11768,7 +11572,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-04",
+          "ticket_id": "t-bulk54-04",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11780,7 +11584,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-05",
+          "ticket_id": "t-bulk54-05",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11792,7 +11596,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-06",
+          "ticket_id": "t-bulk54-06",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11804,7 +11608,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-07",
+          "ticket_id": "t-bulk54-07",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11816,7 +11620,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-08",
+          "ticket_id": "t-bulk54-08",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11828,7 +11632,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-09",
+          "ticket_id": "t-bulk54-09",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11840,7 +11644,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-10",
+          "ticket_id": "t-bulk54-10",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11852,7 +11656,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-11",
+          "ticket_id": "t-bulk54-11",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11864,7 +11668,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-12",
+          "ticket_id": "t-bulk54-12",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11876,7 +11680,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-13",
+          "ticket_id": "t-bulk54-13",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11888,7 +11692,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-14",
+          "ticket_id": "t-bulk54-14",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11900,7 +11704,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-15",
+          "ticket_id": "t-bulk54-15",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11912,7 +11716,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-16",
+          "ticket_id": "t-bulk54-16",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11924,7 +11728,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-17",
+          "ticket_id": "t-bulk54-17",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11936,7 +11740,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-18",
+          "ticket_id": "t-bulk54-18",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11948,7 +11752,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-19",
+          "ticket_id": "t-bulk54-19",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11960,7 +11764,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-20",
+          "ticket_id": "t-bulk54-20",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11972,7 +11776,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-21",
+          "ticket_id": "t-bulk54-21",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11984,7 +11788,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-22",
+          "ticket_id": "t-bulk54-22",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -11996,7 +11800,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-23",
+          "ticket_id": "t-bulk54-23",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12008,7 +11812,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-24",
+          "ticket_id": "t-bulk54-24",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12020,7 +11824,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-25",
+          "ticket_id": "t-bulk54-25",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12032,7 +11836,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-26",
+          "ticket_id": "t-bulk54-26",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12044,7 +11848,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-27",
+          "ticket_id": "t-bulk54-27",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12056,7 +11860,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-28",
+          "ticket_id": "t-bulk54-28",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12068,7 +11872,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-29",
+          "ticket_id": "t-bulk54-29",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12080,7 +11884,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-30",
+          "ticket_id": "t-bulk54-30",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12092,7 +11896,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-31",
+          "ticket_id": "t-bulk54-31",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12104,7 +11908,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-32",
+          "ticket_id": "t-bulk54-32",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12116,7 +11920,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-33",
+          "ticket_id": "t-bulk54-33",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12128,7 +11932,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-34",
+          "ticket_id": "t-bulk54-34",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12140,7 +11944,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-35",
+          "ticket_id": "t-bulk54-35",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12152,7 +11956,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-36",
+          "ticket_id": "t-bulk54-36",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12164,7 +11968,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-37",
+          "ticket_id": "t-bulk54-37",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12176,7 +11980,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-38",
+          "ticket_id": "t-bulk54-38",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12188,7 +11992,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-39",
+          "ticket_id": "t-bulk54-39",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12200,7 +12004,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-40",
+          "ticket_id": "t-bulk54-40",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12212,7 +12016,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-41",
+          "ticket_id": "t-bulk54-41",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12224,7 +12028,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-42",
+          "ticket_id": "t-bulk54-42",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12236,7 +12040,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-43",
+          "ticket_id": "t-bulk54-43",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12248,7 +12052,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-44",
+          "ticket_id": "t-bulk54-44",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12260,7 +12064,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-45",
+          "ticket_id": "t-bulk54-45",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12272,7 +12076,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-46",
+          "ticket_id": "t-bulk54-46",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12284,7 +12088,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-47",
+          "ticket_id": "t-bulk54-47",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12296,7 +12100,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-48",
+          "ticket_id": "t-bulk54-48",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12308,7 +12112,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-49",
+          "ticket_id": "t-bulk54-49",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12320,7 +12124,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-50",
+          "ticket_id": "t-bulk54-50",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12332,7 +12136,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-51",
+          "ticket_id": "t-bulk54-51",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12344,7 +12148,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-52",
+          "ticket_id": "t-bulk54-52",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12356,103 +12160,7 @@
           "routing_flag_codes": []
         },
         {
-          "ticket_id": "t-bulk62-53",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-54",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-55",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-56",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-57",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-58",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-59",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-60",
-          "category": "OTHER",
-          "secondary_categories": [
-            "GENERAL_INQUIRY"
-          ],
-          "unknown_tags": [],
-          "priority": "NORMAL",
-          "draft_count": 2,
-          "suppression_reason": null,
-          "routing_flag_codes": []
-        },
-        {
-          "ticket_id": "t-bulk62-61",
+          "ticket_id": "t-bulk54-53",
           "category": "OTHER",
           "secondary_categories": [
             "GENERAL_INQUIRY"
@@ -12466,20 +12174,20 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 62,
-          "denominator": 62,
+          "numerator": "16200000",
+          "denominator": "3240000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "sla_compliance": {
-          "numerator": 62,
-          "denominator": 62,
+          "numerator": 54,
+          "denominator": 54,
           "display": "100.00%",
           "evidence_state": "verified"
         },
@@ -12501,14 +12209,14 @@
       "excluded": [],
       "coverage": {
         "state": "COMPLETE",
-        "admitted_count": 62,
+        "admitted_count": 54,
         "excluded_count": 0,
         "pending_count": 0
       },
       "population": {
-        "declared_total": 62,
+        "declared_total": 54,
         "complete": true,
-        "actual_total": 62,
+        "actual_total": 54,
         "evidence_state": "verified"
       }
     }
@@ -12663,14 +12371,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -12766,14 +12474,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "600000",
+          "denominator": "60000",
           "display": "10.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -12979,14 +12687,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 10,
-          "denominator": 10,
+          "numerator": "3000000",
+          "denominator": "600000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13197,14 +12905,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 10,
-          "denominator": 10,
+          "numerator": "3000000",
+          "denominator": "600000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13315,14 +13023,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "3660000",
+          "denominator": "120000",
           "display": "30.50",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13428,14 +13136,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "3660000",
+          "denominator": "120000",
           "display": "30.50",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13541,14 +13249,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 2,
-          "denominator": 2,
+          "numerator": "1800000",
+          "denominator": "120000",
           "display": "15.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "3600000",
+          "denominator": "60000",
           "display": "60.00",
           "evidence_state": "verified"
         },
@@ -13644,14 +13352,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13745,14 +13453,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13842,14 +13550,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -13954,14 +13662,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -14066,14 +13774,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -14176,14 +13884,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -14277,14 +13985,14 @@
       "ticket_results": [],
       "metrics": {
         "response_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -14385,14 +14093,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -14499,14 +14207,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "unverifiable"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },
@@ -14604,14 +14312,14 @@
       ],
       "metrics": {
         "response_time": {
-          "numerator": 1,
-          "denominator": 1,
+          "numerator": "300000",
+          "denominator": "60000",
           "display": "5.00",
           "evidence_state": "verified"
         },
         "resolution_time": {
-          "numerator": 0,
-          "denominator": 0,
+          "numerator": "0",
+          "denominator": "0",
           "display": "UNDEFINED",
           "evidence_state": "unverifiable"
         },

@@ -135,7 +135,23 @@ export function validateReadGrant(value, where) {
   return { repo, path };
 }
 
-export function validateContext(context) {
+/**
+ * validateContext(context, budget) — CS-001 fix: the injected trusted
+ * context is itself a candidate population, not a free pre-pass. Every
+ * registered source, every revision within it, every read grant, the
+ * principal record and the criteria record are each object-charged via
+ * budget.countObject() as the FIRST statement before any of that
+ * candidate's own fields are read — exactly the same charge-before-read
+ * discipline src/index.js already applies to tickets. A revision's text
+ * bytes are payload-charged (budget.countPayload) before being accepted,
+ * whether or not that revision is ever later resolved/used — an unused
+ * oversized revision must still count against the total input budget,
+ * not be traversed for free outside it. `budget` is REQUIRED: this
+ * function must never be called without the caller's live monotonic
+ * budget, or validation becomes an unbudgeted side channel again.
+ */
+export function validateContext(context, budget) {
+  if (!budget || typeof budget.countObject !== "function") fail("context", "internal: validateContext requires a live budget");
   if (!isPlainObject(context)) fail("context", "must be an object");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria"], "context");
   const clock = context.clock;
@@ -145,22 +161,30 @@ export function validateContext(context) {
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
   for (const sk of sourceKeys) {
+    budget.countObject(`context.sources[${sk}]`);
     const entry = context.sources[sk];
     if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
     const revs = entry.revisions;
     if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
     for (const commit of Object.keys(revs)) {
+      budget.countObject(`context.sources[${sk}]@${commit}`);
       const rev = revs[commit];
       if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
       if (typeof rev.text !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
+      budget.countPayload(rev.text, `context source ${sk}@${commit}`);
       if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
     }
   }
 
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
-  const readGrants = context.readGrants.map((g, i) => validateReadGrant(g, `context.readGrants[${i}]`));
+  const readGrants = context.readGrants.map((g, i) => {
+    budget.countObject(`context.readGrants[${i}]`);
+    return validateReadGrant(g, `context.readGrants[${i}]`);
+  });
 
+  budget.countObject("context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
+  budget.countObject("context.criteria");
   const criteria = validateCriteria(context.criteria, "context.criteria");
 
   return { clock, sources: context.sources, readGrants, principal, criteria };
