@@ -1,0 +1,13 @@
+{
+  "description": "Customer Success Agent Phase 2 slice 1 synthetic prototype: deterministic ticket triage (taxonomy classification + priority), two inert fixed-template response drafts per eligible ticket, and independently recomputed support metrics over a fixture-only ticket bundle. Advisory only; no real tickets, no helpdesk integration, no sending, no account actions, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "customer-success-prototype",
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
