@@ -7264,7 +7264,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9f03586cf73e8befafbb6dd0e887201a3e06a3cf4d4b7837d29dd85da54fc006"
+          "entry_digest": "9f03586cf73e8befafbb6dd0e887201a3e06a3cf4d4b7837d29dd85da54fc006",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -7278,7 +7279,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -7292,7 +7294,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -7306,7 +7309,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -7320,7 +7324,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -7334,7 +7339,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -7348,7 +7354,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -7472,7 +7479,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -7486,7 +7494,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "3abfe9ae47442eaa72fb73c1b03c413485df0de4490b959c05138a70efc280a3"
+          "entry_digest": "3abfe9ae47442eaa72fb73c1b03c413485df0de4490b959c05138a70efc280a3",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -7500,7 +7509,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -7514,7 +7524,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -7528,7 +7539,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -7542,7 +7554,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -7556,7 +7569,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -7680,7 +7694,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -7694,7 +7709,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -7708,7 +7724,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "1b92738494809b186402b4ab96946021c8d1758f1a56bcbf43811355cefc5d38"
+          "entry_digest": "1b92738494809b186402b4ab96946021c8d1758f1a56bcbf43811355cefc5d38",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -7722,7 +7739,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -7736,7 +7754,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -7750,7 +7769,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -7764,7 +7784,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -7888,7 +7909,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "95be3ef9631e30fc7086a6fa6ac0c8a6df19d24cda10a0309ec3b6e81f778422"
+          "entry_digest": "95be3ef9631e30fc7086a6fa6ac0c8a6df19d24cda10a0309ec3b6e81f778422",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -7902,7 +7924,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -7916,7 +7939,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -7930,7 +7954,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -7944,7 +7969,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -7958,7 +7984,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -7972,7 +7999,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -8096,7 +8124,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -8110,7 +8139,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "fe699529bb37ad2e5b958ca0c0d73c63d7710a484dfd32455ef82bee528fbc94"
+          "entry_digest": "fe699529bb37ad2e5b958ca0c0d73c63d7710a484dfd32455ef82bee528fbc94",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -8124,7 +8154,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -8138,7 +8169,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -8152,7 +8184,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -8166,7 +8199,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -8180,7 +8214,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -8304,7 +8339,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -8318,7 +8354,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -8332,7 +8369,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "d1a686ef6b2c71348f53b0abf800c2ba7cf50f75b7023d16bbc0936fa62ef41d"
+          "entry_digest": "d1a686ef6b2c71348f53b0abf800c2ba7cf50f75b7023d16bbc0936fa62ef41d",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -8346,7 +8384,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -8360,7 +8399,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -8374,7 +8414,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -8388,7 +8429,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -8512,7 +8554,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -8526,7 +8569,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -8540,7 +8584,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "f9ffdf8ee77fe5551b987bd3dfd44427f156ca5980f58517aa170c829b203d3d"
+          "entry_digest": "f9ffdf8ee77fe5551b987bd3dfd44427f156ca5980f58517aa170c829b203d3d",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -8554,7 +8599,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -8568,7 +8614,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -8582,7 +8629,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -8596,7 +8644,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ],
       "replaceReadGrants": [
@@ -8782,7 +8831,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "0279ec82810f99f1d6741c31b5d0dbc7103edbe36d3c0c6b1a99465365e0de41"
+          "entry_digest": "0279ec82810f99f1d6741c31b5d0dbc7103edbe36d3c0c6b1a99465365e0de41",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -8796,7 +8846,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -8810,7 +8861,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -8824,7 +8876,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -8838,7 +8891,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -8852,7 +8906,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -8866,7 +8921,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ],
       "replaceReadGrants": [
@@ -9052,7 +9108,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -9066,7 +9123,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "bde7ae8f413a914862c7ec71b125d87cd94ac5ed5d08a510ddc06232bef38e62"
+          "entry_digest": "bde7ae8f413a914862c7ec71b125d87cd94ac5ed5d08a510ddc06232bef38e62",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -9080,7 +9138,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -9094,7 +9153,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -9108,7 +9168,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -9122,7 +9183,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -9136,7 +9198,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -9260,7 +9323,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -9274,7 +9338,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -9288,7 +9353,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "f8c7c26e057c097e1b0d12bbd40505fe1a90b527989ed98bb2efaec4273feb49"
+          "entry_digest": "f8c7c26e057c097e1b0d12bbd40505fe1a90b527989ed98bb2efaec4273feb49",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -9302,7 +9368,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -9316,7 +9383,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -9330,7 +9398,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -9344,7 +9413,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -9468,7 +9538,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "bead5284908266683d67dea762abfd270c3096a94fc0b9a0c4064f950cbd620d"
+          "entry_digest": "bead5284908266683d67dea762abfd270c3096a94fc0b9a0c4064f950cbd620d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -9482,7 +9553,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -9496,7 +9568,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -9510,7 +9583,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -9524,7 +9598,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -9538,7 +9613,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -9552,7 +9628,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -9676,7 +9753,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -9690,7 +9768,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b0a7991661a8d6fe3c052bbcf9a1042357c0685d3496ae1bbc1730020c997398"
+          "entry_digest": "b0a7991661a8d6fe3c052bbcf9a1042357c0685d3496ae1bbc1730020c997398",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -9704,7 +9783,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -9718,7 +9798,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -9732,7 +9813,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -9746,7 +9828,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -9760,7 +9843,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }
@@ -10390,7 +10474,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-term-001",
@@ -10404,7 +10489,8 @@
           "topic_id": "terminology-income-vs-expense",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9"
+          "entry_digest": "74dc64ec259a87fae7bedf05eb28a34266907c5d06674d1c9dc1e1f8131fd1a9",
+          "registry_ref_digest": "15b5c0d55cd770a69c83e74e26d6e817ea38bec8c92fdb47247e26bef5781d55"
         },
         {
           "registration_ref": "reg-tax-dep-001",
@@ -10418,7 +10504,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06"
+          "entry_digest": "b5e284a1410539a9c1553df52d5028a4615c24c5befa526a7e3a8fa717441f06",
+          "registry_ref_digest": "356d84bdf182d3376e89849ed2c460f7224151b59c8b99b663393c3d20dd113f"
         },
         {
           "registration_ref": "reg-tax-dep-conflict-001",
@@ -10432,7 +10519,8 @@
           "topic_id": "depreciation-concept",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+          "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d",
+          "registry_ref_digest": "38d5b0eb10990c2536fa1a7816cfa0cf6359bb92b76b4dd66267614338a090aa"
         },
         {
           "registration_ref": "reg-tax-expired",
@@ -10446,7 +10534,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-revoked",
@@ -10460,7 +10549,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d"
+          "entry_digest": "b503c559e13db1220d0fad0bfd4c27eada54d3bb038e0a3107f69301a846a92d",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         },
         {
           "registration_ref": "reg-tax-rk-wrong-digest",
@@ -10474,7 +10564,8 @@
           "topic_id": "recordkeeping-basics",
           "entry_version": "v1",
           "jurisdiction": "US-FEDERAL",
-          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999"
+          "entry_digest": "9999999999999999999999999999999999999999999999999999999999999999",
+          "registry_ref_digest": "e80dfe7f24137a1a914450cb83caaa43bf2d78601f96762f6aba7b78f0590337"
         }
       ]
     }

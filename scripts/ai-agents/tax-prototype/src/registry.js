@@ -12,7 +12,7 @@
 import { resolveSourceRef, verifySpan, hasReadGrant, ResolutionError, BudgetError } from "./resolver.js";
 import { scanSourceText } from "./injection.js";
 import { scanPersonalFacts } from "./personal.js";
-import { registryEntryDigest } from "./canonical.js";
+import { registryEntryDigest, sourceRefDigest } from "./canonical.js";
 
 function isoNoMillis(ms) {
   const d = new Date(ms);
@@ -41,10 +41,17 @@ function diag(code, severity, reason, source_ref = null, record_id = null) {
  * fixture store used for claims (never trusted unchecked), and its
  * recomputed content digest must equal both the entry's own declared
  * entry_digest and the digest the authenticated registration binds.
+ * registry_ref itself is ALSO bound (TAX-002 residual): the registration
+ * must commit to a digest of the entry's exact registry_ref SourceRef,
+ * not just the entry's content digest — entry_digest deliberately
+ * excludes registry_ref, so without this separate check a structurally
+ * valid, correctly-digested entry could swap its provenance pointer to
+ * a different, independently legitimate, hash-correct fixture source
+ * while keeping the same entry_digest and an untouched registration.
  * Matching ID strings alone never authenticates an entry's content —
- * only a syntactically-valid entry whose content digest, version,
- * topic_id and jurisdiction are all exactly what the registration
- * approved passes. Returns {ok:true, registrySourceRef} or
+ * only a syntactically-valid entry whose content digest, registry-ref
+ * digest, version, topic_id and jurisdiction are all exactly what the
+ * registration approved passes. Returns {ok:true, registrySourceRef} or
  * {ok:false, diagnostic}.
  */
 function authenticateChain(entry, ctx, asOfMs, budget) {
@@ -81,17 +88,24 @@ function authenticateChain(entry, ctx, asOfMs, budget) {
     return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `registration '${registration.registration_ref}' does not authorize register_topic`, null, registration.registration_ref) };
   }
   // The registration must bind THIS exact approved entry — its topic_id,
-  // entry_version, jurisdiction and full-content digest — not merely
-  // reference the same steward. A syntactically valid entry whose
-  // identifiers happen to match a live registration, but whose content
+  // entry_version, jurisdiction, full-content digest, AND the exact
+  // registry_ref it is approved to point to — not merely reference the
+  // same steward. A syntactically valid entry whose identifiers happen to
+  // match a live registration, but whose content or provenance pointer
   // was never what that registration actually approved, is rejected here.
+  // registry_ref is checked by digest, not by resolving it again: it was
+  // already independently resolved/hash-verified above, so this step
+  // only proves it's the SAME source the registration committed to, not
+  // some other valid-but-unapproved source swapped in afterward.
+  const entryRegistryRefDigest = sourceRefDigest(entry.registry_ref);
   if (
     registration.topic_id !== entry.topic_id ||
     registration.entry_version !== entry.entry_version ||
     registration.jurisdiction !== entry.jurisdiction ||
-    registration.entry_digest !== entry.entry_digest
+    registration.entry_digest !== entry.entry_digest ||
+    registration.registry_ref_digest !== entryRegistryRefDigest
   ) {
-    return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `registration '${registration.registration_ref}' does not bind this entry's exact topic_id/entry_version/jurisdiction/content digest`, null, registration.registration_ref) };
+    return { ok: false, diagnostic: diag("SOURCE_UNVERIFIED", "error", `registration '${registration.registration_ref}' does not bind this entry's exact topic_id/entry_version/jurisdiction/content digest/registry source`, null, registration.registration_ref) };
   }
   const regFrom = Date.parse(registration.valid_from);
   const regTo = Date.parse(registration.expires_at);

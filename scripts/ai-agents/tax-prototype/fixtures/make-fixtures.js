@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { registryEntryDigest } from "../src/canonical.js";
+import { registryEntryDigest, sourceRefDigest } from "../src/canonical.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -212,21 +212,26 @@ const stewards = [
 ];
 
 // Registrations bind the exact approved entry: topic_id, entry_version,
-// jurisdiction and the entry's full-content entry_digest (TAX-002) — one
-// registration per entry, not a shared steward-level blanket grant, so a
-// registration can never be stretched to cover content it never approved.
+// jurisdiction, the entry's full-content entry_digest, AND (TAX-002
+// residual) a digest of the exact registry_ref SourceRef it is approved
+// to point to — one registration per entry, not a shared steward-level
+// blanket grant, so a registration can never be stretched to cover
+// content (or a provenance pointer) it never approved.
 const registrations = [
-  { registration_ref: "reg-tax-rk-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[0].entry_digest },
-  { registration_ref: "reg-tax-term-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "terminology-income-vs-expense", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[1].entry_digest },
-  { registration_ref: "reg-tax-dep-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "depreciation-concept", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[2].entry_digest },
-  { registration_ref: "reg-tax-dep-conflict-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "depreciation-concept", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: depreciationConflictEntry.entry_digest },
-  { registration_ref: "reg-tax-expired", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2015-01-01T00:00:00Z", expires_at: "2019-01-01T00:00:00Z", revoked: false, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[0].entry_digest },
-  { registration_ref: "reg-tax-revoked", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: true, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[0].entry_digest },
+  { registration_ref: "reg-tax-rk-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[0].entry_digest, registry_ref_digest: sourceRefDigest(registry[0].registry_ref) },
+  { registration_ref: "reg-tax-term-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "terminology-income-vs-expense", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[1].entry_digest, registry_ref_digest: sourceRefDigest(registry[1].registry_ref) },
+  { registration_ref: "reg-tax-dep-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "depreciation-concept", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[2].entry_digest, registry_ref_digest: sourceRefDigest(registry[2].registry_ref) },
+  { registration_ref: "reg-tax-dep-conflict-001", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "depreciation-concept", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: depreciationConflictEntry.entry_digest, registry_ref_digest: sourceRefDigest(depreciationConflictEntry.registry_ref) },
+  { registration_ref: "reg-tax-expired", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2015-01-01T00:00:00Z", expires_at: "2019-01-01T00:00:00Z", revoked: false, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[0].entry_digest, registry_ref_digest: sourceRefDigest(registry[0].registry_ref) },
+  { registration_ref: "reg-tax-revoked", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: true, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: registry[0].entry_digest, registry_ref_digest: sourceRefDigest(registry[0].registry_ref) },
   // Deliberately WRONG binding fixture (TAX-002 tamper regression): a
   // syntactically valid, non-revoked registration whose entry_digest does
   // not match any real entry — simulates a registration that approved
-  // different content than what the live entry now presents.
-  { registration_ref: "reg-tax-rk-wrong-digest", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: "9".repeat(64) },
+  // different content than what the live entry now presents. Its
+  // registry_ref_digest is left correct (bound to registry[0]'s real
+  // registry_ref) so this fixture isolates the entry_digest/content
+  // mismatch, not a registry_ref mismatch.
+  { registration_ref: "reg-tax-rk-wrong-digest", steward_id: "steward-tax-edu", action_ids: ["register_topic"], valid_from: "2020-01-01T00:00:00Z", expires_at: "2030-01-01T00:00:00Z", revoked: false, topic_id: "recordkeeping-basics", entry_version: "v1", jurisdiction: "US-FEDERAL", entry_digest: "9".repeat(64), registry_ref_digest: sourceRefDigest(registry[0].registry_ref) },
 ];
 
 const reviewRecords = [

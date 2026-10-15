@@ -104,14 +104,23 @@ export function validateSteward(value, where) {
  * Steward action registration (what a steward may do). Beyond the
  * steward/action/validity envelope, a registration that authorizes
  * register_topic BINDS the exact registry entry it approved: topic_id,
- * entry_version, jurisdiction and the entry's full-content entry_digest.
- * authenticateChain verifies this binding against the live entry before
- * any claim/template is selected — matching ID strings alone is not
- * enough, the registration must commit to the exact approved content.
+ * entry_version, jurisdiction, the entry's full-content entry_digest, AND
+ * (TAX-002 residual) a digest of the exact registry_ref SourceRef the
+ * entry is approved to point to. entry_digest alone is not enough:
+ * registryEntryDigest deliberately excludes registry_ref from what it
+ * commits to (so the provenance pointer can be independently resolved
+ * rather than trusted as part of self-referential content), which means
+ * a structurally valid entry could otherwise swap registry_ref to a
+ * different, legitimate, hash-correct fixture source while keeping the
+ * same entry_digest. Binding registry_ref_digest here closes that gap.
+ * authenticateChain verifies this full binding against the live entry
+ * before any claim/template is selected — matching ID strings alone is
+ * not enough, the registration must commit to the exact approved content
+ * AND the exact approved source.
  */
 export function validateRegistration(value, where) {
   if (!isPlainObject(value)) fail(where, "registration must be an object");
-  exactKeys(value, ["registration_ref", "steward_id", "action_ids", "valid_from", "expires_at", "revoked", "topic_id", "entry_version", "jurisdiction", "entry_digest"], where);
+  exactKeys(value, ["registration_ref", "steward_id", "action_ids", "valid_from", "expires_at", "revoked", "topic_id", "entry_version", "jurisdiction", "entry_digest", "registry_ref_digest"], where);
   const registration_ref = validateRecordId(value.registration_ref, where);
   const steward_id = validateRecordId(value.steward_id, where);
   if (!Array.isArray(value.action_ids) || value.action_ids.length === 0) fail(where, "action_ids must be a non-empty array");
@@ -127,9 +136,11 @@ export function validateRegistration(value, where) {
   if (!JURISDICTIONS.includes(value.jurisdiction)) fail(where, `invalid jurisdiction '${value.jurisdiction}'`);
   const entry_digest = reqStr(value, "entry_digest", where);
   if (!HEX64.test(entry_digest)) fail(where, "entry_digest must be a 64-hex SHA-256 digest");
+  const registry_ref_digest = reqStr(value, "registry_ref_digest", where);
+  if (!HEX64.test(registry_ref_digest)) fail(where, "registry_ref_digest must be a 64-hex SHA-256 digest");
   return {
     registration_ref, steward_id, action_ids: [...value.action_ids], valid_from: value.valid_from, expires_at: value.expires_at, revoked: value.revoked,
-    topic_id, entry_version, jurisdiction: value.jurisdiction, entry_digest,
+    topic_id, entry_version, jurisdiction: value.jurisdiction, entry_digest, registry_ref_digest,
   };
 }
 

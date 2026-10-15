@@ -81,3 +81,19 @@ export function registryEntryDigest(entry) {
   const { entry_digest, registry_ref, ...content } = entry;
   return sha256HexUtf8(content);
 }
+
+/**
+ * Canonical digest of a SourceRef's full six-field identity (repo, path,
+ * commit, blob, algorithm, revision). Used to bind a registry entry's
+ * `registry_ref` into its authenticated registration (TAX-002 residual):
+ * `registryEntryDigest` deliberately excludes `registry_ref` from the
+ * content it commits to, so without this separate binding a structurally
+ * valid entry could swap its provenance pointer to a different, otherwise
+ * legitimate, hash-correct fixture source while keeping the same
+ * `entry_digest` and registration untouched. The registration must pin
+ * exactly which source the entry is allowed to point to, not merely that
+ * the entry's own digest is internally self-consistent.
+ */
+export function sourceRefDigest(ref) {
+  return sha256HexUtf8(ref);
+}

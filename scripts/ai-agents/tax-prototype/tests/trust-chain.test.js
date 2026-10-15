@@ -192,6 +192,24 @@ test("a corrupted registry_ref blob (bytes do not match the pinned hash) is reje
   assert.equal(r.uncertainty_flags.includes("HASH_MISMATCH"), true);
 });
 
+test("registry_ref swapped to a DIFFERENT valid, readable, hash-correct fixture source is rejected even though entry_digest and the registration are both left untouched (TAX-002 residual: registry_ref itself must be bound, not just the entry's content)", () => {
+  const entry = rkEntry();
+  // registryEntryDigest excludes registry_ref from what it hashes, so
+  // this swap alone does NOT change entry_digest — proving the earlier
+  // content-digest check cannot catch it by itself. The swapped-in
+  // source is itself completely legitimate: it's the real, resolvable,
+  // read-granted, hash-correct registry_ref already used by a different
+  // topic's own entry — not a forged or unreadable pointer.
+  const termEntry = store.registry.find((e) => e.topic_id === "terminology-income-vs-expense");
+  entry.registry_ref = termEntry.registry_ref;
+  assert.equal(entry.entry_digest, rkEntry().entry_digest, "swap must not change entry_digest, or this test would exercise the wrong check");
+  const r = run(baseTask(), ctx({ registry: [entry] })); // registrations: untouched store default
+  assert.equal(r.status, "BLOCKED");
+  assert.equal(r.uncertainty_flags.includes("SOURCE_UNVERIFIED"), true);
+  assert.deepEqual(r.claims, []);
+  assert.deepEqual(r.source_refs, []);
+});
+
 test("the legitimate entry/registration pairing still authenticates and drafts normally (fix did not break the clean path)", () => {
   const r = run(baseTask(), ctx());
   assert.equal(r.status, "DRAFT");

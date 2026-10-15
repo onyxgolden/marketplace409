@@ -13,7 +13,7 @@ import {
   validateIsoDate,
   SchemaError,
 } from "../src/schemas.js";
-import { registryEntryDigest } from "../src/canonical.js";
+import { registryEntryDigest, sourceRefDigest } from "../src/canonical.js";
 
 const goodRef = {
   repo: "edu-sources",
@@ -143,14 +143,15 @@ const goodRegistration = {
   entry_version: "v1",
   jurisdiction: "US-FEDERAL",
   entry_digest: goodEntry.entry_digest,
+  registry_ref_digest: sourceRefDigest(goodEntry.registry_ref),
 };
 
 test("valid registration passes", () => {
   assert.equal(validateRegistration(goodRegistration, "t").entry_digest, goodEntry.entry_digest);
 });
 
-test("registration requires topic_id/entry_version/jurisdiction/entry_digest binding fields", () => {
-  for (const key of ["topic_id", "entry_version", "jurisdiction", "entry_digest"]) {
+test("registration requires topic_id/entry_version/jurisdiction/entry_digest/registry_ref_digest binding fields", () => {
+  for (const key of ["topic_id", "entry_version", "jurisdiction", "entry_digest", "registry_ref_digest"]) {
     const { [key]: _drop, ...bad } = goodRegistration;
     assert.throws(() => validateRegistration(bad, "t"), SchemaError, `missing ${key} must be rejected`);
   }
@@ -159,6 +160,8 @@ test("registration requires topic_id/entry_version/jurisdiction/entry_digest bin
 test("registration rejects an unregistered jurisdiction or malformed digest", () => {
   assert.throws(() => validateRegistration({ ...goodRegistration, jurisdiction: "US-CA" }, "t"), SchemaError);
   assert.throws(() => validateRegistration({ ...goodRegistration, entry_digest: "z".repeat(64) }, "t"), SchemaError);
+  assert.throws(() => validateRegistration({ ...goodRegistration, registry_ref_digest: "z".repeat(64) }, "t"), SchemaError);
+  assert.throws(() => validateRegistration({ ...goodRegistration, registry_ref_digest: "a".repeat(63) }, "t"), SchemaError);
 });
 
 test("registry entry requires at least one coverage block", () => {
