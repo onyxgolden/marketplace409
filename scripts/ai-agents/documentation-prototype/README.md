@@ -127,11 +127,17 @@ const result = run(
 ```bash
 # Manual single-proposal run against the fixtures:
 node runner/run-manual.js D-drift-1 C-drift-1 retry-limit
-# Full battery (trust-authenticated):
-npm run battery
+# Full battery (trust-authenticated — approval root from OUTSIDE the tree):
+DOC_APPROVED_ROOT=<separately-trusted-corpus-digest> npm run battery
 # Unit tests (trust-authenticated):
-npm test
+DOC_APPROVED_ROOT=<separately-trusted-corpus-digest> npm test
 ```
+
+> Trust model (DOC-002): the corpus approval root is never stored in this
+> tree. `npm test` / `npm run battery` fail closed (exit 3) when
+> `DOC_APPROVED_ROOT` is absent or does not match the recomputed corpus
+> digest. After any corpus change, run `node corpus/freeze-corpus.js` and
+> record the printed digest externally as the new trusted root.
 
 ## Limitations
 

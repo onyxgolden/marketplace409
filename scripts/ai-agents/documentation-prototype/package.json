@@ -5,8 +5,8 @@
   },
   "name": "documentation-prototype",
   "scripts": {
-    "battery": "DOC_APPROVED_ROOT=6c66d64ac7f8d6f9a644fb9710e533eada8a74a0a9351584056e2b1e765278ed node tests/run-battery.js",
-    "test": "DOC_APPROVED_ROOT=6c66d64ac7f8d6f9a644fb9710e533eada8a74a0a9351584056e2b1e765278ed node tests/run-tests.js"
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
   },
   "type": "module",
   "version": "0.1.0"

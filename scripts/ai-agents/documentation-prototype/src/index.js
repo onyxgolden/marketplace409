@@ -129,6 +129,7 @@ export function run(task, context) {
       proposal_id: payload.proposal_id,
       doc_ref: payload.doc_ref,
       code_evidence: payload.code_evidence,
+      source_refs: payload.source_refs ?? [],
       proposed_diff: payload.proposed_diff,
       claims: payload.claims,
       excluded_claims: payload.excluded_claims,

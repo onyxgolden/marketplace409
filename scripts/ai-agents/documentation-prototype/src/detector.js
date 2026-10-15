@@ -61,40 +61,74 @@ function proposalIdOf(task) {
 export { proposalIdOf };
 
 /**
+ * Byte range of a claim phrase within the document.
+ *
+ * docSpanAbs.start_byte is a UTF-8 byte offset; docPhrase.phrase_start /
+ * phrase_end are UTF-16 code-unit indexes from the regex match into the
+ * quoted text. Adding them directly (DOC-001) corrupts replacements when
+ * multibyte text precedes the phrase on the line. Convert the string
+ * prefix to bytes explicitly so every offset below is a UTF-8 byte offset.
+ */
+function phraseByteRange(docSpanAbs, quotedText, phraseStart, phrase) {
+  const startByte = docSpanAbs.start_byte + Buffer.byteLength(quotedText.slice(0, phraseStart), "utf8");
+  const endByte = startByte + Buffer.byteLength(phrase, "utf8");
+  return { startByte, endByte };
+}
+
+/**
  * Build the inert proposed_diff for drifted claims: hunks over the pinned
  * doc lines, before/after as exact line arrays. Claims sharing a doc line
  * merge into one hunk; replacements apply in descending byte order.
+ *
+ * Replacements are applied over Buffer byte ranges, never String slice
+ * indexes: JavaScript string indexes are UTF-16 code units, not UTF-8
+ * bytes, so slice() on byte offsets shifts replacements when multibyte
+ * text precedes the claim (DOC-001). Any range that does not lie wholly
+ * within its line's byte range fails closed.
  */
 function buildDiff(docRef, docText, driftedClaims) {
   const lines = lineIndex(docText);
   const byLine = new Map();
   for (const c of driftedClaims) {
-    const li = lineIndexOf(lines, c.docSpanAbs.start_byte);
+    const { startByte } = phraseByteRange(c.docSpanAbs, c.before, c.docPhrase.phrase_start, c.docPhrase.phrase);
+    const li = lineIndexOf(lines, startByte);
     if (!byLine.has(li)) byLine.set(li, []);
     byLine.get(li).push(c);
   }
   const hunks = [];
   for (const [li, claims] of [...byLine.entries()].sort((a, b) => a[0] - b[0])) {
     const line = lines[li];
-    let newLine = line.text;
+    const lineBuf = Buffer.from(line.text, "utf8");
+    // Invariant from lineIndex: byte length matches the byte range.
+    if (lineBuf.length !== line.end_byte - line.start_byte) {
+      throw new Error(`buildDiff: line ${li} byte length mismatch`);
+    }
     // Apply replacements in descending absolute byte order so offsets stay valid.
     const reps = claims
-      .map((c) => ({
-        absStart: c.docSpanAbs.start_byte + c.docPhrase.phrase_start,
-        absEnd: c.docSpanAbs.start_byte + c.docPhrase.phrase_end,
-        after: c.afterPhrase,
-      }))
+      .map((c) => {
+        const { startByte, endByte } = phraseByteRange(c.docSpanAbs, c.before, c.docPhrase.phrase_start, c.docPhrase.phrase);
+        return { absStart: startByte, absEnd: endByte, after: c.afterPhrase };
+      })
       .sort((a, b) => b.absStart - a.absStart);
+    let newBuf = lineBuf;
     for (const r of reps) {
       const relStart = r.absStart - line.start_byte;
       const relEnd = r.absEnd - line.start_byte;
-      newLine = newLine.slice(0, relStart) + r.after + newLine.slice(relEnd);
+      // Fail closed: the phrase byte range must lie wholly within this line.
+      if (relStart < 0 || relEnd > newBuf.length || relStart > relEnd) {
+        throw new Error(`buildDiff: phrase byte range [${r.absStart},${r.absEnd}) outside line ${li} byte range`);
+      }
+      newBuf = Buffer.concat([
+        newBuf.subarray(0, relStart),
+        Buffer.from(r.after, "utf8"),
+        newBuf.subarray(relEnd),
+      ]);
     }
     hunks.push({
       start_line: li,
       end_line: li + 1,
       before: [line.text],
-      after: [newLine],
+      after: [newBuf.toString("utf8")],
     });
   }
   return {
@@ -209,6 +243,15 @@ export function detectDrift(task, ctx, budget) {
   let docText = null;
   let docBytes = null;
   let docQuarantined = false;
+  // DOC-003: track verified sources for the envelope's source_refs.
+  // Deterministic order: verified doc first, then non-quarantined code
+  // refs in task order. Denial paths report only what was verified.
+  let verifiedDocRef = null;
+  const verifiedCodeRefs = [];
+  const sourceRefs = () => [
+    ...(verifiedDocRef ? [verifiedDocRef] : []),
+    ...verifiedCodeRefs,
+  ];
   if (!hasReadGrant(task.doc_ref, ctx.readGrants)) {
     return {
       status: "BLOCKED", proposal_id, doc_ref: task.doc_ref, code_evidence: [],
@@ -223,6 +266,7 @@ export function detectDrift(task, ctx, budget) {
     if (resolved.kind !== "doc") throw new ResolutionError("SOURCE_UNVERIFIED", "doc_ref does not resolve to a doc fixture");
     docBytes = resolved.bytes;
     docText = resolved.text;
+    verifiedDocRef = task.doc_ref;
   } catch (e) {
     if (e instanceof ResolutionError || e instanceof BudgetError) {
       const code = e instanceof BudgetError ? e.code : e.code;
@@ -253,6 +297,7 @@ export function detectDrift(task, ctx, budget) {
   if (task.code_refs.length === 0) {
     return {
       status: "BLOCKED", proposal_id, doc_ref: task.doc_ref, code_evidence: [],
+      source_refs: sourceRefs(),
       proposed_diff: null, claims: [], excluded_claims: [],
       uncertainty_flags: [], reviewer_preview: [],
       diagnostics: [diag("SOURCE_UNVERIFIED", "error", "missing mandatory evidence: code_refs is empty")],
@@ -264,6 +309,7 @@ export function detectDrift(task, ctx, budget) {
     if (!hasReadGrant(ref, ctx.readGrants)) {
       return {
         status: "BLOCKED", proposal_id, doc_ref: task.doc_ref, code_evidence: [],
+        source_refs: sourceRefs(),
         proposed_diff: null, claims: [], excluded_claims: [],
         uncertainty_flags: [], reviewer_preview: [],
         diagnostics: [diag("READ_DENIED", "error", `read grant missing for code ${ref.repo}/${ref.path}`, ref)],
@@ -284,12 +330,14 @@ export function detectDrift(task, ctx, budget) {
       }
       budget.countConsulted(`parse ${ref.repo}/${ref.path}`);
       parsedFixtures.push({ ref, parsed: parseCodeFixture(resolved.text), bytes: resolved.bytes });
+      verifiedCodeRefs.push(ref);
     } catch (e) {
       if (e instanceof ResolutionError || e instanceof BudgetError) {
         const code = e instanceof BudgetError ? e.code : e.code;
         return {
           status: e instanceof BudgetError ? "REFUSED" : "BLOCKED",
           proposal_id, doc_ref: task.doc_ref, code_evidence: [],
+          source_refs: sourceRefs(),
           proposed_diff: null, claims: [], excluded_claims: [],
           uncertainty_flags: [], reviewer_preview: [],
           diagnostics: [diag(code, "error", `code_ref ${ref.repo}/${ref.path}: ${e.message}`, ref)],
@@ -441,7 +489,21 @@ export function detectDrift(task, ctx, budget) {
   } else {
     status = "READY";
     if (driftedClaims.length > 0) {
-      proposed_diff = buildDiff(task.doc_ref, docText, driftedClaims);
+      // Diff construction fails closed: any byte-range invariant violation
+      // degrades to UNVERIFIABLE rather than emitting a corrupt diff.
+      try {
+        proposed_diff = buildDiff(task.doc_ref, docText, driftedClaims);
+      } catch (e) {
+        diagnostics.push(diag("DIFF_CONSTRUCTION_FAILED", "error", `diff construction failed closed: ${e.message}`));
+        const strip = ({ docSpanAbs, docPhrase, afterPhrase, codeBlobShort, ...rest }) => rest;
+        return {
+          status: "UNVERIFIABLE", proposal_id, doc_ref: task.doc_ref, code_evidence,
+          source_refs: sourceRefs(),
+          proposed_diff: null, claims: claims.map(strip), excluded_claims,
+          uncertainty_flags, reviewer_preview: [],
+          diagnostics, quarantined_sources, routing_flags: [], complete: false,
+        };
+      }
     } else {
       proposed_diff = {
         doc: { repo: task.doc_ref.repo, path: task.doc_ref.path, commit: task.doc_ref.commit, blob: task.doc_ref.blob },
@@ -455,6 +517,7 @@ export function detectDrift(task, ctx, budget) {
 
   return {
     status, proposal_id, doc_ref: task.doc_ref, code_evidence,
+    source_refs: sourceRefs(),
     proposed_diff, claims: claims.map(({ docSpanAbs, docPhrase, afterPhrase, codeBlobShort, ...rest }) => rest),
     excluded_claims, uncertainty_flags, reviewer_preview,
     diagnostics, quarantined_sources, routing_flags: [], complete,
