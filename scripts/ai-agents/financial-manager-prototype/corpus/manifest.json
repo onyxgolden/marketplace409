@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "10b958c839eb8f476488d794d0464f124cc8bd3dff144ce9b303ac2406e9b804",
+  "corpus_digest": "5879ff0be980509918c07b0624f3f24da35109ae6cdc2b28145acecb8d8ac309",
   "files": [
     {
       "path": "README.md",
@@ -51,7 +51,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "0cd471803b06cb7194497d91a9efafff166b4630e27b571b9afbc790bc7bbd90"
+      "sha256": "3ee72a0206d593b6aafa97416ed052036b4a50dff551dd2b74e42fb06f0bfa35"
     },
     {
       "path": "src/injection.js",
@@ -90,6 +90,10 @@
       "sha256": "ade6a79b1b66a2ea8599cff9e0e0aeb8c0f48c6decbfa0c5926368f8ca5174d7"
     },
     {
+      "path": "tests/fm-findings3.test.js",
+      "sha256": "8833c52bde69acb5408036e7d818b08fa8e71a9e233c634fa538a34ba4fca9ce"
+    },
+    {
       "path": "tests/harness.js",
       "sha256": "7bca8b92a0bd9cc7670a1346f61d492fc32310c0519fea777e393b9b2dde0f53"
     },
@@ -99,7 +103,7 @@
     },
     {
       "path": "tests/limits.test.js",
-      "sha256": "c6c447a24b7c141a075dbec46918b9aabe6dd647711fe9706c3bf58bb06c6d3f"
+      "sha256": "d604fd6fde07847c50d1b17743a38ff73272f5a79fb2132469ba894ba725187d"
     },
     {
       "path": "tests/markdown.test.js",
