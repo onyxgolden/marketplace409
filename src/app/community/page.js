@@ -1,4 +1,11 @@
 import Header from "@/components/Header";
+
+export const metadata = {
+  title: "Community Hub | 409 Marketplace",
+  description:
+    "Local events, pets, fundraisers, markets, schools, shelters, and neighbors helping neighbors across Southeast Texas.",
+};
+
 export default function CommunityPage() {
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
@@ -6,7 +13,7 @@ export default function CommunityPage() {
 
       <section className="bg-gradient-to-r from-blue-950 to-red-700 text-white py-20 px-6">
         <div className="max-w-6xl mx-auto text-center">
-          <h1 className="text-6xl font-extrabold mb-6">Community Hub</h1>
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold mb-6">Community Hub</h1>
 
           <p className="text-2xl text-blue-100 max-w-3xl mx-auto">
             Local events, pets, fundraisers, markets, schools, shelters, and

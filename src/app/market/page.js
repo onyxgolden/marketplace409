@@ -11,45 +11,44 @@ import HomeMarketplaceStats from "@/components/home/HomeMarketplaceStats";
 import HomeWhyLocal from "@/components/home/HomeWhyLocal";
 import HomeFooter from "@/components/home/HomeFooter";
 import HomeMobileBottomNav from "@/components/home/HomeMobileBottomNav";
-import { supabase } from "@/lib/supabase";
+import { getMarketplaceCounts, getMarketplaceFeatured } from "./_data";
 
 export const dynamic = "force-dynamic";
+
+export const metadata = {
+  title: "Southeast Texas Marketplace | 409 Marketplace",
+  description:
+    "Buy and sell locally in Southeast Texas — listings, rentals, pets, jobs, local businesses, and community. Post your listing free.",
+};
+
 export default async function Home() {
-  const { count: listingsCount } = await supabase
-    .from("listings")
-    .select("*", { count: "exact", head: true });
-
-  const { count: businessesCount } = await supabase
-    .from("businesses")
-    .select("*", { count: "exact", head: true });
-
-  const { count: petsCount } = await supabase
-    .from("pets")
-    .select("*", { count: "exact", head: true });
-
-  const { count: jobsCount } = await supabase
-    .from("jobs")
-    .select("*", { count: "exact", head: true });
-
-  const { data: featuredListings } = await supabase
-    .from("listings")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(3);
-
-  const { data: featuredBusinesses } = await supabase
-    .from("businesses")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(3);
-
-  const { data: petOfTheWeek } = await supabase
-    .from("pets")
-    .select("*")
-    .eq("pet_of_week_eligible", true)
-    .order("votes", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // A failed query throws inside the cached callbacks above, so no shared
+  // failure entry is ever written. Handle it here with an explicit degraded
+  // render — exactly what the page did before the queries were cached — and
+  // never by catching inside the cache and returning a success-shaped object.
+  let counts = {
+    listingsCount: null,
+    businessesCount: null,
+    petsCount: null,
+    jobsCount: null,
+  };
+  let featured = {
+    featuredListings: null,
+    featuredBusinesses: null,
+    petOfTheWeek: null,
+  };
+  try {
+    counts = await getMarketplaceCounts();
+  } catch (error) {
+    console.error("Marketplace counts unavailable", error);
+  }
+  try {
+    featured = await getMarketplaceFeatured();
+  } catch (error) {
+    console.error("Marketplace featured content unavailable", error);
+  }
+  const { listingsCount, businessesCount, petsCount, jobsCount } = counts;
+  const { featuredListings, featuredBusinesses, petOfTheWeek } = featured;
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900 dark:bg-slate-950">
       <HomeLaunchBanner />

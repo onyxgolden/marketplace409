@@ -1,6 +1,12 @@
 import Header from "@/components/Header";
 import { supabase } from "@/lib/supabase";
 
+export const metadata = {
+  title: "Browse Listings | 409 Marketplace",
+  description:
+    "Browse local classified listings across Southeast Texas — vehicles, rentals, services, farm & ranch, pets, electronics, and more.",
+};
+
 export default async function BrowsePage({ searchParams }) {
   const params = await searchParams;
   const category = params?.category;
@@ -33,7 +39,7 @@ export default async function BrowsePage({ searchParams }) {
       <Header />
 
       <section className="max-w-6xl mx-auto py-12 px-6">
-        <h1 className="text-5xl font-extrabold mb-4">Browse Listings</h1>
+        <h1 className="text-4xl sm:text-5xl font-extrabold mb-4">Browse Listings</h1>
 
         <p className="text-xl text-gray-600 mb-8">
           Search local items, services, rentals, farm goods, pets, and
