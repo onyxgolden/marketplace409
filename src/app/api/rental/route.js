@@ -1,71 +1,86 @@
 import { NextResponse } from "next/server";
 import { createAuthenticatedRentalManagerApplication } from "@/lib/supabase/createAuthenticatedRentalManagerApplication";
-import { getActiveWorkspaceRole } from "@/lib/supabase/getActiveWorkspaceRole";
-import { isOwnerOrActiveCoOwner } from "@/lib/supabase/isOwnerOrActiveCoOwner";
-import { createRentalUnit } from "@/domains/rental-unit";
-import { createRentalTenant } from "@/domains/rental-tenant";
-import { createRentalLease } from "@/domains/rental-lease";
-import { createRentSchedule, RENT_SCHEDULE_PAYMENT_FREQUENCIES } from "@/domains/rent-schedule";
 import { fetchAllOwnerFinancialEvents } from "@/domains/rentec-financial-history-import/fetchAllOwnerFinancialEvents";
-import { createResendRentalEmailProvider } from "@/infrastructure/notifications/ResendRentalEmailProvider";
-import { buildTenantInviteEmail, buildTenantInviteIdempotencyKey, fingerprintString } from "@/domains/rental-tenant/tenantInviteEmail";
-import { validateAddressFields } from "@/lib/address/validateAddress";
-import { isPaymentPolicy, PAYMENT_POLICIES } from "@/domains/rental-payment/paymentPolicy";
-import { checkRentalPaymentPolicy } from "@/application/rental/checkRentalPaymentPolicy";
-import { validateFeeInput } from "@/domains/rental-payment/convenienceFee";
+import { badRequest, now } from "./_actions/shared.js";
+import { saveUnit, archiveUnit, deleteArchivedUnit } from "./_actions/units.js";
+import {
+  saveTenant, deleteUnusedTenant, updateTenantEmail, sendTenantInvite,
+  updateTenantProfile, setPrimaryTenant, reviewAnimal,
+} from "./_actions/tenants.js";
+import {
+  saveLease, saveSchedule, cancelLease, updateLeaseTerms, generateCharge, voidCharge,
+  activateForgeBilling, setBillingEnabled, activateLeaseSchedule, saveLeaseChange,
+  approveLeaseChange, saveLeasePreparationVersion, approveLeasePreparationVersion,
+} from "./_actions/leases.js";
+import {
+  recordOfflinePayment, setPaymentDepositState, applyTenantCredit, voidTenantCredit,
+  saveConvenienceFee, savePaymentPolicy, savePaymentPolicyTenantOverride,
+} from "./_actions/payments.js";
+import { queueRentReminder, cancelRentNotification, queueInsuranceRenewals } from "./_actions/notifications.js";
+import {
+  updateMaintenanceRequest, saveContractor, recordContractorPayment, updateSupportCase,
+  createMaintenanceWorkOrder, updateMaintenanceWorkOrder,
+} from "./_actions/maintenance.js";
+import { saveSecurityDeposit, recordSecurityDepositTransaction } from "./_actions/deposits.js";
+import { saveInspection, finalizeInspection } from "./_actions/inspections.js";
+import {
+  saveLateFeeRule, assessLateFee, saveLateFeeAutoSettings, saveLateFeeTenantOverride,
+} from "./_actions/lateFees.js";
 
-function badRequest(message) { return NextResponse.json({ error: message }, { status: 400 }); }
-function now() { return new Date().toISOString(); }
-function id(prefix, supplied) { return supplied?.trim() || `${prefix}_${crypto.randomUUID()}`; }
-
-// A read_only workspace member is blocked outright on lease/schedule writes: the role name
-// promises no writes, so the write must not happen even though scoping alone would only
-// divert it into the actor's own fallback workspace. Non-members (no membership row) keep
-// the scoping behavior -- their writes land under their own id and can never touch this
-// workspace. See getActiveWorkspaceRole.js for why the lookup is by actor, not by owner.
-async function readOnlyWriteBlocked(authenticated) {
-  return (await getActiveWorkspaceRole({
-    supabaseClient: authenticated.supabaseClient,
-    actorUserId: authenticated.user.id,
-  })) === "read_only";
-}
-
-// R11: payment-policy mutations are owner/co-owner only (the Rentec parity contract).
-// Staff -- manager, bookkeeper, read_only -- may not change the portfolio policy or a
-// tenant override. isOwnerOrActiveCoOwner answers exactly this question: the primary
-// owner (no membership row) or an active co_owner is the owning household, never staff.
-async function ownerOnlyPolicyWriteBlocked(authenticated) {
-  return !(await isOwnerOrActiveCoOwner({
-    supabaseClient: authenticated.supabaseClient,
-    actorUserId: authenticated.user.id,
-  }));
-}
-// R12: the card convenience-fee percentage is owner/co-owner only (the Rentec parity
-// contract). Staff -- manager, bookkeeper, read_only -- may not change the percentage
-// charged to tenants. isOwnerOrActiveCoOwner answers exactly this question: the primary
-// owner (no membership row) or an active co_owner is the owning household, never staff.
-// The set_rental_card_convenience_fee RPC re-checks has_workspace_access
-// (owner-or-active-co_owner only) as defense in depth behind this route gate.
-async function ownerOnlyFeeWriteBlocked(authenticated) {
-  return !(await isOwnerOrActiveCoOwner({
-    supabaseClient: authenticated.supabaseClient,
-    actorUserId: authenticated.user.id,
-  }));
-}
-
-// R11: for the payment-policy gate on manual payment recording, the tenant is
-// the explicitly supplied tenantId when given, otherwise the charge's primary
-// lease member. Returns null when nothing is derivable -- the gate then fails
-// open to the portfolio default (never newly blocking a payment).
-async function findPolicyTenantIdForCharge(supabaseClient, ownerId, chargeId) {
-  const { data: charge } = await supabaseClient.from("rent_charges").select("lease_id")
-    .eq("owner_id", ownerId).eq("id", chargeId).maybeSingle();
-  if (!charge?.lease_id) return null;
-  const { data: memberships } = await supabaseClient.from("rental_lease_tenants").select("tenant_id, occupancy_role")
-    .eq("owner_id", ownerId).eq("lease_id", charge.lease_id);
-  if (!memberships?.length) return null;
-  return (memberships.find((row) => row.occupancy_role === "primary") || memberships[0]).tenant_id;
-}
+// Operation dispatch table: each action module owns its logic; this route only
+// authenticates, parses the body, and dispatches. Behavior is identical to the
+// pre-split switch — same operation names, same handlers, same error mapping.
+// Null-prototype on purpose: inherited Object.prototype keys ("constructor",
+// "toString", "__proto__", "hasOwnProperty") must never dispatch to a handler.
+const OPERATION_HANDLERS = Object.assign(Object.create(null), {
+  "save-unit": saveUnit,
+  "archive-unit": archiveUnit,
+  "delete-archived-unit": deleteArchivedUnit,
+  "review-animal": reviewAnimal,
+  "save-tenant": saveTenant,
+  "delete-unused-tenant": deleteUnusedTenant,
+  "update-tenant-email": updateTenantEmail,
+  "send-tenant-invite": sendTenantInvite,
+  "update-tenant-profile": updateTenantProfile,
+  "set-primary-tenant": setPrimaryTenant,
+  "save-lease": saveLease,
+  "save-schedule": saveSchedule,
+  "cancel-lease": cancelLease,
+  "update-lease-terms": updateLeaseTerms,
+  "generate-charge": generateCharge,
+  "void-charge": voidCharge,
+  "activate-forge-billing": activateForgeBilling,
+  "set-billing-enabled": setBillingEnabled,
+  "save-convenience-fee": saveConvenienceFee,
+  "activate-lease-schedule": activateLeaseSchedule,
+  "record-offline-payment": recordOfflinePayment,
+  "set-payment-deposit-state": setPaymentDepositState,
+  "apply-tenant-credit": applyTenantCredit,
+  "void-tenant-credit": voidTenantCredit,
+  "queue-rent-reminder": queueRentReminder,
+  "cancel-rent-notification": cancelRentNotification,
+  "queue-insurance-renewals": queueInsuranceRenewals,
+  "update-maintenance-request": updateMaintenanceRequest,
+  "save-security-deposit": saveSecurityDeposit,
+  "record-security-deposit-transaction": recordSecurityDepositTransaction,
+  "save-inspection": saveInspection,
+  "finalize-inspection": finalizeInspection,
+  "save-lease-change": saveLeaseChange,
+  "approve-lease-change": approveLeaseChange,
+  "save-late-fee-rule": saveLateFeeRule,
+  "assess-late-fee": assessLateFee,
+  "save-late-fee-auto-settings": saveLateFeeAutoSettings,
+  "save-late-fee-tenant-override": saveLateFeeTenantOverride,
+  "save-payment-policy": savePaymentPolicy,
+  "save-payment-policy-tenant-override": savePaymentPolicyTenantOverride,
+  "save-contractor": saveContractor,
+  "record-contractor-payment": recordContractorPayment,
+  "update-support-case": updateSupportCase,
+  "create-maintenance-work-order": createMaintenanceWorkOrder,
+  "update-maintenance-work-order": updateMaintenanceWorkOrder,
+  "save-lease-preparation-version": saveLeasePreparationVersion,
+  "approve-lease-preparation-version": approveLeasePreparationVersion,
+});
 
 async function withPhotoUrls(supabaseClient, records) {
   return Promise.all(records.map(async (record) => {
@@ -206,673 +221,16 @@ export async function POST(request) {
     const body = await request.json();
     const { application, user, effectiveOwnerId } = authenticated;
     const timestamp = now();
-
-    switch (body?.operation) {
-      case "save-unit": {
-        const input = body.unit;
-        if (!input || typeof input !== "object") return badRequest("unit is required.");
-        if (!input.id) {
-          const existing = await application.findUnitsByProperty(input.propertyId, effectiveOwnerId);
-          const duplicate = existing.find((item) => item.status !== "inactive" && item.label.trim().toLowerCase() === String(input.label || "").trim().toLowerCase());
-          if (duplicate) return NextResponse.json({ error: `${duplicate.label} already exists. Select it to edit the existing property/unit.` }, { status: 409 });
-        }
-        const addressCheck = validateAddressFields({
-          street: input.addressStreet, unit: input.addressUnit, city: input.addressCity,
-          state: input.addressState, zip: input.addressZip,
-        }, { allowEmptyGroup: Boolean(input.id) });
-        if (!addressCheck.ok) return badRequest(Object.values(addressCheck.errors).join(" "));
-        const unit = createRentalUnit({ ...input, id: id("rental_unit", input.id), createdAt: input.createdAt || timestamp,
-          updatedAt: timestamp, bedrooms: input.bedrooms ?? null, bathrooms: input.bathrooms ?? null,
-          squareFeet: input.squareFeet ?? null, availableAt: input.availableAt ?? null, notes: input.notes ?? null,
-          addressStreet: addressCheck.values.street || null, addressUnit: addressCheck.values.unit || null,
-          addressCity: addressCheck.values.city || null, addressState: addressCheck.values.state || null,
-          addressZip: addressCheck.values.zip || null });
-        return NextResponse.json({ success: true, unit: await application.saveUnit(unit, effectiveOwnerId) });
-      }
-      case "archive-unit": {
-        if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
-        const unit = await application.units.findById(body.unitId.trim(), effectiveOwnerId);
-        if (!unit) return NextResponse.json({ error: "Property/unit not found." }, { status: 404 });
-        const { data: activeLeases, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
-          .select("id").eq("owner_id", effectiveOwnerId).eq("unit_id", unit.id).eq("status", "active").limit(1);
-        if (leaseError) throw leaseError;
-        if (activeLeases?.length) return NextResponse.json({ error: "End or transfer the active lease before archiving this property/unit." }, { status: 409 });
-        const archived = createRentalUnit({ ...unit, status: "inactive", updatedAt: timestamp });
-        return NextResponse.json({ success: true, unit: await application.saveUnit(archived, effectiveOwnerId) });
-      }
-      case "delete-archived-unit": {
-        if (typeof body.unitId !== "string" || body.unitId.trim() === "") return badRequest("unitId is required.");
-        const unitId = body.unitId.trim();
-        const unit = await application.units.findById(unitId, effectiveOwnerId);
-        if (!unit) return NextResponse.json({ error: "Property/unit not found." }, { status: 404 });
-        if (unit.status !== "inactive") return NextResponse.json({ error: "Archive the duplicate before permanently deleting it." }, { status: 409 });
-        const referenceTables = ["rental_leases", "rental_maintenance_requests", "rental_inspections"];
-        const referenceResults = await Promise.all(referenceTables.map((table) => authenticated.supabaseClient.from(table)
-          .select("id").eq("owner_id", effectiveOwnerId).eq("unit_id", unitId).limit(1)));
-        const referenceError = referenceResults.find((result) => result.error)?.error;
-        if (referenceError) throw referenceError;
-        if (referenceResults.some((result) => result.data?.length)) return NextResponse.json({
-          error: "This archived property/unit has linked lease, maintenance, or inspection history and cannot be permanently deleted.",
-        }, { status: 409 });
-        const { data, error } = await authenticated.supabaseClient.from("rental_units").delete()
-          .eq("owner_id", effectiveOwnerId).eq("id", unitId).eq("status", "inactive").select("id, label").maybeSingle();
-        if (error) throw error;
-        if (!data) return NextResponse.json({ error: "Archived property/unit was not found." }, { status: 404 });
-        return NextResponse.json({ success: true, deletedUnit: data });
-      }
-      case "review-animal": {if(!body.animalId||!["approved","denied"].includes(body.decision)||!body.classification||!body.approvalEvidenceId)return badRequest("Animal, decision, classification, and evidence are required.");const{data,error}=await authenticated.supabaseClient.rpc("review_rental_animal",{p_owner_id:effectiveOwnerId,p_animal_id:body.animalId,p_decision:body.decision,p_classification:body.classification,p_approval_evidence_id:body.approvalEvidenceId,p_monthly_fee_cents:body.monthlyFeeCents??null,p_effective_start_date:body.effectiveStartDate||null});if(error)throw error;return NextResponse.json({success:true,review:data});}
-      case "save-tenant": {
-        const input = body.tenant;
-        if (!input || typeof input !== "object") return badRequest("tenant is required.");
-        const normalizedEmail = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
-        if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) return badRequest("A valid tenant email is required.");
-        const { data: existingTenants, error: existingError } = await authenticated.supabaseClient.from("rental_tenants")
-          .select("id, display_name, email, status").eq("owner_id", effectiveOwnerId);
-        if (existingError) throw existingError;
-        const duplicate = existingTenants?.find((item) => item.email?.trim().toLowerCase() === normalizedEmail);
-        if (duplicate) return NextResponse.json({
-          error: `${duplicate.display_name} already exists with ${duplicate.email}. The existing tenant has been selected.`,
-          existingTenant: duplicate,
-        }, { status: 409 });
-        const tenant = createRentalTenant({ ...input, id: id("rental_tenant", input.id), authUserId: input.authUserId ?? null,
-          email: normalizedEmail, phone: input.phone ?? null, status: input.status ?? "invited", invitedAt: input.invitedAt ?? timestamp,
-          activatedAt: input.activatedAt ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
-        return NextResponse.json({ success: true, tenant: await application.saveTenant(tenant, effectiveOwnerId) });
-      }
-      case "delete-unused-tenant": {
-        if (typeof body.tenantId !== "string" || !body.tenantId.trim()) return badRequest("tenantId is required.");
-        if (body.confirmation !== "DELETE") return badRequest("Type DELETE to confirm permanent deletion.");
-        const tenantId = body.tenantId.trim();
-        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
-          .select("id, display_name, email, auth_user_id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
-        if (tenantError) throw tenantError;
-        if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
-        if (tenant.auth_user_id) return NextResponse.json({ error: "This tenant has claimed portal access and cannot be deleted." }, { status: 409 });
-        const references = ["rental_lease_tenants", "rental_payments", "billing_customer_references", "rent_reporting_enrollments",
-          "rental_maintenance_requests", "rental_document_acknowledgements", "rental_security_deposits",
-          "pet_liability_policies", "rental_notification_outbox", "rental_autopay_enrollments",
-          "renters_insurance_policies", "renters_insurance_evidence", "rental_animals", "rental_support_cases", "rental_inspections",
-          "rental_inspection_acknowledgements", "rental_notification_preferences"];
-        const checks = await Promise.all(references.map((table) => authenticated.supabaseClient.from(table)
-          .select("tenant_id").eq("owner_id", effectiveOwnerId).eq("tenant_id", tenantId).limit(1)));
-        const checkError = checks.find((result) => result.error)?.error;
-        if (checkError) throw checkError;
-        if (checks.some((result) => result.data?.length)) return NextResponse.json({
-          error: "This tenant is assigned or has rental history. Delete the other, unassigned duplicate instead.",
-        }, { status: 409 });
-        const { data: deleted, error: deleteError } = await authenticated.supabaseClient.from("rental_tenants").delete()
-          .eq("owner_id", effectiveOwnerId).eq("id", tenantId).is("auth_user_id", null)
-          .select("id, display_name, email").maybeSingle();
-        if (deleteError) throw deleteError;
-        if (!deleted) return NextResponse.json({ error: "Unused tenant was not found." }, { status: 404 });
-        return NextResponse.json({ success: true, deletedTenant: deleted });
-      }
-      case "update-tenant-email": {
-        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
-        if (typeof body.email !== "string" || !/^\S+@\S+\.\S+$/.test(body.email.trim())) return badRequest("A valid email is required.");
-        const { data, error } = await authenticated.supabaseClient.from("rental_tenants")
-          .update({ email: body.email.trim().toLowerCase(), updated_at: timestamp })
-          .eq("owner_id", effectiveOwnerId).eq("id", body.tenantId.trim()).is("auth_user_id", null)
-          .select("id, display_name, email, status").maybeSingle();
-        if (error) throw error;
-        if (!data) return NextResponse.json({ error: "Only an unlinked tenant email can be changed." }, { status: 409 });
-        return NextResponse.json({ success: true, tenant: data });
-      }
-      case "send-tenant-invite": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot send tenant invites." }, { status: 403 });
-        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
-        const tenantId = body.tenantId.trim();
-        // Owner-scoped lookup: a tenant from another workspace resolves to 404,
-        // never a 403 that would leak its existence.
-        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
-          .select("id, display_name, email, status, auth_user_id").eq("owner_id", effectiveOwnerId).eq("id", tenantId).maybeSingle();
-        if (tenantError) throw tenantError;
-        if (!tenant) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
-        if (tenant.auth_user_id) return NextResponse.json({ error: "This tenant already has portal access." }, { status: 409 });
-        const email = (tenant.email || "").trim().toLowerCase();
-        if (!/^\S+@\S+\.\S+$/.test(email)) return badRequest("The tenant does not have a valid email address.");
-
-        let leaseSummary = null;
-        if (typeof body.leaseId === "string" && body.leaseId.trim() !== "") {
-          const leaseId = body.leaseId.trim();
-          const { data: link, error: linkError } = await authenticated.supabaseClient.from("rental_lease_tenants")
-            .select("lease_id").eq("owner_id", effectiveOwnerId).eq("lease_id", leaseId).eq("tenant_id", tenantId).maybeSingle();
-          if (linkError) throw linkError;
-          if (!link) return NextResponse.json({ error: "The tenant is not on that lease." }, { status: 409 });
-          const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
-            .select("unit_id, start_date, monthly_rent_cents").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
-          if (leaseError) throw leaseError;
-          if (lease) {
-            const { data: unit, error: unitError } = await authenticated.supabaseClient.from("rental_units")
-              .select("label").eq("owner_id", effectiveOwnerId).eq("id", lease.unit_id).maybeSingle();
-            if (unitError) throw unitError;
-            leaseSummary = { unitLabel: unit?.label || "your rental", monthlyRentCents: lease.monthly_rent_cents, startDate: lease.start_date };
-          }
-        }
-
-        const asOfDate = timestamp.slice(0, 10);
-        const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://marketplace409.vercel.app").replace(/\/$/, "");
-        const rendered = buildTenantInviteEmail({
-          tenantName: tenant.display_name, tenantEmail: email, leaseSummary,
-          portalUrl: `${siteUrl}/forge/rental/portal`,
-        });
-        // The recipient always comes from the owner's own tenant record — never
-        // free-form input — so this endpoint cannot be repurposed as a relay.
-        // The per-day-per-invitation idempotency key is forwarded as the
-        // provider idempotency key: a double click or retried request resolves
-        // to a single email, while a corrected email or lease summary gets a
-        // fresh key and actually sends.
-        try {
-          await createResendRentalEmailProvider().send({
-            id: buildTenantInviteIdempotencyKey({
-              tenantId,
-              asOfDate,
-              payloadFingerprint: fingerprintString(`${rendered.subject}\n${rendered.bodyText}`),
-            }),
-            senderName: "FORGE Rental Manager",
-            senderEmail: process.env.RENTAL_EMAIL_SENDER || "rentals@mail.409marketplace.online",
-            recipient: email, subject: rendered.subject, bodyText: rendered.bodyText,
-          });
-        } catch (sendError) {
-          console.error("Tenant invite email failed", { tenantId, code: sendError?.name || "unknown" });
-          return NextResponse.json({ error: "The invite email could not be sent. Please try again." }, { status: 502 });
-        }
-        // invited_at is a UI convenience ("Invite sent <date>"), not the
-        // delivery ledger: a failed send never reaches this update.
-        const { error: updateError } = await authenticated.supabaseClient.from("rental_tenants")
-          .update({ invited_at: timestamp, updated_at: timestamp }).eq("owner_id", effectiveOwnerId).eq("id", tenantId);
-        if (updateError) throw updateError;
-        return NextResponse.json({ success: true, tenantId, invitedAt: timestamp });
-      }
-      case "update-tenant-profile": {
-        if (typeof body.tenantId !== "string" || body.tenantId.trim() === "") return badRequest("tenantId is required.");
-        const profile = body.profile && typeof body.profile === "object" ? body.profile : {};
-        const optional = (value) => typeof value === "string" ? value.trim() || null : null;
-        const lastFour = optional(profile.ssnLastFour);
-        if (lastFour && !/^\d{4}$/.test(lastFour)) return badRequest("SSN last four must contain exactly four digits.");
-        const monthlyIncomeCents = profile.monthlyIncomeCents === null || profile.monthlyIncomeCents === "" || profile.monthlyIncomeCents === undefined
-          ? null : Number(profile.monthlyIncomeCents);
-        if (monthlyIncomeCents !== null && (!Number.isSafeInteger(monthlyIncomeCents) || monthlyIncomeCents < 0)) return badRequest("Monthly income must be a non-negative whole-cent amount.");
-        // date_of_birth is deliberately never written here, even if a caller sends dateOfBirth --
-        // FORGE does not collect tenant birth dates (owner privacy decision). Omitting the key
-        // entirely means Supabase's .update() never touches that column, so any birth date already
-        // stored on a legacy record is left exactly as-is, neither erased nor overwritten.
-        const update = { phone: optional(profile.phone), work_phone: optional(profile.workPhone),
-          employer_name: optional(profile.employerName), employer_phone: optional(profile.employerPhone), monthly_income_cents: monthlyIncomeCents,
-          emergency_contact_name: optional(profile.emergencyContactName), emergency_contact_phone: optional(profile.emergencyContactPhone),
-          application_status: optional(profile.applicationStatus), application_submitted_at: optional(profile.applicationSubmittedAt),
-          screening_provider: optional(profile.screeningProvider), screening_reference: optional(profile.screeningReference),
-          screening_status: optional(profile.screeningStatus), screening_completed_at: optional(profile.screeningCompletedAt),
-          ssn_last_four: lastFour, landlord_notes: optional(profile.landlordNotes), updated_at: timestamp };
-        const { data, error } = await authenticated.supabaseClient.from("rental_tenants").update(update)
-          .eq("owner_id", effectiveOwnerId).eq("id", body.tenantId.trim()).select("id, display_name").maybeSingle();
-        if (error) throw error;
-        if (!data) return NextResponse.json({ error: "Tenant was not found." }, { status: 404 });
-        return NextResponse.json({ success: true, tenant: data });
-      }
-      case "set-primary-tenant": {
-        if (!body.leaseId || !body.tenantId) return badRequest("leaseId and tenantId are required.");
-        const { error } = await authenticated.supabaseClient.rpc("set_rental_primary_tenant", {
-          p_owner_id: effectiveOwnerId, p_lease_id: body.leaseId, p_tenant_id: body.tenantId,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true });
-      }
-      case "save-lease": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
-        const input = body.lease;
-        if (!input || typeof input !== "object") return badRequest("lease is required.");
-        const lease = createRentalLease({ ...input, id: id("rental_lease", input.id), status: input.status ?? "draft",
-          endDate: input.endDate ?? null, beginChargesDate: input.beginChargesDate ?? null,
-          documentEvidenceId: input.documentEvidenceId ?? null,
-          activatedAt: input.activatedAt ?? null, endedAt: input.endedAt ?? null,
-          createdAt: input.createdAt || timestamp, updatedAt: timestamp, notes: input.notes ?? null });
-        return NextResponse.json({ success: true, lease: await application.saveLease(lease, effectiveOwnerId) });
-      }
-      case "save-schedule": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit rent schedules." }, { status: 403 });
-        const input = body.schedule;
-        if (!input || typeof input !== "object") return badRequest("schedule is required.");
-        const schedule = createRentSchedule({ ...input, id: id("rent_schedule", input.id), status: input.status ?? "draft",
-          effectiveEndDate: input.effectiveEndDate ?? null, createdAt: input.createdAt || timestamp, updatedAt: timestamp });
-        return NextResponse.json({ success: true, schedule: await application.saveSchedule(schedule, effectiveOwnerId) });
-      }
-      case "cancel-lease": {
-        if (typeof body.leaseId !== "string" || body.leaseId.trim() === "") return badRequest("leaseId is required.");
-        const { data, error } = await authenticated.supabaseClient.from("rental_leases")
-          .update({ status: "cancelled", updated_at: timestamp })
-          .eq("owner_id", effectiveOwnerId).eq("id", body.leaseId.trim()).eq("status", "draft")
-          .select("id, status").maybeSingle();
-        if (error) throw error;
-        if (!data) return NextResponse.json({ error: "Only a draft lease can be cancelled." }, { status: 409 });
-        return NextResponse.json({ success: true, lease: data });
-      }
-      case "update-lease-terms": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot edit leases." }, { status: 403 });
-        const input = body.terms;
-        if (!input || typeof input !== "object") return badRequest("terms is required.");
-        if (typeof input.leaseId !== "string" || input.leaseId.trim() === "") return badRequest("leaseId is required.");
-        const leaseId = input.leaseId.trim();
-        const monthlyRentCents = Number(input.monthlyRentCents);
-        if (!Number.isSafeInteger(monthlyRentCents) || monthlyRentCents <= 0) return badRequest("Monthly rent must be a positive whole-cent amount.");
-        const rentDueDay = Number(input.rentDueDay);
-        if (!Number.isInteger(rentDueDay) || rentDueDay < 1 || rentDueDay > 28) return badRequest("Due day must be between 1 and 28.");
-        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-        if (typeof input.startDate !== "string" || !datePattern.test(input.startDate)) return badRequest("A valid start date (YYYY-MM-DD) is required.");
-        const endDate = input.endDate === null || input.endDate === undefined || input.endDate === "" ? null : input.endDate;
-        if (endDate !== null && (typeof endDate !== "string" || !datePattern.test(endDate))) return badRequest("A valid end date (YYYY-MM-DD) is required.");
-        if (endDate !== null && endDate < input.startDate) return badRequest("The end date cannot be before the start date.");
-        const earlyPayDays = Number(input.earlyPayDays);
-        if (!Number.isInteger(earlyPayDays) || earlyPayDays < 0 || earlyPayDays > 31) return badRequest("Early pay window must be between 0 and 31 days.");
-        // R10: begin-charges date is optional — omitted/blank keeps the lease's
-        // current value (never clobbers), a provided value must be a valid date.
-        const rawBeginCharges = input.beginChargesDate === null || input.beginChargesDate === undefined
-          ? "" : String(input.beginChargesDate).trim();
-        if (rawBeginCharges !== "" && !datePattern.test(rawBeginCharges)) return badRequest("A valid begin-charges date (YYYY-MM-DD) is required.");
-        const beginChargesDate = rawBeginCharges === "" ? null : rawBeginCharges;
-        // R13: payment frequency is optional on edit-terms. It lives only on the
-        // rent_schedules row (the charge cron's single read source), so it is
-        // written by a second, owner-scoped update right after the atomic
-        // terms RPC -- there is no lease-row counterpart to drift against.
-        // Changing the frequency resets the cadence anchor to today unless the
-        // caller passes an explicit anchor, so a mid-lease switch never
-        // backfills weeks of "missed" charges under the old cadence. Charges
-        // already generated keep their original terms and are never rewritten.
-        const paymentFrequency = input.paymentFrequency ?? null;
-        if (paymentFrequency !== null && !RENT_SCHEDULE_PAYMENT_FREQUENCIES.includes(paymentFrequency))
-          return badRequest("Payment frequency must be weekly, biweekly, or monthly.");
-        const paymentAnchorDate = input.paymentAnchorDate ?? null;
-        if (paymentAnchorDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(paymentAnchorDate))
-          return badRequest("Payment anchor date must use YYYY-MM-DD format.");
-        const todayStr = new Date().toISOString().slice(0, 10);
-        // Owner-scoped lookup: a lease from another workspace resolves to 404, never a 403
-        // that would leak its existence.
-        const { data: lease, error: leaseError } = await authenticated.supabaseClient.from("rental_leases")
-          .select("id, status").eq("owner_id", effectiveOwnerId).eq("id", leaseId).maybeSingle();
-        if (leaseError) throw leaseError;
-        if (!lease) return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
-        if (lease.status === "cancelled") return NextResponse.json({ error: "A cancelled lease cannot be edited." }, { status: 409 });
-        // Atomic write: update_lease_terms updates the rent_schedules row and the
-        // rental_leases row inside a single database transaction, so the two can
-        // never drift apart. Reports read lease.monthly_rent_cents while the
-        // charge cron (generate_monthly_rent_charge) reads the schedule row when
-        // each charge is generated — so the new terms apply to future charges
-        // only. Already-generated charges keep their original terms and are never
-        // rewritten by this operation.
-        //
-        // All auth decisions stay here in the route (owner-scoped lease lookup
-        // above, read-only gate, cancelled rejection); the function only does the
-        // atomic write. The schedule-existence check lives inside the function's
-        // transaction (locked SELECT) — there is no separate pre-check here, so
-        // no race can slip between the check and the write.
-        const { data: termsResult, error: termsError } = await authenticated.supabaseClient.rpc("update_lease_terms", {
-          p_owner_id: effectiveOwnerId,
-          p_lease_id: leaseId,
-          p_monthly_rent_cents: monthlyRentCents,
-          p_due_day: rentDueDay,
-          p_start_date: input.startDate,
-          p_end_date: endDate,
-          p_early_pay_days: earlyPayDays,
-          p_begin_charges_date: beginChargesDate,
-        });
-        if (termsError) {
-          const message = String(termsError.message || "");
-          if (message.includes("rent schedule not found for lease"))
-            return NextResponse.json({ error: "No rent schedule found for this lease — save one before editing terms." }, { status: 409 });
-          if (message.includes("lease not found"))
-            return NextResponse.json({ error: "Lease was not found." }, { status: 404 });
-          throw termsError;
-        }
-        let schedule = termsResult?.schedule ?? null;
-        if (paymentFrequency !== null) {
-          const { data: currentSchedule, error: currentScheduleError } = await authenticated.supabaseClient
-            .from("rent_schedules").select("id, payment_frequency").eq("owner_id", effectiveOwnerId)
-            .eq("lease_id", leaseId).maybeSingle();
-          if (currentScheduleError) throw currentScheduleError;
-          // Anchor reset on frequency change only; an explicit anchor always wins.
-          const anchorDate = paymentAnchorDate ?? (currentSchedule?.payment_frequency !== paymentFrequency ? todayStr : null);
-          const frequencyUpdate = { payment_frequency: paymentFrequency, updated_at: timestamp };
-          if (anchorDate !== null) frequencyUpdate.payment_anchor_date = anchorDate;
-          const { data: updatedSchedule, error: frequencyError } = await authenticated.supabaseClient
-            .from("rent_schedules").update(frequencyUpdate).eq("owner_id", effectiveOwnerId)
-            .eq("lease_id", leaseId).select("*").maybeSingle();
-          if (frequencyError) throw frequencyError;
-          schedule = updatedSchedule ?? schedule;
-        }
-        return NextResponse.json({ success: true, lease: termsResult?.lease, schedule });
-      }
-      case "generate-charge": {
-        if (!body.scheduleId || !body.period) return badRequest("scheduleId and period are required.");
-        const charge = await application.generateMonthlyCharge(body.scheduleId, body.period, effectiveOwnerId);
-        if (!charge) return NextResponse.json({ error: "The schedule must be active and effective for the selected month." }, { status: 409 });
-        return NextResponse.json({ success: true, charge });
-      }
-      case "void-charge": {
-        if (typeof body.chargeId !== "string" || body.chargeId.trim() === "") return badRequest("chargeId is required.");
-        if (typeof body.reason !== "string" || body.reason.trim() === "") return badRequest("A reason is required to void a charge.");
-        const { data, error } = await authenticated.supabaseClient.rpc("void_rental_rent_charge",
-          { p_owner_id: effectiveOwnerId, p_charge_id: body.chargeId.trim(), p_reason: body.reason.trim() });
-        if (error) throw error;
-        if (!data || !data.id) return NextResponse.json({ error: "Only a charge with no paid balance, not already voided, and no pending or unreversed payment can be voided." }, { status: 409 });
-        return NextResponse.json({ success: true, charge: data });
-      }
-      case "activate-forge-billing": {
-        if (typeof body.scheduleId !== "string" || body.scheduleId.trim() === "") return badRequest("scheduleId is required.");
-        if (typeof body.cutoverDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body.cutoverDate)) return badRequest("A valid cutoverDate (YYYY-MM-DD) is required.");
-        const { data, error } = await authenticated.supabaseClient.rpc("activate_forge_billing_collection", {
-          p_owner_id: effectiveOwnerId, p_schedule_id: body.scheduleId.trim(), p_cutover_date: body.cutoverDate,
-          p_reconciliation_summary: body.reconciliationSummary && typeof body.reconciliationSummary === "object" ? body.reconciliationSummary : {},
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, schedule: data });
-      }
-      case "set-billing-enabled": {
-        if (typeof body.enabled !== "boolean") return badRequest("enabled must be boolean.");
-        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_billing_enabled", {
-          p_owner_id: effectiveOwnerId, p_enabled: body.enabled,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, settings: data });
-      }
-      // R12: workspace card convenience fee. The UI sends a human percent
-      // ("2.95"); the server validates and stores integer basis points. The
-      // RPC audits every change. Owner/co-owner only: staff may not change
-      // the percentage charged to tenants.
-      case "save-convenience-fee": {
-        if (await ownerOnlyFeeWriteBlocked(authenticated)) return NextResponse.json({ error: "Only the owner or co-owner can change convenience fee settings." }, { status: 403 });
-        const validation = validateFeeInput(body.feePercent);
-        if (!validation.ok) return badRequest(validation.message);
-        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_card_convenience_fee", {
-          p_owner_id: effectiveOwnerId, p_fee_bps: validation.bps,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, convenienceFeeBps: data?.card_convenience_fee_bps ?? validation.bps });
-      }
-      case "activate-lease-schedule": {
-        if (!body.scheduleId) return badRequest("scheduleId is required.");
-        const { data, error } = await authenticated.supabaseClient.rpc("activate_rental_lease_schedule", {
-          p_owner_id: effectiveOwnerId, p_schedule_id: body.scheduleId,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, activation: data });
-      }
-      case "record-offline-payment": {
-        const input = body.payment;
-        if (!input?.chargeId || !["cash", "cashiers_check"].includes(input.paymentMethod))
-          return badRequest("chargeId and a supported offline payment method are required.");
-        const amountCents = Number(input.amountCents);
-        if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive payment amount is required.");
-        // allowOverpaymentCredit: when true, an amount exceeding the charge's remaining
-        // balance is accepted — the applied portion settles the charge and the excess is
-        // recorded as an open tenant credit (see rental_tenant_credits) instead of being
-        // rejected. Requires the caller's explicit human-gated confirmation (the UI
-        // enforces checkbox + CONFIRM); the RPC re-validates everything.
-        // tenantId: the tenant the payment (and any credit) is attributed to — validated
-        // by the RPC as a member of the charge's lease. idempotencyKey: client-generated
-        // per submission intent so a retried POST replays instead of double-recording.
-        const tenantId = typeof input.tenantId === "string" && input.tenantId.trim() ? input.tenantId.trim() : null;
-        const idempotencyKey = typeof input.idempotencyKey === "string" && input.idempotencyKey.trim() ? input.idempotencyKey.trim() : null;
-        // depositState: "received" (collected, not yet in the bank) or "deposited".
-        // Defaults to "received" so un-deposited money is never silently claimed as
-        // settled — the form captures it explicitly at record time.
-        const depositState = input.depositState === "deposited" ? "deposited" : "received";
-        // R11 payment-policy gate (server-side, never client-only): the entered
-        // amount must satisfy the tenant's effective policy (per-tenant
-        // override, else the portfolio default) before the RPC records
-        // anything. Stripe autopay is intentionally exempt -- its amounts are
-        // computed from the consented schedule, never tenant-entered.
-        const policyTenantId = tenantId || (await findPolicyTenantIdForCharge(authenticated.supabaseClient, effectiveOwnerId, input.chargeId));
-        const gate = await checkRentalPaymentPolicy(authenticated.supabaseClient, {
-          ownerId: effectiveOwnerId, tenantId: policyTenantId, amountCents,
-        });
-        if (!gate.ok) return NextResponse.json({ error: gate.message }, { status: 422 });
-        const { data, error } = await authenticated.supabaseClient.rpc("record_offline_rental_payment", {
-          p_owner_id: effectiveOwnerId, p_charge_id: input.chargeId, p_payment_method: input.paymentMethod,
-          p_amount_cents: amountCents, p_received_at: input.receivedAt,
-          p_receipt_reference: input.receiptReference || null, p_notes: input.notes || null,
-          p_allow_overpayment_credit: input.allowOverpaymentCredit === true,
-          p_tenant_id: tenantId, p_idempotency_key: idempotencyKey,
-          p_deposit_state: depositState,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, payment: data });
-      }
-      case "set-payment-deposit-state": {
-        // Reversible transition between "received / awaiting deposit" and
-        // "deposited / settled" for a recorded payment. The RPC validates the
-        // state, the payment's existence, and that the payment moved money.
-        const depositState = body.depositState === "deposited" ? "deposited" : body.depositState === "received" ? "received" : null;
-        if (typeof body.paymentId !== "string" || !body.paymentId.trim() || !depositState)
-          return badRequest("paymentId and a valid depositState (received or deposited) are required.");
-        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_payment_deposit_state", {
-          p_owner_id: effectiveOwnerId, p_payment_id: body.paymentId.trim(), p_deposit_state: depositState,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, payment: data });
-      }
-      case "apply-tenant-credit": {
-        const input = body.credit;
-        const amountCents = Number(input?.amountCents);
-        if (typeof input?.creditId !== "string" || !input.creditId.trim() || typeof input?.chargeId !== "string" || !input.chargeId.trim())
-          return badRequest("creditId and chargeId are required.");
-        if (!Number.isSafeInteger(amountCents) || amountCents <= 0) return badRequest("A positive credit amount is required.");
-        if (input.ownerConfirmed !== true) return badRequest("Owner confirmation is required to apply a credit.");
-        const { data, error } = await authenticated.supabaseClient.rpc("apply_rental_tenant_credit", {
-          p_owner_id: effectiveOwnerId, p_credit_id: input.creditId.trim(), p_charge_id: input.chargeId.trim(),
-          p_amount_cents: amountCents, p_notes: typeof input.notes === "string" ? input.notes.trim() || null : null,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, application: data });
-      }
-      case "void-tenant-credit": {
-        if (typeof body.creditId !== "string" || !body.creditId.trim()) return badRequest("creditId is required.");
-        if (typeof body.reason !== "string" || !body.reason.trim()) return badRequest("A reason is required to void a credit.");
-        if (body.ownerConfirmed !== true) return badRequest("Owner confirmation is required to void a credit.");
-        const { data, error } = await authenticated.supabaseClient.rpc("void_rental_tenant_credit", {
-          p_owner_id: effectiveOwnerId, p_credit_id: body.creditId.trim(), p_reason: body.reason.trim(),
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, credit: data });
-      }
-      case "queue-rent-reminder": {
-        if(!body.chargeId||!["rent_reminder","balance_overdue"].includes(body.notificationType)||!body.scheduledFor)return badRequest("Charge, reminder type, and schedule are required.");const attempts=Number(body.maxAttempts);if(!Number.isInteger(attempts)||attempts<1||attempts>5)return badRequest("Retry limit must be between 1 and 5.");const{data,error}=await authenticated.supabaseClient.rpc("queue_rental_balance_reminder",{p_owner_id:effectiveOwnerId,p_charge_id:body.chargeId,p_scheduled_for:body.scheduledFor,p_notification_type:body.notificationType,p_max_attempts:attempts});if(error)throw error;return NextResponse.json({success:true,notification:data});
-      }
-      case "cancel-rent-notification": {
-        if(!body.notificationId)return badRequest("notificationId is required.");const{data,error}=await authenticated.supabaseClient.rpc("cancel_rental_notification",{p_owner_id:effectiveOwnerId,p_notification_id:body.notificationId});if(error)throw error;return NextResponse.json({success:true,notification:data});
-      }
-      case "queue-insurance-renewals": {const{data,error}=await authenticated.supabaseClient.rpc("queue_renters_insurance_renewal_reminders",{p_owner_id:effectiveOwnerId,p_as_of:body.asOf||new Date().toISOString().slice(0,10)});if(error)throw error;return NextResponse.json({success:true,queued:Number(data||0)});}
-      case "update-maintenance-request": {
-        if (typeof body.requestId !== "string" || body.requestId.trim() === "") return badRequest("requestId is required.");
-        if (!["submitted", "reviewing", "scheduled", "in_progress", "completed", "cancelled"].includes(body.status))
-          return badRequest("A supported maintenance status is required.");
-        const update = { status: body.status, updated_at: timestamp,
-          owner_notes: typeof body.ownerNotes === "string" ? body.ownerNotes.trim() || null : null,
-          completed_at: body.status === "completed" ? timestamp : null };
-        const { data, error } = await authenticated.supabaseClient.from("rental_maintenance_requests")
-          .update(update).eq("owner_id", effectiveOwnerId).eq("id", body.requestId.trim())
-          .select("id, status, owner_notes, updated_at, completed_at").maybeSingle();
-        if (error) throw error;
-        if (!data) return NextResponse.json({ error: "Maintenance request was not found." }, { status: 404 });
-        return NextResponse.json({ success: true, request: data });
-      }
-      case "save-security-deposit": {
-        const input=body.deposit;const amountCents=Number(input?.requiredAmountCents);
-        if(!input?.leaseId||!input?.tenantId||!Number.isSafeInteger(amountCents)||amountCents<0)return badRequest("Lease, tenant, and a nonnegative required deposit are required.");
-        const depositId=id("rental_deposit",input.id);const {data,error}=await authenticated.supabaseClient.from("rental_security_deposits").insert({
-          owner_id:effectiveOwnerId,id:depositId,lease_id:input.leaseId,tenant_id:input.tenantId,required_amount_cents:amountCents,currency_code:"USD",
-          status:"required",jurisdiction_code:input.jurisdictionCode||null,received_deadline:input.receivedDeadline||null,
-          disposition_deadline:input.dispositionDeadline||null,updated_at:timestamp}).select("*").single();
-        if(error)throw error;return NextResponse.json({success:true,deposit:data});
-      }
-      case "record-security-deposit-transaction": {
-        const input=body.transaction;const amountCents=Number(input?.amountCents);
-        if(!input?.depositId||!Number.isSafeInteger(amountCents)||amountCents<=0)return badRequest("Deposit and a positive transaction amount are required.");
-        const {data,error}=await authenticated.supabaseClient.rpc("record_rental_security_deposit_transaction",{p_owner_id:effectiveOwnerId,
-          p_deposit_id:input.depositId,p_transaction_type:input.transactionType,p_amount_cents:amountCents,p_occurred_at:input.occurredAt,
-          p_description:input.description,p_evidence_document_id:input.evidenceDocumentId||null});if(error)throw error;
-        return NextResponse.json({success:true,transaction:data});
-      }
-      case "save-inspection": {
-        const input=body.inspection;const items=body.items;
-        if(!input?.leaseId||!input?.unitId||!input?.tenantId||!["move_in","move_out","periodic"].includes(input.inspectionType)||!input.inspectionDate)
-          return badRequest("Lease, unit, tenant, inspection type, and date are required.");
-        if(!Array.isArray(items)||items.length===0||items.some(item=>!item.area?.trim()||!item.component?.trim()||!["excellent","good","fair","poor","damaged","not_inspected"].includes(item.conditionRating)))
-          return badRequest("At least one complete inspection item is required.");
-        const [{data:lease,error:leaseError},{data:membership,error:membershipError}]=await Promise.all([
-          authenticated.supabaseClient.from("rental_leases").select("id, unit_id").eq("owner_id",effectiveOwnerId).eq("id",input.leaseId).maybeSingle(),
-          authenticated.supabaseClient.from("rental_lease_tenants").select("tenant_id").eq("owner_id",effectiveOwnerId).eq("lease_id",input.leaseId).eq("tenant_id",input.tenantId).maybeSingle(),
-        ]);
-        if(leaseError||membershipError)throw leaseError||membershipError;
-        if(!lease||lease.unit_id!==input.unitId||!membership)return badRequest("Inspection unit and tenant must belong to the selected lease.");
-        const evidenceIds=[...new Set(items.map(item=>item.evidenceDocumentId).filter(Boolean))];
-        if(evidenceIds.length){
-          const {data:evidence,error:evidenceError}=await authenticated.supabaseClient.from("rental_documents").select("id").eq("owner_id",effectiveOwnerId).eq("lease_id",input.leaseId).in("id",evidenceIds);
-          if(evidenceError)throw evidenceError;
-          if((evidence||[]).length!==evidenceIds.length)return badRequest("Inspection evidence must be a saved document for the selected lease.");
-        }
-        const {data,error}=await authenticated.supabaseClient.rpc("save_rental_inspection",{p_owner_id:effectiveOwnerId,p_inspection:input,p_items:items});
-        if(error)throw error;return NextResponse.json({success:true,inspection:data});
-      }
-      case "finalize-inspection": {
-        if(typeof body.inspectionId!=="string"||!body.inspectionId.trim())return badRequest("inspectionId is required.");
-        const {data,error}=await authenticated.supabaseClient.from("rental_inspections").update({status:"finalized",finalized_at:timestamp,updated_at:timestamp})
-          .eq("owner_id",effectiveOwnerId).eq("id",body.inspectionId.trim()).eq("status","draft").select("*").maybeSingle();
-        if(error)throw error;if(!data)return NextResponse.json({error:"Draft inspection was not found."},{status:404});
-        return NextResponse.json({success:true,inspection:data});
-      }
-      case "save-lease-change": {
-        const input=body.change;if(!input?.leaseId||!["renewal","amendment","proration"].includes(input.changeType)||!input.effectiveDate||!input.reason?.trim())return badRequest("Lease, supported change type, effective date, and reason are required.");
-        const {data:lease,error:leaseError}=await authenticated.supabaseClient.from("rental_leases").select("*").eq("owner_id",effectiveOwnerId).eq("id",input.leaseId).maybeSingle();if(leaseError)throw leaseError;if(!lease)return NextResponse.json({error:"Lease was not found."},{status:404});
-        const newTerms=input.changeType==="proration"?{amountCents:Number(input.amountCents)}:{monthlyRentCents:Number(input.monthlyRentCents)||lease.monthly_rent_cents,rentDueDay:Number(input.rentDueDay)||lease.rent_due_day,endDate:input.endDate||lease.end_date};
-        if(input.changeType==="proration"&&(!Number.isSafeInteger(newTerms.amountCents)||newTerms.amountCents<=0))return badRequest("Proration requires a positive amount.");
-        const {data,error}=await authenticated.supabaseClient.from("rental_lease_changes").insert({owner_id:effectiveOwnerId,id:id("rental_lease_change",input.id),lease_id:lease.id,change_type:input.changeType,status:"draft",effective_date:input.effectiveDate,previous_terms:{monthlyRentCents:Number(lease.monthly_rent_cents),rentDueDay:lease.rent_due_day,endDate:lease.end_date},new_terms:newTerms,reason:input.reason.trim(),document_evidence_id:input.documentEvidenceId||null}).select("*").single();if(error)throw error;return NextResponse.json({success:true,change:data});
-      }
-      case "approve-lease-change": {
-        if(!body.changeId)return badRequest("changeId is required.");const {data:approved,error:approvalError}=await authenticated.supabaseClient.from("rental_lease_changes").update({status:"approved",approved_at:timestamp}).eq("owner_id",effectiveOwnerId).eq("id",body.changeId).eq("status","draft").select("id").maybeSingle();if(approvalError)throw approvalError;if(!approved)return NextResponse.json({error:"Draft lease change was not found."},{status:404});const {data,error}=await authenticated.supabaseClient.rpc("apply_rental_lease_change",{p_owner_id:effectiveOwnerId,p_change_id:body.changeId});if(error)throw error;return NextResponse.json({success:true,application:data});
-      }
-      case "save-late-fee-rule": {
-        const input=body.rule;if(!input?.leaseId||!input.jurisdictionCode?.trim()||!input.ruleSource?.trim()||input.manualApprovalConfirmed!==true)return badRequest("Lease, jurisdiction, rule source, and manual-approval confirmation are required.");const graceDays=Number(input.graceDays);if(!Number.isInteger(graceDays)||graceDays<0||graceDays>31)return badRequest("Grace days must be between 0 and 31.");const calculationType=input.calculationType;const fixed=calculationType==="fixed"?Number(input.fixedAmountCents):null;const percentage=calculationType==="percentage"?Number(input.percentageBasisPoints):null;if((calculationType==="fixed"&&(!Number.isSafeInteger(fixed)||fixed<=0))||(calculationType==="percentage"&&(!Number.isInteger(percentage)||percentage<=0)))return badRequest("A valid late-fee calculation is required.");const {data,error}=await authenticated.supabaseClient.from("rental_late_fee_rules").insert({owner_id:effectiveOwnerId,id:id("rental_late_fee_rule",input.id),lease_id:input.leaseId,status:"active",jurisdiction_code:input.jurisdictionCode.trim().toUpperCase(),grace_days:graceDays,calculation_type:calculationType,fixed_amount_cents:fixed,percentage_basis_points:percentage,maximum_amount_cents:input.maximumAmountCents?Number(input.maximumAmountCents):null,rule_source:input.ruleSource.trim(),requires_manual_approval:true}).select("*").single();if(error)throw error;return NextResponse.json({success:true,rule:data});
-      }
-      case "assess-late-fee": {
-        if(!body.ruleId||!body.chargeId||!body.reason?.trim()||body.ownerApproved!==true)return badRequest("Rule, overdue charge, reason, and explicit owner approval are required.");const {data,error}=await authenticated.supabaseClient.rpc("assess_rental_late_fee",{p_owner_id:effectiveOwnerId,p_rule_id:body.ruleId,p_charge_id:body.chargeId,p_reason:body.reason.trim()});if(error)throw error;return NextResponse.json({success:true,assessment:data});
-      }
-      case "save-late-fee-auto-settings": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change late-fee settings." }, { status: 403 });
-        const input = body.settings;
-        if (!input || typeof input !== "object" || typeof input.enabled !== "boolean") return badRequest("enabled must be boolean.");
-        if (input.enabled === true && input.confirmAutoPost !== true) return badRequest("Confirm automatic posting before enabling.");
-        const graceDays = Number(input.graceDays);
-        const calculationType = input.calculationType;
-        const fixed = calculationType === "fixed" ? Number(input.fixedAmountCents) : null;
-        const percentage = calculationType === "percentage" ? Number(input.percentageBasisPoints) : null;
-        const maximum = input.maximumAmountCents === null || input.maximumAmountCents === undefined || input.maximumAmountCents === "" ? null : Number(input.maximumAmountCents);
-        if (input.enabled === true) {
-          if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 31) return badRequest("Grace days must be between 0 and 31.");
-          if ((calculationType === "fixed" && (!Number.isSafeInteger(fixed) || fixed <= 0)) || (calculationType === "percentage" && (!Number.isInteger(percentage) || percentage <= 0))) return badRequest("A valid late-fee calculation is required.");
-          if (maximum !== null && (!Number.isSafeInteger(maximum) || maximum <= 0)) return badRequest("Maximum amount must be positive.");
-        }
-        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_late_fee_auto_settings", {
-          p_owner_id: effectiveOwnerId,
-          p_settings: { enabled: input.enabled, graceDays: input.enabled ? graceDays : null,
-            calculationType: input.enabled ? calculationType : null,
-            fixedAmountCents: input.enabled ? fixed : null,
-            percentageBasisPoints: input.enabled ? percentage : null,
-            maximumAmountCents: input.enabled ? maximum : null },
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, settings: data });
-      }
-      case "save-late-fee-tenant-override": {
-        if (await readOnlyWriteBlocked(authenticated)) return NextResponse.json({ error: "Read-only members cannot change late-fee overrides." }, { status: 403 });
-        const input = body.override;
-        if (!input?.tenantId) return badRequest("tenantId is required.");
-        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
-          .select("id").eq("owner_id", effectiveOwnerId).eq("id", input.tenantId).maybeSingle();
-        if (tenantError) throw tenantError;
-        if (!tenant) return badRequest("Tenant was not found.");
-        const exempt = input.exempt === true;
-        const numOrNull = (value) => (value === null || value === undefined || value === "" ? null : Number(value));
-        const graceDays = numOrNull(input.graceDays);
-        const calculationType = input.calculationType || null;
-        const fixed = calculationType === "fixed" ? numOrNull(input.fixedAmountCents) : null;
-        const percentage = calculationType === "percentage" ? numOrNull(input.percentageBasisPoints) : null;
-        const maximum = numOrNull(input.maximumAmountCents);
-        if (!exempt) {
-          if (graceDays !== null && (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > 31)) return badRequest("Grace days must be between 0 and 31.");
-          if (calculationType !== null && !["fixed", "percentage"].includes(calculationType)) return badRequest("Calculation type must be fixed or percentage.");
-          if (fixed !== null && (!Number.isSafeInteger(fixed) || fixed <= 0)) return badRequest("Fixed amount must be positive.");
-          if (percentage !== null && (!Number.isInteger(percentage) || percentage <= 0)) return badRequest("Percentage must be positive.");
-          if (maximum !== null && (!Number.isSafeInteger(maximum) || maximum <= 0)) return badRequest("Maximum amount must be positive.");
-        }
-        const isEmpty = !exempt && graceDays === null && calculationType === null && maximum === null;
-        if (isEmpty) {
-          const { error } = await authenticated.supabaseClient.from("rental_late_fee_tenant_overrides")
-            .delete().eq("owner_id", effectiveOwnerId).eq("tenant_id", input.tenantId);
-          if (error) throw error;
-          return NextResponse.json({ success: true, override: null });
-        }
-        const { data, error } = await authenticated.supabaseClient.from("rental_late_fee_tenant_overrides")
-          .upsert({ owner_id: effectiveOwnerId, tenant_id: input.tenantId, exempt,
-            grace_days: exempt ? null : graceDays,
-            calculation_type: exempt ? null : calculationType,
-            fixed_amount_cents: exempt ? null : fixed,
-            percentage_basis_points: exempt ? null : percentage,
-            maximum_amount_cents: exempt ? null : maximum,
-            updated_at: timestamp }, { onConflict: "owner_id,tenant_id" }).select("*").single();
-        if (error) throw error;
-        return NextResponse.json({ success: true, override: data });
-      }
-      case "save-payment-policy": {
-        if (await ownerOnlyPolicyWriteBlocked(authenticated)) return NextResponse.json({ error: "Only the owner or co-owner can change payment policies." }, { status: 403 });
-        const policy = typeof body.policy === "string" ? body.policy.trim() : "";
-        if (!isPaymentPolicy(policy)) return badRequest(`Payment policy must be one of: ${PAYMENT_POLICIES.join(", ")}.`);
-        const { data, error } = await authenticated.supabaseClient.rpc("set_rental_payment_policy", {
-          p_owner_id: effectiveOwnerId, p_policy: policy,
-        });
-        if (error) throw error;
-        return NextResponse.json({ success: true, paymentPolicy: data?.payment_policy || policy });
-      }
-      case "save-payment-policy-tenant-override": {
-        if (await ownerOnlyPolicyWriteBlocked(authenticated)) return NextResponse.json({ error: "Only the owner or co-owner can change payment policy overrides." }, { status: 403 });
-        const input = body.override;
-        if (!input?.tenantId) return badRequest("tenantId is required.");
-        // null / "inherit" clears the override so the tenant inherits the
-        // portfolio default again.
-        const policy = input.policy === null || input.policy === undefined || input.policy === "" || input.policy === "inherit"
-          ? null : String(input.policy).trim();
-        if (policy !== null && !isPaymentPolicy(policy)) return badRequest(`Payment policy must be one of: ${PAYMENT_POLICIES.join(", ")}.`);
-        const { data: tenant, error: tenantError } = await authenticated.supabaseClient.from("rental_tenants")
-          .select("id").eq("owner_id", effectiveOwnerId).eq("id", input.tenantId).maybeSingle();
-        if (tenantError) throw tenantError;
-        if (!tenant) return badRequest("Tenant was not found.");
-        const { data, error } = await authenticated.supabaseClient.from("rental_tenants")
-          .update({ payment_policy: policy }).eq("owner_id", effectiveOwnerId).eq("id", input.tenantId)
-          .select("id, payment_policy").single();
-        if (error) throw error;
-        return NextResponse.json({ success: true, override: data?.payment_policy || null });
-      }
-      case "save-contractor": {
-        const input=body.contractor;if(!input?.businessName?.trim())return badRequest("Contractor business name is required.");const taxLast4=input.taxIdLast4?.trim()||null;if(taxLast4&&!/^\d{4}$/.test(taxLast4))return badRequest("Tax ID last four must contain four digits.");const {data,error}=await authenticated.supabaseClient.from("rental_contractors").insert({owner_id:effectiveOwnerId,id:id("rental_contractor",input.id),business_name:input.businessName.trim(),contact_name:input.contactName?.trim()||null,email:input.email?.trim()||null,phone:input.phone?.trim()||null,status:"active",trade:input.trade?.trim()||null,license_reference:input.licenseReference?.trim()||null,insurance_expiration:input.insuranceExpiration||null,w9_status:input.w9Status||"not_requested",tax_classification:input.taxClassification?.trim()||null,tax_id_last4:taxLast4}).select("*").single();if(error)throw error;return NextResponse.json({success:true,contractor:data});
-      }
-      case "record-contractor-payment": {const input=body.payment,amount=Number(input?.amountCents);if(!input?.contractorId||!input?.propertyId||!input?.paidAt||!Number.isSafeInteger(amount)||amount<=0)return badRequest("Contractor, property, payment date, and positive amount are required.");const{data,error}=await authenticated.supabaseClient.rpc("record_rental_contractor_payment",{p_owner_id:effectiveOwnerId,p_contractor_id:input.contractorId,p_work_order_id:input.workOrderId||null,p_property_id:input.propertyId,p_paid_at:input.paidAt,p_amount_cents:amount,p_payment_method:input.paymentMethod,p_reference:input.reference||null,p_invoice_reference:input.invoiceReference||null,p_invoice_document_id:input.invoiceDocumentId||null,p_notes:input.notes||null});if(error)throw error;return NextResponse.json({success:true,payment:data});}
-      case "update-support-case": {if(!body.caseId||!["open","investigating","waiting_on_tenant","waiting_on_provider","resolved","closed"].includes(body.status))return badRequest("Case and supported status are required.");if(["resolved","closed"].includes(body.status)&&!body.resolution?.trim())return badRequest("A resolution is required before resolving or closing a case.");const{data,error}=await authenticated.supabaseClient.rpc("update_rental_support_case",{p_owner_id:effectiveOwnerId,p_case_id:body.caseId,p_status:body.status,p_public_note:body.publicNote||null,p_private_note:body.privateNote||null,p_resolution:body.resolution||null});if(error)throw error;return NextResponse.json({success:true,supportCase:data});}
-      case "create-maintenance-work-order": {
-        const input=body.workOrder;if(!input?.requestId||!input?.scopeOfWork?.trim())return badRequest("Maintenance request and scope of work are required.");const estimate=input.estimatedCostCents==null||input.estimatedCostCents===""?null:Number(input.estimatedCostCents);if(estimate!==null&&(!Number.isSafeInteger(estimate)||estimate<0))return badRequest("Estimated cost must be a nonnegative whole number of cents.");const {data,error}=await authenticated.supabaseClient.rpc("create_rental_maintenance_work_order",{p_owner_id:effectiveOwnerId,p_work_order:{...input,id:id("rental_work_order",input.id),scopeOfWork:input.scopeOfWork.trim(),estimatedCostCents:estimate}});if(error)throw error;return NextResponse.json({success:true,workOrder:data});
-      }
-      case "update-maintenance-work-order": {
-        const input=body.workOrder;if(!input?.id)return badRequest("workOrder id is required.");const cents=value=>value===null||value===undefined?null:Number(value);const {data,error}=await authenticated.supabaseClient.rpc("update_rental_maintenance_work_order",{p_owner_id:effectiveOwnerId,p_work_order_id:input.id,p_status:input.status,p_scheduled_start:input.scheduledStart||null,p_scheduled_end:input.scheduledEnd||null,p_estimated_cost_cents:cents(input.estimatedCostCents),p_actual_cost_cents:cents(input.actualCostCents),p_invoice_reference:input.invoiceReference||null,p_invoice_document_id:input.invoiceDocumentId||null,p_completion_document_id:input.completionDocumentId||null,p_public_note:input.publicNote||null,p_private_note:input.privateNote||null});if(error)throw error;return NextResponse.json({success:true,workOrder:data});
-      }
-      case "save-lease-preparation-version": {
-        const input=body.preparation;if(!input?.leaseId||!input?.title?.trim()||!input?.changeSummary?.trim()||!input.terms||typeof input.terms!=="object"||Array.isArray(input.terms))return badRequest("Lease, title, change summary, and structured terms are required.");
-        const {data,error}=await authenticated.supabaseClient.rpc("save_rental_lease_preparation_version",{p_owner_id:effectiveOwnerId,p_lease_id:input.leaseId,p_title:input.title.trim(),p_terms:input.terms,p_change_summary:input.changeSummary.trim()});if(error)throw error;return NextResponse.json({success:true,preparation:data});
-      }
-      case "approve-lease-preparation-version": {
-        const version=Number(body.versionNumber);if(!body.preparationId||!Number.isInteger(version)||version<1||body.ownerApprovalConfirmed!==true)return badRequest("Preparation, version, and explicit owner approval are required.");
-        const {data,error}=await authenticated.supabaseClient.rpc("approve_rental_lease_preparation_version",{p_owner_id:effectiveOwnerId,p_preparation_id:body.preparationId,p_version_number:version});if(error)throw error;return NextResponse.json({success:true,preparation:data});
-      }
-      default:
-        return badRequest("A supported Rental Manager operation is required.");
-    }
+    // Strict own-key dispatch: only a string operation that is a registered
+    // table key reaches a handler. Inherited/prototype names ("constructor",
+    // "toString", "__proto__", "hasOwnProperty") and non-string operations
+    // fall through to the unknown-operation 400, as the pre-split switch did.
+    const operation = body?.operation;
+    const handler = typeof operation === "string" && Object.hasOwn(OPERATION_HANDLERS, operation)
+      ? OPERATION_HANDLERS[operation]
+      : undefined;
+    if (!handler) return badRequest("A supported Rental Manager operation is required.");
+    return await handler({ authenticated, body, application, user, effectiveOwnerId, timestamp });
   } catch (error) {
     console.error("Rental Manager operation error", error);
     const message = error?.code === "23505"
