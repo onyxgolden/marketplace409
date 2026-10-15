@@ -11,7 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { canonicalBytes } from "./canonical.js";
+import { canonicalBytes, measureDepth } from "./canonical.js";
 
 export function gitBlobSha1(bytes) {
   const header = Buffer.from(`blob ${bytes.length}\0`, "utf8");
@@ -53,6 +53,17 @@ export function resolveRef(ref, store, approvedRepos) {
       ok: false,
       code: "SOURCE_UNVERIFIED",
       reason: `no registered fixture for ${ref.repo} ${ref.path} @ ${ref.commit.slice(0, 12)}`,
+    };
+  }
+  // FM-005: bound traversal depth BEFORE recursive canonicalization.
+  // A pathologically nested fixture would otherwise throw RangeError
+  // (stack exhaustion) instead of producing a named refusal.
+  const depth = measureDepth(found.fixture.content);
+  if (!depth.ok) {
+    return {
+      ok: false,
+      code: "INPUT_TOO_DEEP",
+      reason: `fixture ${found.id} refused before traversal: ${depth.reason}`,
     };
   }
   const bytes = canonicalBytes(found.fixture.content);

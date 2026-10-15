@@ -14,6 +14,34 @@ import { createHash } from "node:crypto";
 const WM = "DRAFT — SYNTHETIC FIXTURE DATA — NOT A FINANCIAL STATEMENT";
 const HEX40 = /^[0-9a-f]{40}$/;
 
+// --- bounded input-depth pre-scan (own copy; FM-005) ---
+// canon() below is recursive, so adversarial nesting depth must be
+// refused by name before any recursive traversal. Iterative: an explicit
+// stack, never the call stack.
+const MAX_DEPTH = 64;
+function measureDepth(value) {
+  let maxDepth = 0, visited = 0;
+  const stack = (value !== null && typeof value === "object")
+    ? [{ node: value, depth: 1, keys: null, index: 0, ancestors: new Set() }]
+    : [];
+  while (stack.length) {
+    const fr = stack[stack.length - 1];
+    if (fr.keys === null) {
+      if (fr.ancestors.has(fr.node)) return { ok: false, reason: "cyclic input structure" };
+      fr.ancestors.add(fr.node);
+      fr.keys = Array.isArray(fr.node) ? fr.node : Object.values(fr.node);
+      if (fr.depth > maxDepth) maxDepth = fr.depth;
+      if (maxDepth > MAX_DEPTH) return { ok: false, reason: "input depth " + maxDepth + " exceeds limit " + MAX_DEPTH };
+    }
+    if (fr.index >= fr.keys.length) { fr.ancestors.delete(fr.node); stack.pop(); continue; }
+    const child = fr.keys[fr.index++];
+    if (++visited > 1000000) return { ok: false, reason: "input exceeds 1000000 visited nodes" };
+    if (child !== null && typeof child === "object")
+      stack.push({ node: child, depth: fr.depth + 1, keys: null, index: 0, ancestors: fr.ancestors });
+  }
+  return { ok: true, maxDepth };
+}
+
 // --- canonical bytes / git blob sha1 (own copy) ---
 function canon(v) {
   if (v === null || v === undefined) return "null";
@@ -243,9 +271,14 @@ function assembleSection(sec, ref, externalContra = []) {
   const sid = sec.section_id;
   const diags = [];
   const flagSet = new Set();
+  // FM-001: lines marked _dedupedTo by bundle dedup are non-counting
+  // duplicates; this section's evidence projection keeps its own labels,
+  // weakest support and flags.
+  const deduped = sec.lines.filter((l) => l._dedupedTo);
+  const own = sec.lines.filter((l) => !l._dedupedTo);
   // dedup
   const groups = new Map();
-  for (const l of sec.lines) {
+  for (const l of own) {
     const k = [sec.population_id, l.line_id, sec.period_start, sec.period_end, sec.currency, String(sec.minor_unit_scale), l.category].join(" ");
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(l);
@@ -274,13 +307,23 @@ function assembleSection(sec, ref, externalContra = []) {
   for (const c of externalContra) {
     contra.push({ line_id: c.line_id, alternatives: c.alternatives });
   }
-  const allLabels = uniqUnion(merged.map((l) => l.source_labels));
-  const allFlags = [...new Set(uniqUnion(merged.map((l) => l.flags)))].sort();
+  // Evidence projection: canonical amount counting (merged) is separate
+  // from per-section evidence. Dedup never upgrades support or clears
+  // flags/labels.
+  const evidenceLines = merged.concat(deduped);
+  const allLabels = uniqUnion(evidenceLines.map((l) => l.source_labels));
+  const allFlags = [...new Set(uniqUnion(evidenceLines.map((l) => l.flags)))].sort();
+  let evidenceRank = 2;
+  for (const l of evidenceLines) evidenceRank = Math.min(evidenceRank, supRank(l.support_strength));
+  const dedupLinks = deduped
+    .map((l) => ({ line_id: l.line_id, counted_in_section: l._dedupedTo }))
+    .sort((a, b) => (a.line_id < b.line_id ? -1 : 1));
   const blockedOut = (code, sev, reason, excs, extraFlags) => ({
     section_id: sid, complete: false, amounts: null, variances: null,
     claimed_vs_recomputed: [], source_labels: allLabels, support_strength: "unverifiable",
     flags: [...new Set([...allFlags, ...(extraFlags || [])])].sort(), narrative_results: [],
     diagnostics: sortD(diags.concat([D(code, sev, reason, ref, sid)])),
+    ...(dedupLinks.length > 0 ? { dedup_links: dedupLinks } : {}),
     _exc: excs || [], _lr: [],
   });
   if (contra.length) {
@@ -295,7 +338,7 @@ function assembleSection(sec, ref, externalContra = []) {
   if (sums.length && detail.length && sec.disjoint_proof !== true) {
     return blockedOut("UNVERIFIABLE_POPULATION", "error", "summary rows overlap detail populations without disjoint-population proof");
   }
-  const unlabeled = merged.filter((l) => l.source_labels.length === 0).map((l) => l.line_id);
+  const unlabeled = evidenceLines.filter((l) => l.source_labels.length === 0).map((l) => l.line_id);
   if (unlabeled.length) {
     return blockedOut("MISSING_LABELS", "error", "lines missing source labels: " + unlabeled.join(","));
   }
@@ -337,6 +380,22 @@ function assembleSection(sec, ref, externalContra = []) {
     };
   }
   const lineMap = new Map(lr.map((x) => [x.line_id, x]));
+  // FM-001: claims may reference lines deduplicated elsewhere; their
+  // arithmetic verifies against this section's own carried copy.
+  for (const l of deduped) {
+    if (lineMap.has(l.line_id)) continue;
+    const b = toRat(l.budget_minor), a = toRat(l.actual_minor), v = rSub(a, b);
+    lineMap.set(l.line_id, {
+      line_id: l.line_id, category: l.category,
+      budget_minor: rRound(b[0], b[1]).toString(),
+      actual_minor: rRound(a[0], a[1]).toString(),
+      variance_minor: rRound(v[0], v[1]).toString(),
+      variance_exact: v[0] + "/" + v[1],
+      favorability: favOf(l.category, rSign(v)), pct_variance: pctStr(v, b),
+      source_labels: l.source_labels.slice(), support_strength: supName(supRank(l.support_strength)),
+      flags: l.flags.slice(), _b: b, _a: a, _v: v,
+    });
+  }
   // claimed totals
   const claimedVs = [];
   for (const ct of sec.claimed_totals) {
@@ -360,7 +419,7 @@ function assembleSection(sec, ref, externalContra = []) {
   // narrative
   const narr = [];
   let worst = 2;
-  for (const l of merged) worst = Math.min(worst, supRank(l.support_strength));
+  for (const l of evidenceLines) worst = Math.min(worst, supRank(l.support_strength));
   for (const c of sec.narrative_claims) {
     const miss = c.line_ids.filter((id) => !lineMap.has(id));
     if (miss.length) {
@@ -399,7 +458,7 @@ function assembleSection(sec, ref, externalContra = []) {
       if (state === "unverifiable") diags.push(D("UNSUPPORTED_CAUSE", "warning", "narrative claim " + c.claim_id + " attributes cause without verified fixture basis", ref, c.claim_id));
     }
   }
-  for (const l of merged) for (const f of l.flags) flagSet.add(f);
+  for (const l of evidenceLines) for (const f of l.flags) flagSet.add(f);
   const pub = (x) => { const { _b, _a, _v, ...rest } = x; return rest; };
   return {
     section_id: sid, complete: true,
@@ -430,6 +489,7 @@ function assembleSection(sec, ref, externalContra = []) {
     flags: [...flagSet].sort(),
     narrative_results: narr,
     diagnostics: sortD(diags),
+    ...(dedupLinks.length > 0 ? { dedup_links: dedupLinks } : {}),
     _exc: [], _lr: lr,
   };
 }
@@ -440,6 +500,8 @@ export function oracleRun(task, context) {
   const errs = checkTask(task);
   if (errs.length) return deny(task && isObj(task) ? task.task_id : null, "INVALID_INPUT", "error", errs.join("; "));
   const tid = task.task_id;
+  const td = measureDepth(task);
+  if (!td.ok) return deny(tid, "INPUT_TOO_DEEP", "error", "task envelope refused before traversal: " + td.reason);
   const taskBytes = Buffer.byteLength(JSON.stringify(task), "utf8");
   if (taskBytes > 262144)
     return deny(tid, "INPUT_LIMIT", "error", "input " + taskBytes + " bytes exceeds 262144");
@@ -461,6 +523,9 @@ export function oracleRun(task, context) {
       if (sr && sr.repo === ref.repo && sr.path === ref.path && sr.commit === ref.commit) { hit = { id, f: store[id] }; break; }
     }
     if (!hit) return deny(tid, "SOURCE_UNVERIFIED", "error", "no registered fixture for " + ref.repo + " " + ref.path + " @ " + ref.commit.slice(0, 12), task.bundle_refs);
+    // FM-005: bound depth before recursive canonicalization.
+    const dd = measureDepth(hit.f.content);
+    if (!dd.ok) return deny(tid, "INPUT_TOO_DEEP", "error", "fixture " + hit.id + " refused before traversal: " + dd.reason, task.bundle_refs);
     if (gitSha1OfContent(hit.f.content) !== ref.blob)
       return deny(tid, "HASH_MISMATCH", "error", "blob pin mismatch for fixture " + hit.id, task.bundle_refs);
     resolved.push({ ref, content: hit.f.content, id: hit.id });
@@ -482,8 +547,13 @@ export function oracleRun(task, context) {
   if (!secs.length) return deny(tid, "INVALID_INPUT", "error", "no sections resolved from bundle_refs", task.bundle_refs);
   // FM-005: charge the exact registered fixture bytes actually consulted
   // (canonical pinned bytes) together with the task envelope, before walking.
+  // Depth already bounded at resolution; re-check defensively.
   let fixBytes = 0;
-  for (const r of resolved) fixBytes += Buffer.from(canon(r.content), "utf8").length;
+  for (const r of resolved) {
+    const dd2 = measureDepth(r.content);
+    if (!dd2.ok) return deny(tid, "INPUT_TOO_DEEP", "error", "fixture " + r.id + " refused before traversal: " + dd2.reason, task.bundle_refs);
+    fixBytes += Buffer.from(canon(r.content), "utf8").length;
+  }
   if (taskBytes + fixBytes > 262144)
     return deny(tid, "INPUT_LIMIT", "error", "input " + (taskBytes + fixBytes) + " bytes (task " + taskBytes + " + resolved fixtures " + fixBytes + ") exceeds 262144", task.bundle_refs);
   // FM-001: bundle-wide dedup on working copies before totals/budgets/scans.
@@ -530,15 +600,18 @@ export function oracleRun(task, context) {
       let r = 2;
       for (const c of copies) r = Math.min(r, supRank(c.line.support_strength));
       first.line.support_strength = r === 2 ? "verified" : r === 1 ? "attributed" : null;
+      // FM-001: mark later copies as non-counting duplicates; they stay in
+      // their section so its evidence projection is preserved.
+      const canonicalSid = working[copies[0].si].sec.section_id;
       for (let n = 1; n < copies.length; n++) {
-        const arr = working[copies[n].si].sec.lines;
-        const at = arr.indexOf(copies[n].line);
-        if (at >= 0) arr.splice(at, 1);
+        copies[n].line._dedupedTo = canonicalSid;
       }
     }
   }
+  // FM-005: operation budgets charge the RESOLVED pre-dedup content.
+  // Dedup reduces money totals; it never refunds reads already performed.
   let res = task.bundle_refs.length, spans = 0;
-  for (const { sec } of working) {
+  for (const { sec } of secs) {
     res += sec.lines.length + sec.narrative_claims.length + sec.claimed_totals.length;
     for (const l of sec.lines) spans += l.source_labels.length;
     spans += sec.narrative_claims.length;

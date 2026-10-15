@@ -100,6 +100,18 @@ absent or does not match the pinned corpus. The root is never carried in the
 candidate tree (`package.json` carries no root); the authoritative value lives
 outside this package (recorded in forge-ai-drop with the review).
 
+**Trust boundary.** The authenticated entrypoint is
+`node tests/run-tests.js` invoked directly with `FM_APPROVED_ROOT` set.
+`tests/run-tests.js` imports node builtins only and authenticates every
+pinned file — including `package.json` and every executable entrypoint —
+against the host-supplied root *before* any scored helper is imported, so a
+tampered helper can never execute pre-verification. `npm test` merely
+delegates to that file; npm itself authenticates nothing, so
+candidate-controlled npm metadata (`package.json` scripts) is **not** a
+trust entrypoint. A host that delegates to npm MUST authenticate the
+candidate package bytes first (e.g. by running the launcher above, whose
+digest covers `package.json`).
+
 Zero runtime dependencies, zero model calls, pure Node 24 ESM.
 
 ## Limitations (non-goals)
