@@ -86,10 +86,13 @@ test("limits: >512 evidence spans -> BUDGET_EXCEEDED", () => {
   assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
 });
 
-test("limits: >256 output records -> OUTPUT_LIMIT", () => {
+test("limits: 300 sections -> BUDGET_EXCEEDED (consultation budget fires before output budget)", () => {
   const store = loadStore();
-  // 300 empty sections: 1 ref + 0 lines => within input budgets,
-  // but 1 + 300 output records exceeds the output cap.
+  // FM-005 round 3: section metadata objects count toward the 64-object
+  // consultation budget, charged before validation. 1 ref + 300 sections =
+  // 301 consultations, so the consultation budget fires first; the output
+  // cap remains as defense-in-depth (unreachable while consultations <= 64,
+  // since output records are ~1:1 with consulted objects).
   const sections = Array.from({ length: 300 }, (_, i) =>
     sec("s" + i, [], "2026-01-01", "2026-01-31")
   );
@@ -100,7 +103,8 @@ test("limits: >256 output records -> OUTPUT_LIMIT", () => {
     ctx
   );
   assert.equal(r.status, "REFUSED");
-  assert.equal(r.diagnostics[0].code, "OUTPUT_LIMIT");
+  assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
+  assert.deepStrictEqual(r.sections, []);
 });
 
 test("limits: single case completes well under the 5s watchdog", () => {

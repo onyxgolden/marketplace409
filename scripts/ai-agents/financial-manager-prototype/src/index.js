@@ -816,8 +816,17 @@ export function run(task, context) {
     );
   }
 
-  // 6. gather + validate sections (malformed tables deny the whole task)
+  // 5c. FM-005 (round 3): SINGLE consultation budget, charged BEFORE
+  // section validation traverses anything. Every consulted object counts:
+  // 1 per bundle ref, 1 per section metadata object, 1 per line,
+  // 1 per narrative claim, 1 per claimed total, 1 per nested basis record.
+  // Only shallow array-length reads happen here — no element inspection —
+  // so no deep traversal occurs before the budget is enforced.
+  // Deduplication (6c) merges money totals later; it never refunds the
+  // cost of reads already performed.
   const sections = [];
+  let consultations = task.bundle_refs.length;
+  let spans = 0;
   for (const r of resolved) {
     const content = r.fixture.content;
     if (!content || !Array.isArray(content.sections)) {
@@ -825,18 +834,57 @@ export function run(task, context) {
         sourceRefs: task.bundle_refs,
       });
     }
+    for (const s of content.sections) {
+      if (s === null || typeof s !== "object" || Array.isArray(s)) {
+        return refused(taskId, "INVALID_INPUT", "error", `fixture ${r.fixtureId}: section must be an object`, {
+          sourceRefs: task.bundle_refs,
+        });
+      }
+      consultations += 1; // the section metadata object itself
+      const lines = Array.isArray(s.lines) ? s.lines : null;
+      const claims = Array.isArray(s.narrative_claims) ? s.narrative_claims : null;
+      const totals = Array.isArray(s.claimed_totals) ? s.claimed_totals : null;
+      if (!lines || !claims || !totals) {
+        return refused(taskId, "INVALID_INPUT", "error",
+          `fixture ${r.fixtureId} section ${JSON.stringify(s.section_id)}: lines, claimed_totals and narrative_claims must be arrays`, {
+          sourceRefs: task.bundle_refs,
+        });
+      }
+      consultations += lines.length + claims.length + totals.length;
+      for (const l of lines) {
+        if (l !== null && typeof l === "object" && !Array.isArray(l) && Array.isArray(l.source_labels)) {
+          spans += l.source_labels.length;
+        }
+      }
+      spans += claims.length; // one quoted span per narrative claim
+      for (const c of claims) {
+        if (c !== null && typeof c === "object" && !Array.isArray(c) && Array.isArray(c.basis_refs)) {
+          consultations += c.basis_refs.length;
+        }
+      }
+      sections.push({ sec: s, sourceRef: r.sourceRef });
+    }
+  }
+  if (consultations > MAX_RESOLUTIONS || spans > MAX_SPANS) {
+    return refused(taskId, "BUDGET_EXCEEDED", "error",
+      `consultation budget exceeded: ${consultations} consulted objects / ${spans} evidence spans (caps ${MAX_RESOLUTIONS} / ${MAX_SPANS})`, {
+      sourceRefs: task.bundle_refs,
+    });
+  }
+
+  // 6. validate sections (malformed tables deny the whole task).
+  //    Array shapes were confirmed in 5c; this is deep field validation,
+  //    and it runs only after the consultation budget has been charged.
+  {
     const sectionErrors = [];
-    content.sections.forEach((s, i) => {
-      validateSection(s, `sections[${i}]`, sectionErrors);
+    sections.forEach(({ sec }, i) => {
+      validateSection(sec, `sections[${i}]`, sectionErrors);
     });
     if (sectionErrors.length > 0) {
       return refused(taskId, "INVALID_INPUT", "error", sectionErrors.join("; "), {
         sourceRefs: task.bundle_refs,
       });
     }
-    content.sections.forEach((s) => {
-      sections.push({ sec: s, sourceRef: r.sourceRef });
-    });
   }
 
   const seenSections = new Set();
@@ -854,24 +902,8 @@ export function run(task, context) {
     });
   }
 
-  // 6b. FM-005: operation budgets are charged on the RESOLVED pre-dedup
-  // content, BEFORE any inspection or processing. Every consulted source
-  // object and span counts — including duplicates that bundleDedup later
-  // merges for money totals, and metadata (claims, claimed totals).
-  // Deduplication reduces money totals; it never refunds the cost of
-  // reads already performed.
-  let resolutions = task.bundle_refs.length;
-  let spans = 0;
-  for (const { sec } of sections) {
-    resolutions += sec.lines.length + sec.narrative_claims.length + sec.claimed_totals.length;
-    for (const l of sec.lines) spans += l.source_labels.length;
-    spans += sec.narrative_claims.length; // one quoted span per claim
-  }
-  if (resolutions > MAX_RESOLUTIONS || spans > MAX_SPANS) {
-    return refused(taskId, "BUDGET_EXCEEDED", "error", `budget exceeded: ${resolutions} resolutions / ${spans} spans`, {
-      sourceRefs: task.bundle_refs,
-    });
-  }
+  // 6b. (retired in round 3: the consultation budget now lives in 5c,
+  // charged before validation; this stub is intentionally empty.)
 
   // 6c. FM-001: bundle-wide dedup BEFORE any section/rollup totals or
   // scans. Work on copies so the shared fixture store is never mutated.
