@@ -280,11 +280,13 @@ describe("TB-004: handoff replay compares the complete step identity", () => {
       expect(h.queue.commit).toBe("def456"); // stored queue unchanged
       expect(h.queue.blob).toBe("blob456");
       expect(await handoffs.getEvents("h-1")).toHaveLength(eventsBefore.length);
-      // Exact replay with the identical binding and actor is idempotent.
+      // Exact replay with the identical binding, actor, time, and reason is idempotent.
+      // (Recorded time/reason are part of the step identity per the corrected
+      // contract: a retry marker reason is a different step, not an exact replay.)
       const replayed = await handoffs.updateQueue("h-1", {
         actor: "Muse",
         recordedAt: T3,
-        reason: "q-retry",
+        reason: "q",
         queue: queueRef(),
       });
       expect(replayed.state).toBe("QUEUE_UPDATED");
@@ -343,10 +345,11 @@ describe("TB-004: handoff replay compares the complete step identity", () => {
     const second = await freshBackend(dir);
     try {
       const eventsBefore = await second.handoffs.getEvents("h-1");
+      // Exact replay (identical actor, time, reason, bindings) after restart.
       const replayed = await second.handoffs.updateQueue("h-1", {
         actor: "Muse",
         recordedAt: T3,
-        reason: "q-retry",
+        reason: "q",
         queue: queueRef(),
       });
       expect(replayed.state).toBe("COMPLETE");

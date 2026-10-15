@@ -89,7 +89,10 @@ async function main() {
   mkdirSync(args.db, { recursive: true });
   const db = new PGlite(args.db);
   try {
-    const repo = createRepository(db);
+    // The fixture's trusted Jason authorization records are injected at
+    // repository creation so overrides are authenticated at the write
+    // boundary, in the same transaction as the filing.
+    const repo = createRepository(db, { trustedAuthorizations: fixture.trustedAuthorizations || [] });
     await repo.migrate();
     const handoffs = createHandoffMachine(db);
     const report = await buildFixtureReport({

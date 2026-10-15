@@ -21,9 +21,13 @@ columns:
 - actor: text nullable=NO default=none
 - recorded_at: text nullable=NO default=none
 - reason: text nullable=NO default=none
+- artifact_repo: text nullable=YES default=none
+- artifact_path: text nullable=YES default=none
 - artifact_commit: text nullable=YES default=none
 - artifact_blob: text nullable=YES default=none
 - artifact_head: text nullable=YES default=none
+- queue_repo: text nullable=YES default=none
+- queue_path: text nullable=YES default=none
 - queue_commit: text nullable=YES default=none
 - queue_blob: text nullable=YES default=none
 constraints:

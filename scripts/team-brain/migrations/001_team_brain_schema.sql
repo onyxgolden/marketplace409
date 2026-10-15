@@ -112,9 +112,17 @@ create table if not exists team_brain_handoff_events (
   actor text not null,
   recorded_at text not null check (team_brain_is_valid_utc_iso(recorded_at)),
   reason text not null,
+  -- Complete per-step identity: a replay must match every recorded field,
+  -- never hashes alone. repo/path are stored alongside the content pointers
+  -- so a retry that swaps repository or path is a conflicting replay, and
+  -- recorded actor/time/reason are part of the identity too.
+  artifact_repo text,
+  artifact_path text,
   artifact_commit text,
   artifact_blob text,
   artifact_head text,
+  queue_repo text,
+  queue_path text,
   queue_commit text,
   queue_blob text
 );

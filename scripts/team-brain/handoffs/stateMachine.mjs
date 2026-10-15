@@ -80,8 +80,9 @@ export function createHandoffMachine(db) {
     await runner.query(
       `insert into team_brain_handoff_events
          (handoff_id, from_state, to_state, actor, recorded_at, reason,
-          artifact_commit, artifact_blob, artifact_head, queue_commit, queue_blob)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          artifact_repo, artifact_path, artifact_commit, artifact_blob, artifact_head,
+          queue_repo, queue_path, queue_commit, queue_blob)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         id,
         from,
@@ -89,50 +90,91 @@ export function createHandoffMachine(db) {
         actor,
         recordedAt,
         reason,
+        artifact ? artifact.repo : null,
+        artifact ? artifact.path : null,
         artifact ? artifact.commit : null,
         artifact ? artifact.blob : null,
         artifact ? artifact.head : null,
+        queue ? queue.repo : null,
+        queue ? queue.path : null,
         queue ? queue.commit : null,
         queue ? queue.blob : null,
       ],
     );
   }
 
+  // Field-by-field comparison of a recorded binding against a requested one.
+  // Both null is a match; a null on one side only is a mismatch. Every
+  // pointer field participates: repository and path are identity, never
+  // decoration — comparing hashes alone would accept a retry that swaps the
+  // repository or path while reusing the same content hashes.
+  function bindingsMatch(recorded, requested, fields) {
+    if (recorded == null && requested == null) return true;
+    if (recorded == null || requested == null) return false;
+    return fields.every((f) => recorded[f] === requested[f]);
+  }
+
   // Does a committed step event exactly match the requested step identity?
-  // A step's identity is its target state plus the complete transition
-  // bindings (artifact and queue, where supplied) and the recorded
-  // attribution. Anything less is not an exact replay.
-  function stepEventMatches(ev, { actor, artifact, queue }) {
+  // A step's identity is its target state plus the COMPLETE transition
+  // identity: recorded actor, recorded time, recorded reason, and the full
+  // artifact binding (repo/path/commit/blob/head) and queue binding
+  // (repo/path/commit/blob) where the step carries them. Anything less is
+  // not an exact replay.
+  function stepEventMatches(ev, { actor, recordedAt, reason, artifact, queue }) {
     if (ev.actor !== actor) return false;
-    if (artifact) {
-      if (
-        ev.artifact_commit !== artifact.commit ||
-        ev.artifact_blob !== artifact.blob ||
-        ev.artifact_head !== artifact.head
-      ) {
-        return false;
-      }
+    if (ev.recorded_at !== recordedAt) return false;
+    if (ev.reason !== reason) return false;
+    if (
+      !bindingsMatch(
+        ev.artifact_repo == null
+          ? null
+          : {
+              repo: ev.artifact_repo,
+              path: ev.artifact_path,
+              commit: ev.artifact_commit,
+              blob: ev.artifact_blob,
+              head: ev.artifact_head,
+            },
+        artifact,
+        ["repo", "path", "commit", "blob", "head"],
+      )
+    ) {
+      return false;
     }
-    if (queue) {
-      if (ev.queue_commit !== queue.commit || ev.queue_blob !== queue.blob) {
-        return false;
-      }
+    if (
+      !bindingsMatch(
+        ev.queue_repo == null
+          ? null
+          : {
+              repo: ev.queue_repo,
+              path: ev.queue_path,
+              commit: ev.queue_commit,
+              blob: ev.queue_blob,
+            },
+        queue,
+        ["repo", "path", "commit", "blob"],
+      )
+    ) {
+      return false;
     }
     return true;
   }
 
   // Core guarded transition. `apply` mutates the row columns for the step.
   //
-  // Idempotent replay: if the requested step (target state + bindings +
-  // attribution) exactly matches a committed step event, the current state is
+  // Idempotent replay: if the requested step (target state + complete step
+  // identity: actor, recorded time, reason, full artifact and queue
+  // bindings) exactly matches a committed step event, the current state is
   // returned without appending a second event — even when later transitions
   // have since advanced the handoff. A retry after subsequent committed
   // progress is recognized from history, never mistaken for a new transition.
   //
-  // Conflicting replay: if the step was committed with different bindings or
-  // attribution, the replay is rejected. The queue binding is compared as
-  // well as the artifact binding, so a queue update that claims a new
-  // tracker commit cannot masquerade as idempotent.
+  // Conflicting replay: if the step was committed with a different identity
+  // in ANY field — a swapped repository or path with reused hashes, a new
+  // recorded time or reason, a different actor — the replay is rejected
+  // atomically: no state change, no event appended. The queue binding is
+  // compared as well as the artifact binding, so a queue update that claims
+  // a new tracker commit cannot masquerade as idempotent.
   async function transition(id, to, { actor, recordedAt, reason, artifact, queue, apply }) {
     assertNonEmptyString(actor, "actor");
     assertUtcIso(recordedAt, "recordedAt");
@@ -140,6 +182,16 @@ export function createHandoffMachine(db) {
     return tx(async (t) => {
       const handoff = await requireHandoff(t, id);
       const from = handoff.state;
+      // The step identity mirrors exactly what recordEvent persists below:
+      // steps that carry no binding in the request inherit the handoff's
+      // current binding (which is what gets recorded).
+      const stepIdentity = {
+        actor,
+        recordedAt,
+        reason,
+        artifact: artifact || handoff.artifact || null,
+        queue: queue || null,
+      };
       const stepEvents = await t.query(
         "select * from team_brain_handoff_events where handoff_id = $1 and to_state = $2 order by seq asc",
         [id, to],
@@ -147,7 +199,7 @@ export function createHandoffMachine(db) {
       let exactReplay = false;
       let conflictingReplay = false;
       for (const ev of stepEvents.rows) {
-        if (stepEventMatches(ev, { actor, artifact, queue })) {
+        if (stepEventMatches(ev, stepIdentity)) {
           exactReplay = true;
           break;
         }

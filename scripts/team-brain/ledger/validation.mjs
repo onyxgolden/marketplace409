@@ -115,9 +115,10 @@ export function assertUniqueStringArray(value, fieldName) {
 // required attribution fields, a non-empty authorityRef, no free-text
 // authority (caller self-attestation is rejected here, never honored), and a
 // well-formed rank. Trust resolution (is the authorityRef a real, Jason,
-// item-bound, unrevoked grant?) happens in the queue projection against
-// host-injected trusted records, and at the ledger write boundary the shape
-// alone is enforced so malformed overrides can never be persisted.
+// item-bound, unrevoked grant of the right rank?) runs against
+// host-injected trusted records both at the ledger write boundary
+// (repository fileObligationRow, before anything persists) and in the queue
+// projection (revalidation for grants that change after filing).
 export function assertOverrideStructure(override, id) {
   if (override == null) return null;
   if (typeof override !== "object" || Array.isArray(override)) {

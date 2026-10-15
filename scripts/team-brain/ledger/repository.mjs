@@ -19,13 +19,13 @@ import { fileURLToPath } from "node:url";
 import { CODES, fail, TeamBrainError } from "./errors.mjs";
 import {
   assertNonEmptyString,
-  assertOverrideStructure,
   assertSourceBinding,
   assertStringArray,
   assertUniqueStringArray,
   assertUtcIso,
   utcIsoToMs,
 } from "./validation.mjs";
+import { validateOverride } from "../queue/projection.mjs";
 
 const KINDS = ["TASK", "AUTHORIZATION", "VERDICT", "EVIDENCE"];
 const TERMINAL_STATES = ["CLOSED", "REVOKED", "SUPERSEDED"];
@@ -61,7 +61,15 @@ function rowToObligation(row, dependencies) {
   };
 }
 
-export function createRepository(db) {
+export function createRepository(db, { trustedAuthorizations = [] } = {}) {
+  // The host-injected trusted Jason authorization records. Overrides are
+  // authenticated against these records at the write boundary (in
+  // fileObligationRow, inside the same transaction as the insert) AND in the
+  // queue projection — trust is never derived from an obligation's own
+  // strings. An override whose authorityRef is unknown, non-Jason,
+  // wrong-item, revoked, or rank-mismatched is refused before anything is
+  // persisted, so it can never poison later queue reads.
+  const trusted = trustedAuthorizations;
   async function tx(work) {
     if (typeof db.transaction === "function") {
       return db.transaction(async (t) => work(t));
@@ -190,12 +198,16 @@ export function createRepository(db) {
         fail(CODES.UNKNOWN_OBLIGATION, `Supersession target does not exist: ${supersedes}`, { id: supersedes });
       }
     }
-    // Write-boundary override validation: malformed overrides (including
-    // free-text self-attested authority) are rejected here so they can never
-    // be persisted to poison later queue reads. Trust resolution against
-    // Jason authorization records happens in the queue projection.
+    // Write-boundary override authentication: the override's authorityRef is
+    // resolved against the host-injected trusted Jason authorization records
+    // BEFORE anything is persisted, in the same transaction as the insert.
+    // Unknown refs, non-Jason granters, wrong-item bindings, revoked grants,
+    // and rank mismatches are refused here with no record and no event, so a
+    // bad override can never be filed and then poison every queue read with
+    // UNKNOWN_AUTHORITY. Projection keeps its own revalidation for grants
+    // that change after filing.
     if (priorityOverride !== null) {
-      assertOverrideStructure(priorityOverride, id);
+      validateOverride(id, priorityOverride, { trustedAuthorizations: trusted });
     }
     try {
       await runner.query(
