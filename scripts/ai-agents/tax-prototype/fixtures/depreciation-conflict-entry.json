@@ -1,0 +1,76 @@
+{
+  "topic_id": "depreciation-concept",
+  "topic_label": "Depreciation Concept Vocabulary",
+  "entry_version": "v1",
+  "jurisdiction": "US-FEDERAL",
+  "steward_id": "steward-tax-edu",
+  "registration_ref": "reg-tax-dep-conflict-001",
+  "review_record_ref": "review-dep-001",
+  "registry_ref": {
+    "repo": "edu-sources",
+    "path": "registry/depreciation-concept-conflict-entry.md",
+    "commit": "db7c35ca8eeec0518fd9d764dfb96295368dd1a8",
+    "blob": "30b16166ccd6f5fea0554385b9de33a8373004b8",
+    "algorithm": "git-sha1",
+    "revision": "rev-1"
+  },
+  "current": {
+    "tax_year_from": 2024,
+    "tax_year_to": 2026,
+    "effective_from": "2024-01-01T00:00:00Z",
+    "reviewed_through": "2026-12-31T23:59:59Z",
+    "claims": [
+      {
+        "claim_id": "claim-dep-conflict-a",
+        "concept_key": "placed-in-service-definition",
+        "template_id": "general-educational",
+        "text": "Placed-in-service date is defined as the date an asset is first available for its intended conceptual use.",
+        "source_ref": {
+          "repo": "edu-sources",
+          "path": "depreciation/concept-conflict-a.md",
+          "commit": "92fb9a78b8ccad6962f8b4d21a39e25fcb2e810d",
+          "blob": "1aa95080a835684e1c55207c93f3ab6165202056",
+          "algorithm": "git-sha1",
+          "revision": "rev-1"
+        }
+      },
+      {
+        "claim_id": "claim-dep-conflict-b",
+        "concept_key": "placed-in-service-definition",
+        "template_id": "general-educational",
+        "text": "Placed-in-service date is defined as the date an asset is formally purchased, regardless of its availability for use.",
+        "source_ref": {
+          "repo": "edu-sources",
+          "path": "depreciation/concept-conflict-b.md",
+          "commit": "925d93c080742b56dd8648734e821496889ed4c1",
+          "blob": "2a3fbdbb42be82aed6f75914932151c52efd4ab3",
+          "algorithm": "git-sha1",
+          "revision": "rev-1"
+        }
+      }
+    ]
+  },
+  "historical": {
+    "tax_year_from": 2020,
+    "tax_year_to": 2023,
+    "effective_from": "2020-01-01T00:00:00Z",
+    "reviewed_through": "2023-12-31T23:59:59Z",
+    "claims": [
+      {
+        "claim_id": "claim-dep-hist-1",
+        "concept_key": "depreciation-vocabulary",
+        "template_id": "general-educational",
+        "text": "In the historical reference period, depreciation vocabulary included basis, useful life, method, and convention, describing conceptual cost allocation over time.",
+        "source_ref": {
+          "repo": "edu-sources",
+          "path": "depreciation/concept-historical.md",
+          "commit": "87c7e2273ea605f24c98deee67e7dd45046c1b41",
+          "blob": "242cf5e117adf63aa2f36815a0055bbf502797e3",
+          "algorithm": "git-sha1",
+          "revision": "rev-1"
+        }
+      }
+    ]
+  },
+  "entry_digest": "a18533be7726c0cd82d1dad64d32fa115aa8416e8709d049d551db1ae10dff3d"
+}

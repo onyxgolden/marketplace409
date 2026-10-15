@@ -1,0 +1,13 @@
+{
+  "description": "Tax Agent Phase 2 slice 1 synthetic prototype: deterministic educational-topic classifier and cited draft assembler over a fixture-only registered-topic registry. Advisory only; no live tax data, no calculations, no publication, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "tax-prototype",
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
