@@ -38,12 +38,12 @@ function taskFor(setName, declared_total) {
   };
 }
 
-test("exact boundary: 61 documents sharing one content blob (2 fixed + 61 docs + 1 shared content = 64) succeed fully", () => {
+test("exact boundary: 56 documents sharing one content blob (6 fixed + 56 docs + 1 shared content grant+resolution = 64) succeed fully", () => {
   const context = buildContext(ROOT, { clock: "2026-07-01T00:00:00Z" });
-  const result = run(taskFor("sixty-one-documents-shared-content", 61), context);
+  const result = run(taskFor("sixty-one-documents-shared-content", 56), context);
   assert.equal(result.status, "REPORT_READY");
   assert.equal(result.diagnostics.length, 0);
-  assert.equal(result.report.coverage.admitted_count, 61);
+  assert.equal(result.report.coverage.admitted_count, 56);
 });
 
 test("budget sentinel: 65 documents, the last 3 structurally poisoned, refuses BUDGET_EXCEEDED — proving the poisoned entries were never inspected", () => {
@@ -66,12 +66,12 @@ test("65 documents (no sharing) refuses during the document-record charging phas
   assert.match(result.diagnostics[0].reason, /remaining documents/);
 });
 
-test("62 documents (distinct content) refuses during the content-resolution phase, after all 62 document records were themselves charged successfully", () => {
+test("58 documents (distinct content) refuses during the content-resolution phase, after all 58 document records were themselves charged successfully", () => {
   const context = buildContext(ROOT, { clock: "2026-07-01T00:00:00Z" });
-  const result = run(taskFor("sixty-two-documents", 62), context);
+  const result = run(taskFor("sixty-two-documents", 58), context);
   assert.equal(result.status, "REFUSED");
   assert.equal(result.diagnostics[0].code, "BUDGET_EXCEEDED");
-  assert.match(result.diagnostics[0].reason, /content for/);
+  assert.match(result.diagnostics[0].reason, /content read grant/);
 });
 
 test("65 assertions on one document refuses BUDGET_EXCEEDED before inspecting the remaining assertions", () => {

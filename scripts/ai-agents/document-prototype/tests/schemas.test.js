@@ -10,6 +10,7 @@ import {
   validateTask,
   validateContext,
 } from "../src/schemas.js";
+import { makeBudget } from "../src/resolver.js";
 
 const REF = { repo: "edu-sources", path: "content/x.txt", commit: "a".repeat(40), blob: "b".repeat(40), algorithm: "git-sha1", revision: "v1" };
 
@@ -43,44 +44,44 @@ function baseDoc(overrides = {}) {
 }
 
 test("validateDocument accepts a well-formed record", () => {
-  const d = validateDocument(baseDoc(), "x");
+  const d = validateDocument(baseDoc(), "x", makeBudget());
   assert.equal(d.doc_id, "d-1");
 });
 
 test("validateDocument rejects unknown property, bad revision, dup section id, dup marker key", () => {
-  assert.throws(() => validateDocument({ ...baseDoc(), extra: 1 }, "x"), SchemaError);
-  assert.throws(() => validateDocument(baseDoc({ revision: 0 }), "x"), SchemaError);
-  assert.throws(() => validateDocument(baseDoc({ revision: 1.5 }), "x"), SchemaError);
+  assert.throws(() => validateDocument({ ...baseDoc(), extra: 1 }, "x", makeBudget()), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ revision: 0 }), "x", makeBudget()), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ revision: 1.5 }), "x", makeBudget()), SchemaError);
   assert.throws(
-    () => validateDocument(baseDoc({ sections: [{ section_id: "s", start_byte: 0, end_byte: 1 }, { section_id: "s", start_byte: 2, end_byte: 3 }] }), "x"),
+    () => validateDocument(baseDoc({ sections: [{ section_id: "s", start_byte: 0, end_byte: 1 }, { section_id: "s", start_byte: 2, end_byte: 3 }] }), "x", makeBudget()),
     SchemaError
   );
   assert.throws(
-    () => validateDocument(baseDoc({ markers: [{ key: "author", start_byte: 0, end_byte: 1 }, { key: "author", start_byte: 2, end_byte: 3 }] }), "x"),
+    () => validateDocument(baseDoc({ markers: [{ key: "author", start_byte: 0, end_byte: 1 }, { key: "author", start_byte: 2, end_byte: 3 }] }), "x", makeBudget()),
     SchemaError
   );
 });
 
 test("validateDocument rejects section/marker spans where end <= start", () => {
-  assert.throws(() => validateDocument(baseDoc({ sections: [{ section_id: "s", start_byte: 5, end_byte: 5 }] }), "x"), SchemaError);
-  assert.throws(() => validateDocument(baseDoc({ markers: [{ key: "id", start_byte: 5, end_byte: 3 }] }), "x"), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ sections: [{ section_id: "s", start_byte: 5, end_byte: 5 }] }), "x", makeBudget()), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ markers: [{ key: "id", start_byte: 5, end_byte: 3 }] }), "x", makeBudget()), SchemaError);
 });
 
 test("validateDocument reference rules: INTERNAL requires target_doc_id and forbids external_pointer; EXTERNAL requires external_pointer and forbids target fields", () => {
   const internalOk = { ref_id: "r1", kind: "CITATION", target_kind: "INTERNAL", target_doc_id: "d-2", target_section_id: null, external_pointer: null };
-  assert.doesNotThrow(() => validateDocument(baseDoc({ references: [internalOk] }), "x"));
+  assert.doesNotThrow(() => validateDocument(baseDoc({ references: [internalOk] }), "x", makeBudget()));
   const internalMissingTarget = { ref_id: "r1", kind: "CITATION", target_kind: "INTERNAL", target_doc_id: null, target_section_id: null, external_pointer: null };
-  assert.throws(() => validateDocument(baseDoc({ references: [internalMissingTarget] }), "x"), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ references: [internalMissingTarget] }), "x", makeBudget()), SchemaError);
   const internalWithPointer = { ref_id: "r1", kind: "CITATION", target_kind: "INTERNAL", target_doc_id: "d-2", target_section_id: null, external_pointer: "https://x" };
-  assert.throws(() => validateDocument(baseDoc({ references: [internalWithPointer] }), "x"), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ references: [internalWithPointer] }), "x", makeBudget()), SchemaError);
   const externalOk = { ref_id: "r1", kind: "CITATION", target_kind: "EXTERNAL", target_doc_id: null, target_section_id: null, external_pointer: "https://x" };
-  assert.doesNotThrow(() => validateDocument(baseDoc({ references: [externalOk] }), "x"));
+  assert.doesNotThrow(() => validateDocument(baseDoc({ references: [externalOk] }), "x", makeBudget()));
   const externalMissingPointer = { ref_id: "r1", kind: "CITATION", target_kind: "EXTERNAL", target_doc_id: null, target_section_id: null, external_pointer: null };
-  assert.throws(() => validateDocument(baseDoc({ references: [externalMissingPointer] }), "x"), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ references: [externalMissingPointer] }), "x", makeBudget()), SchemaError);
   const externalWithTarget = { ref_id: "r1", kind: "CITATION", target_kind: "EXTERNAL", target_doc_id: "d-2", target_section_id: null, external_pointer: "https://x" };
-  assert.throws(() => validateDocument(baseDoc({ references: [externalWithTarget] }), "x"), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ references: [externalWithTarget] }), "x", makeBudget()), SchemaError);
   const dupRefId = [internalOk, { ...internalOk }];
-  assert.throws(() => validateDocument(baseDoc({ references: dupRefId }), "x"), SchemaError);
+  assert.throws(() => validateDocument(baseDoc({ references: dupRefId }), "x", makeBudget()), SchemaError);
 });
 
 function baseAssertion(overrides = {}) {
@@ -141,8 +142,40 @@ test("validateContext rejects out-of-range source catalog size and malformed pri
     principal: { principal_id: "p1", role: "JASON", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
     criteria: { checklist_version: "v1", required_sections: [], required_companions: [], checklist_ref: REF },
   };
-  assert.doesNotThrow(() => validateContext(ctx));
-  assert.throws(() => validateContext({ ...ctx, sources: {} }), SchemaError);
-  assert.throws(() => validateContext({ ...ctx, principal: { ...ctx.principal, role: "ADMIN" } }), SchemaError);
-  assert.throws(() => validateContext({ ...ctx, principal: { ...ctx.principal, registered_by: "someone-else" } }), SchemaError);
+  assert.doesNotThrow(() => validateContext(ctx, makeBudget()));
+  assert.throws(() => validateContext({ ...ctx, sources: {} }, makeBudget()), SchemaError);
+  assert.throws(() => validateContext({ ...ctx, principal: { ...ctx.principal, role: "ADMIN" } }, makeBudget()), SchemaError);
+  assert.throws(() => validateContext({ ...ctx, principal: { ...ctx.principal, registered_by: "someone-else" } }, makeBudget()), SchemaError);
+});
+
+test("validateContext charges principal and criteria as per-task candidates (DOC-002a, scoped)", () => {
+  const ctx = {
+    clock: Date.now(),
+    sources: { "edu-sources|content/x.txt": { revisions: { [REF.commit]: { text: "hi", blob: REF.blob } } } },
+    readGrants: [],
+    principal: { principal_id: "p1", role: "JASON", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
+    criteria: { checklist_version: "v1", required_sections: [], required_companions: [], checklist_ref: REF },
+  };
+  // principal + criteria = 2 objects charged, regardless of catalog size
+  // below — context.sources/readGrants are the host's large registered
+  // catalog (the common contract's own explicit distinction from the
+  // strict per-task budget), not per-task candidates in their own right.
+  const budget = makeBudget();
+  validateContext(ctx, budget);
+  assert.equal(budget.used.objects, 2);
+
+  // A large catalog — even one carrying an unused, oversized revision
+  // nothing ever reads — must NOT by itself exhaust a task's budget: only
+  // entries actually consulted (via resolveSourceRef, elsewhere) are
+  // charged. This is the deliberate, documented resolution of DOC-002a's
+  // literal "unused 300,000-byte revision" reproduction: catalog presence
+  // alone costs nothing; actual consultation is what's bounded (and
+  // already was, correctly, via resolveSourceRef's own charging).
+  const bigCatalog = { ...ctx, sources: { ...ctx.sources } };
+  for (let i = 0; i < 200; i++) {
+    bigCatalog.sources[`edu-sources|content/extra-${i}.txt`] = { revisions: { [REF.commit]: { text: i === 100 ? "x".repeat(300000) : "small", blob: REF.blob } } };
+  }
+  const budget2 = makeBudget();
+  assert.doesNotThrow(() => validateContext(bigCatalog, budget2));
+  assert.equal(budget2.used.objects, 2);
 });

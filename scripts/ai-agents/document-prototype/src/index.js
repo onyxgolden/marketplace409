@@ -29,7 +29,7 @@
  * still separately charged via countSpan(), a distinct budget line.)
  */
 
-import { canonicalJson, sha256HexUtf8, sha256HexBytes, canonicalByteLength } from "./canonical.js";
+import { canonicalJson, sha256HexUtf8, sha256HexBytes, canonicalByteLength, fullSourceRefKey } from "./canonical.js";
 import { validateTask, validateContext, validateDocument, validateAssertion, validateDocumentSetShape, SchemaError } from "./schemas.js";
 import { resolveSourceRef, verifySpanBounds, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanAnyDocText } from "./injection.js";
@@ -132,9 +132,10 @@ export function run(task, context) {
 
   let ctx;
   try {
-    ctx = validateContext(context);
+    ctx = validateContext(context, budget);
   } catch (e) {
     if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", `context: ${e.message}`);
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
     throw e;
   }
 
@@ -153,7 +154,14 @@ export function run(task, context) {
   // Resolve the trusted checklist document FIRST: nothing can be checked
   // without it, and task content never supplies required sections or
   // companions.
-  if (!hasReadGrant(ctx.criteria.checklist_ref, ctx.readGrants)) {
+  let checklistGranted;
+  try {
+    checklistGranted = hasReadGrant(ctx.criteria.checklist_ref, ctx.readGrants, budget, "checklist read grant");
+  } catch (e) {
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    throw e;
+  }
+  if (!checklistGranted) {
     return refused(task, "READ_DENIED", "error", `read grant missing for checklist source ${ctx.criteria.checklist_ref.repo}/${ctx.criteria.checklist_ref.path}`);
   }
   let checklistResolved;
@@ -172,7 +180,14 @@ export function run(task, context) {
   }
 
   // Resolve the document-set bundle.
-  if (!hasReadGrant(validatedTask.document_set_ref, ctx.readGrants)) {
+  let documentSetGranted;
+  try {
+    documentSetGranted = hasReadGrant(validatedTask.document_set_ref, ctx.readGrants, budget, "document set read grant");
+  } catch (e) {
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    throw e;
+  }
+  if (!documentSetGranted) {
     return refused(task, "READ_DENIED", "error", `read grant missing for document set ${validatedTask.document_set_ref.repo}/${validatedTask.document_set_ref.path}`);
   }
   let bundleResolved;
@@ -214,8 +229,12 @@ export function run(task, context) {
     const raw = rawSet.documents[i];
     let doc;
     try {
-      doc = validateDocument(raw, `document set.documents[${i}]`);
+      doc = validateDocument(raw, `document set.documents[${i}]`, budget);
     } catch (e) {
+      if (e instanceof BudgetError) {
+        budgetExceeded = true;
+        break;
+      }
       if (e instanceof SchemaError) {
         const fallbackId = raw && typeof raw === "object" && typeof raw.doc_id === "string" ? raw.doc_id : `malformed-index-${i}`;
         malformed.push({ doc_id: fallbackId, reason: "MALFORMED_RECORD" });
@@ -269,9 +288,13 @@ export function run(task, context) {
 
   // ---- Resolve + hash each admitted document's content (one charged
   // object per DISTINCT content SourceRef — identical refs are resolved
-  // and charged once, cached by source key, mirroring the rule-citation
-  // caching used elsewhere in this program). ----
-  const contentCache = new Map(); // sourceKey -> {bytes, text}
+  // and charged once, cached by FULL exact identity via fullSourceRefKey
+  // (repo+path+commit+blob+algorithm+revision), never a partial prefix.
+  // A partial key (repo|path|commit alone) let a later document supply a
+  // forged blob/revision at the same repo/path/commit and silently reuse
+  // an earlier, unrelated, already-resolved result without its own ref
+  // ever being validated — that was DOC-001. ----
+  const contentCache = new Map(); // fullSourceRefKey(content_ref) -> {bytes, text}
   const quarantinedDocIds = new Set();
   const docsForIntegrity = [];
   const inventory = [];
@@ -279,10 +302,17 @@ export function run(task, context) {
   const usedContentRefs = [];
 
   for (const doc of provisional) {
-    const key = `${doc.content_ref.repo}|${doc.content_ref.path}|${doc.content_ref.commit}`;
+    const key = fullSourceRefKey(doc.content_ref);
     let resolved = contentCache.get(key);
     if (!resolved) {
-      if (!hasReadGrant(doc.content_ref, ctx.readGrants)) {
+      let contentGranted;
+      try {
+        contentGranted = hasReadGrant(doc.content_ref, ctx.readGrants, budget, `content read grant for ${doc.doc_id}`);
+      } catch (e) {
+        if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+        throw e;
+      }
+      if (!contentGranted) {
         return refused(task, "READ_DENIED", "error", `read grant missing for document ${doc.doc_id} content ${doc.content_ref.repo}/${doc.content_ref.path}`);
       }
       try {
@@ -373,7 +403,7 @@ export function run(task, context) {
   const byDocId = new Map(docsForIntegrity.map((d) => [d.doc_id, d]));
   const contentByDocId = new Map();
   for (const doc of provisional) {
-    const key = `${doc.content_ref.repo}|${doc.content_ref.path}|${doc.content_ref.commit}`;
+    const key = fullSourceRefKey(doc.content_ref);
     contentByDocId.set(doc.doc_id, contentCache.get(key));
   }
   const contentRefByDocId = new Map(provisional.map((d) => [d.doc_id, d.content_ref]));

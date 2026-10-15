@@ -48,3 +48,16 @@ export function detached(value) {
 
 export const HEX40 = /^[0-9a-f]{40}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * Full exact SourceRef identity key: repo, path, commit, blob, algorithm
+ * AND revision. Resolved-content reuse (e.g. a per-document content
+ * cache) must key on this full identity, never a partial prefix like
+ * repo|path|commit alone — a partial key lets a later caller supplying
+ * the same repo/path/commit but a DIFFERENT (forged) blob/revision reuse
+ * an earlier, unrelated resolution without its own ref ever being
+ * validated. This is the fix for DOC-001.
+ */
+export function fullSourceRefKey(r) {
+  return `${r.repo}|${r.path}|${r.commit}|${r.blob}|${r.algorithm}|${r.revision}`;
+}

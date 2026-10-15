@@ -378,19 +378,29 @@ addSet(
 );
 
 // Exact-boundary success: shared content means only ONE content
-// resolution is charged regardless of document count. 2 fixed charges +
-// 61 document records + 1 shared content resolution = 64 exactly — the
-// full budget, fully admitted, no refusal.
+// resolution (plus its one read-grant check) is charged regardless of
+// document count. 6 fixed charges (checklist read-grant + checklist
+// resolution + document-set read-grant + document-set resolution +
+// principal + criteria) + 56 document records + 1 shared-content
+// read-grant + 1 shared-content resolution = 64 exactly — the full
+// budget, fully admitted, no refusal. (Empirically verified via a
+// standalone probe script against the real run() function, not just
+// hand-derived — this exact count matters and is easy to get wrong by
+// forgetting the principal/criteria charges.)
 const sharedBulkContent = "Shared bulk content for the exact-boundary success case.\n";
 const sharedBulkRef = contentRef(sharedBulkContent, "shared-bulk");
 addSet(
   "sixty-one-documents-shared-content",
-  Array.from({ length: 61 }, (_, i) => doc({ doc_id: `d-shb-${String(i).padStart(2, "0")}`, logical_id: `shb-${i}`, declared_date: "2026-01-01", content: sharedBulkContent, sharedContentRef: sharedBulkRef }))
+  Array.from({ length: 56 }, (_, i) => doc({ doc_id: `d-shb-${String(i).padStart(2, "0")}`, logical_id: `shb-${i}`, declared_date: "2026-01-01", content: sharedBulkContent, sharedContentRef: sharedBulkRef }))
 );
 
+// 6 fixed charges (see above) + 58 document records = 64 exactly, so all
+// 58 document records charge successfully; the FIRST per-document
+// content read-grant check (distinct content per document, so each
+// needs its own) is charge #65 and refuses there.
 addSet(
   "sixty-two-documents",
-  Array.from({ length: 62 }, (_, i) => doc({ doc_id: `d-bulk62-${String(i).padStart(2, "0")}`, logical_id: `bulk62-${i}`, declared_date: "2026-01-01", content: `Bulk62 doc ${i}.\n`, contentTag: `bulk62-${i}` }))
+  Array.from({ length: 58 }, (_, i) => doc({ doc_id: `d-bulk62-${String(i).padStart(2, "0")}`, logical_id: `bulk62-${i}`, declared_date: "2026-01-01", content: `Bulk62 doc ${i}.\n`, contentTag: `bulk62-${i}` }))
 );
 
 addSet(

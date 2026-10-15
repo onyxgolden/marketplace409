@@ -117,8 +117,17 @@ export function resolveSourceRef(ref, sources, budget, what) {
   return { bytes, text: rev.text };
 }
 
-/** Exact read-grant check: grants are exact repo+path, never prefixes. */
-export function hasReadGrant(ref, readGrants) {
+/**
+ * Exact read-grant check: grants are exact repo+path, never prefixes.
+ * Charged with budget.countObject() ONCE PER CALL — i.e., once per ref a
+ * task actually needs a grant decision for (checklist, document-set,
+ * each document's content) — not once per entry in the host's full
+ * readGrants catalog, which (like context.sources) is explicitly a large
+ * registry distinct from the strict per-task budget. This is DOC-002(a)'s
+ * grant-charging requirement, applied at the point of actual consultation.
+ */
+export function hasReadGrant(ref, readGrants, budget, what) {
+  budget.countObject(what ?? `read grant check for ${ref.repo}/${ref.path}`);
   return readGrants.some((g) => g.repo === ref.repo && g.path === ref.path);
 }
 
@@ -134,7 +143,17 @@ export function verifySpanBounds(bytes, span, budget, what) {
   if (span.end_byte > bytes.length) {
     throw new ResolutionError("SPAN_MISMATCH", `span [${span.start_byte},${span.end_byte}) exceeds resolved content length ${bytes.length}`);
   }
-  const quoted_text = bytes.slice(span.start_byte, span.end_byte).toString("utf8");
+  // Fatal UTF-8 decode: a span that splits a multi-byte code point (or
+  // otherwise isn't a valid UTF-8 byte sequence on its own) is not an
+  // exact quoted passage. Buffer#toString("utf8") would silently replace
+  // such bytes with U+FFFD instead of refusing — that's DOC-003: it let a
+  // split code point manufacture a "verified" citation with garbage text.
+  let quoted_text;
+  try {
+    quoted_text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(span.start_byte, span.end_byte));
+  } catch {
+    throw new ResolutionError("SPAN_MISMATCH", `span [${span.start_byte},${span.end_byte}) does not align to valid UTF-8 code point boundaries`);
+  }
   return { start_byte: span.start_byte, end_byte: span.end_byte, quoted_text };
 }
 

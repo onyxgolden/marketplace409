@@ -152,7 +152,39 @@ export function validateReadGrant(value, where) {
   return { repo, path };
 }
 
-export function validateContext(context) {
+/**
+ * Validate the host-injected trusted context. `budget` is REQUIRED.
+ *
+ * `context.sources` and `context.readGrants` are the host's *registered
+ * catalog* — the common contract explicitly distinguishes this from the
+ * strict 64-object/256 KiB per-TASK consultation budget ("This bounds the
+ * host's total registered source catalog... NOT the per-task consultation
+ * budget"). This prototype's own fixture architecture relies on that
+ * distinction: a single shared catalog (hundreds of entries) is reused
+ * across every test case, with each task only ever consulting the
+ * handful of entries its own refs name. Charging every catalog entry
+ * against the per-task budget here — rather than at the point a specific
+ * entry is actually consulted — would make EVERY task fail regardless of
+ * its own complexity, which contradicts that distinction. So: this
+ * function's catalog-shape check stays purely structural (type/hex-format
+ * only, no byte-length read of `rev.text`) — it does not "deeply read" an
+ * entry's content, so an unused revision sitting in the catalog is never
+ * actually traversed by this function. Real consultation — and the
+ * correct charge-before-read discipline, including the payload-byte
+ * charge for whatever text is actually read — happens where a specific
+ * SourceRef is resolved (resolveSourceRef in resolver.js, unchanged, and
+ * already compliant: it charges countObject then countPayload before any
+ * caller sees the resolved bytes).
+ *
+ * What WAS missing, and is fixed here: `principal` and `criteria` are
+ * each a single, per-task-scoped candidate (not a large shared catalog)
+ * — each now costs one budget.countObject() charge, before its own
+ * fields are read. Read-grant checks are charged at resolver.js's
+ * hasReadGrant() — once per actual consultation call (one per ref a task
+ * needs a grant for), not once per catalog entry, for the same
+ * catalog-vs-budget reason as sources above.
+ */
+export function validateContext(context, budget) {
   if (!isPlainObject(context)) fail("context", "must be an object");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria"], "context");
   const clock = context.clock;
@@ -164,7 +196,7 @@ export function validateContext(context) {
   // context (a schema-level sanity cap this prototype chooses), NOT the
   // per-task consultation budget — that is separately and strictly
   // enforced at 64 objects by resolver.js's BUDGET_LIMITS regardless of
-  // how large the registered catalog is.
+  // how large the registered catalog is. See the function doc comment.
   if (sourceKeys.length === 0 || sourceKeys.length > 4096) fail("context", "sources must have 1..4096 entries");
   for (const sk of sourceKeys) {
     const entry = context.sources[sk];
@@ -182,7 +214,9 @@ export function validateContext(context) {
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
   const readGrants = context.readGrants.map((g, i) => validateReadGrant(g, `context.readGrants[${i}]`));
 
+  budget.countObject("context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
+  budget.countObject("context.criteria");
   const criteria = validateCriteria(context.criteria, "context.criteria");
 
   return { clock, sources: context.sources, readGrants, principal, criteria };
@@ -265,8 +299,17 @@ function validateReference(value, where, seenIds) {
   return { ref_id, kind: value.kind, target_kind: value.target_kind, target_doc_id, target_section_id, external_pointer };
 }
 
-/** One document record, as read from the resolved document-set fixture. */
-export function validateDocument(value, where) {
+/**
+ * One document record, as read from the resolved document-set fixture.
+ * `budget` is REQUIRED: each section, marker and reference is its own
+ * candidate object, charged with budget.countObject() immediately before
+ * ITS OWN fields are read — not lumped into the one charge already made
+ * for the owning document record by the caller. Array-length checks below
+ * (MAX_SECTIONS_PER_DOC etc.) are the common contract's permitted
+ * "container/length preflight" — they inspect only `.length`, never an
+ * uncharged element's fields. This closes DOC-002(b).
+ */
+export function validateDocument(value, where, budget) {
   if (!isPlainObject(value)) fail(where, "document must be an object");
   exactKeys(value, ["doc_id", "logical_id", "revision", "declared_date", "metadata", "content_ref", "sections", "markers", "references"], where);
   const doc_id = validateRecordId(value.doc_id, where);
@@ -286,15 +329,27 @@ export function validateDocument(value, where) {
 
   if (!Array.isArray(value.sections) || value.sections.length > MAX_SECTIONS_PER_DOC) fail(where, `sections must be an array of at most ${MAX_SECTIONS_PER_DOC} entries`);
   const sectionIds = new Set();
-  const sections = value.sections.map((s, i) => validateSection(s, `${where}.sections[${i}]`, sectionIds));
+  const sections = [];
+  for (let i = 0; i < value.sections.length; i++) {
+    budget.countObject(`${where}.sections[${i}]`);
+    sections.push(validateSection(value.sections[i], `${where}.sections[${i}]`, sectionIds));
+  }
 
   if (!Array.isArray(value.markers) || value.markers.length > MAX_MARKERS_PER_DOC) fail(where, `markers must be an array of at most ${MAX_MARKERS_PER_DOC} entries`);
   const markerKeys = new Set();
-  const markers = value.markers.map((m, i) => validateMarker(m, `${where}.markers[${i}]`, markerKeys));
+  const markers = [];
+  for (let i = 0; i < value.markers.length; i++) {
+    budget.countObject(`${where}.markers[${i}]`);
+    markers.push(validateMarker(value.markers[i], `${where}.markers[${i}]`, markerKeys));
+  }
 
   if (!Array.isArray(value.references) || value.references.length > MAX_REFERENCES_PER_DOC) fail(where, `references must be an array of at most ${MAX_REFERENCES_PER_DOC} entries`);
   const refIds = new Set();
-  const references = value.references.map((r, i) => validateReference(r, `${where}.references[${i}]`, refIds));
+  const references = [];
+  for (let i = 0; i < value.references.length; i++) {
+    budget.countObject(`${where}.references[${i}]`);
+    references.push(validateReference(value.references[i], `${where}.references[${i}]`, refIds));
+  }
 
   return { doc_id, logical_id, revision: value.revision, declared_date: value.declared_date, metadata: { author, date: md.date, id, status }, content_ref, sections, markers, references };
 }
