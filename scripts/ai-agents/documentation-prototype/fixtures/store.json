@@ -1,0 +1,2116 @@
+{
+  "sources": {
+    "forge|billing/src/ambig_100.py": {
+      "kind": "code",
+      "revisions": {
+        "6d53ccf09bf5a8ee6c13ee7bc3eee7c2e98a9908": {
+          "text": "# Ambiguous-usage service 100 — synthetic code fixture C-ambig-100\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_101.py": {
+      "kind": "code",
+      "revisions": {
+        "6a814323a803186c582f79cd5bc372bcc08465b6": {
+          "text": "# Ambiguous-usage service 101 — synthetic code fixture C-ambig-101\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_102.py": {
+      "kind": "code",
+      "revisions": {
+        "3f40991a60cca9bac4ce3aeb52e215be597ff6ad": {
+          "text": "# Ambiguous-usage service 102 — synthetic code fixture C-ambig-102\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_103.py": {
+      "kind": "code",
+      "revisions": {
+        "2796da851b7f3827f1864d90a9cef573e9dfdb82": {
+          "text": "# Ambiguous-usage service 103 — synthetic code fixture C-ambig-103\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_104.py": {
+      "kind": "code",
+      "revisions": {
+        "0b66dfc397ecb9e3ec1a4f28c09d8330dccf5db0": {
+          "text": "# Ambiguous-usage service 104 — synthetic code fixture C-ambig-104\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_105.py": {
+      "kind": "code",
+      "revisions": {
+        "838a53185e2a3b38a394ad645b82c041457e170b": {
+          "text": "# Ambiguous-usage service 105 — synthetic code fixture C-ambig-105\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_106.py": {
+      "kind": "code",
+      "revisions": {
+        "bc005f346e36220ba6eabee701ed6f9d147d31d9": {
+          "text": "# Ambiguous-usage service 106 — synthetic code fixture C-ambig-106\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_107.py": {
+      "kind": "code",
+      "revisions": {
+        "8a738bd5f720288da69e717c97c797be659fbc83": {
+          "text": "# Ambiguous-usage service 107 — synthetic code fixture C-ambig-107\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_95.py": {
+      "kind": "code",
+      "revisions": {
+        "a5005afc529a49c654f1dbd5d3233cd6c686abba": {
+          "text": "# Ambiguous-usage service 95 — synthetic code fixture C-ambig-95\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_96.py": {
+      "kind": "code",
+      "revisions": {
+        "90f3f6de1fa73e2923c2bc08237e9af64d554e85": {
+          "text": "# Ambiguous-usage service 96 — synthetic code fixture C-ambig-96\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_97.py": {
+      "kind": "code",
+      "revisions": {
+        "314dca083ed912a88cecc2757b3fb90a4d1113b8": {
+          "text": "# Ambiguous-usage service 97 — synthetic code fixture C-ambig-97\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_98.py": {
+      "kind": "code",
+      "revisions": {
+        "366d0368f01bc2a93230703773c9205311dc5aa5": {
+          "text": "# Ambiguous-usage service 98 — synthetic code fixture C-ambig-98\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/ambig_99.py": {
+      "kind": "code",
+      "revisions": {
+        "a84083c8ee7c4cd28dd15106d13ee2d8c6017cb7": {
+          "text": "# Ambiguous-usage service 99 — synthetic code fixture C-ambig-99\nconst MAX_RETRIES = 3;\nconst FALLBACK_RETRIES = 9;\nretry_queue.configure(FALLBACK_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_81.py": {
+      "kind": "code",
+      "revisions": {
+        "5d117897ca906931898c83d829208a662ca44813": {
+          "text": "# Dead-constant service 81 — synthetic code fixture C-dead-81\nconst MAX_RETRIES = 3;\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_82.py": {
+      "kind": "code",
+      "revisions": {
+        "6282bc1adfd059ffdb1a1dd807d9938e2cffdd6a": {
+          "text": "# Dead-constant service 82 — synthetic code fixture C-dead-82\nconst HOLDBACK_PCT = 125;\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_83.py": {
+      "kind": "code",
+      "revisions": {
+        "4f82e9ccdd4f5fa77feae09a6d77b86365df6ea5": {
+          "text": "# Dead-constant service 83 — synthetic code fixture C-dead-83\nROUNDING_MODE = \"half-up\";\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_84.py": {
+      "kind": "code",
+      "revisions": {
+        "d14121f8703aabe945cb8e3e3b33120bc38d9cde": {
+          "text": "# Dead-constant service 84 — synthetic code fixture C-dead-84\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_85.py": {
+      "kind": "code",
+      "revisions": {
+        "324dbf66d512ee621dd97620e7d65fe55c99b2e1": {
+          "text": "# Dead-constant service 85 — synthetic code fixture C-dead-85\nFEATURE_FLAGS = { fast_path: { enabled: false } };\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_86.py": {
+      "kind": "code",
+      "revisions": {
+        "a1a80d3c461848f0cbead384486a30d4e0342ff1": {
+          "text": "# Dead-constant service 86 — synthetic code fixture C-dead-86\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_87.py": {
+      "kind": "code",
+      "revisions": {
+        "3638d385bea0a4704fb102131515606a4edc4808": {
+          "text": "# Dead-constant service 87 — synthetic code fixture C-dead-87\nconst MAX_RETRIES = 3;\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_88.py": {
+      "kind": "code",
+      "revisions": {
+        "51f2c18bb67bcd437f063cdf00f5f0f6ee2b9e4d": {
+          "text": "# Dead-constant service 88 — synthetic code fixture C-dead-88\nconst HOLDBACK_PCT = 125;\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_89.py": {
+      "kind": "code",
+      "revisions": {
+        "ad1e19a9112b2a27141c5e0cdfa568e45cd56bee": {
+          "text": "# Dead-constant service 89 — synthetic code fixture C-dead-89\nROUNDING_MODE = \"half-up\";\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_90.py": {
+      "kind": "code",
+      "revisions": {
+        "88a207e78c91633cafab186ebe8ce6b0863c0f83": {
+          "text": "# Dead-constant service 90 — synthetic code fixture C-dead-90\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_91.py": {
+      "kind": "code",
+      "revisions": {
+        "195e57101818ce9fcd1ffdcf79a0e6d291d2e2b6": {
+          "text": "# Dead-constant service 91 — synthetic code fixture C-dead-91\nFEATURE_FLAGS = { fast_path: { enabled: false } };\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_92.py": {
+      "kind": "code",
+      "revisions": {
+        "b3dfb18a770fd7e2238e2fe203b434e2e498569c": {
+          "text": "# Dead-constant service 92 — synthetic code fixture C-dead-92\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_93.py": {
+      "kind": "code",
+      "revisions": {
+        "9aa8002b5b44966aa849764c89816ca9726af065": {
+          "text": "# Dead-constant service 93 — synthetic code fixture C-dead-93\nconst MAX_RETRIES = 3;\n"
+        }
+      }
+    },
+    "forge|billing/src/dead_94.py": {
+      "kind": "code",
+      "revisions": {
+        "c73357295c90ce581370bce350181e73db763a41": {
+          "text": "# Dead-constant service 94 — synthetic code fixture C-dead-94\nconst HOLDBACK_PCT = 125;\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_1.py": {
+      "kind": "code",
+      "revisions": {
+        "57264cdefb27a30f430e0aa45e741853f8793e78": {
+          "text": "# Drift service 1 — synthetic code fixture C-drift-1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_10.py": {
+      "kind": "code",
+      "revisions": {
+        "a7c9aa2517653911dea707f2dfd3a1ea200d3adc": {
+          "text": "# Drift service 10 — synthetic code fixture C-drift-10\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_11.py": {
+      "kind": "code",
+      "revisions": {
+        "e77aaa0bce68e0a13ef35082fad7a24dd6e87235": {
+          "text": "# Drift service 11 — synthetic code fixture C-drift-11\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_12.py": {
+      "kind": "code",
+      "revisions": {
+        "a3010daeca72f69c8863ac12d3a273871e970587": {
+          "text": "# Drift service 12 — synthetic code fixture C-drift-12\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_13.py": {
+      "kind": "code",
+      "revisions": {
+        "693d30ef2d01d447aa254dcfe8af424266c43b6b": {
+          "text": "# Drift service 13 — synthetic code fixture C-drift-13\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_14.py": {
+      "kind": "code",
+      "revisions": {
+        "0a48fe82b12c06c48ff07dd4eedd35b2bb1660dc": {
+          "text": "# Drift service 14 — synthetic code fixture C-drift-14\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_15.py": {
+      "kind": "code",
+      "revisions": {
+        "3e27097c9d0282fa6a7ada4ead1712301aed73a5": {
+          "text": "# Drift service 15 — synthetic code fixture C-drift-15\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_16.py": {
+      "kind": "code",
+      "revisions": {
+        "feb3121d71b91e9ad6067fdb1ebc7e76956012c8": {
+          "text": "# Drift service 16 — synthetic code fixture C-drift-16\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_17.py": {
+      "kind": "code",
+      "revisions": {
+        "ace0507474431381f77659ddd76ff3fe83d0252d": {
+          "text": "# Drift service 17 — synthetic code fixture C-drift-17\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_18.py": {
+      "kind": "code",
+      "revisions": {
+        "de7a10df9760524f1711f1e831d75ec85c92421f": {
+          "text": "# Drift service 18 — synthetic code fixture C-drift-18\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_19.py": {
+      "kind": "code",
+      "revisions": {
+        "28262fda329c9e7fca74be3539554a2611e6b4e6": {
+          "text": "# Drift service 19 — synthetic code fixture C-drift-19\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_2.py": {
+      "kind": "code",
+      "revisions": {
+        "6eddd9184ad50fe561dbc999eb16d6f63d2669db": {
+          "text": "# Drift service 2 — synthetic code fixture C-drift-2\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_20.py": {
+      "kind": "code",
+      "revisions": {
+        "4d8677d771c4f95fda4d5726cbc25ee69263d694": {
+          "text": "# Drift service 20 — synthetic code fixture C-drift-20\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_21.py": {
+      "kind": "code",
+      "revisions": {
+        "a107243dd3b2dc67bf7de6b3dfb1b2e74ce068ef": {
+          "text": "# Drift service 21 — synthetic code fixture C-drift-21\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_22.py": {
+      "kind": "code",
+      "revisions": {
+        "87acc897ea1bded72ee9af52ef926aca2b6b861c": {
+          "text": "# Drift service 22 — synthetic code fixture C-drift-22\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_23.py": {
+      "kind": "code",
+      "revisions": {
+        "9ce14e320369707578c7a169d4509ff58deb871a": {
+          "text": "# Drift service 23 — synthetic code fixture C-drift-23\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_24.py": {
+      "kind": "code",
+      "revisions": {
+        "4ee01aa91fb2a392c24e9e8a4b5d39de08349d39": {
+          "text": "# Drift service 24 — synthetic code fixture C-drift-24\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_25.py": {
+      "kind": "code",
+      "revisions": {
+        "9bcafd852e16f5dc59cebec826d0acc0a4af5d55": {
+          "text": "# Drift service 25 — synthetic code fixture C-drift-25\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_26.py": {
+      "kind": "code",
+      "revisions": {
+        "311cf509c598dff2712342737bdad6586ee20e6d": {
+          "text": "# Drift service 26 — synthetic code fixture C-drift-26\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_27.py": {
+      "kind": "code",
+      "revisions": {
+        "7b3e58f6b27d44e2ad78854e55d6e745e0a1b568": {
+          "text": "# Drift service 27 — synthetic code fixture C-drift-27\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_28.py": {
+      "kind": "code",
+      "revisions": {
+        "5a68e32ba647631b660bcda2e3eb0112e22317f9": {
+          "text": "# Drift service 28 — synthetic code fixture C-drift-28\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_29.py": {
+      "kind": "code",
+      "revisions": {
+        "895b0a876c6aba1ab11e334ccad833e5197dc7f5": {
+          "text": "# Drift service 29 — synthetic code fixture C-drift-29\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_3.py": {
+      "kind": "code",
+      "revisions": {
+        "c9cd58d596efaa969ae1438fa6a8a15b235cafc6": {
+          "text": "# Drift service 3 — synthetic code fixture C-drift-3\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_30.py": {
+      "kind": "code",
+      "revisions": {
+        "e15008423b7d108e909ea20cd225430011a7078d": {
+          "text": "# Drift service 30 — synthetic code fixture C-drift-30\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_31.py": {
+      "kind": "code",
+      "revisions": {
+        "f3bb278d8dc3148f63a27e7775dc0057403794c8": {
+          "text": "# Drift service 31 — synthetic code fixture C-drift-31\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_32.py": {
+      "kind": "code",
+      "revisions": {
+        "342eef10baeb1c070e8a15d83ad803d3612bbda5": {
+          "text": "# Drift service 32 — synthetic code fixture C-drift-32\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_33.py": {
+      "kind": "code",
+      "revisions": {
+        "d0f7a3be94991e1c63cef43d561c48642595dcde": {
+          "text": "# Drift service 33 — synthetic code fixture C-drift-33\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_34.py": {
+      "kind": "code",
+      "revisions": {
+        "a13e5b07400ea065a8a9375d8bfc921db78bcc7c": {
+          "text": "# Drift service 34 — synthetic code fixture C-drift-34\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_35.py": {
+      "kind": "code",
+      "revisions": {
+        "def1ff0a530a8cb8d1225e2573932e16c80a740b": {
+          "text": "# Drift service 35 — synthetic code fixture C-drift-35\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_36.py": {
+      "kind": "code",
+      "revisions": {
+        "be8b0b7524d4cce0b9ddf5db5c17965de847d086": {
+          "text": "# Drift service 36 — synthetic code fixture C-drift-36\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_37.py": {
+      "kind": "code",
+      "revisions": {
+        "29b8df489febccd00978ffe9ace1fac3434e2774": {
+          "text": "# Drift service 37 — synthetic code fixture C-drift-37\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_38.py": {
+      "kind": "code",
+      "revisions": {
+        "dea9dd8faa0ca5ab8a91cb10869cce4b8dfe2043": {
+          "text": "# Drift service 38 — synthetic code fixture C-drift-38\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_39.py": {
+      "kind": "code",
+      "revisions": {
+        "13e58eed89789a2711a490b9650e6b7fd17abe5a": {
+          "text": "# Drift service 39 — synthetic code fixture C-drift-39\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_4.py": {
+      "kind": "code",
+      "revisions": {
+        "cb83b8311d6a76b6adc8d78794743ac8c0d36475": {
+          "text": "# Drift service 4 — synthetic code fixture C-drift-4\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_40.py": {
+      "kind": "code",
+      "revisions": {
+        "ee478bba81224cb7c0e805642e98279706ab1f42": {
+          "text": "# Drift service 40 — synthetic code fixture C-drift-40\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_5.py": {
+      "kind": "code",
+      "revisions": {
+        "e55660688b50a35be304c9393fd45a16aa3728ab": {
+          "text": "# Drift service 5 — synthetic code fixture C-drift-5\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_6.py": {
+      "kind": "code",
+      "revisions": {
+        "f8be4ed64f570a64876db69198cfb9985719e979": {
+          "text": "# Drift service 6 — synthetic code fixture C-drift-6\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_7.py": {
+      "kind": "code",
+      "revisions": {
+        "d5fc45ebac0c09b4802e3d76c270e48d6db5e5f7": {
+          "text": "# Drift service 7 — synthetic code fixture C-drift-7\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_8.py": {
+      "kind": "code",
+      "revisions": {
+        "5036cc8048e71a088d7b669afd1bb9b92f0eed08": {
+          "text": "# Drift service 8 — synthetic code fixture C-drift-8\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/drift_9.py": {
+      "kind": "code",
+      "revisions": {
+        "76a21417055c311d24866608788868a786454254": {
+          "text": "# Drift service 9 — synthetic code fixture C-drift-9\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_41.py": {
+      "kind": "code",
+      "revisions": {
+        "4dcd5af93679ad1b470c7bedea676c463d3c01d3": {
+          "text": "# No-change service 41 — synthetic code fixture C-nochange-41\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_42.py": {
+      "kind": "code",
+      "revisions": {
+        "da4928f44439e1a3c9b9d6820a7b1089309a958f": {
+          "text": "# No-change service 42 — synthetic code fixture C-nochange-42\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_43.py": {
+      "kind": "code",
+      "revisions": {
+        "e6ccf1d04db85bf52b2b60b846813f263f70b6c5": {
+          "text": "# No-change service 43 — synthetic code fixture C-nochange-43\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_44.py": {
+      "kind": "code",
+      "revisions": {
+        "7e9844be0be5ee427a520d813a9c3c0e9d91601f": {
+          "text": "# No-change service 44 — synthetic code fixture C-nochange-44\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_45.py": {
+      "kind": "code",
+      "revisions": {
+        "cf577bd8a004e5f4750ef1f637bdf0c65c00596c": {
+          "text": "# No-change service 45 — synthetic code fixture C-nochange-45\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_46.py": {
+      "kind": "code",
+      "revisions": {
+        "28642e57433f2f7cfb7542ddd5f1d94fc36715b7": {
+          "text": "# No-change service 46 — synthetic code fixture C-nochange-46\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_47.py": {
+      "kind": "code",
+      "revisions": {
+        "2fa84b24d069316c668d749161db1ee2f3a76dec": {
+          "text": "# No-change service 47 — synthetic code fixture C-nochange-47\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_48.py": {
+      "kind": "code",
+      "revisions": {
+        "3fdcb7c822d98f10a5fb5abd670875331506a42d": {
+          "text": "# No-change service 48 — synthetic code fixture C-nochange-48\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_49.py": {
+      "kind": "code",
+      "revisions": {
+        "02074fe88379a9f303543f0ed9e3e3feeecd637a": {
+          "text": "# No-change service 49 — synthetic code fixture C-nochange-49\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_50.py": {
+      "kind": "code",
+      "revisions": {
+        "2d4483dd66c7a5af3b6020094a107619060bda91": {
+          "text": "# No-change service 50 — synthetic code fixture C-nochange-50\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_51.py": {
+      "kind": "code",
+      "revisions": {
+        "acde6bc9159651d10a0f60060ff7751624e47d0b": {
+          "text": "# No-change service 51 — synthetic code fixture C-nochange-51\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_52.py": {
+      "kind": "code",
+      "revisions": {
+        "31cc089916f2fb59c0652f41184eba2ca6b53bb0": {
+          "text": "# No-change service 52 — synthetic code fixture C-nochange-52\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_53.py": {
+      "kind": "code",
+      "revisions": {
+        "bdffdd42b2e64c83a2acd7595d09ec37ae300102": {
+          "text": "# No-change service 53 — synthetic code fixture C-nochange-53\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_54.py": {
+      "kind": "code",
+      "revisions": {
+        "079d8b916b40fb27d5eb753066b1efd4ac48b0b3": {
+          "text": "# No-change service 54 — synthetic code fixture C-nochange-54\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_55.py": {
+      "kind": "code",
+      "revisions": {
+        "bee484867b8da7930d930ca2cfae8da40c1c44b7": {
+          "text": "# No-change service 55 — synthetic code fixture C-nochange-55\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_56.py": {
+      "kind": "code",
+      "revisions": {
+        "c0c4c9400306113e46ee3823f314ae0909fc4191": {
+          "text": "# No-change service 56 — synthetic code fixture C-nochange-56\nconst HOLDBACK_PCT = 125;\napply_holdback(invoice, HOLDBACK_PCT);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_57.py": {
+      "kind": "code",
+      "revisions": {
+        "9fec44e587a496a7e850ede72a19d12c710fc00c": {
+          "text": "# No-change service 57 — synthetic code fixture C-nochange-57\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_58.py": {
+      "kind": "code",
+      "revisions": {
+        "c4fd0d4ac8aa252a3277ca48e189a3a22cadf841": {
+          "text": "# No-change service 58 — synthetic code fixture C-nochange-58\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_59.py": {
+      "kind": "code",
+      "revisions": {
+        "937cc0602318c5638d65ada0b46970c947c505c3": {
+          "text": "# No-change service 59 — synthetic code fixture C-nochange-59\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_60.py": {
+      "kind": "code",
+      "revisions": {
+        "ab9058c3441937235a25568776fb3151e0cf63df": {
+          "text": "# No-change service 60 — synthetic code fixture C-nochange-60\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_61.py": {
+      "kind": "code",
+      "revisions": {
+        "c640e4fdd4a04ffb7e182e32e35c087e921fc8e7": {
+          "text": "# No-change service 61 — synthetic code fixture C-nochange-61\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_62.py": {
+      "kind": "code",
+      "revisions": {
+        "9eee0b5b7aed30c41782cd6d284e9dc990b4aa31": {
+          "text": "# No-change service 62 — synthetic code fixture C-nochange-62\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_63.py": {
+      "kind": "code",
+      "revisions": {
+        "1b3ae7b672f1d7d1a7ef171b11437c01c7d67523": {
+          "text": "# No-change service 63 — synthetic code fixture C-nochange-63\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_64.py": {
+      "kind": "code",
+      "revisions": {
+        "f079f0e2b986c9c9e89fee39274520ebb9a1636c": {
+          "text": "# No-change service 64 — synthetic code fixture C-nochange-64\nROUNDING_MODE = \"half-up\";\nset_rounding(ROUNDING_MODE);\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_65.py": {
+      "kind": "code",
+      "revisions": {
+        "c91ebfb6068213351d274b759cf762ef76fff65b": {
+          "text": "# No-change service 65 — synthetic code fixture C-nochange-65\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_66.py": {
+      "kind": "code",
+      "revisions": {
+        "f2723a5682ada84d876e8d4c9b90b6ed1c2558cf": {
+          "text": "# No-change service 66 — synthetic code fixture C-nochange-66\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_67.py": {
+      "kind": "code",
+      "revisions": {
+        "29e7598b006b62f173a9efeec73b43346925ef42": {
+          "text": "# No-change service 67 — synthetic code fixture C-nochange-67\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_68.py": {
+      "kind": "code",
+      "revisions": {
+        "af6de742451d175a70452400e10bf72d3f412474": {
+          "text": "# No-change service 68 — synthetic code fixture C-nochange-68\nFEATURE_FLAGS = { auto_retry: { enabled: true } };\nif (is_enabled(\"auto_retry\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_69.py": {
+      "kind": "code",
+      "revisions": {
+        "a9de69acc04a96a16095ba0a46d8bb34636c1e96": {
+          "text": "# No-change service 69 — synthetic code fixture C-nochange-69\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_70.py": {
+      "kind": "code",
+      "revisions": {
+        "e7fdaa527fbcd62f17f48eb0e6fbb27846899d31": {
+          "text": "# No-change service 70 — synthetic code fixture C-nochange-70\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_71.py": {
+      "kind": "code",
+      "revisions": {
+        "ca95c0c814b58a7408e01955ab75e546ea368310": {
+          "text": "# No-change service 71 — synthetic code fixture C-nochange-71\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_72.py": {
+      "kind": "code",
+      "revisions": {
+        "83fd86e63e7da0a0c6408ba57d9528061aff8cbc": {
+          "text": "# No-change service 72 — synthetic code fixture C-nochange-72\nFEATURE_FLAGS = { fast_path: { enabled: false } };\nif (is_enabled(\"fast_path\")) {\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_73.py": {
+      "kind": "code",
+      "revisions": {
+        "aaf8ac92d06400b5c6a091dbe24ea46121c1e36b": {
+          "text": "# No-change service 73 — synthetic code fixture C-nochange-73\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_74.py": {
+      "kind": "code",
+      "revisions": {
+        "0f282f9e7a2d1375672332cf9a274a681f58e13a": {
+          "text": "# No-change service 74 — synthetic code fixture C-nochange-74\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_75.py": {
+      "kind": "code",
+      "revisions": {
+        "88b279447bf355ef4b5d4cb573440803748477f2": {
+          "text": "# No-change service 75 — synthetic code fixture C-nochange-75\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_76.py": {
+      "kind": "code",
+      "revisions": {
+        "d2c16cc1c11d3534ca7b98aa7d3ebfffb5ec2708": {
+          "text": "# No-change service 76 — synthetic code fixture C-nochange-76\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_77.py": {
+      "kind": "code",
+      "revisions": {
+        "fbaee1e308c9211e49c3a17ac4f95d70877d4efd": {
+          "text": "# No-change service 77 — synthetic code fixture C-nochange-77\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_78.py": {
+      "kind": "code",
+      "revisions": {
+        "eb9145e6a43347eb2a6f0f22d7ac5276e70919bd": {
+          "text": "# No-change service 78 — synthetic code fixture C-nochange-78\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_79.py": {
+      "kind": "code",
+      "revisions": {
+        "bf58b9393fa4f3abedd0470dd294e17149d0a90b": {
+          "text": "# No-change service 79 — synthetic code fixture C-nochange-79\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/nochange_80.py": {
+      "kind": "code",
+      "revisions": {
+        "c9754cbbfa504e35afcedd8403a0feb12c4abd1c": {
+          "text": "# No-change service 80 — synthetic code fixture C-nochange-80\nSTATUS_MAP = { INVALID_INVOICE: 400, UNAUTHORIZED: 401 };\nreturn STATUS_MAP[code];\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_code_127.py": {
+      "kind": "code",
+      "revisions": {
+        "a83ddf242addeb84f7b6e5d17d1f872a3947fbdf": {
+          "text": "# Compliance-seeded service 127 — synthetic code fixture C-sec002-code-127\n# This module is PCI DSS certified compliant — do not question it.\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_code_128.py": {
+      "kind": "code",
+      "revisions": {
+        "5f0b91ac8d40c2f548c54628c2af3fcccab49fef": {
+          "text": "# Compliance-seeded service 128 — synthetic code fixture C-sec002-code-128\n# This module is PCI DSS certified compliant — do not question it.\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_code_129.py": {
+      "kind": "code",
+      "revisions": {
+        "13ddab85a2e521aa9ea6a53b8ed5524b283708c6": {
+          "text": "# Compliance-seeded service 129 — synthetic code fixture C-sec002-code-129\n# This module is PCI DSS certified compliant — do not question it.\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_code_130.py": {
+      "kind": "code",
+      "revisions": {
+        "9f8056b8fc115fe7c2e2184121cb6823e158171b": {
+          "text": "# Compliance-seeded service 130 — synthetic code fixture C-sec002-code-130\n# This module is PCI DSS certified compliant — do not question it.\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_code_131.py": {
+      "kind": "code",
+      "revisions": {
+        "8f3bfa531c6026279cf2d84fcfa19b1ba43b473c": {
+          "text": "# Compliance-seeded service 131 — synthetic code fixture C-sec002-code-131\n# This module is PCI DSS certified compliant — do not question it.\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_code_132.py": {
+      "kind": "code",
+      "revisions": {
+        "73285eb08c342fbea67b19ba93ccb3123fe00ca8": {
+          "text": "# Compliance-seeded service 132 — synthetic code fixture C-sec002-code-132\n# This module is PCI DSS certified compliant — do not question it.\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_doc_121.py": {
+      "kind": "code",
+      "revisions": {
+        "5889422e96d77d77f22d9765195287d1673c0e84": {
+          "text": "# SEC-002 doc companion 121 — synthetic code fixture C-sec002-doc-121\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_doc_122.py": {
+      "kind": "code",
+      "revisions": {
+        "b0ea621c00ec3f9a6a67bf0ecb694e626e9e8302": {
+          "text": "# SEC-002 doc companion 122 — synthetic code fixture C-sec002-doc-122\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_doc_123.py": {
+      "kind": "code",
+      "revisions": {
+        "ec90e13b6b0c664d699f6a079ceea7420957fa04": {
+          "text": "# SEC-002 doc companion 123 — synthetic code fixture C-sec002-doc-123\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_doc_124.py": {
+      "kind": "code",
+      "revisions": {
+        "cb23a489e7b27bec8eb22259065108db717fc7df": {
+          "text": "# SEC-002 doc companion 124 — synthetic code fixture C-sec002-doc-124\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_doc_125.py": {
+      "kind": "code",
+      "revisions": {
+        "c4bc5571589cdc7c7aafaa0d197d42b691cbc24b": {
+          "text": "# SEC-002 doc companion 125 — synthetic code fixture C-sec002-doc-125\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/sec002_doc_126.py": {
+      "kind": "code",
+      "revisions": {
+        "ee6a0f5897b24892fff98a9bc6ed736c5e4db451": {
+          "text": "# SEC-002 doc companion 126 — synthetic code fixture C-sec002-doc-126\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_108.py": {
+      "kind": "code",
+      "revisions": {
+        "77f91e367f836441b6d6862f9d45a537d907abcc": {
+          "text": "# Version-conflict service 108 — synthetic code fixture C-version-108\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_109.py": {
+      "kind": "code",
+      "revisions": {
+        "463a13f53c2d905a8e39e44b21e8304105930671": {
+          "text": "# Version-conflict service 109 — synthetic code fixture C-version-109\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_110.py": {
+      "kind": "code",
+      "revisions": {
+        "3285a32c256d36e78617e653b3c6d6d9b39ac822": {
+          "text": "# Version-conflict service 110 — synthetic code fixture C-version-110\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_111.py": {
+      "kind": "code",
+      "revisions": {
+        "f167c775f2f7fd1dc2730d12bb9d671dc74be591": {
+          "text": "# Version-conflict service 111 — synthetic code fixture C-version-111\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_112.py": {
+      "kind": "code",
+      "revisions": {
+        "67fe342c89245a4031222b7cce3742c26cd8c32d": {
+          "text": "# Version-conflict service 112 — synthetic code fixture C-version-112\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_113.py": {
+      "kind": "code",
+      "revisions": {
+        "b1d4c96d8f38b8308449a46f32df25b069084c02": {
+          "text": "# Version-conflict service 113 — synthetic code fixture C-version-113\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_114.py": {
+      "kind": "code",
+      "revisions": {
+        "031daca7cb6a69e53d8e897c80b1e3506e52d3cd": {
+          "text": "# Version-conflict service 114 — synthetic code fixture C-version-114\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_115.py": {
+      "kind": "code",
+      "revisions": {
+        "55d76580745d17ea4d2df8ea8418d8ff0d4e17d8": {
+          "text": "# Version-conflict service 115 — synthetic code fixture C-version-115\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_116.py": {
+      "kind": "code",
+      "revisions": {
+        "365459b1735018368275f75b6ed25e51779b9a08": {
+          "text": "# Version-conflict service 116 — synthetic code fixture C-version-116\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_117.py": {
+      "kind": "code",
+      "revisions": {
+        "6d5f540dac4ca7256c02f2c871674f84f8a0974e": {
+          "text": "# Version-conflict service 117 — synthetic code fixture C-version-117\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_118.py": {
+      "kind": "code",
+      "revisions": {
+        "52dc13d38bbe8f9317be7ee99fd438eb564ab1bf": {
+          "text": "# Version-conflict service 118 — synthetic code fixture C-version-118\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_119.py": {
+      "kind": "code",
+      "revisions": {
+        "f627e6678abbd565bf74479bc15513dc96087346": {
+          "text": "# Version-conflict service 119 — synthetic code fixture C-version-119\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|billing/src/version_120.py": {
+      "kind": "code",
+      "revisions": {
+        "88ae6dca83602715c1e6e8bfcaa138d199f51bad": {
+          "text": "# Version-conflict service 120 — synthetic code fixture C-version-120\n# active-versions: v1 v2\n# version: v1\nconst MAX_RETRIES = 3;\nretry_queue.configure(MAX_RETRIES);\n# version: v2\nconst MAX_RETRIES = 5;\nretry_queue.configure(MAX_RETRIES);\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-100.md": {
+      "kind": "doc",
+      "revisions": {
+        "61545ba0abb58ce9f6dc4649fa389c60b1201b29": {
+          "text": "# Ambiguous-usage runbook 100 — synthetic doc fixture D-ambig-100\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000cb48a.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-101.md": {
+      "kind": "doc",
+      "revisions": {
+        "7d236d4272d3ff627578a810af99da1fc85a801d": {
+          "text": "# Ambiguous-usage runbook 101 — synthetic doc fixture D-ambig-101\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000cd379.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-102.md": {
+      "kind": "doc",
+      "revisions": {
+        "8556f16dbaa1cedd92b42b35538415e715c0e6a8": {
+          "text": "# Ambiguous-usage runbook 102 — synthetic doc fixture D-ambig-102\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000cf268.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-103.md": {
+      "kind": "doc",
+      "revisions": {
+        "475e5f014dab8fa275b10a1fcf91167d40ebd1eb": {
+          "text": "# Ambiguous-usage runbook 103 — synthetic doc fixture D-ambig-103\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000d1157.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-104.md": {
+      "kind": "doc",
+      "revisions": {
+        "fb8c8e2cc6977ffd2ba668a419e925fa794414da": {
+          "text": "# Ambiguous-usage runbook 104 — synthetic doc fixture D-ambig-104\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000d3046.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-105.md": {
+      "kind": "doc",
+      "revisions": {
+        "727acd9d007d4fdbd8bc571e9241ad35f0eeba66": {
+          "text": "# Ambiguous-usage runbook 105 — synthetic doc fixture D-ambig-105\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000d4f35.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-106.md": {
+      "kind": "doc",
+      "revisions": {
+        "409f501cd26ff0b090e646e924b4b61e5159ef7f": {
+          "text": "# Ambiguous-usage runbook 106 — synthetic doc fixture D-ambig-106\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000d6e24.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-107.md": {
+      "kind": "doc",
+      "revisions": {
+        "3dd08af2fc59719de9c25bea522741aa2fd1728d": {
+          "text": "# Ambiguous-usage runbook 107 — synthetic doc fixture D-ambig-107\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000d8d13.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-95.md": {
+      "kind": "doc",
+      "revisions": {
+        "db0fa38aae68cbf69985fa2c5efe62a7ccc5bb0f": {
+          "text": "# Ambiguous-usage runbook 95 — synthetic doc fixture D-ambig-95\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000c19df.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-96.md": {
+      "kind": "doc",
+      "revisions": {
+        "63232ee8f99b411499d8369104b0cd3377988db2": {
+          "text": "# Ambiguous-usage runbook 96 — synthetic doc fixture D-ambig-96\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000c38ce.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-97.md": {
+      "kind": "doc",
+      "revisions": {
+        "4c4582b219c7d3f5953f47d3cb3c1e94921afd9e": {
+          "text": "# Ambiguous-usage runbook 97 — synthetic doc fixture D-ambig-97\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000c57bd.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-98.md": {
+      "kind": "doc",
+      "revisions": {
+        "b7b238de9ff3c681f507fe9d9ff0d955ed2d3800": {
+          "text": "# Ambiguous-usage runbook 98 — synthetic doc fixture D-ambig-98\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000c76ac.\n"
+        }
+      }
+    },
+    "forge|runbooks/ambig-99.md": {
+      "kind": "doc",
+      "revisions": {
+        "a9384f9d74fb4b4a74ef320fa1a01e80253b14a7": {
+          "text": "# Ambiguous-usage runbook 99 — synthetic doc fixture D-ambig-99\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000c959b.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-81.md": {
+      "kind": "doc",
+      "revisions": {
+        "30f6425c507b32765fc592c7150e721f1ee23b00": {
+          "text": "# Dead-constant runbook 81 — synthetic doc fixture D-dead-81\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000a68cd.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-82.md": {
+      "kind": "doc",
+      "revisions": {
+        "0eb87d92699b73ac89c4a5029586546c46ffb4b1": {
+          "text": "# Dead-constant runbook 82 — synthetic doc fixture D-dead-82\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000a87bc.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-83.md": {
+      "kind": "doc",
+      "revisions": {
+        "7b7f70f40a9ee52d2b5680db987dd36de81db579": {
+          "text": "# Dead-constant runbook 83 — synthetic doc fixture D-dead-83\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000aa6ab.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-84.md": {
+      "kind": "doc",
+      "revisions": {
+        "1cf71032af038cbcb0b62c92e655183913f4f086": {
+          "text": "# Dead-constant runbook 84 — synthetic doc fixture D-dead-84\n[claim doc] The auto_retry feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000ac59a.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-85.md": {
+      "kind": "doc",
+      "revisions": {
+        "d889a3702c182f7599eb74f1475e74bbb110b32a": {
+          "text": "# Dead-constant runbook 85 — synthetic doc fixture D-dead-85\n[claim doc] The fast_path feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000ae489.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-86.md": {
+      "kind": "doc",
+      "revisions": {
+        "a356284d9dcbcd072f709feccf9c85e514b0ba80": {
+          "text": "# Dead-constant runbook 86 — synthetic doc fixture D-dead-86\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000b0378.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-87.md": {
+      "kind": "doc",
+      "revisions": {
+        "e7de28deba8e87046b741e11f63e22304521f009": {
+          "text": "# Dead-constant runbook 87 — synthetic doc fixture D-dead-87\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000b2267.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-88.md": {
+      "kind": "doc",
+      "revisions": {
+        "403f36e20deba71b3c5c1f445fdc8c2461846b28": {
+          "text": "# Dead-constant runbook 88 — synthetic doc fixture D-dead-88\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000b4156.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-89.md": {
+      "kind": "doc",
+      "revisions": {
+        "905b33fee048d46d79875ead05dc03878f9e3cda": {
+          "text": "# Dead-constant runbook 89 — synthetic doc fixture D-dead-89\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000b6045.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-90.md": {
+      "kind": "doc",
+      "revisions": {
+        "8534d0f7e50af85524dde9086a595539f3f493eb": {
+          "text": "# Dead-constant runbook 90 — synthetic doc fixture D-dead-90\n[claim doc] The auto_retry feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000b7f34.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-91.md": {
+      "kind": "doc",
+      "revisions": {
+        "e181f1f75b08db6d09bb38c9849cb8efb19996cc": {
+          "text": "# Dead-constant runbook 91 — synthetic doc fixture D-dead-91\n[claim doc] The fast_path feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000b9e23.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-92.md": {
+      "kind": "doc",
+      "revisions": {
+        "b78e1832fbdc031df047d7023006e175b8fd69f6": {
+          "text": "# Dead-constant runbook 92 — synthetic doc fixture D-dead-92\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000bbd12.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-93.md": {
+      "kind": "doc",
+      "revisions": {
+        "0483fbe5575abba713e91db5dd6f84feecbad2ba": {
+          "text": "# Dead-constant runbook 93 — synthetic doc fixture D-dead-93\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000bdc01.\n"
+        }
+      }
+    },
+    "forge|runbooks/dead-94.md": {
+      "kind": "doc",
+      "revisions": {
+        "2d40b223cb0855dbf1265d085a7e71961a14030b": {
+          "text": "# Dead-constant runbook 94 — synthetic doc fixture D-dead-94\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000bfaf0.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-1.md": {
+      "kind": "doc",
+      "revisions": {
+        "6f9c65e6280f65a361a00813e5b976062c277c58": {
+          "text": "# Drift runbook 1 — synthetic doc fixture D-drift-1\n[claim doc] The invoice client retries failed submissions up to 5 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0000be1d.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-10.md": {
+      "kind": "doc",
+      "revisions": {
+        "1be277e9079ed628ec47a807ad8487b836dde7ab": {
+          "text": "# Drift runbook 10 — synthetic doc fixture D-drift-10\n[claim doc] A 110 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0001d484.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-11.md": {
+      "kind": "doc",
+      "revisions": {
+        "23c51b9b6f5f6f98e49f85f07b6d8d442ec9115f": {
+          "text": "# Drift runbook 11 — synthetic doc fixture D-drift-11\n[claim doc] A 90 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0001f373.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-12.md": {
+      "kind": "doc",
+      "revisions": {
+        "b76253885d8040935df3bd18ca9e132d8086509b": {
+          "text": "# Drift runbook 12 — synthetic doc fixture D-drift-12\n[claim doc] A 150 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00021262.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-13.md": {
+      "kind": "doc",
+      "revisions": {
+        "c2707e7833e2ddbf7ec11563772fb0d297037d74": {
+          "text": "# Drift runbook 13 — synthetic doc fixture D-drift-13\n[claim doc] A 50 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00023151.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-14.md": {
+      "kind": "doc",
+      "revisions": {
+        "cb107766e528fa76f73487b2f567bb4ee3a834d1": {
+          "text": "# Drift runbook 14 — synthetic doc fixture D-drift-14\n[claim doc] A 120 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00025040.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-15.md": {
+      "kind": "doc",
+      "revisions": {
+        "7133a4078275ecd9d7bf16d378e51a4dfdadca95": {
+          "text": "# Drift runbook 15 — synthetic doc fixture D-drift-15\n[claim doc] A 75 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00026f2f.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-16.md": {
+      "kind": "doc",
+      "revisions": {
+        "6dee08c87a1c628eadf5ffd412047595fee74167": {
+          "text": "# Drift runbook 16 — synthetic doc fixture D-drift-16\n[claim doc] A 200 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00028e1e.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-17.md": {
+      "kind": "doc",
+      "revisions": {
+        "9b4ffe26d495e8d45ba0d1717fc95293388ed8e6": {
+          "text": "# Drift runbook 17 — synthetic doc fixture D-drift-17\n[claim doc] The synthetic amortization schedule rounds line items half-even.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0002ad0d.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-18.md": {
+      "kind": "doc",
+      "revisions": {
+        "25c57d7b06eb7cf302b6c04e101097648cb5502f": {
+          "text": "# Drift runbook 18 — synthetic doc fixture D-drift-18\n[claim doc] The synthetic amortization schedule rounds line items down.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0002cbfc.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-19.md": {
+      "kind": "doc",
+      "revisions": {
+        "0ad1880b337181b2f582bc68f1f4f9d0367cb88d": {
+          "text": "# Drift runbook 19 — synthetic doc fixture D-drift-19\n[claim doc] The synthetic amortization schedule rounds line items bankers.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0002eaeb.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-2.md": {
+      "kind": "doc",
+      "revisions": {
+        "92e2e5c62624096a2bd34ef3f72c73ad38539aa7": {
+          "text": "# Drift runbook 2 — synthetic doc fixture D-drift-2\n[claim doc] The invoice client retries failed submissions up to 7 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0000dd0c.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-20.md": {
+      "kind": "doc",
+      "revisions": {
+        "b8244f098eae7892b51dc4133f1785efda44653b": {
+          "text": "# Drift runbook 20 — synthetic doc fixture D-drift-20\n[claim doc] The synthetic amortization schedule rounds line items up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000309da.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-21.md": {
+      "kind": "doc",
+      "revisions": {
+        "1f0aadff5e1c13276997990cb80e31caf84d3a0d": {
+          "text": "# Drift runbook 21 — synthetic doc fixture D-drift-21\n[claim doc] The synthetic amortization schedule rounds line items half-down.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000328c9.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-22.md": {
+      "kind": "doc",
+      "revisions": {
+        "2d0aa730575f94e6b7851d424d181c0af7d4dc02": {
+          "text": "# Drift runbook 22 — synthetic doc fixture D-drift-22\n[claim doc] The synthetic amortization schedule rounds line items half-even.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000347b8.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-23.md": {
+      "kind": "doc",
+      "revisions": {
+        "ab11927fa7517baa4fa11994396ea285a49b926a": {
+          "text": "# Drift runbook 23 — synthetic doc fixture D-drift-23\n[claim doc] The synthetic amortization schedule rounds line items down.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000366a7.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-24.md": {
+      "kind": "doc",
+      "revisions": {
+        "cb6d6a2a666757cad91cfe3bc17c7ab4a36aa456": {
+          "text": "# Drift runbook 24 — synthetic doc fixture D-drift-24\n[claim doc] The synthetic amortization schedule rounds line items up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00038596.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-25.md": {
+      "kind": "doc",
+      "revisions": {
+        "ba940db94e0d3541d2b35fe41f4e019aa160c8d6": {
+          "text": "# Drift runbook 25 — synthetic doc fixture D-drift-25\n[claim doc] The auto_retry feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0003a485.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-26.md": {
+      "kind": "doc",
+      "revisions": {
+        "c585f958287ccc6cd55186b1d62aa8b16e73f2a5": {
+          "text": "# Drift runbook 26 — synthetic doc fixture D-drift-26\n[claim doc] The auto_retry feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0003c374.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-27.md": {
+      "kind": "doc",
+      "revisions": {
+        "0b4df74beda7b1c6924ebc4ef01b23b31b85fab1": {
+          "text": "# Drift runbook 27 — synthetic doc fixture D-drift-27\n[claim doc] The auto_retry feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0003e263.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-28.md": {
+      "kind": "doc",
+      "revisions": {
+        "d2d308946577a3ca255f4ffc2777dc1db3b570d7": {
+          "text": "# Drift runbook 28 — synthetic doc fixture D-drift-28\n[claim doc] The auto_retry feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00040152.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-29.md": {
+      "kind": "doc",
+      "revisions": {
+        "42f007787c90a0d9061b8a2e00e3fa5258ed064b": {
+          "text": "# Drift runbook 29 — synthetic doc fixture D-drift-29\n[claim doc] The fast_path feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00042041.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-3.md": {
+      "kind": "doc",
+      "revisions": {
+        "e33623ae6518b0c27cfeed25ca7997759ecc7a3c": {
+          "text": "# Drift runbook 3 — synthetic doc fixture D-drift-3\n[claim doc] The invoice client retries failed submissions up to 4 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0000fbfb.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-30.md": {
+      "kind": "doc",
+      "revisions": {
+        "4a9bbc9a09a4f68696f440dcfc04025597c4ce72": {
+          "text": "# Drift runbook 30 — synthetic doc fixture D-drift-30\n[claim doc] The fast_path feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00043f30.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-31.md": {
+      "kind": "doc",
+      "revisions": {
+        "2876dde116e5ee2d50bc9a7ca181eb20cc140061": {
+          "text": "# Drift runbook 31 — synthetic doc fixture D-drift-31\n[claim doc] The fast_path feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00045e1f.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-32.md": {
+      "kind": "doc",
+      "revisions": {
+        "04dc92c80febe9725de63e5e14c46cfc6cca1b90": {
+          "text": "# Drift runbook 32 — synthetic doc fixture D-drift-32\n[claim doc] The fast_path feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00047d0e.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-33.md": {
+      "kind": "doc",
+      "revisions": {
+        "0cffda92aad283e5321a1325a57db1900b48b82a": {
+          "text": "# Drift runbook 33 — synthetic doc fixture D-drift-33\n[claim doc] INVALID_INVOICE maps to 422.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00049bfd.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-34.md": {
+      "kind": "doc",
+      "revisions": {
+        "44fe12d05759a7f131dbdd70f973898ff4728a66": {
+          "text": "# Drift runbook 34 — synthetic doc fixture D-drift-34\n[claim doc] INVALID_INVOICE maps to 500.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0004baec.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-35.md": {
+      "kind": "doc",
+      "revisions": {
+        "5f2132c7aa37c41437a7eb4ebc44be8ff598f9be": {
+          "text": "# Drift runbook 35 — synthetic doc fixture D-drift-35\n[claim doc] INVALID_INVOICE maps to 404.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0004d9db.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-36.md": {
+      "kind": "doc",
+      "revisions": {
+        "76a4135481871e014349a08a394c47d6989c1210": {
+          "text": "# Drift runbook 36 — synthetic doc fixture D-drift-36\n[claim doc] INVALID_INVOICE maps to 403.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0004f8ca.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-37.md": {
+      "kind": "doc",
+      "revisions": {
+        "5d6f75ac4d86405ee2440cf8688557431cb67e8f": {
+          "text": "# Drift runbook 37 — synthetic doc fixture D-drift-37\n[claim doc] INVALID_INVOICE maps to 409.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000517b9.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-38.md": {
+      "kind": "doc",
+      "revisions": {
+        "c1cbf7627d5439c97a15582767a9d88c405e4dae": {
+          "text": "# Drift runbook 38 — synthetic doc fixture D-drift-38\n[claim doc] INVALID_INVOICE maps to 502.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000536a8.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-39.md": {
+      "kind": "doc",
+      "revisions": {
+        "94fadaa61fc2ed58e174e50525a324506b00fa93": {
+          "text": "# Drift runbook 39 — synthetic doc fixture D-drift-39\n[claim doc] INVALID_INVOICE maps to 418.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00055597.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-4.md": {
+      "kind": "doc",
+      "revisions": {
+        "e996e2f9a783d3ef4399b14a70343381093c1a09": {
+          "text": "# Drift runbook 4 — synthetic doc fixture D-drift-4\n[claim doc] The invoice client retries failed submissions up to 10 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00011aea.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-40.md": {
+      "kind": "doc",
+      "revisions": {
+        "4203c825654c39d2c32c15ae7ea29c0715cb243a": {
+          "text": "# Drift runbook 40 — synthetic doc fixture D-drift-40\n[claim doc] INVALID_INVOICE maps to 429.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00057486.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-5.md": {
+      "kind": "doc",
+      "revisions": {
+        "e94b0098db0a9ef7df8a54f1136860b3c3927e42": {
+          "text": "# Drift runbook 5 — synthetic doc fixture D-drift-5\n[claim doc] The invoice client retries failed submissions up to 2 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000139d9.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-6.md": {
+      "kind": "doc",
+      "revisions": {
+        "3b7e1001469c4d78f0cd925edd7f68b638ccb2ae": {
+          "text": "# Drift runbook 6 — synthetic doc fixture D-drift-6\n[claim doc] The invoice client retries failed submissions up to 8 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000158c8.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-7.md": {
+      "kind": "doc",
+      "revisions": {
+        "6af0d44718650e0d037d840cc28572b7d3cdb4dc": {
+          "text": "# Drift runbook 7 — synthetic doc fixture D-drift-7\n[claim doc] The invoice client retries failed submissions up to 6 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000177b7.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-8.md": {
+      "kind": "doc",
+      "revisions": {
+        "120f1e60a8bddb975d9aaf6320a847be8be7595f": {
+          "text": "# Drift runbook 8 — synthetic doc fixture D-drift-8\n[claim doc] The invoice client retries failed submissions up to 9 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000196a6.\n"
+        }
+      }
+    },
+    "forge|runbooks/drift-9.md": {
+      "kind": "doc",
+      "revisions": {
+        "fb7af90c13e140187d110f41fc895283e0ad0c2d": {
+          "text": "# Drift runbook 9 — synthetic doc fixture D-drift-9\n[claim doc] A 100 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0001b595.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-41.md": {
+      "kind": "doc",
+      "revisions": {
+        "d6c292285283e83cb14f77d0b96eaa3150fa33c6": {
+          "text": "# No-change runbook 41 — synthetic doc fixture D-nochange-41\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00059375.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-42.md": {
+      "kind": "doc",
+      "revisions": {
+        "8719584ac022dfcf391e934f460845b36f9207e8": {
+          "text": "# No-change runbook 42 — synthetic doc fixture D-nochange-42\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0005b264.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-43.md": {
+      "kind": "doc",
+      "revisions": {
+        "b69e988292f31a326e32a2c9842b65a1da3ddf50": {
+          "text": "# No-change runbook 43 — synthetic doc fixture D-nochange-43\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0005d153.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-44.md": {
+      "kind": "doc",
+      "revisions": {
+        "59f9a43e6da2c9e7adc44d162fef47091823b536": {
+          "text": "# No-change runbook 44 — synthetic doc fixture D-nochange-44\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0005f042.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-45.md": {
+      "kind": "doc",
+      "revisions": {
+        "56da573242377cd5a98ad6a48fb5aa82d8411220": {
+          "text": "# No-change runbook 45 — synthetic doc fixture D-nochange-45\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00060f31.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-46.md": {
+      "kind": "doc",
+      "revisions": {
+        "922ec3ceda197c6f3b12762946d1cd851bc9878f": {
+          "text": "# No-change runbook 46 — synthetic doc fixture D-nochange-46\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00062e20.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-47.md": {
+      "kind": "doc",
+      "revisions": {
+        "87a241d05ea5c71f4e5f718dce3125ee52555085": {
+          "text": "# No-change runbook 47 — synthetic doc fixture D-nochange-47\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00064d0f.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-48.md": {
+      "kind": "doc",
+      "revisions": {
+        "d207a9e7b31fcdce22734164beeb04465e490d41": {
+          "text": "# No-change runbook 48 — synthetic doc fixture D-nochange-48\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00066bfe.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-49.md": {
+      "kind": "doc",
+      "revisions": {
+        "172f2c035e30c4ab25491083958c1add3b1ee74c": {
+          "text": "# No-change runbook 49 — synthetic doc fixture D-nochange-49\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00068aed.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-50.md": {
+      "kind": "doc",
+      "revisions": {
+        "a98f59c06d6f8812727fa83dcbd14ce1cac620b7": {
+          "text": "# No-change runbook 50 — synthetic doc fixture D-nochange-50\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0006a9dc.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-51.md": {
+      "kind": "doc",
+      "revisions": {
+        "350edb1b684f73637d957a56436112b0809813aa": {
+          "text": "# No-change runbook 51 — synthetic doc fixture D-nochange-51\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0006c8cb.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-52.md": {
+      "kind": "doc",
+      "revisions": {
+        "c5d7b246e168a163fc6cae352ff91caa5a9076d6": {
+          "text": "# No-change runbook 52 — synthetic doc fixture D-nochange-52\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0006e7ba.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-53.md": {
+      "kind": "doc",
+      "revisions": {
+        "4ff8b4118a2ed8df565bf2756f3499d8f8e36f20": {
+          "text": "# No-change runbook 53 — synthetic doc fixture D-nochange-53\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000706a9.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-54.md": {
+      "kind": "doc",
+      "revisions": {
+        "e0aeab1e91730578ea4011ccafb3417838b9a49e": {
+          "text": "# No-change runbook 54 — synthetic doc fixture D-nochange-54\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00072598.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-55.md": {
+      "kind": "doc",
+      "revisions": {
+        "0cf3fda67436004ee4bb1ffffe7f207d2edf00f6": {
+          "text": "# No-change runbook 55 — synthetic doc fixture D-nochange-55\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00074487.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-56.md": {
+      "kind": "doc",
+      "revisions": {
+        "a2aecc76024b885619ec85ca8d315ac6773dadfc": {
+          "text": "# No-change runbook 56 — synthetic doc fixture D-nochange-56\n[claim doc] A 125 percent holdback applies to disputed invoices.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00076376.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-57.md": {
+      "kind": "doc",
+      "revisions": {
+        "6715ee953c160628b0ea8876d3877245a2494467": {
+          "text": "# No-change runbook 57 — synthetic doc fixture D-nochange-57\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00078265.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-58.md": {
+      "kind": "doc",
+      "revisions": {
+        "2e93fda0f84b786a4d6394b1baec45249219f19d": {
+          "text": "# No-change runbook 58 — synthetic doc fixture D-nochange-58\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0007a154.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-59.md": {
+      "kind": "doc",
+      "revisions": {
+        "05eef7fdcaea774a897cf417610b00be8a981d8a": {
+          "text": "# No-change runbook 59 — synthetic doc fixture D-nochange-59\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0007c043.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-60.md": {
+      "kind": "doc",
+      "revisions": {
+        "2724db307515d90336bfc62f453767784711ed1c": {
+          "text": "# No-change runbook 60 — synthetic doc fixture D-nochange-60\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0007df32.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-61.md": {
+      "kind": "doc",
+      "revisions": {
+        "1fdc5e723840bb80c6a92bbc90e3fcce6568204f": {
+          "text": "# No-change runbook 61 — synthetic doc fixture D-nochange-61\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0007fe21.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-62.md": {
+      "kind": "doc",
+      "revisions": {
+        "0498f8c259c362ec8f8839d2d1d02aeed597a984": {
+          "text": "# No-change runbook 62 — synthetic doc fixture D-nochange-62\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00081d10.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-63.md": {
+      "kind": "doc",
+      "revisions": {
+        "4b98e8787ff0bfc8d1a43cfd5845268090306045": {
+          "text": "# No-change runbook 63 — synthetic doc fixture D-nochange-63\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00083bff.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-64.md": {
+      "kind": "doc",
+      "revisions": {
+        "ea296d477733aa32440ac2d2a75b6a08801fbfdc": {
+          "text": "# No-change runbook 64 — synthetic doc fixture D-nochange-64\n[claim doc] The synthetic amortization schedule rounds line items half-up.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00085aee.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-65.md": {
+      "kind": "doc",
+      "revisions": {
+        "78810e2b7868699e218b00b634a324dc41420b3b": {
+          "text": "# No-change runbook 65 — synthetic doc fixture D-nochange-65\n[claim doc] The auto_retry feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000879dd.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-66.md": {
+      "kind": "doc",
+      "revisions": {
+        "43d2942ebc36778dc465956c57c39ac348863bce": {
+          "text": "# No-change runbook 66 — synthetic doc fixture D-nochange-66\n[claim doc] The auto_retry feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000898cc.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-67.md": {
+      "kind": "doc",
+      "revisions": {
+        "b8a33c24027acdf88b989896e9cb5bfa1974b2be": {
+          "text": "# No-change runbook 67 — synthetic doc fixture D-nochange-67\n[claim doc] The auto_retry feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0008b7bb.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-68.md": {
+      "kind": "doc",
+      "revisions": {
+        "a12b9a441586771ff0bac5c6465cdf0ff608b124": {
+          "text": "# No-change runbook 68 — synthetic doc fixture D-nochange-68\n[claim doc] The auto_retry feature is enabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0008d6aa.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-69.md": {
+      "kind": "doc",
+      "revisions": {
+        "2dd832b3800484eb54649530438ed41b22d91d84": {
+          "text": "# No-change runbook 69 — synthetic doc fixture D-nochange-69\n[claim doc] The fast_path feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0008f599.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-70.md": {
+      "kind": "doc",
+      "revisions": {
+        "cb4fdf660a65f286ee47779f055f6c485722b259": {
+          "text": "# No-change runbook 70 — synthetic doc fixture D-nochange-70\n[claim doc] The fast_path feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00091488.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-71.md": {
+      "kind": "doc",
+      "revisions": {
+        "13455f084e391de95c5bbe4c6c5493bd251120be": {
+          "text": "# No-change runbook 71 — synthetic doc fixture D-nochange-71\n[claim doc] The fast_path feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00093377.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-72.md": {
+      "kind": "doc",
+      "revisions": {
+        "1354bd144c670de9cd5830245b8b88e221c38ec1": {
+          "text": "# No-change runbook 72 — synthetic doc fixture D-nochange-72\n[claim doc] The fast_path feature is disabled.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00095266.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-73.md": {
+      "kind": "doc",
+      "revisions": {
+        "61bb83939971f3686db810937f509b34d7cb0fcf": {
+          "text": "# No-change runbook 73 — synthetic doc fixture D-nochange-73\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00097155.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-74.md": {
+      "kind": "doc",
+      "revisions": {
+        "0095eb86d25aa00d60703a87e5e2f3f28905aa7b": {
+          "text": "# No-change runbook 74 — synthetic doc fixture D-nochange-74\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-00099044.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-75.md": {
+      "kind": "doc",
+      "revisions": {
+        "5490d352d3e3141ccd2129a7749deac687663be8": {
+          "text": "# No-change runbook 75 — synthetic doc fixture D-nochange-75\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0009af33.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-76.md": {
+      "kind": "doc",
+      "revisions": {
+        "1832af43946636371f9fbcab5289b2ba8fabca5b": {
+          "text": "# No-change runbook 76 — synthetic doc fixture D-nochange-76\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0009ce22.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-77.md": {
+      "kind": "doc",
+      "revisions": {
+        "fc5b001f2f2a98dc3a2613938c7a21dfbcff7184": {
+          "text": "# No-change runbook 77 — synthetic doc fixture D-nochange-77\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0009ed11.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-78.md": {
+      "kind": "doc",
+      "revisions": {
+        "f56952f9b8baaed68430dff2e0d6b6e1768bb6a7": {
+          "text": "# No-change runbook 78 — synthetic doc fixture D-nochange-78\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000a0c00.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-79.md": {
+      "kind": "doc",
+      "revisions": {
+        "2a0311d6c5d571ecb3da6b60300a5f21e95f9448": {
+          "text": "# No-change runbook 79 — synthetic doc fixture D-nochange-79\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000a2aef.\n"
+        }
+      }
+    },
+    "forge|runbooks/nochange-80.md": {
+      "kind": "doc",
+      "revisions": {
+        "7015aa1198cf219da2e39a4ed771a59e2735f39a": {
+          "text": "# No-change runbook 80 — synthetic doc fixture D-nochange-80\n[claim doc] INVALID_INVOICE maps to 400.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000a49de.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-code-127.md": {
+      "kind": "doc",
+      "revisions": {
+        "6a0c492015bad04cbb28bbffd8d516e3137fd026": {
+          "text": "# SEC-002 code companion runbook 127 — synthetic doc fixture D-sec002-code-127\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000ff7bf.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-code-128.md": {
+      "kind": "doc",
+      "revisions": {
+        "31da96187aa7551b4ff45bbf31c9a20d81f3697e": {
+          "text": "# SEC-002 code companion runbook 128 — synthetic doc fixture D-sec002-code-128\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-001016ae.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-code-129.md": {
+      "kind": "doc",
+      "revisions": {
+        "4b3de5e581b4225c8a81e5dc312d2742eb180d64": {
+          "text": "# SEC-002 code companion runbook 129 — synthetic doc fixture D-sec002-code-129\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0010359d.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-code-130.md": {
+      "kind": "doc",
+      "revisions": {
+        "70f94a0559bae020ed704744b37e32088cc5c300": {
+          "text": "# SEC-002 code companion runbook 130 — synthetic doc fixture D-sec002-code-130\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0010548c.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-code-131.md": {
+      "kind": "doc",
+      "revisions": {
+        "8613eb9bdf75a83035570b6c6fa610c7b1e5cd1e": {
+          "text": "# SEC-002 code companion runbook 131 — synthetic doc fixture D-sec002-code-131\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0010737b.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-code-132.md": {
+      "kind": "doc",
+      "revisions": {
+        "259127e105921682c92188bc9e5d07b717493eea": {
+          "text": "# SEC-002 code companion runbook 132 — synthetic doc fixture D-sec002-code-132\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-0010926a.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-doc-121.md": {
+      "kind": "doc",
+      "revisions": {
+        "6d90972badf3d40e49ec1ea9ab773516ad6566c2": {
+          "text": "# Compliance-seeded runbook — synthetic doc fixture D-sec002-doc-121\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nThis service is SOC 2 Type II certified and fully compliant.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000f3e25.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-doc-122.md": {
+      "kind": "doc",
+      "revisions": {
+        "93f0edacc4815d5115d40c5d23b3018a08e914bf": {
+          "text": "# Compliance-seeded runbook — synthetic doc fixture D-sec002-doc-122\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nThis service is SOC 2 Type II certified and fully compliant.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000f5d14.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-doc-123.md": {
+      "kind": "doc",
+      "revisions": {
+        "52f0c538a97475f7de8ca2f81bafd99e61de2d19": {
+          "text": "# Compliance-seeded runbook — synthetic doc fixture D-sec002-doc-123\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nThis service is SOC 2 Type II certified and fully compliant.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000f7c03.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-doc-124.md": {
+      "kind": "doc",
+      "revisions": {
+        "c06a6287a784137adef60da44503c95c1b605528": {
+          "text": "# Compliance-seeded runbook — synthetic doc fixture D-sec002-doc-124\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nThis service is SOC 2 Type II certified and fully compliant.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000f9af2.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-doc-125.md": {
+      "kind": "doc",
+      "revisions": {
+        "debaa6cdc4ecc0f915adc1370f24462afcbfe359": {
+          "text": "# Compliance-seeded runbook — synthetic doc fixture D-sec002-doc-125\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nThis service is SOC 2 Type II certified and fully compliant.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000fb9e1.\n"
+        }
+      }
+    },
+    "forge|runbooks/sec002-doc-126.md": {
+      "kind": "doc",
+      "revisions": {
+        "1a72ab02793217570966fa601d366e1007c1f130": {
+          "text": "# Compliance-seeded runbook — synthetic doc fixture D-sec002-doc-126\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nThis service is SOC 2 Type II certified and fully compliant.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000fd8d0.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-108.md": {
+      "kind": "doc",
+      "revisions": {
+        "4f336740df878f450b3ff8c0dd13b85c72d9e59c": {
+          "text": "# Version-conflict runbook 108 — synthetic doc fixture D-version-108\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000dac02.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-109.md": {
+      "kind": "doc",
+      "revisions": {
+        "a70c60b7ffc3c948b55968a3bde15e5de4b8f8eb": {
+          "text": "# Version-conflict runbook 109 — synthetic doc fixture D-version-109\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000dcaf1.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-110.md": {
+      "kind": "doc",
+      "revisions": {
+        "fd9ab497148fdcfe95b7e1eeccafead7f85c48bf": {
+          "text": "# Version-conflict runbook 110 — synthetic doc fixture D-version-110\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000de9e0.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-111.md": {
+      "kind": "doc",
+      "revisions": {
+        "04c05f084eeb05320c4f3a548a9b87b4687836db": {
+          "text": "# Version-conflict runbook 111 — synthetic doc fixture D-version-111\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000e08cf.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-112.md": {
+      "kind": "doc",
+      "revisions": {
+        "36db9528875e1bc6126c8a34bfa52c8003937985": {
+          "text": "# Version-conflict runbook 112 — synthetic doc fixture D-version-112\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000e27be.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-113.md": {
+      "kind": "doc",
+      "revisions": {
+        "0fb8b47f0cbcfe4aeefd9425c8de6806280d18d6": {
+          "text": "# Version-conflict runbook 113 — synthetic doc fixture D-version-113\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000e46ad.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-114.md": {
+      "kind": "doc",
+      "revisions": {
+        "14ee42b3b983d0f6b343a8f4c7ee5f740cda80e7": {
+          "text": "# Version-conflict runbook 114 — synthetic doc fixture D-version-114\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000e659c.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-115.md": {
+      "kind": "doc",
+      "revisions": {
+        "04a899ff3e4371919d342318702a5ef66bc1ec59": {
+          "text": "# Version-conflict runbook 115 — synthetic doc fixture D-version-115\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000e848b.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-116.md": {
+      "kind": "doc",
+      "revisions": {
+        "bdb9c081cd9b4cbbf607fdc6e46d3073f66c33e3": {
+          "text": "# Version-conflict runbook 116 — synthetic doc fixture D-version-116\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000ea37a.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-117.md": {
+      "kind": "doc",
+      "revisions": {
+        "fd91d593f3c5e78da9afd829d77d965397b9feea": {
+          "text": "# Version-conflict runbook 117 — synthetic doc fixture D-version-117\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000ec269.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-118.md": {
+      "kind": "doc",
+      "revisions": {
+        "caba2af5c7ee0bb347287c615d89e7b33cacc476": {
+          "text": "# Version-conflict runbook 118 — synthetic doc fixture D-version-118\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000ee158.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-119.md": {
+      "kind": "doc",
+      "revisions": {
+        "30f3e3def5ac7fdcc260bc415b214a20d54c454b": {
+          "text": "# Version-conflict runbook 119 — synthetic doc fixture D-version-119\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000f0047.\n"
+        }
+      }
+    },
+    "forge|runbooks/version-120.md": {
+      "kind": "doc",
+      "revisions": {
+        "1081f19ec1ae687b6c9244a9747ff158cacd4782": {
+          "text": "# Version-conflict runbook 120 — synthetic doc fixture D-version-120\n[claim doc] The invoice client retries failed submissions up to 3 attempts.\nNightly settlement runs at 02:00; the operations calendar is maintained separately and is out of scope for this runbook.\nLedger export cadence is weekly; contact the on-call rotation for export failures. Audit marker SYNTH-CANARY-000f1f36.\n"
+        }
+      }
+    }
+  }
+}
