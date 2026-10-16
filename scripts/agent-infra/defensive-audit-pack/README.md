@@ -56,7 +56,13 @@ applicability, freshness, coverage and a remediation proposal.
 
 - 64 consulted candidates — each inspected config entry is **charged before**
   it is read; the first over-budget candidate refuses without being touched.
-- 256 KiB admitted input bytes.
+  One aggregate cap per invocation, shared by the input document, the host
+  pin registrations, and the check reads.
+- 256 KiB admitted input bytes, counted as **exact serialized JSON bytes**
+  (UTF-8) including string escaping and structural punctuation — one
+  aggregate cap per invocation, shared by the input document and the host
+  pin registrations, so the same document sees the same bound as text or as
+  an object.
 - JSON nesting depth 16, measured by a byte-level structural scanner **before**
   `JSON.parse` (never decodes candidate fields).
 - 5 s watchdog (injectable clock for tests).
@@ -74,6 +80,7 @@ const report = auditExport(envelopeJsonText, {
     signer_fingerprint: "SHA256:...",
     authorized_key_fingerprints: ["SHA256:..."],
     expected_sshd_binary: "C:\\Program Files\\Git\\usr\\bin\\sshd.exe",
+    allowed_access_rules: ["allow:pin-identity"],
   },
 });
 // report: { status: READY|PARTIAL|REFUSED, complete, lane, machine_id, findings, ... }

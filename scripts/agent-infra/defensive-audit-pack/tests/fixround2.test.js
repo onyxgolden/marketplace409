@@ -127,13 +127,20 @@ test("DAP-001: unknown nested config field is refused, never silently ignored", 
   assertEqual(r.refused_reason, "INVALID_INPUT", "closed schema");
 });
 
-test("DAP-001: pins go through their own bounded admission (independent counter)", () => {
+test("DAP-001: pins share the aggregate admission budget with the document (shared counter)", () => {
   const fatPins = {};
   for (let i = 0; i < 70; i++) fatPins[`pin_${i}`] = `v${i}`;
   const c = CASES.find((x) => x.name === "bridge-pass-full");
   const r = auditExport(c.envelope, { asOfMs: AS_OF_MS, pins: fatPins });
   assertEqual(r.status, "REFUSED", "fat pins refused");
-  assertEqual(r.refused_reason, "BUDGET_EXCEEDED", "pins budget");
+  assertEqual(r.refused_reason, "BUDGET_EXCEEDED", "shared pins budget");
+  // A doc plus a pin set that together exceed 64 consulted candidates refuse
+  // even when each fits alone: one aggregate cap per invocation.
+  const smallPins = {};
+  for (let i = 0; i < 50; i++) smallPins[`pin_${i}`] = `v${i}`;
+  const r2 = auditExport(c.envelope, { asOfMs: AS_OF_MS, pins: smallPins });
+  assertEqual(r2.status, "REFUSED", "doc+pins over 64 refused");
+  assertEqual(r2.refused_reason, "BUDGET_EXCEEDED", "aggregate candidate cap");
 });
 
 /* ================= DAP-002: no escaping budget failures; real watchdog ================= */

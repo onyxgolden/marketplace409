@@ -93,14 +93,19 @@ function auditExportInner(input, opts, box) {
     return refused(null, null, "INVALID_INPUT", "$");
   }
   // Charge-before-inspect deep copy: byte/depth caps, accessor-free,
-  // first-over-budget candidate never touched.
-  const doc = admitDocument(parsed, budget, { label: "admission" });
+  // first-over-budget candidate never touched. The input document and the
+  // consulted host metadata share ONE aggregate 256KiB / 64-candidate cap
+  // per invocation (scope); neither admission resets the other's budget,
+  // so the same document sees the same bound as text or as an object.
+  const bytesBox = { count: 0 };
+  const doc = admitDocument(parsed, budget, { label: "admission", bytesBox });
 
-  // --- Host pin collections through their own bounded admission ---
-  // Independent counter: pins are trusted fixture registrations, admitted
-  // and hashed so findings bind to exactly the pin set consulted.
+  // --- Host pin collections through the shared bounded admission ---
+  // Pins are trusted fixture registrations, admitted and hashed so findings
+  // bind to exactly the pin set consulted. They charge the same aggregate
+  // candidate budget and byte box as the input document.
   const rawPins = opts.pins !== null && typeof opts.pins === "object" ? opts.pins : {};
-  const pins = admitDocument(rawPins, new CandidateBudget(), { label: "pins" });
+  const pins = admitDocument(rawPins, budget, { label: "pins", bytesBox });
   const pinsDigest = sha256HexUtf8(pins);
 
   const env = validateEnvelope(doc);

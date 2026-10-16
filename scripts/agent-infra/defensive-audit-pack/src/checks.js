@@ -164,13 +164,38 @@ function bridgeChecks() {
         }
         const fp = read(ctx, s.value, "fingerprint", "BRG-001:signer.fingerprint");
         const al = read(ctx, s.value, "allowlist_digest", "BRG-001:signer.allowlist_digest");
-        if (!fp.present || typeof fp.value !== "string" || fp.value !== ctx.pins.signer_fingerprint) {
-          return finding(ctx, "BRG-001", "bridge", FAIL, `${ptr}.fingerprint`, fp.present ? fp.value : null,
-            "Wrong or missing signer identity: rotate to the pinned signer and re-export.",
+        // Required host pins: an applicable pin must be registered before a
+        // comparison can be made. A missing pin is missing evidence, never a
+        // passing or failing identity claim.
+        const pinnedFp = ctx.pins.signer_fingerprint;
+        const pinnedAl = ctx.pins.command_allowlist_digest;
+        if (typeof pinnedFp !== "string" || pinnedFp.length === 0 ||
+            typeof pinnedAl !== "string" || pinnedAl.length === 0) {
+          return finding(ctx, "BRG-001", "bridge", UNVERIFIED, `${ptr}.fingerprint`, fp.present ? fp.value : null,
+            "Required host pins are not registered (signer_fingerprint and/or command_allowlist_digest): " +
+            "an unregistered signer cannot be compared, so this check cannot earn PASS.",
             { freshness_sensitive: true, coverage: ["signer"] });
         }
-        if (!al.present || typeof al.value !== "string" || al.value !== ctx.pins.command_allowlist_digest) {
-          return finding(ctx, "BRG-001", "bridge", FAIL, `${ptr}.allowlist_digest`, al.present ? al.value : null,
+        // Missing-versus-unsafe: an absent fingerprint or digest is missing
+        // evidence (UNVERIFIED); a present value that does not match the pin
+        // is an explicitly wrong identity (FAIL).
+        if (!fp.present || typeof fp.value !== "string" || fp.value.length === 0) {
+          return finding(ctx, "BRG-001", "bridge", UNVERIFIED, `${ptr}.fingerprint`, fp.present ? fp.value : null,
+            "Signer fingerprint is absent: export the signer fingerprint explicitly; an unregistered signer cannot be trusted.",
+            { freshness_sensitive: true, coverage: ["signer"] });
+        }
+        if (!al.present || typeof al.value !== "string" || al.value.length === 0) {
+          return finding(ctx, "BRG-001", "bridge", UNVERIFIED, `${ptr}.allowlist_digest`, al.present ? al.value : null,
+            "Allowlist digest is absent: export the command allowlist digest explicitly; an unbound allowlist cannot be trusted.",
+            { freshness_sensitive: true, coverage: ["signer", "allowlist"] });
+        }
+        if (fp.value !== pinnedFp) {
+          return finding(ctx, "BRG-001", "bridge", FAIL, `${ptr}.fingerprint`, fp.value,
+            "Wrong signer identity: rotate to the pinned signer and re-export.",
+            { freshness_sensitive: true, coverage: ["signer"] });
+        }
+        if (al.value !== pinnedAl) {
+          return finding(ctx, "BRG-001", "bridge", FAIL, `${ptr}.allowlist_digest`, al.value,
             "Allowlist digest does not match the pinned command allowlist: re-export with the authorized allowlist binding.",
             { freshness_sensitive: true, coverage: ["signer", "allowlist"] });
         }
@@ -325,11 +350,34 @@ function bridgeChecks() {
 /** Validated allow-rule grammar: allow:<token>. Anything else is refused. */
 const ALLOW_RULE_RE = /^allow:[A-Za-z0-9][A-Za-z0-9_.+\-]*$/;
 
+/** Closed typed policy declarations: exact lowercase tokens only — no substring matching. */
+const DENY_BY_DEFAULT_POLICIES = new Set([
+  "deny-by-default",
+  "deny_by_default",
+  "deny by default",
+  "denydefault",
+  "deny/default",
+]);
+
+/** Rule subjects that are explicitly permissive regardless of registration. */
+const EXPLICIT_PERMISSIVE_RULE_SUBJECTS = new Set([
+  "everyone",
+  "everybody",
+  "all",
+  "anyone",
+  "any",
+  "*",
+  "users",
+  "world",
+  "public",
+  "authenticated",
+]);
+
 function cloudflareChecks() {
   return [
     {
       id: "CF-001",
-      title: "Cloudflare Access policy is explicit deny-by-default with validated rules",
+      title: "Cloudflare Access policy is explicit deny-by-default with registered rules",
       run(ctx) {
         const ptr = "$.config.access";
         const a = read(ctx, ctx.config, "access", "CF-001:access");
@@ -342,23 +390,34 @@ function cloudflareChecks() {
         const rules = read(ctx, a.value, "rules", "CF-001:access.rules");
         if (!policy.present || typeof policy.value !== "string") {
           return finding(ctx, "CF-001", "cloudflare", UNVERIFIED, `${ptr}.policy`, policy.present ? policy.value : null,
-            "Access policy is undeclared: name the policy explicitly (deny-by-default with an enumerated allow list).",
+            "Access policy is undeclared: declare deny-by-default with an exact closed token.",
             { freshness_sensitive: true });
         }
-        const p = policy.value.toLowerCase();
+        const p = policy.value.toLowerCase().trim();
         if (p.includes("allow all") || p.includes("allow everyone") || p.includes("bypass")) {
           return finding(ctx, "CF-001", "cloudflare", FAIL, `${ptr}.policy`, policy.value,
             "Policy is explicitly permissive: replace with deny-by-default and an enumerated allow list.",
             { freshness_sensitive: true });
         }
-        if (!(p.includes("deny") && p.includes("default"))) {
+        if (!DENY_BY_DEFAULT_POLICIES.has(p)) {
           return finding(ctx, "CF-001", "cloudflare", FAIL, `${ptr}.policy`, policy.value,
-            "Policy is not explicit deny-by-default: state deny-by-default explicitly.",
+            "Policy is not an exact deny-by-default declaration: use one of the closed typed tokens (deny-by-default).",
             { freshness_sensitive: true });
         }
         if (!rules.present || !Array.isArray(rules.value) || rules.value.length === 0) {
           return finding(ctx, "CF-001", "cloudflare", UNVERIFIED, `${ptr}.rules`, rules.present ? rules.value : null,
             "Allow rules are undeclared: enumerate the allow rules explicitly; undeclared rules cannot earn PASS.",
+            { freshness_sensitive: true });
+        }
+        // Exact registered rule subjects: a rule must be individually
+        // registered by the host. Token syntax alone never earns PASS.
+        const registered = Array.isArray(ctx.pins.allowed_access_rules)
+          ? new Set(ctx.pins.allowed_access_rules.filter((r) => typeof r === "string"))
+          : new Set();
+        if (registered.size === 0) {
+          return finding(ctx, "CF-001", "cloudflare", UNVERIFIED, `${ptr}.rules`, rules.value,
+            "No allow rules are registered by the host: rules cannot be compared without a registration; " +
+            "register the exact allowed rule subjects.",
             { freshness_sensitive: true });
         }
         for (let i = 0; i < rules.value.length; i++) {
@@ -368,9 +427,21 @@ function cloudflareChecks() {
               "Rule is not a validated allow entry (allow:<token>): permissive or malformed rules are refused.",
               { freshness_sensitive: true });
           }
+          const subject = e.value.slice("allow:".length).toLowerCase();
+          if (EXPLICIT_PERMISSIVE_RULE_SUBJECTS.has(subject)) {
+            return finding(ctx, "CF-001", "cloudflare", FAIL, `${ptr}.rules[${i}]`, e.value,
+              "Rule is explicitly permissive: an allow rule for everyone/anyone is the opposite of deny-by-default.",
+              { freshness_sensitive: true });
+          }
+          if (!registered.has(e.value)) {
+            return finding(ctx, "CF-001", "cloudflare", UNVERIFIED, `${ptr}.rules[${i}]`, e.value,
+              "Rule is not registered by the host: only exactly registered rule subjects earn PASS; " +
+              "register this rule after out-of-band review or remove it.",
+              { freshness_sensitive: true });
+          }
         }
         return finding(ctx, "CF-001", "cloudflare", PASS, `${ptr}.policy`, policy.value,
-          "None — policy is explicit deny-by-default with validated allow rules.",
+          "None — policy is an exact deny-by-default declaration with registered allow rules.",
           { freshness_sensitive: true, coverage: ["access"] });
       },
     },
@@ -388,11 +459,9 @@ function cloudflareChecks() {
         const hv = read(ctx, o.value, "host_validation", "CF-002:origin.host_validation");
         const eh = read(ctx, o.value, "expected_host", "CF-002:origin.expected_host");
         const refMachine = read(ctx, o.value, "machine_id", "CF-002:origin.machine_id");
-        if (refMachine.present && typeof refMachine.value === "string" && refMachine.value.length > 0 && refMachine.value !== ctx.machineId) {
-          return finding(ctx, "CF-002", "cloudflare", UNVERIFIED, `${ptr}.machine_id`, refMachine.value,
-            "Cross-machine evidence never satisfies a check: re-collect origin evidence on the audited machine.",
-            { freshness_sensitive: true, coverage: ["origin"] });
-        }
+        // Explicit unsafe is detected first: an explicitly disabled host
+        // validation is an observed unsafe configuration regardless of
+        // binding. Missing-versus-unsafe ordering never weakens explicit FAILs.
         if (!hv.present) {
           return finding(ctx, "CF-002", "cloudflare", UNVERIFIED, `${ptr}.host_validation`, null,
             "Host validation is undeclared: enable it explicitly with an exact expected host.",
@@ -408,10 +477,32 @@ function cloudflareChecks() {
             "Expected host is undeclared: export the exact expected host.",
             { freshness_sensitive: true });
         }
-        if (eh.value !== ctx.pins.expected_origin_host) {
+        // Required host pin: without a registered expected origin host there
+        // is nothing to compare against. A missing pin is missing evidence.
+        const pinnedHost = ctx.pins.expected_origin_host;
+        if (typeof pinnedHost !== "string" || pinnedHost.length === 0) {
+          return finding(ctx, "CF-002", "cloudflare", UNVERIFIED, `${ptr}.expected_host`, eh.value,
+            "No expected origin host is registered by the host: the host binding cannot be compared without a pin.",
+            { freshness_sensitive: true });
+        }
+        if (eh.value !== pinnedHost) {
           return finding(ctx, "CF-002", "cloudflare", FAIL, `${ptr}.expected_host`, eh.value,
             "Expected host does not match the pinned origin host: an unbound host is never accepted.",
             { freshness_sensitive: true });
+        }
+        // Mandatory same-machine origin evidence: the binding must declare
+        // which machine it was collected on, and it must be this machine.
+        // A missing machine_id is missing evidence (UNVERIFIED), never a
+        // silent pass through the cross-machine guard.
+        if (!refMachine.present || typeof refMachine.value !== "string" || refMachine.value.length === 0) {
+          return finding(ctx, "CF-002", "cloudflare", UNVERIFIED, `${ptr}.machine_id`, refMachine.present ? refMachine.value : null,
+            "Origin evidence is not bound to a machine: export the evidence machine_id explicitly; unbound evidence never satisfies this check.",
+            { freshness_sensitive: true, coverage: ["origin"] });
+        }
+        if (refMachine.value !== ctx.machineId) {
+          return finding(ctx, "CF-002", "cloudflare", UNVERIFIED, `${ptr}.machine_id`, refMachine.value,
+            "Cross-machine evidence never satisfies a check: re-collect origin evidence on the audited machine.",
+            { freshness_sensitive: true, coverage: ["origin"] });
         }
         return finding(ctx, "CF-002", "cloudflare", PASS, `${ptr}.expected_host`, eh.value,
           "None — origin host validation is pinned to the expected host.",
@@ -430,12 +521,20 @@ function cloudflareChecks() {
             { freshness_sensitive: true });
         }
         const en = read(ctx, b.value, "enabled", "CF-003:bypass.enabled");
-        if (en.present && en.value === false) {
+        // Missing-versus-unsafe: an undeclared bypass state is missing
+        // evidence (UNVERIFIED); an enabled or ambiguous value is unsafe
+        // (FAIL). Only an explicit false earns PASS.
+        if (!en.present) {
+          return finding(ctx, "CF-003", "cloudflare", UNVERIFIED, `${ptr}.enabled`, null,
+            "Bypass state is undeclared: export bypass.enabled:false explicitly; an undeclared bypass cannot earn PASS.",
+            { freshness_sensitive: true, coverage: ["bypass"] });
+        }
+        if (en.value === false) {
           return finding(ctx, "CF-003", "cloudflare", PASS, `${ptr}.enabled`, false,
             "None — origin bypass is explicitly disabled.",
             { freshness_sensitive: true, coverage: ["bypass"] });
         }
-        return finding(ctx, "CF-003", "cloudflare", FAIL, `${ptr}.enabled`, en.present ? en.value : null,
+        return finding(ctx, "CF-003", "cloudflare", FAIL, `${ptr}.enabled`, en.value,
           "Origin bypass is enabled or ambiguous: disable bypass so all traffic enforces the Access policy.",
           { freshness_sensitive: true });
       },
@@ -500,14 +599,18 @@ function sshChecks() {
         }
         const pw = read(ctx, a.value, "password_auth", "SSH-001:auth.password_auth");
         const pk = read(ctx, a.value, "pubkey_auth", "SSH-001:auth.pubkey_auth");
+        // Closed typed predicate: an explicit boolean false is required
+        // before PASS. An explicit true is unsafe (FAIL); any other value —
+        // absent, non-boolean, ambiguous — is missing/unsafe evidence
+        // (UNVERIFIED), never a key-only PASS.
         if (pw.present && pw.value === true) {
           return finding(ctx, "SSH-001", "fleet-ssh", FAIL, `${ptr}.password_auth`, true,
             "Unsafe SSH configuration: disable password authentication; key-based auth only.",
             { freshness_sensitive: true });
         }
-        if (!pw.present) {
-          return finding(ctx, "SSH-001", "fleet-ssh", UNVERIFIED, `${ptr}.password_auth`, null,
-            "password_auth is undeclared: key-only auth cannot be claimed without explicit evidence that password auth is disabled.",
+        if (!pw.present || typeof pw.value !== "boolean") {
+          return finding(ctx, "SSH-001", "fleet-ssh", UNVERIFIED, `${ptr}.password_auth`, pw.present ? pw.value : null,
+            "password_auth is not an explicit boolean false: key-only auth cannot be claimed without explicit evidence that password auth is disabled.",
             { freshness_sensitive: true });
         }
         if (!pk.present || pk.value !== true) {
@@ -536,13 +639,24 @@ function sshChecks() {
             "Authorized-keys list is empty: no pinned keys are evidenced.",
             { freshness_sensitive: true });
         }
-        const pinned = new Set(ctx.pins.authorized_key_fingerprints || []);
+        const pinned = Array.isArray(ctx.pins.authorized_key_fingerprints)
+          ? ctx.pins.authorized_key_fingerprints.filter((f) => typeof f === "string")
+          : [];
+        // Required host pin: without a registered fingerprint set there is
+        // nothing to compare against. A missing registration is missing
+        // evidence, never a failing key claim.
+        if (pinned.length === 0) {
+          return finding(ctx, "SSH-002", "fleet-ssh", UNVERIFIED, ptr, k.value,
+            "No authorized-key fingerprints are registered by the host: keys cannot be compared without a pin set.",
+            { freshness_sensitive: true });
+        }
+        const pinnedSet = new Set(pinned);
         for (let i = 0; i < k.value.length; i++) {
           const e = readIndex(ctx, k.value, i, `SSH-002:authorized_keys[${i}]`);
           const fp = e.present && e.value !== null && typeof e.value === "object" && !Array.isArray(e.value)
             ? ownRead(e.value, "fingerprint").value
             : undefined;
-          if (typeof fp !== "string" || !pinned.has(fp)) {
+          if (typeof fp !== "string" || !pinnedSet.has(fp)) {
             return finding(ctx, "SSH-002", "fleet-ssh", FAIL, `${ptr}[${i}].fingerprint`, fp,
               "Unknown or malformed authorized key: remove it or pin it explicitly after out-of-band verification.",
               { freshness_sensitive: true });
@@ -586,7 +700,17 @@ function sshChecks() {
             "remote_address is a deny-all scope (0.0.0.0/0 or ::/0): that is the opposite of restricted.",
             { freshness_sensitive: true });
         }
-        const allowed = (ctx.pins.allowed_lan_cidrs || []).map(parseCidr).filter(Boolean);
+        const allowed = (Array.isArray(ctx.pins.allowed_lan_cidrs) ? ctx.pins.allowed_lan_cidrs : [])
+          .map(parseCidr)
+          .filter(Boolean);
+        // Required host pin: without registered allowed LAN ranges there is
+        // no safe scope to contain the firewall rule. Missing registration
+        // is missing evidence, never a failing scope claim.
+        if (allowed.length === 0) {
+          return finding(ctx, "SSH-003", "fleet-ssh", UNVERIFIED, `${ptr}.remote_address`, ra.value,
+            "No allowed LAN ranges are registered by the host: the firewall scope cannot be compared without pins.",
+            { freshness_sensitive: true });
+        }
         if (!allowed.some((a) => cidrContains(a, scope))) {
           return finding(ctx, "SSH-003", "fleet-ssh", FAIL, `${ptr}.remote_address`, ra.value,
             "remote_address is not within a declared allowed LAN range: restrict the firewall rule to the declared LAN CIDRs.",
@@ -625,7 +749,16 @@ function sshChecks() {
             "Service binary is undeclared: the binary cannot be claimed as expected without it.",
             { freshness_sensitive: true });
         }
-        if (ctx.pins.expected_sshd_binary && bin.value !== ctx.pins.expected_sshd_binary) {
+        // Required host pin: the expected sshd binary must be registered for
+        // the comparison to mean anything. A missing pin is missing
+        // evidence, never a passing binary claim.
+        const expectedBinary = ctx.pins.expected_sshd_binary;
+        if (typeof expectedBinary !== "string" || expectedBinary.length === 0) {
+          return finding(ctx, "SSH-004", "fleet-ssh", UNVERIFIED, `${ptr}.binary`, bin.value,
+            "No expected sshd binary is registered by the host: the service binary cannot be compared without a pin.",
+            { freshness_sensitive: true });
+        }
+        if (bin.value !== expectedBinary) {
           return finding(ctx, "SSH-004", "fleet-ssh", FAIL, `${ptr}.binary`, bin.value,
             "Unexpected sshd binary: verify the service binary matches the expected pinned path.",
             { freshness_sensitive: true });

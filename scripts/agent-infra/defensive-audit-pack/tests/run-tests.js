@@ -9,6 +9,7 @@ await import("./checks.test.js");
 await import("./mutation.test.js");
 await import("./misc.test.js");
 await import("./fixround2.test.js");
+await import("./fixround3.test.js");
 
 const res = await runAll();
 process.exit(printResults(res));

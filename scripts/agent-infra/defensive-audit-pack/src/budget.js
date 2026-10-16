@@ -55,30 +55,50 @@ function accessorError(where) {
  *   the first candidate over the limit refuses without touching it
  * - nesting depth is capped at MAX_DEPTH (root counts as 1, matching the
  *   byte-level scanJsonDepth used on the string path)
- * - admitted bytes are estimated (keys + string leaves + fixed per-value
- *   cost) and capped at MAX_ADMIT_BYTES
+ * - admitted bytes are counted EXACTLY as the minimal JSON serialization of
+ *   the admitted value would occupy (UTF-8): every string leaf is charged
+ *   its JSON-escaped byte length, every key its escaped bytes, and every
+ *   structural character ({ } [ ] : ,) its byte. opts.bytesBox (default a
+ *   fresh box) aggregates across every admission of one invocation, so the
+ *   input document and the consulted host metadata share ONE 256KiB cap —
+ *   the same document admitted as text or as an object sees the same bound
  * - accessors are rejected WITHOUT invocation (getOwnPropertyDescriptor
  *   never fires a getter); array indices are read only via their own data
  *   descriptor, never by indexed access or iteration first
- * - cyclic graphs are rejected
+ * - cyclic graphs and non-JSON scalars (undefined, bigint, functions,
+ *   symbols) are rejected
  *
  * Throws BudgetExceeded or SchemaError. Returns a plain-data deep copy.
  */
 export function admitDocument(value, budget, opts = {}) {
   const label = opts.label || "admission";
+  const bytesBox = opts.bytesBox || { count: 0 };
   const seen = new Set();
-  let bytes = 0;
+  const utf8 = (s) => Buffer.byteLength(s, "utf8");
   const chargeBytes = (n, path) => {
-    bytes += n;
-    if (bytes > MAX_ADMIT_BYTES) {
+    bytesBox.count += n;
+    if (bytesBox.count > MAX_ADMIT_BYTES) {
       throw new BudgetExceeded("bytes", `${label}: ${path} pushes admitted bytes over ${MAX_ADMIT_BYTES}`);
     }
   };
+  /** Exact serialized byte cost of a scalar, as JSON.stringify would emit. */
+  function scalarBytes(v, path) {
+    if (typeof v === "string") return utf8(JSON.stringify(v));
+    if (typeof v === "number") {
+      const t = JSON.stringify(v); // null for Infinity/NaN
+      if (t === null) throw new SchemaError("invalid_scalar", `${label}: ${path} non-finite number is not JSON`);
+      return utf8(t);
+    }
+    if (typeof v === "boolean") return v ? 4 : 5;
+    if (v === null) return 4;
+    throw new SchemaError("invalid_scalar", `${label}: ${path} non-JSON scalar is not admitted`);
+  }
+  function accessorError(where) {
+    return new SchemaError("accessor", `accessor property at ${where} rejected without invocation`);
+  }
   function walk(v, depth, path) {
     if (v === null || typeof v !== "object") {
-      if (typeof v === "string") chargeBytes(Buffer.byteLength(v, "utf8"), path);
-      else if (typeof v === "number") chargeBytes(8, path);
-      else chargeBytes(4, path);
+      chargeBytes(scalarBytes(v, path), path);
       return v;
     }
     if (depth > MAX_DEPTH) {
@@ -88,26 +108,34 @@ export function admitDocument(value, budget, opts = {}) {
       throw new SchemaError("cycle", `${label}: ${path} object graph must be acyclic`);
     }
     seen.add(v);
-    chargeBytes(2, path);
     let out;
     if (Array.isArray(v)) {
       out = new Array(v.length);
+      chargeBytes(1, path); // [
       for (let i = 0; i < v.length; i++) {
+        if (i > 0) chargeBytes(1, `${path}[${i}]`); // comma separator
         budget.charge(`${label}:${path}[${i}]`);
         const d = Object.getOwnPropertyDescriptor(v, String(i));
         if (d && !("value" in d)) throw accessorError(`${path}[${i}]`);
         out[i] = walk(d ? d.value : undefined, depth + 1, `${path}[${i}]`);
       }
+      chargeBytes(1, path); // ]
     } else {
       out = {};
+      chargeBytes(1, path); // {
+      let first = true;
       for (const k of Object.keys(v)) {
-        chargeBytes(Buffer.byteLength(k, "utf8"), `${path}.${k}`);
+        if (!first) chargeBytes(1, `${path}.${k}`); // comma separator
+        first = false;
+        chargeBytes(utf8(JSON.stringify(k)), `${path}.${k}`); // exact escaped key bytes
+        chargeBytes(1, `${path}.${k}`); // colon
         budget.charge(`${label}:${path}.${k}`);
         const d = Object.getOwnPropertyDescriptor(v, k);
         if (!d) continue;
         if (!("value" in d)) throw accessorError(`${path}.${k}`);
         out[k] = walk(d.value, depth + 1, `${path}.${k}`);
       }
+      chargeBytes(1, path); // }
     }
     seen.delete(v);
     return out;

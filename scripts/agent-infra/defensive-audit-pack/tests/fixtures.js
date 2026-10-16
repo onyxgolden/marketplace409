@@ -19,6 +19,9 @@ export const PINS = {
   expected_sshd_binary: "C:\\Program Files\\Git\\usr\\bin\\sshd.exe",
   expected_origin_host: "localhost:11434",
   allowed_lan_cidrs: ["192.168.1.0/24", "10.0.0.0/8"],
+  // Exact registered Cloudflare Access rule subjects. CF-001 earns PASS only
+  // for rules individually registered here; token syntax alone is not enough.
+  allowed_access_rules: ["allow:pin-identity", "allow:otp", "allow:pin", "allow:hw-key"],
 };
 
 const LANE_SCHEMAS = {
@@ -64,7 +67,8 @@ const BRIDGE_PASS = { "BRG-001": "PASS", "BRG-002": "PASS", "BRG-003": "PASS", "
 
 function cloudflareConfig(over = {}) {
   return {
-    access: { policy: "deny by default; allow: jason-only-pin + one-time-pin", rules: ["allow:pin-identity", "allow:otp"] },
+    // Closed typed policy declaration: exact deny-by-default token.
+    access: { policy: "deny-by-default", rules: ["allow:pin-identity", "allow:otp"] },
     origin: { host_validation: true, expected_host: "localhost:11434", machine_id: "machine-cf-01" },
     bypass: { enabled: false },
     ...over,
@@ -107,11 +111,11 @@ export const CASES = [
 
   // ---- Cloudflare: 6 passing ----
   { name: "cf-pass-full", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig(), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
-  { name: "cf-pass-minimal", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig({ access: { policy: "deny by default; allow: pin", rules: ["allow:pin"] } }), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
+  { name: "cf-pass-minimal", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig({ access: { policy: "deny_by_default", rules: ["allow:pin"] } }), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
   { name: "cf-pass-alt-machine", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-02", FRESH, cloudflareConfig({ origin: { host_validation: true, expected_host: "localhost:11434", machine_id: "machine-cf-02" } }), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
   { name: "cf-pass-explicit-coverage", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig(), ["access", "origin", "bypass", "freshness", "digest"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
   { name: "cf-pass-fresh-boundary", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", AS_OF_MS - 71 * HOUR, cloudflareConfig(), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
-  { name: "cf-pass-strict-policy", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig({ access: { policy: "DENY BY DEFAULT; allow: hardware-key-identity", rules: ["allow:hw-key"] } }), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
+  { name: "cf-pass-strict-policy", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig({ access: { policy: "DENY BY DEFAULT", rules: ["allow:hw-key"] } }), ["access", "origin"]), expect: { status: "READY", complete: true, verdicts: CF_PASS } },
   // ---- Cloudflare: 6 failing/unknown ----
   { name: "cf-fail-origin-bypass", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig({ bypass: { enabled: true } }), ["access", "origin"]), expect: { status: "PARTIAL", complete: false, verdicts: { ...CF_PASS, "CF-003": "FAIL" } } },
   { name: "cf-fail-ambiguous-policy", lane: "cloudflare", envelope: envelope("cloudflare", "machine-cf-01", FRESH, cloudflareConfig({ access: { policy: "allow authenticated users", rules: [] } }), ["access", "origin"]), expect: { status: "PARTIAL", complete: false, verdicts: { ...CF_PASS, "CF-001": "FAIL" } } },
