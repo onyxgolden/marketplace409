@@ -237,8 +237,41 @@ export function validateClaimedSummary(value, where) {
   return { claims, provenance };
 }
 
-/** Task input schema. kind: "analyze" | "prohibited". */
-export function validateTask(task) {
+/**
+ * validateClaimRecord (MM-S1-003): the provenance bytes must decode to a
+ * bounded STRUCTURED claim record — not arbitrary text. Each claim the
+ * caller asserts must be exactly bound to a declared entry by
+ * claim_id + metric + claimed_value. A valid span over unrelated text
+ * (e.g. a single byte "W") can never verify a claim, because there is
+ * no declared entry to bind it to.
+ *
+ * Bounded: at most MAX_CLAIMS entries, each with exactly the three
+ * claim fields. No natural-language inference — pure structural
+ * equality.
+ */
+export function validateClaimRecord(value, where) {
+  if (!isPlainObject(value)) fail(where, "claim record must be an object");
+  exactKeys(value, ["claims"], where);
+  if (!Array.isArray(value.claims) || value.claims.length > MAX_CLAIMS) fail(where, `claims must be an array of at most ${MAX_CLAIMS} entries`);
+  const seen = new Set();
+  const claims = [];
+  for (let i = 0; i < value.claims.length; i++) {
+    const c = value.claims[i];
+    const w2 = `${where}.claims[${i}]`;
+    if (!isPlainObject(c)) fail(w2, "must be an object");
+    exactKeys(c, ["claim_id", "metric", "claimed_value"], w2);
+    const claim_id = validateRecordId(c.claim_id, w2);
+    if (seen.has(claim_id)) fail(w2, `duplicate claim_id '${claim_id}'`);
+    seen.add(claim_id);
+    if (!CLAIM_METRICS.includes(c.metric)) fail(w2, `metric must be one of ${CLAIM_METRICS.join(", ")}`);
+    const claimed_value = reqStr(c, "claimed_value", w2);
+    if (!PERCENT_RE.test(claimed_value)) fail(w2, "claimed_value must be a 2-decimal percent string");
+    claims.push({ claim_id, metric: c.metric, claimed_value });
+  }
+  return { claims };
+}
+
+/** Task input schema. kind: "analyze" | "prohibited". */export function validateTask(task) {
   if (!isPlainObject(task)) fail("task", "must be an object");
   exactKeys(task, ["schema_version", "task_id", "operation", "fixture_refs", "options"], "task");
   if (task.schema_version !== "1") fail("task", "schema_version must be '1'");

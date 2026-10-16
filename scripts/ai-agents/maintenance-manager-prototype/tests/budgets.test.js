@@ -110,12 +110,13 @@ function minimalContextFor(register, overrides = {}) {
 
 // Fixed object-charge overhead for this minimal single-asset-array
 // register (chargeContext's principal+criteria+1 grant+1 source key+1
-// revision = 5, plus resolveSourceRef(register) = 1) is 6, empirically
-// confirmed below — 58 clean assets exactly fills the 64-object budget
-// (6+58=64); the 59th asset is candidate 65.
+// revision = 5, plus resolveSourceRef(register) = 1, plus MM-S1-001 task
+// admission's 6 task objects) is 12, empirically confirmed below — 52
+// clean assets exactly fills the 64-object budget (12+52=64); the 53rd
+// asset is candidate 65.
 test("assets[] budget: the first poisoned asset past the cap refuses BUDGET_EXCEEDED before being read — a non-string entry would otherwise surface as INVALID_INPUT, proving it was touched", () => {
   const assets = [];
-  for (let i = 0; i < 58; i++) assets.push(`AST-${i}`);
+  for (let i = 0; i < 52; i++) assets.push(`AST-${i}`);
   for (let i = 0; i < 3; i++) assets.push(12345 + i); // non-string: would fail validation if ever read
   const { task, context } = minimalContextFor({ assets, work_orders: [], pm_occurrences: [] });
   const result = run(task, context);
@@ -123,9 +124,9 @@ test("assets[] budget: the first poisoned asset past the cap refuses BUDGET_EXCE
   assert.equal(result.diagnostics[0].code, "BUDGET_EXCEEDED", "the first poisoned non-string asset (candidate 65) must never be read");
 });
 
-test("assets[] budget: exactly 58 clean assets (filling the budget to exactly 64 with fixed overhead) succeeds (sanity boundary — the test above isn't just always refusing)", () => {
+test("assets[] budget: exactly 52 clean assets (filling the budget to exactly 64 with fixed overhead) succeeds (sanity boundary — the test above isn't just always refusing)", () => {
   const assets = [];
-  for (let i = 0; i < 58; i++) assets.push(`AST-${i}`);
+  for (let i = 0; i < 52; i++) assets.push(`AST-${i}`);
   const { task, context } = minimalContextFor({ assets, work_orders: [], pm_occurrences: [] });
   const result = run(task, context);
   assert.notEqual(result.diagnostics[0]?.code, "BUDGET_EXCEEDED");

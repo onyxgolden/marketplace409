@@ -143,6 +143,40 @@ export function aggregateWorkOrders(classified) {
 }
 
 /**
+ * MM-S1-002: explicit support chain for one PM calculation input: the
+ * due occurrence's own citation PLUS the linked work order's
+ * status/completion citation (the numerator and early/late/cancelled
+ * counts depend on the linked order's completed_ms/status, so the
+ * occurrence citation alone does not support the calculation). Each
+ * entry carries its record identity and contributing role so the chain
+ * is auditable. Missing/unverifiable support is explicit UNAVAILABLE,
+ * never silently omitted.
+ */
+function occurrenceSupportChain(occ, workOrderById, citations) {
+  const chain = [];
+  const occCitation = citations.get(occ.occurrence_id);
+  chain.push({
+    record_id: occ.occurrence_id,
+    role: "occurrence",
+    citation: occCitation?.verification === "VERIFIED"
+      ? occCitation
+      : { verification: "UNAVAILABLE", reason: "occurrence citation not verified" },
+  });
+  if (occ.linked_work_order_id !== null) {
+    const linked = workOrderById.get(occ.linked_work_order_id);
+    const woCitation = linked?.citation;
+    chain.push({
+      record_id: occ.linked_work_order_id,
+      role: "linked_work_order",
+      citation: woCitation?.verification === "VERIFIED"
+        ? woCitation
+        : { verification: "UNAVAILABLE", reason: linked ? "linked work order citation not verified" : "linked work order not in register" },
+    });
+  }
+  return chain;
+}
+
+/**
  * PM compliance over already-schema-valid PM occurrences, the full set
  * of classified work orders (by id, for link resolution) and the task's
  * reporting window. Returns the pm_compliance report section plus any
@@ -177,8 +211,18 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
     if (c?.verification === "VERIFIED") dueMemberCitations.push({ id: o.occurrence_id, citation: c });
   }
   dueMemberCitations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // MM-S1-002: explicit per-input support chain — every due occurrence
+  // plus its linked work order's status/completion citation, each tagged
+  // with its record identity and contributing role. Sorted for
+  // determinism. This is the auditable evidence for the numerator and
+  // early/late/cancelled-link counts, which depend on the linked order.
+  const pmInputs = [];
+  for (const o of dueMembers) {
+    pmInputs.push(...occurrenceSupportChain(o, workOrderById, citations));
+  }
+  pmInputs.sort((a, b) => (a.record_id < b.record_id ? -1 : a.record_id > b.record_id ? 1 : a.role < b.role ? -1 : 1));
   const pmCitationSupport = dueMemberCitations.length > 0
-    ? { state: "VERIFIED", record_count: dueMemberCitations.length, citations: dueMemberCitations.map((x) => x.citation) }
+    ? { state: "VERIFIED", record_count: dueMemberCitations.length, citations: dueMemberCitations.map((x) => x.citation), inputs: pmInputs }
     : { state: "UNAVAILABLE", reason: "no contributing due occurrences" };
 
   // MM-S1-004: population completeness defines the PM basis. When the
@@ -358,21 +402,25 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
  * one. When the computed basis itself isn't VERIFIED (e.g. UNVERIFIABLE,
  * NO_DUE_OCCURRENCES), the comparison is UNKNOWN, never silently a MATCH.
  *
- * MM-S1-003: every comparison carries its claim citation — the verified
- * provenance citation supplied by the caller, or an explicit UNAVAILABLE
- * marker when the claim set had no (or unverifiable) provenance. A claim
- * without verified provenance can NEVER be MATCH; it is UNKNOWN with
- * explicit unavailable support.
+ * MM-S1-003: `claimCitations` is a Map of claim_id -> citation. Every
+ * comparison carries its OWN claim citation — the verified provenance
+ * declaration bound to that exact claim_id + metric + claimed_value, or
+ * an explicit UNAVAILABLE marker when the claim has no (or unverifiable
+ * or undeclared) provenance. A claim without its own verified binding
+ * can NEVER be MATCH; it is UNKNOWN with explicit unavailable support.
+ * The same citation object is never reused across claims.
  */
-export function computeHeaderComparisons(claimedSummary, pmSection, claimCitation) {
+export function computeHeaderComparisons(claimedSummary, pmSection, claimCitations) {
   if (!claimedSummary) return [];
   const out = [];
-  // MM-S1-003: absent or unverifiable provenance → explicit UNAVAILABLE.
-  const effectiveCitation = claimCitation?.verification === "VERIFIED"
-    ? claimCitation
-    : { verification: "UNAVAILABLE", reason: claimCitation?.reason ?? "claim set has no verified provenance" };
-  const provenanceVerified = effectiveCitation.verification === "VERIFIED";
   for (const claim of claimedSummary.claims) {
+    // MM-S1-003: per-claim citation lookup. Absent or unverifiable
+    // binding → explicit UNAVAILABLE.
+    const bound = claimCitations instanceof Map ? claimCitations.get(claim.claim_id) : null;
+    const effectiveCitation = bound?.verification === "VERIFIED"
+      ? bound
+      : { verification: "UNAVAILABLE", reason: bound?.reason ?? "claim has no verified provenance binding" };
+    const provenanceVerified = effectiveCitation.verification === "VERIFIED";
     if (claim.metric === "pm_compliance_percent") {
       let computed_value = null;
       let evidence_state;

@@ -372,7 +372,10 @@ export function computeExpected(register, task, sourcesBag) {
   let status, coverageState;
   if (totalRecords === 0) {
     status = "EMPTY";
-    coverageState = populationEvidence === "verified" ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY";
+    // MM-S1-005 oracle: EMPTY completeness derives from the whole-envelope
+    // decision (fullyComplete), including header comparisons — an empty
+    // register with an unsupported claim is not complete.
+    coverageState = fullyComplete ? "COMPLETE_EMPTY" : "INCOMPLETE_EMPTY";
   } else {
     status = fullyComplete ? "REPORT_READY" : "PARTIAL";
     coverageState = fullyComplete ? "COMPLETE" : "PARTIAL";
@@ -397,7 +400,8 @@ export function computeExpected(register, task, sourcesBag) {
   return {
     status,
     // MM-S1-005 oracle: complete follows status. PARTIAL is never complete.
-    complete: status === "REPORT_READY" || (status === "EMPTY" && populationEvidence === "verified"),
+    // EMPTY is complete only when the whole envelope is complete.
+    complete: status === "REPORT_READY" || (status === "EMPTY" && fullyComplete),
     diagnostic_codes: [],
     quarantined_work_order_ids: quarantined_work_order_ids.sort(),
     source_ref_count: seenRefs.size,

@@ -212,7 +212,7 @@ test("computeHeaderComparisons: returns [] when there's no claimed summary", () 
 
 test("computeHeaderComparisons: exact match between claim and computed value", () => {
   const verifiedCitation = { verification: "VERIFIED", repo: "r", path: "p.md", commit: "c".repeat(40), blob: "b".repeat(40), algorithm: "git-sha1", revision: "rev", quoted_span: "75.00", span: { start_byte: 0, end_byte: 5, quoted_text: "75.00" } };
-  const out = computeHeaderComparisons({ claims: [{ claim_id: "H1", metric: "pm_compliance_percent", claimed_value: "75.00" }] }, { basis_state: "VERIFIED", display_percent: "75.00%" }, verifiedCitation);
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H1", metric: "pm_compliance_percent", claimed_value: "75.00" }] }, { basis_state: "VERIFIED", display_percent: "75.00%" }, new Map([["H1", verifiedCitation]]));
   assert.equal(out[0].evidence_state, "MATCH");
   assert.equal(out[0].computed_value, "75.00");
   assert.equal(out[0].claimed_value, "75.00", "the claimed value is preserved, not overwritten by the computed one");
@@ -221,7 +221,7 @@ test("computeHeaderComparisons: exact match between claim and computed value", (
 
 test("computeHeaderComparisons: the brief's named 98%-vs-computed case is a MISMATCH with both values retained", () => {
   const verifiedCitation = { verification: "VERIFIED", repo: "r", path: "p.md", commit: "c".repeat(40), blob: "b".repeat(40), algorithm: "git-sha1", revision: "rev", quoted_span: "98.00", span: { start_byte: 0, end_byte: 5, quoted_text: "98.00" } };
-  const out = computeHeaderComparisons({ claims: [{ claim_id: "H2", metric: "pm_compliance_percent", claimed_value: "98.00" }] }, { basis_state: "VERIFIED", display_percent: "100.00%" }, verifiedCitation);
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H2", metric: "pm_compliance_percent", claimed_value: "98.00" }] }, { basis_state: "VERIFIED", display_percent: "100.00%" }, new Map([["H2", verifiedCitation]]));
   assert.equal(out[0].evidence_state, "MISMATCH");
   assert.equal(out[0].claimed_value, "98.00");
   assert.equal(out[0].computed_value, "100.00");
@@ -229,14 +229,14 @@ test("computeHeaderComparisons: the brief's named 98%-vs-computed case is a MISM
 
 test("computeHeaderComparisons: an unverified computed basis is UNKNOWN, never silently a MATCH", () => {
   const verifiedCitation = { verification: "VERIFIED", repo: "r", path: "p.md", commit: "c".repeat(40), blob: "b".repeat(40), algorithm: "git-sha1", revision: "rev", quoted_span: "50.00", span: { start_byte: 0, end_byte: 5, quoted_text: "50.00" } };
-  const out = computeHeaderComparisons({ claims: [{ claim_id: "H3", metric: "pm_compliance_percent", claimed_value: "50.00" }] }, { basis_state: "UNVERIFIABLE", display_percent: null }, verifiedCitation);
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H3", metric: "pm_compliance_percent", claimed_value: "50.00" }] }, { basis_state: "UNVERIFIABLE", display_percent: null }, new Map([["H3", verifiedCitation]]));
   assert.equal(out[0].evidence_state, "UNKNOWN");
   assert.equal(out[0].computed_value, null);
 });
 
 test("computeHeaderComparisons: MM-S1-003 — a claim without verified provenance is UNKNOWN with explicit UNAVAILABLE citation, never MATCH", () => {
   // No citation supplied: the claim has no provenance.
-  const out = computeHeaderComparisons({ claims: [{ claim_id: "H4", metric: "pm_compliance_percent", claimed_value: "75.00" }] }, { basis_state: "VERIFIED", display_percent: "75.00%" }, null);
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H4", metric: "pm_compliance_percent", claimed_value: "75.00" }] }, { basis_state: "VERIFIED", display_percent: "75.00%" }, new Map());
   assert.equal(out[0].evidence_state, "UNKNOWN", "a claim without verified provenance can never be MATCH, even when the values agree");
   assert.equal(out[0].claim_citation.verification, "UNAVAILABLE");
   assert.ok(out[0].claim_citation.reason, "the unavailable state must carry an explicit reason");

@@ -24,8 +24,8 @@
  *    candidate is touched.
  */
 
-import { canonicalJson, sha256HexUtf8, canonicalByteLength, maxContainerDepth, maxJsonNestingDepth, MAX_CONTAINER_DEPTH } from "./canonical.js";
-import { validateTask, validateRegisterShape, validateWorkOrder, validatePmOccurrence, SchemaError } from "./schemas.js";
+import { canonicalJson, sha256HexUtf8, canonicalByteLength, maxJsonNestingDepth, MAX_CONTAINER_DEPTH, admitData, AdmissionError } from "./canonical.js";
+import { validateTask, validateRegisterShape, validateWorkOrder, validatePmOccurrence, validateClaimRecord, SchemaError } from "./schemas.js";
 import { resolveSourceRef, verifySpanBounds, hasReadGrant, makeBudget, buildVerifiedCitation, buildUnverifiedCitation, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { chargeContext } from "./contextGuard.js";
 import { scanAnyDocText } from "./injection.js";
@@ -50,19 +50,23 @@ function emptyReport() {
   };
 }
 
-function taskIdOf(task) {
+function taskIdOfSnapshot(admittedTask) {
   try {
-    return `mm-${sha256HexUtf8(canonicalJson(task)).slice(0, 16)}`;
+    // admittedTask is a data-only snapshot (no accessors) — safe to hash.
+    return `mm-${sha256HexUtf8(canonicalJson(admittedTask)).slice(0, 16)}`;
   } catch {
     return "mm-invalid-task";
   }
 }
 
-function envelope(task, { status, complete, source_refs = [], diagnostics = [], quarantined_sources = [], routing_flags = [], report = null }) {
+// MM-S1-001: envelope/refused take a precomputed task identity string,
+// NEVER the raw task — canonicalizing the raw task would invoke the
+// accessors admission rejected.
+function envelope(taskIdentity, { status, complete, source_refs = [], diagnostics = [], quarantined_sources = [], routing_flags = [], report = null }) {
   return {
     schema_version: SCHEMA_VERSION,
     agent: AGENT_ID,
-    task_id: taskIdOf(task),
+    task_id: taskIdentity,
     status,
     advisory: true,
     fixture_only: true,
@@ -76,8 +80,8 @@ function envelope(task, { status, complete, source_refs = [], diagnostics = [], 
   };
 }
 
-function refused(task, code, severity, reason, extra = {}) {
-  return envelope(task, {
+function refused(taskIdentity, code, severity, reason, extra = {}) {
+  return envelope(taskIdentity, {
     status: "REFUSED",
     complete: false,
     diagnostics: [{ code, severity, source_ref: null, record_id: null, reason }],
@@ -91,35 +95,50 @@ function refKey(r) {
 
 export function run(task, context) {
   const clockRaw = context && typeof context === "object" ? context.clock : undefined;
-  if (!Number.isFinite(clockRaw)) return refused(task, "INVALID_INPUT", "error", "context.clock must be a finite number");
+  // MM-S1-001: constant invalid-task identity — the raw task is never
+  // canonicalized, so an accessor on it is never invoked even for this
+  // earliest refusal.
+  if (!Number.isFinite(clockRaw)) return refused("mm-invalid-task", "INVALID_INPUT", "error", "context.clock must be a finite number");
 
-  // MM-S1-001: structural depth preflight on the task. maxContainerDepth
-  // uses own-property descriptors only and never invokes accessors, so a
-  // throwing getter/proxy on the task path is never touched by the guard.
-  // This runs before validateTask and before any budget charging.
-  if (maxContainerDepth(task) > MAX_CONTAINER_DEPTH) {
-    return refused(task, "INPUT_LIMIT", "error", `task exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
+  const budget = makeBudget();
+
+  // MM-S1-001: admit the task into a bounded data-only snapshot BEFORE
+  // any semantic inspection. Accessors are rejected WITHOUT invocation;
+  // every admitted object is budget-charged before its fields are read;
+  // the depth cap is enforced during the walk. ALL downstream work —
+  // validation, hashing, payload budgeting, envelopes — uses the
+  // snapshot, never the raw task. This replaces the maxContainerDepth
+  // preflight (which is retained as a unit-tested helper but no longer
+  // gates the run path).
+  let admittedTask;
+  let taskIdentity = "mm-invalid-task";
+  try {
+    admittedTask = admitData(task, budget, "task");
+    taskIdentity = taskIdOfSnapshot(admittedTask);
+  } catch (e) {
+    if (e instanceof AdmissionError) return refused(taskIdentity, e.code, "error", `task admission: ${e.message}`);
+    if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
+    throw e;
   }
 
   let validatedTask;
   try {
-    validatedTask = validateTask(task);
+    validatedTask = validateTask(admittedTask);
   } catch (e) {
-    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+    if (e instanceof SchemaError) return refused(taskIdentity, "INVALID_INPUT", "error", e.message);
     throw e;
   }
 
-  const budget = makeBudget();
   try {
-    budget.countPayload(canonicalJson(task), "task payload");
+    budget.countPayload(canonicalJson(admittedTask), "task payload");
   } catch (e) {
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
     throw e;
   }
 
   if (validatedTask.kind === "prohibited") {
     return refused(
-      task,
+      taskIdentity,
       "ACTION_DENIED",
       "critical",
       `prohibited operation '${validatedTask.operation}': this agent only supports 'analyze' (read a fixture-only maintenance register and return an advisory audit); it cannot dispatch, schedule PM work, close work orders, purchase parts, predict reliability, or mutate any record`
@@ -133,29 +152,29 @@ export function run(task, context) {
   try {
     ctx = chargeContext(context, budget);
   } catch (e) {
-    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", `context: ${e.message}`);
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    if (e instanceof SchemaError) return refused(taskIdentity, "INVALID_INPUT", "error", `context: ${e.message}`);
+    if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
     throw e;
   }
 
   if (ctx.principal.revoked) {
-    return refused(task, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
+    return refused(taskIdentity, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
   }
   const validFrom = Date.parse(ctx.principal.valid_from);
   const expiresAt = Date.parse(ctx.principal.expires_at);
   if (!(validFrom <= ctx.clock && ctx.clock <= expiresAt)) {
-    return refused(task, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
+    return refused(taskIdentity, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
   }
 
   if (!hasReadGrant(validatedTask.register_ref, ctx.readGrants)) {
-    return refused(task, "READ_DENIED", "error", `read grant missing for register ${validatedTask.register_ref.repo}/${validatedTask.register_ref.path}`);
+    return refused(taskIdentity, "READ_DENIED", "error", `read grant missing for register ${validatedTask.register_ref.repo}/${validatedTask.register_ref.path}`);
   }
   let registerResolved;
   try {
     registerResolved = resolveSourceRef(validatedTask.register_ref, ctx.sources, budget, "register source");
   } catch (e) {
-    if (e instanceof ResolutionError) return refused(task, e.code, "error", `register: ${e.message}`);
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    if (e instanceof ResolutionError) return refused(taskIdentity, e.code, "error", `register: ${e.message}`);
+    if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
     throw e;
   }
 
@@ -166,17 +185,17 @@ export function run(task, context) {
   // text length is already bounded by the payload budget charged in
   // resolveSourceRef, so this scan is linear in a bounded input.
   if (maxJsonNestingDepth(registerResolved.text) > MAX_CONTAINER_DEPTH) {
-    return refused(task, "INPUT_LIMIT", "error", `register exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
+    return refused(taskIdentity, "INPUT_LIMIT", "error", `register exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
   }
   try {
     parsed = JSON.parse(registerResolved.text);
   } catch {
-    return refused(task, "INVALID_INPUT", "error", "register is not valid JSON");
+    return refused(taskIdentity, "INVALID_INPUT", "error", "register is not valid JSON");
   }
   try {
     rawRegister = validateRegisterShape(parsed, "register");
   } catch (e) {
-    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+    if (e instanceof SchemaError) return refused(taskIdentity, "INVALID_INPUT", "error", e.message);
     throw e;
   }
 
@@ -194,12 +213,12 @@ export function run(task, context) {
       throw e;
     }
     const a = rawRegister.assets[i];
-    if (typeof a !== "string") return refused(task, "INVALID_INPUT", "error", "every registered asset id must be a string");
-    if (assetSeen.has(a)) return refused(task, "INVALID_INPUT", "error", `duplicate registered asset id '${a}'`);
+    if (typeof a !== "string") return refused(taskIdentity, "INVALID_INPUT", "error", "every registered asset id must be a string");
+    if (assetSeen.has(a)) return refused(taskIdentity, "INVALID_INPUT", "error", `duplicate registered asset id '${a}'`);
     assetSeen.add(a);
   }
   if (budgetExceeded) {
-    return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining assets`);
+    return refused(taskIdentity, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining assets`);
   }
   const registeredAssets = assetSeen;
 
@@ -218,15 +237,15 @@ export function run(task, context) {
     try {
       wo = validateWorkOrder(rawRegister.work_orders[i], `work_orders[${i}]`);
     } catch (e) {
-      if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+      if (e instanceof SchemaError) return refused(taskIdentity, "INVALID_INPUT", "error", e.message);
       throw e;
     }
-    if (seenWoIds.has(wo.work_order_id)) return refused(task, "INVALID_INPUT", "error", `duplicate work_order_id '${wo.work_order_id}'`);
+    if (seenWoIds.has(wo.work_order_id)) return refused(taskIdentity, "INVALID_INPUT", "error", `duplicate work_order_id '${wo.work_order_id}'`);
     seenWoIds.add(wo.work_order_id);
     workOrders.push(wo);
   }
   if (budgetExceeded) {
-    return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining work orders`);
+    return refused(taskIdentity, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining work orders`);
   }
 
   // ---- Charged pass over pm_occurrences[]. ----
@@ -243,15 +262,15 @@ export function run(task, context) {
     try {
       occ = validatePmOccurrence(rawRegister.pm_occurrences[i], `pm_occurrences[${i}]`);
     } catch (e) {
-      if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+      if (e instanceof SchemaError) return refused(taskIdentity, "INVALID_INPUT", "error", e.message);
       throw e;
     }
-    if (seenOccIds.has(occ.occurrence_id)) return refused(task, "INVALID_INPUT", "error", `duplicate occurrence_id '${occ.occurrence_id}'`);
+    if (seenOccIds.has(occ.occurrence_id)) return refused(taskIdentity, "INVALID_INPUT", "error", `duplicate occurrence_id '${occ.occurrence_id}'`);
     seenOccIds.add(occ.occurrence_id);
     pmOccurrences.push(occ);
   }
   if (budgetExceeded) {
-    return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining PM occurrences`);
+    return refused(taskIdentity, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining PM occurrences`);
   }
 
   // ---- Content resolution + injection scan for every distinct
@@ -286,8 +305,8 @@ export function run(task, context) {
     try {
       resolved = resolveContent(wo.content_ref, `work order ${wo.work_order_id}`);
     } catch (e) {
-      if (e instanceof ResolutionError) return refused(task, e.code, "error", e.message);
-      if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+      if (e instanceof ResolutionError) return refused(taskIdentity, e.code, "error", e.message);
+      if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
       throw e;
     }
     const injection = scanAnyDocText([wo.notes]);
@@ -304,7 +323,7 @@ export function run(task, context) {
       const spanResult = verifySpanBounds(resolved.bytes, wo.span, budget, `work_orders[${wo.work_order_id}].span`);
       citation = buildVerifiedCitation(wo.content_ref, spanResult);
     } catch (e) {
-      if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+      if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
       citation = buildUnverifiedCitation(wo.content_ref, wo.span);
     }
     if (!injection.injected && citation.verification === "VERIFIED") {
@@ -322,8 +341,8 @@ export function run(task, context) {
     try {
       resolved = resolveContent(occ.content_ref, `PM occurrence ${occ.occurrence_id}`);
     } catch (e) {
-      if (e instanceof ResolutionError) return refused(task, e.code, "error", e.message);
-      if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+      if (e instanceof ResolutionError) return refused(taskIdentity, e.code, "error", e.message);
+      if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
       throw e;
     }
     let citation;
@@ -331,7 +350,7 @@ export function run(task, context) {
       const spanResult = verifySpanBounds(resolved.bytes, occ.span, budget, `pm_occurrences[${occ.occurrence_id}].span`);
       citation = buildVerifiedCitation(occ.content_ref, spanResult);
     } catch (e) {
-      if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+      if (e instanceof BudgetError) return refused(taskIdentity, e.code, "error", e.message);
       citation = buildUnverifiedCitation(occ.content_ref, occ.span);
     }
     occCitations.set(occ.occurrence_id, citation);
@@ -367,11 +386,17 @@ export function run(task, context) {
 
   // MM-S1-003: resolve the claim set's provenance (when present) through
   // the same verified pipeline as any other source: read grant, budget
-  // charge, blob verification, UTF-8 span verification. The resulting
-  // citation is carried into each header comparison. Absent provenance
-  // (or a failed verification) yields an explicit UNAVAILABLE claim
-  // citation — the comparison can then never be MATCH.
-  let claimCitation = null;
+  // charge, blob verification, UTF-8 span verification. Then bind each
+  // claim to a DECLARED entry in the provenance bytes: the bytes must
+  // decode to a bounded structured claim record, and each caller claim
+  // must exactly match its declared claim_id + metric + claimed_value.
+  // A valid span over unrelated text verifies nothing. Each claim gets
+  // its own citation; absent/unverifiable/undeclared support yields an
+  // explicit UNAVAILABLE claim citation — the comparison can then never
+  // be MATCH.
+  let provSpanCitation = null;
+  let provClaimRecord = null;
+  let provFailureReason = null;
   if (validatedTask.claimed_summary?.provenance) {
     const prov = validatedTask.claimed_summary.provenance;
     try {
@@ -380,14 +405,47 @@ export function run(task, context) {
       }
       const provResolved = resolveSourceRef(prov.source_ref, ctx.sources, budget, "claim provenance source");
       const provSpan = verifySpanBounds(provResolved.bytes, prov.span, budget, "claim provenance span");
-      claimCitation = buildVerifiedCitation(prov.source_ref, provSpan);
+      // MM-S1-003: the verified bytes must BE the claim record — parse
+      // and validate the structured binding.
+      let parsed;
+      try {
+        parsed = JSON.parse(provSpan.quoted_text);
+      } catch {
+        throw new ResolutionError("SOURCE_UNVERIFIED", "claim provenance bytes are not valid JSON");
+      }
+      try {
+        provClaimRecord = validateClaimRecord(parsed, "claim provenance record");
+      } catch (e) {
+        if (e instanceof SchemaError) throw new ResolutionError("SOURCE_UNVERIFIED", `claim provenance record invalid: ${e.message}`);
+        throw e;
+      }
+      provSpanCitation = buildVerifiedCitation(prov.source_ref, provSpan);
     } catch (e) {
       if (e instanceof ResolutionError) {
-        claimCitation = { verification: "UNAVAILABLE", reason: `claim provenance unverifiable: ${e.code}`, source_ref: prov.source_ref };
+        provFailureReason = `claim provenance unverifiable: ${e.code}`;
       } else if (e instanceof BudgetError) {
-        return refused(task, e.code, "error", e.message);
+        return refused(taskIdentity, e.code, "error", e.message);
       } else {
         throw e;
+      }
+    }
+  }
+
+  // MM-S1-003: per-claim citations. A claim is VERIFIED only when its
+  // claim_id is declared in the provenance record with exactly matching
+  // metric and claimed_value. Anything else is explicit UNAVAILABLE.
+  const claimCitations = new Map();
+  if (validatedTask.claimed_summary) {
+    for (const claim of validatedTask.claimed_summary.claims) {
+      const declared = provClaimRecord?.claims.find((c) => c.claim_id === claim.claim_id);
+      if (provSpanCitation && declared && declared.metric === claim.metric && declared.claimed_value === claim.claimed_value) {
+        claimCitations.set(claim.claim_id, provSpanCitation);
+      } else {
+        const reason = provFailureReason
+          ?? (!provSpanCitation ? "claim set has no verified provenance" : !declared
+            ? `claim_id '${claim.claim_id}' not declared in provenance record`
+            : "claim metric/value does not match provenance record declaration");
+        claimCitations.set(claim.claim_id, { verification: "UNAVAILABLE", reason });
       }
     }
   }
@@ -395,14 +453,18 @@ export function run(task, context) {
   // MM-S1-003: header claims are compared, never allowed to overwrite the
   // computed value; an unmatched or unknown-evidence comparison keeps the
   // whole rollup out of REPORT_READY, same as any other incompleteness.
-  // A claim without verified provenance can never be MATCH.
-  const header_comparisons = computeHeaderComparisons(validatedTask.claimed_summary, pmSection, claimCitation);
+  // A claim without a bound verified declaration can never be MATCH.
+  const header_comparisons = computeHeaderComparisons(validatedTask.claimed_summary, pmSection, claimCitations);
   const headerAllMatch = header_comparisons.every((h) => h.evidence_state === "MATCH");
 
   const fullyComplete = population.evidence_state === "verified" && !hasIntegrityFindings && additionalFindings.length === 0 && headerAllMatch;
   let coverageState;
   const admittedCount = workOrders.length + pmOccurrences.length - allFindings.length;
-  if (admittedCount === 0 && workOrders.length === 0 && pmOccurrences.length === 0) coverageState = population.evidence_state === "verified" ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY";
+  // MM-S1-005: EMPTY coverage and completeness derive from the SAME
+  // whole-envelope completeness decision as every other status —
+  // including header comparisons. An empty register with an unsupported
+  // claim is not a complete report.
+  if (admittedCount === 0 && workOrders.length === 0 && pmOccurrences.length === 0) coverageState = fullyComplete ? "COMPLETE_EMPTY" : "INCOMPLETE_EMPTY";
   else coverageState = fullyComplete ? "COMPLETE" : "PARTIAL";
   const status = workOrders.length === 0 && pmOccurrences.length === 0 ? "EMPTY" : fullyComplete ? "REPORT_READY" : "PARTIAL";
 
@@ -435,12 +497,14 @@ export function run(task, context) {
     source_refs.push({ repo: r.repo, path: r.path, commit: r.commit, blob: r.blob, algorithm: r.algorithm, revision: r.revision });
   }
 
-  const result = envelope(task, {
+  const result = envelope(taskIdentity, {
     status,
     // MM-S1-005: envelope `complete` is derived from the same completeness
     // decision as status. PARTIAL is never complete:true. EMPTY is complete
-    // only when the population evidence itself is verified.
-    complete: status === "REPORT_READY" || (status === "EMPTY" && population.evidence_state === "verified"),
+    // only when the whole envelope is complete — verified population AND
+    // no integrity findings AND all header comparisons MATCH. An empty
+    // register with an unsupported claim is not complete.
+    complete: status === "REPORT_READY" || (status === "EMPTY" && fullyComplete),
     source_refs,
     diagnostics: [],
     quarantined_sources,
@@ -449,7 +513,7 @@ export function run(task, context) {
   });
 
   if (outputRecordsOf(result) > BUDGET_LIMITS.maxOutputRecords || canonicalByteLength(result) > BUDGET_LIMITS.maxOutputBytes) {
-    return refused(task, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
+    return refused(taskIdentity, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
   }
   return result;
 }

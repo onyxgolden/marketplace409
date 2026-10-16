@@ -13890,7 +13890,7 @@
           "repo": "maint-sources",
           "path": "registers/budget-exact-64.json",
           "commit": "f4f039f8c8b31ecbe491dcba4a23e8a38091e6b3",
-          "blob": "5facce5501c01c2fb08a97b5f41e38f50f2b1bdd",
+          "blob": "366330e0d7f5a38311cb9c56bcb61033424f8173",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -13922,26 +13922,26 @@
         "evidence_state": "verified"
       },
       "backlog": {
-        "total": 53,
+        "total": 47,
         "by_priority": {
           "P1": 0,
-          "P2": 53,
+          "P2": 47,
           "P3": 0
         },
         "by_bin": {
           "bin_0_7": 0,
           "bin_8_30": 0,
-          "bin_31_90": 53,
+          "bin_31_90": 47,
           "bin_91_plus": 0
         },
         "citation_support": {
           "state": "VERIFIED",
-          "record_count": 53
+          "record_count": 47
         }
       },
       "overdue": {
         "total": 0,
-        "unknown_due_count": 53,
+        "unknown_due_count": 47,
         "by_priority": {
           "P1": 0,
           "P2": 0,
@@ -13985,7 +13985,7 @@
       },
       "coverage": {
         "state": "COMPLETE",
-        "admitted_count": 53,
+        "admitted_count": 47,
         "excluded_count": 0
       }
     },
@@ -14005,7 +14005,7 @@
           "repo": "maint-sources",
           "path": "registers/budget-65-exceeded.json",
           "commit": "0e92886a133506a4ebd266eb47f54f9d83625128",
-          "blob": "4147327211e9eed7cccbb75beca0680e64a66e8a",
+          "blob": "cbd6f43af259b4b78df319d44707bf52255b51b5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -14122,7 +14122,7 @@
           "repo": "maint-sources",
           "path": "registers/pm-budget-exact-64.json",
           "commit": "f61d5324661773d82160d907f8225deec5606587",
-          "blob": "1eb576028bbe44c43eb4ea44c2cff44fbb883bc2",
+          "blob": "da001c5900098abc5f2e78dceeb1ad17bfac5bbe",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -14217,7 +14217,7 @@
       },
       "coverage": {
         "state": "COMPLETE",
-        "admitted_count": 53,
+        "admitted_count": 47,
         "excluded_count": 0
       }
     },
@@ -14237,7 +14237,7 @@
           "repo": "maint-sources",
           "path": "registers/pm-budget-65-exceeded.json",
           "commit": "8fa7eb561a3574671fd225fa8f5e8bd4907a893c",
-          "blob": "1c589635f3c659c2bb69a99b4e5df9c41aa17854",
+          "blob": "bdbb53e3041c797749c8a4b2821914faf671a786",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -14936,7 +14936,7 @@
           "repo": "maint-sources",
           "path": "registers/budget-exact-64.json",
           "commit": "f4f039f8c8b31ecbe491dcba4a23e8a38091e6b3",
-          "blob": "5facce5501c01c2fb08a97b5f41e38f50f2b1bdd",
+          "blob": "366330e0d7f5a38311cb9c56bcb61033424f8173",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -14968,26 +14968,26 @@
         "evidence_state": "verified"
       },
       "backlog": {
-        "total": 53,
+        "total": 47,
         "by_priority": {
           "P1": 0,
-          "P2": 53,
+          "P2": 47,
           "P3": 0
         },
         "by_bin": {
           "bin_0_7": 0,
           "bin_8_30": 0,
-          "bin_31_90": 53,
+          "bin_31_90": 47,
           "bin_91_plus": 0
         },
         "citation_support": {
           "state": "VERIFIED",
-          "record_count": 53
+          "record_count": 47
         }
       },
       "overdue": {
         "total": 0,
-        "unknown_due_count": 53,
+        "unknown_due_count": 47,
         "by_priority": {
           "P1": 0,
           "P2": 0,
@@ -15031,7 +15031,7 @@
       },
       "coverage": {
         "state": "COMPLETE",
-        "admitted_count": 53,
+        "admitted_count": 47,
         "excluded_count": 0
       }
     },

@@ -108,6 +108,83 @@ export function maxContainerDepth(value) {
 export const MAX_CONTAINER_DEPTH = 32;
 
 /**
+ * MM-S1-001: admit caller-supplied data into a bounded, data-only
+ * snapshot. Walks OWN enumerable properties via descriptors ONLY —
+ * accessor properties (get/set, i.e. descriptors without a "value") are
+ * REJECTED without invocation (SchemaError). Each admitted object is
+ * charged via budget.countObject() BEFORE any of its fields are read,
+ * and the container depth cap is enforced during the walk itself, so
+ * admission is bounded before any semantic inspection.
+ *
+ * Returns a plain JSON-safe deep copy containing only data values.
+ * The caller MUST use the returned snapshot for ALL downstream work
+ * (validation, hashing, budgeting, diagnostics) — never rewalk the raw
+ * input, because rewalking (e.g. canonicalJson for a task_id) would
+ * invoke the very accessors admission rejected.
+ *
+ * "__proto__" keys are defined as own data properties (not assigned),
+ * so a crafted payload cannot re-prototype the snapshot.
+ */
+class AdmissionError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "AdmissionError";
+    this.code = code;
+  }
+}
+
+/**
+ * MM-S1-001: admit caller-supplied data into a bounded, data-only
+ * snapshot. Walks OWN enumerable properties via descriptors ONLY —
+ * accessor properties (get/set, i.e. descriptors without a "value") are
+ * REJECTED without invocation (AdmissionError). Each admitted object is
+ * charged via budget.countObject() BEFORE any of its fields are read,
+ * and the container depth cap is enforced during the walk itself, so
+ * admission is bounded before any semantic inspection.
+ *
+ * Returns a plain JSON-safe deep copy containing only data values.
+ * The caller MUST use the returned snapshot for ALL downstream work
+ * (validation, hashing, budgeting, diagnostics) — never rewalk the raw
+ * input, because rewalking (e.g. canonicalJson for a task_id) would
+ * invoke the very accessors admission rejected.
+ *
+ * "__proto__" keys are defined as own data properties (not assigned),
+ * so a crafted payload cannot re-prototype the snapshot.
+ */
+export function admitData(value, budget, what, depth = 1) {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (depth > MAX_CONTAINER_DEPTH) {
+    throw new AdmissionError("INPUT_LIMIT", `${what}: exceeds maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
+  }
+  budget.countObject(what);
+  if (Array.isArray(value)) {
+    const out = [];
+    for (let i = 0; i < value.length; i++) {
+      const desc = Object.getOwnPropertyDescriptor(value, i);
+      if (!desc || !("value" in desc)) {
+        throw new AdmissionError("INVALID_INPUT", `${what}[${i}]: accessor properties are not admitted`);
+      }
+      out.push(admitData(desc.value, budget, `${what}[${i}]`, depth + 1));
+    }
+    return out;
+  }
+  const out = {};
+  for (const k of Object.keys(value)) {
+    const desc = Object.getOwnPropertyDescriptor(value, k);
+    if (!desc || !("value" in desc)) {
+      throw new AdmissionError("INVALID_INPUT", `${what}.${k}: accessor properties are not admitted`);
+    }
+    const child = admitData(desc.value, budget, `${what}.${k}`, depth + 1);
+    Object.defineProperty(out, k, { value: child, enumerable: true, configurable: true, writable: true });
+  }
+  return out;
+}
+
+export { AdmissionError };
+
+/**
  * Byte-level JSON nesting depth scanner (MM-S1-001). Computes the maximum
  * container nesting depth directly from raw JSON TEXT without parsing it
  * and without constructing any objects — candidate fields are never

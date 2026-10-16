@@ -500,11 +500,12 @@ addSet("duplicate-asset-id", { assets: ["AST-1", "AST-1"] });
 // Context overhead for a single-shared-content set (register key +
 // content key, 1 commit each, 2 read grants, principal, criteria) is 8
 // object charges from chargeContext + 1 for resolving the register
-// itself + 1 for resolving the shared content on the FIRST work order =
-// 10 fixed charges, PLUS 1 per registered asset (MM-S1-001: assets are
-// now charged too) before any work order is its own charge. These sets
-// use exactly 1 asset -> 11 fixed charges. N clean work orders -> 11+N
-// total. Exactly 64 at N=53; 65 (exceeded) at N=54.
+// itself + 1 for resolving the shared content on the FIRST work order +
+// 6 for MM-S1-001 task admission = 16 fixed charges, PLUS 1 per registered
+// asset (MM-S1-001: assets are now charged too) before any work order is
+// its own charge. These sets use exactly 1 asset -> 17 fixed charges.
+// N clean work orders -> 17+N total. Exactly 64 at N=47; 65 (exceeded)
+// at N=48.
 // ---------------------------------------------------------------------
 function manyWorkOrdersSet(name, n, { poisonCount = 0 } = {}) {
   const sharedTxt = "Bulk work order: asset AST-1, created 2026-05-01, status OPEN, priority P2, bulk entry.\n";
@@ -521,8 +522,8 @@ function manyWorkOrdersSet(name, n, { poisonCount = 0 } = {}) {
   }
   addSet(name, { assets: ["AST-1"], work_orders });
 }
-manyWorkOrdersSet("budget-exact-64", 53);
-manyWorkOrdersSet("budget-65-exceeded", 53, { poisonCount: 2 }); // 55 total, well under the 64-entry schema array cap — the OBJECT budget (not the schema cap) is what must cut this off, at the first poison entry (index 53)
+manyWorkOrdersSet("budget-exact-64", 47);
+manyWorkOrdersSet("budget-65-exceeded", 47, { poisonCount: 2 }); // 49 total, well under the 64-entry schema array cap — the OBJECT budget (not the schema cap) is what must cut this off, at the first poison entry (index 47)
 
 function manyPmOccurrencesSet(name, n, { poisonCount = 0 } = {}) {
   const sharedTxt = "Bulk PM occurrence: asset AST-1, due 2026-05-10, window 2026-05-05..2026-05-15, bulk entry.\n";
@@ -536,8 +537,8 @@ function manyPmOccurrencesSet(name, n, { poisonCount = 0 } = {}) {
   }
   addSet(name, { assets: ["AST-1"], pm_occurrences });
 }
-manyPmOccurrencesSet("pm-budget-exact-64", 53);
-manyPmOccurrencesSet("pm-budget-65-exceeded", 53, { poisonCount: 2 });
+manyPmOccurrencesSet("pm-budget-exact-64", 47);
+manyPmOccurrencesSet("pm-budget-65-exceeded", 47, { poisonCount: 2 });
 
 // ---------------------------------------------------------------------
 // Context registry padding (CS-001 / DOC-002 regression): an extra
