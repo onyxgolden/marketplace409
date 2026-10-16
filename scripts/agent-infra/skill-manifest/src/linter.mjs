@@ -1398,10 +1398,23 @@ function main() {
   }
   const report = lintSkill(positional[0], { spectreFindingsPath });
   const { report: emitted, text } = serializeReportBounded(report);
-  console.log(text);
-  if (emitted.conformance === "conformant") process.exit(0);
-  if (emitted.diagnostics.some((d) => d.code === "OPERATIONAL_ERROR")) process.exit(2);
-  process.exit(1);
+  const code = emitted.conformance === "conformant"
+    ? 0
+    : emitted.diagnostics.some((d) => d.code === "OPERATIONAL_ERROR")
+      ? 2
+      : 1;
+  // SM-005: a forced process.exit() discards the unwritten tail when a
+  // large report goes to a pipe, emitting truncated JSON at exit 0. Stage
+  // the status via process.exitCode and let the event loop drain the full
+  // stdout write (including pipe backpressure) before terminating. A
+  // write failure is reported honestly: the intended status is moot once
+  // the output is lost, so exit non-zero with an stderr diagnostic.
+  process.exitCode = code;
+  process.stdout.write(text + "\n", (err) => {
+    if (err) {
+      process.stderr.write(`Error: failed to write report to stdout: ${err.message}\n`, () => process.exit(2));
+    }
+  });
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);

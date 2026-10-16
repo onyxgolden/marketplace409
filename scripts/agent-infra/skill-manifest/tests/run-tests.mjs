@@ -568,6 +568,40 @@ function makeParserRoot(dirName, frontmatter) {
     overRep.security_composition.attachment_status === "rejected_oversize",
     `cap+1 attachment status was ${overRep.security_composition.attachment_status}`
   );
+  // SM-005: pipe-flush regression — a near-limit ACCEPTED report captured
+  // through a real pipe must arrive complete. A forced process.exit()
+  // discards the unwritten tail of a large piped stdout write, emitting
+  // truncated JSON at exit 0; the CLI stages the status via
+  // process.exitCode so the event loop drains the full write first.
+  // 15000 findings nested 90 deep: 30,194-byte attachment, ~2.9MB report
+  // (inside the 4MiB serialized-output bound), structurally shallow enough
+  // to attach.
+  const pipePath = join(dir, "pipe-findings.json");
+  let pipeFindings = Array.from({ length: 15000 }, () => 0);
+  for (let i = 0; i < 90; i++) pipeFindings = [pipeFindings];
+  const pipeInput = { findings: pipeFindings };
+  writeFileSync(pipePath, JSON.stringify(pipeInput));
+  const pipeCli = runCli([join(FIXTURES, "f02-valid-full"), "--spectre-findings", pipePath]);
+  check(
+    "sm005-pipe-flush-exit",
+    pipeCli.code === 0 && pipeCli.stderr === "",
+    `pipe-flush probe exit was ${pipeCli.code}, stderr ${pipeCli.stderr.length} bytes`
+  );
+  let pipeParsed = null;
+  try { pipeParsed = JSON.parse(pipeCli.stdout); } catch { /* captured below */ }
+  check(
+    "sm005-pipe-flush-complete",
+    pipeParsed !== null &&
+      pipeParsed.conformance === "conformant" &&
+      pipeParsed.security_composition.attachment_status === "attached",
+    `pipe-flush report incomplete/unparseable: ${pipeCli.stdout.length} bytes captured`
+  );
+  check(
+    "sm005-pipe-flush-verbatim",
+    pipeParsed !== null &&
+      JSON.stringify(pipeParsed.security_composition.spectre_findings) === JSON.stringify(pipeInput),
+    "pipe-flush attachment not attached verbatim"
+  );
   rmSync(dir, { recursive: true, force: true });
 }
 
