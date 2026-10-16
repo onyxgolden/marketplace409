@@ -37,6 +37,22 @@ Inventoried 2026-10-16 for the FORGE offline export profile. The skill is
   upstream privacy statement cannot substitute for the offline acceptance
   check.
 
+## Builder evidence — full file hashes (sha256)
+
+Recorded 2026-10-16 from the installed skill at
+`~/workspace/custom-skills/diagram-design/` (not a git checkout, so no
+revision is obtainable; hashes are the installation identity):
+
+| File | sha256 |
+|---|---|
+| SKILL.md | `ec62ac28761324d58fab182c6eeaa58557c34db66b2ac76771ffc824517a30c4` |
+| scripts/self_check.py | `4da309dc768c921153872715666859f4d2c3af384ec804b3d4159b549b7697ea` |
+| scripts/export_svg.py | `f61fb56777067365f17dac7857609ca7a46b6dd794ec176c1a716adbcb971081` |
+| scripts/export_png.py | `430ddcc2d39441808bd4217fbdeb944dbb6de0be281782705a81748986d7d348` |
+| scripts/drawio_extract.py | `72098800fb5893ba620a432275b332901cfdbfa45bcd608c15d055466b25abe6` |
+| scripts/mermaid_extract.py | `751d5eb38476e3b1f6176524a57cc4f30f9f8e55d0e05220921f4b7802d41cb4` |
+| scripts/excalidraw_extract.py | `10f6a6b999b3b2e8a626774515ba6817df331a6d39d671a4876541262b63697c` |
+
 ## License attribution
 
 The skill declares MIT in its SKILL.md frontmatter. This slice only

@@ -1,160 +1,523 @@
 #!/usr/bin/env python3
-"""Convert a diagram HTML file to the FORGE offline export profile.
+"""Convert a diagram HTML/SVG file to the FORGE offline export profile.
 
 Removes every network-dependent construct so the result renders with
-local/system assets only:
+local/system assets only. Operates under the SAME closed policy as
+check_offline.py: only admitted elements/attributes are emitted, output is
+escaped on serialization, and the final serialized output is validated by
+the shared checker before success is reported.
 
-- Google Fonts <link> and @import (font stacks already end in generic
-  families, so viewers fall back to system faces)
-- remote <script src>, remote stylesheet <link>, remote images
-- inline event-handler attributes and <script> blocks
+Contract:
+- sanitize() returns (ok, html, report). Report carries counts and fixed
+  reason codes only -- never file content, URLs, or filenames.
+- ok=True only if the serialized output passes check_offline.check_text
+  AND rendered text is preserved (labels intact) or the input had no text.
+- The CLI writes the destination atomically on success only; a failed
+  conversion never replaces an existing valid destination.
 
 Usage:
-    python3 sanitize_offline.py <in.html> <out.html> [--json]
-
-Prints a JSON report of changes (counts only, never file content, so
-private-looking labels never leak into logs).
+    python3 sanitize_offline.py <src> <dst> [--json]
 """
 
 from __future__ import annotations
 
 import argparse
+import html as html_module
 import json
-import re
+import os
 import sys
+import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
 
-from check_offline import REFERENCE_ATTRS, _is_remote
+from check_offline import (
+    ADMITTED_ATTRS,
+    ELEMENT_ATTRS,
+    HTML_ELEMENTS,
+    SVG_ELEMENTS,
+    URL_ATTRS,
+    VOID_ELEMENTS,
+    _check_css_decls,
+    _css_unescape,
+    _FindingSink,
+    _is_xmlns_decl,
+    _local,
+    _url_codes,
+    check_text,
+)
 
-VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-        "meta", "param", "source", "track", "wbr"}
+import xml.etree.ElementTree as ET
+
+MAX_BYTES = 2_000_000
+
+
+class _TextExtract(HTMLParser):
+    """Independent rendered-text extractor (skips style/script subtrees)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.texts: list[str] = []
+        self._skip = 0
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if _local(tag) in ("style", "script"):
+            self._skip += 1
+
+    def handle_endtag(self, tag) -> None:
+        if _local(tag) in ("style", "script") and self._skip:
+            self._skip -= 1
+
+    def handle_data(self, data) -> None:
+        if not self._skip and data.strip():
+            self.texts.append(data.strip())
+
+
+def _extract_text_html(text: str) -> list[str]:
+    ex = _TextExtract()
+    ex.feed(text)
+    return ex.texts
+
+
+def _extract_text_svg(text: str) -> list[str]:
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        return []
+    out: list[str] = []
+    stack = [root]
+    while stack:
+        el = stack.pop()
+        if _local(el.tag) == "style":
+            continue
+        if el.text and el.text.strip():
+            out.append(el.text.strip())
+        for child in reversed(list(el)):
+            stack.append(child)
+        if el.tail and el.tail.strip():
+            out.append(el.tail.strip())
+    return out
 
 
 class _Sanitizer(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
+    """HTML sanitizer emitting only policy-admitted, escaped markup."""
+
+    def __init__(self, sink: _FindingSink) -> None:
+        # convert_charrefs=True decodes entities in text AND attributes, so
+        # serialization re-escapes the browser-interpreted values (D641-002).
+        super().__init__(convert_charrefs=True)
+        self.sink = sink
         self.out: list[str] = []
-        self.changes: list[dict] = []
-        self.text_before: list[str] = []
-        self.text_after: list[str] = []
+        self.change_counts: dict[str, int] = {}
         self.elements_before = 0
         self.elements_after = 0
-        self._skip_depth = 0  # inside removed <script>/<style-remote>
+        self._drop_depth = 0  # inside a dropped (unadmitted) subtree
+        self._refuse = False
 
-    def _record(self, code: str, detail: str) -> None:
-        self.changes.append({"code": code, "detail": detail})
+    def _changed(self, code: str) -> None:
+        self.change_counts[code] = self.change_counts.get(code, 0) + 1
 
     def handle_decl(self, decl: str) -> None:
-        self.out.append(f"<!{decl}>")
+        if self._drop_depth:
+            return
+        if decl.lower().startswith("doctype html"):
+            self.out.append("<!DOCTYPE html>")
+        # Other declarations (e.g. XML prologs in .svg handled separately)
+        # are dropped silently: they carry no diagram content.
 
     def handle_comment(self, data: str) -> None:
-        self.out.append(f"<!--{data}-->")
+        # Comments are inert; drop them (never carry content forward).
+        pass
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self._skip_depth:
-            self._skip_depth += 1
+    def _emit_attrs(self, element: str,
+                    attrs: list[tuple[str, str | None]]) -> str:
+        parts: list[str] = []
+        allowed = ELEMENT_ATTRS.get(element, ADMITTED_ATTRS)
+        for raw_k, v in attrs:
+            if _is_xmlns_decl(raw_k):
+                parts.append(f' {raw_k}="{html_module.escape(v or "", quote=True)}"')
+                continue
+            k = _local(raw_k)
+            if k not in allowed:
+                self._changed("REMOVED_UNADMITTED_ATTR")
+                continue
+            val = v or ""
+            if k in URL_ATTRS and _url_codes(val):
+                # Remote URL on an admitted attribute: drop the attribute.
+                self._changed("REMOVED_REMOTE_ATTR")
+                continue
+            if k == "style":
+                # Any remote url()/import in a style attribute -> drop it.
+                # Other violations (unsupported sizing, ...) -> refuse.
+                probe = _FindingSink()
+                _check_css_decls(val, probe, "")
+                if any(c in ("F_REMOTE_CSS", "F_GOOGLE_FONTS", "F_EXECUTABLE_URL")
+                       for c in {f["code"] for f in probe.findings}):
+                    self._changed("REMOVED_REMOTE_CSS")
+                    continue
+                if probe.findings:
+                    # Unsupported sizing etc.: refuse rather than mangle.
+                    self._refuse = True
+                    self.sink.add("F_INVALID_DIMENSION",
+                                  "style attribute outside profile bounds")
+                    return ""
+            # Escaped serialization: decoded values can never break out of
+            # the attribute (D641-002).
+            parts.append(f' {k}="{html_module.escape(val, quote=True)}"')
+        return "".join(parts)
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if self._drop_depth:
+            self._drop_depth += 1
             return
-        low = tag.lower()
+        local = _local(tag)
         self.elements_before += 1
-        if low == "script":
-            self._record("REMOVED_SCRIPT", f"<{tag}> block")
-            self._skip_depth = 1
+        if local not in HTML_ELEMENTS:
+            # Unadmitted element (object/iframe/script/...): drop subtree.
+            self._changed("REMOVED_UNADMITTED_ELEMENT")
+            self._drop_depth += 1
             return
-        amap = {k.lower(): (v or "") for k, v in attrs}
-        if low == "link":
-            rel = amap.get("rel", "").lower()
+        if local == "link":
+            amap = {_local(k): (v or "") for k, v in attrs
+                    if not _is_xmlns_decl(k)}
             href = amap.get("href", "")
-            if "stylesheet" in rel or "font" in rel or _is_remote(href):
-                self._record("REMOVED_REMOTE_LINK",
-                             f"rel={rel or '?'} host={(href[:60])}")
+            if _url_codes(href):
+                self._changed("REMOVED_REMOTE_LINK")
                 return
-        if low in ("img", "image") or (low == "img"):
-            src = amap.get("src", "") or amap.get("href", "")
-            if _is_remote(src):
-                self._record("REMOVED_REMOTE_IMAGE", f"<{tag}> src")
-                self.out.append(
-                    f'<rect class="offline-image-removed" width="24" height="24"/>')
+        if local == "image":
+            amap = {_local(k): (v or "") for k, v in attrs
+                    if not _is_xmlns_decl(k)}
+            if _url_codes(amap.get("href", "")):
+                self._changed("REMOVED_REMOTE_IMAGE")
                 return
-        keep: list[tuple[str, str]] = []
-        for k, v in attrs:
-            kl = k.lower()
-            if kl.startswith("on"):
-                self._record("REMOVED_EVENT_HANDLER", kl)
-                continue
-            if kl in REFERENCE_ATTRS and _is_remote(v or ""):
-                self._record("REMOVED_REMOTE_ATTR", f"{kl}")
-                continue
-            keep.append((k, v or ""))
-        self.elements_after += 1
-        attr_s = "".join(f' {k}="{v}"' for k, v in keep)
-        if low in VOID:
-            self.out.append(f"<{tag}{attr_s}>")
-        else:
-            self.out.append(f"<{tag}{attr_s}>")
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.handle_starttag(tag, attrs)
-        if not self._skip_depth:
-            self.handle_endtag(tag)
-
-    def handle_endtag(self, tag: str) -> None:
-        if self._skip_depth:
-            self._skip_depth -= 1
+        if local == "meta":
+            # Only charset survives the policy; enforced via allowlist.
+            pass
+        attr_s = self._emit_attrs(local, attrs)
+        if self._refuse:
             return
-        self.out.append(f"</{tag}>")
+        self.elements_after += 1
+        self.out.append(f"<{local}{attr_s}>")
+
+    def handle_startendtag(self, tag, attrs) -> None:
+        drop_before = self._drop_depth
+        self.handle_starttag(tag, attrs)
+        if self._drop_depth > drop_before:
+            # Self-closing unadmitted element: the drop opens and closes here.
+            self._drop_depth = drop_before
+            return
+        if not self._drop_depth and not self._refuse:
+            local = _local(tag)
+            # Self-closing: emit the matching end tag for non-void elements
+            # so output stays well-formed and idempotent.
+            if local not in VOID_ELEMENTS:
+                self.out.append(f"</{local}>")
+
+    def handle_endtag(self, tag) -> None:
+        if self._drop_depth:
+            self._drop_depth -= 1
+            return
+        local = _local(tag)
+        if local in HTML_ELEMENTS and local not in VOID_ELEMENTS:
+            self.out.append(f"</{local}>")
 
     def handle_data(self, data: str) -> None:
-        if self._skip_depth:
+        if self._drop_depth:
             return
-        if data.strip():
-            self.text_before.append(data.strip())
-            self.text_after.append(data.strip())
-        self.out.append(data)
+        # Style blocks: strip remote @imports (safe: rule-level removal),
+        # refuse on remote url() inside declarations.
+        # NOTE: _Sanitizer tracks style via a simple flag set in start/end.
+        self.out.append(html_module.escape(data))
+
+    def handle_entityref(self, name: str) -> None:
+        # With convert_charrefs=True these are not called; defined for
+        # explicitness per the review (D641-002).
+        self.handle_data(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self.handle_data(f"&#{name};")
 
 
-CSS_IMPORT_REMOTE_RE = re.compile(
-    r"@import\s+url\(\s*['\"]?https?://[^)'\"]+['\"]?\s*\)\s*;", re.IGNORECASE)
+class _StyleAwareSanitizer(_Sanitizer):
+    """Sanitizer with style-block CSS processing."""
+
+    def __init__(self, sink: _FindingSink) -> None:
+        super().__init__(sink)
+        self._in_style = False
+        self._style_buf: list[str] = []
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if _local(tag) == "style" and not self._drop_depth:
+            # Emit the open tag now; CSS text is buffered and processed in
+            # handle_endtag.
+            _Sanitizer.handle_starttag(self, tag, attrs)
+            if not self._refuse:
+                self._in_style = True
+            return
+        super().handle_starttag(tag, attrs)
+
+    def handle_startendtag(self, tag, attrs) -> None:
+        # A self-closed <style/> has no body: do not arm the CSS buffer.
+        if _local(tag) == "style":
+            _Sanitizer.handle_startendtag(self, tag, attrs)
+            self._in_style = False
+            self._style_buf = []
+            return
+        super().handle_startendtag(tag, attrs)
+
+    def handle_endtag(self, tag) -> None:
+        if _local(tag) == "style" and self._in_style:
+            css = "".join(self._style_buf)
+            self._style_buf = []
+            self._in_style = False
+            cleaned, ok = _clean_style_block(css, self)
+            if not ok:
+                self._refuse = True
+                return
+            # <style> is a raw-text element: the browser does not
+            # entity-decode its content, so emit the CSS unescaped
+            # (escaping here would double-encode on every pass and
+            # break idempotence).
+            if "</style" in cleaned.lower():
+                self._refuse = True
+                self.sink.add("F_MALFORMED",
+                              "style block contains closing tag")
+                return
+            self.out.append(cleaned)
+            self.out.append("</style>")
+            return
+        super().handle_endtag(tag)
+
+    def handle_data(self, data: str) -> None:
+        if self._in_style:
+            self._style_buf.append(data)
+            return
+        super().handle_data(data)
 
 
-def sanitize(path: Path) -> tuple[str, dict]:
-    """Return (sanitized_html, report). Report carries counts only."""
-    raw = path.read_bytes().decode("utf-8", errors="replace")
-    # Strip remote CSS @imports before parsing (they live inside <style>).
-    raw2, n_css = CSS_IMPORT_REMOTE_RE.subn("", raw)
-    s = _Sanitizer()
-    s.feed(raw2)
-    report = {
-        "file": path.name,
-        "bytes_in": len(raw.encode("utf-8")),
-        "bytes_out": len("".join(s.out).encode("utf-8")),
-        "remote_css_imports_removed": n_css,
-        "changes": [{"code": c["code"], "detail": c["detail"]}
-                    for c in s.changes],
-        "text_nodes_before": len(s.text_before),
-        "text_nodes_after": len(s.text_after),
-        "text_preserved": s.text_before == s.text_after,
-        "elements_before": s.elements_before,
-        "elements_after": s.elements_after,
-    }
-    return "".join(s.out), report
+def _clean_style_block(css: str, s: _Sanitizer) -> tuple[str, bool]:
+    """Remove remote @imports; refuse on remote url() or other violations."""
+    unescaped = _css_unescape(css)
+    probe = _FindingSink()
+    _check_css_decls(css, probe, "")
+    codes = {f["code"] for f in probe.findings}
+    if codes & {"F_REMOTE_CSS", "F_GOOGLE_FONTS", "F_EXECUTABLE_URL"}:
+        # Distinguish: remote @import rules can be dropped safely;
+        # remote url() inside declarations cannot -> refuse.
+        import re as _re
+        stripped = _re.sub(
+            r"@import\s+(?:url\(\s*[^)]*?\)|[\"'][^\"']*[\"'])\s*;",
+            "", unescaped, flags=_re.IGNORECASE)
+        reprobe = _FindingSink()
+        _check_css_decls(stripped, reprobe, "")
+        recodes = {f["code"] for f in reprobe.findings}
+        if recodes & {"F_REMOTE_CSS", "F_GOOGLE_FONTS", "F_EXECUTABLE_URL"}:
+            s.sink.add("F_REMOTE_CSS",
+                       "style block requires network resources")
+            return "", False
+        s._changed("REMOVED_REMOTE_CSS_IMPORT")
+        return stripped, True
+    if codes:
+        s.sink.add("F_INVALID_DIMENSION",
+                   "style block outside profile bounds")
+        return "", False
+    return css, True
+
+
+def _sanitize_svg(text: str, sink: _FindingSink
+                  ) -> tuple[bool, str, dict[str, int]]:
+    """SVG sanitizer: rebuild from the admitted subset via ElementTree."""
+    try:
+        root = ET.fromstring(text.encode("utf-8"))
+    except ET.ParseError:
+        sink.add("F_MALFORMED", "SVG is not well-formed XML")
+        return False, "", {}
+    changes: dict[str, int] = {}
+
+    def bump(code: str) -> None:
+        changes[code] = changes.get(code, 0) + 1
+
+    def clean(el: ET.Element) -> ET.Element | None:
+        local = _local(el.tag)
+        if local not in SVG_ELEMENTS:
+            bump("REMOVED_UNADMITTED_ELEMENT")
+            return None
+        allowed = ELEMENT_ATTRS.get(local, ADMITTED_ATTRS)
+        new = ET.Element(local)
+        for qname, val in el.attrib.items():
+            if _is_xmlns_decl(qname):
+                continue
+            k = _local(qname)
+            if k not in allowed:
+                bump("REMOVED_UNADMITTED_ATTR")
+                continue
+            if k in URL_ATTRS and _url_codes(val):
+                bump("REMOVED_REMOTE_ATTR")
+                return None  # drop elements whose URL is remote
+            if k == "style":
+                probe = _FindingSink()
+                _check_css_decls(val, probe, "")
+                if probe.findings:
+                    bump("REMOVED_REMOTE_CSS")
+                    continue
+            new.set(k, val)
+        if local == "style":
+            cleaned, ok = _clean_style_block(el.text or "", _style_ctx(sink, changes))
+            if not ok:
+                return None
+            new.text = cleaned
+        else:
+            new.text = el.text
+        for child in list(el):
+            c = clean(child)
+            if c is not None:
+                new.append(c)
+                c.tail = child.tail
+        return new
+
+    cleaned_root = clean(root)
+    if cleaned_root is None:
+        return False, "", changes
+    # Preserve the SVG namespace declaration for well-formedness.
+    cleaned_root.set("xmlns", "http://www.w3.org/2000/svg")
+    out = ET.tostring(cleaned_root, encoding="unicode")
+    return True, out, changes
+
+
+class _style_ctx:
+    """Minimal adapter so _clean_style_block can record changes."""
+
+    def __init__(self, sink: _FindingSink, changes: dict[str, int]) -> None:
+        self.sink = sink
+        self._changes = changes
+
+    def _changed(self, code: str) -> None:
+        self._changes[code] = self._changes.get(code, 0) + 1
+
+
+def sanitize(path: Path) -> tuple[bool, str, dict]:
+    """Return (ok, sanitized_text, report). Report carries counts only."""
+    report: dict = {"ok": False}
+    try:
+        size = os.stat(path).st_size
+    except OSError:
+        report["finding_codes"] = ["F_MALFORMED"]
+        return False, "", report
+    if size > MAX_BYTES:
+        report["finding_codes"] = ["F_OVERSIZED"]
+        return False, "", report
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        report["finding_codes"] = ["F_MALFORMED"]
+        return False, "", report
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        report["finding_codes"] = ["F_MALFORMED"]
+        return False, "", report
+
+    report["bytes_in"] = len(raw)
+    sink: _FindingSink = _FindingSink()
+    is_svg = path.suffix.lower() == ".svg"
+
+    if is_svg:
+        pre_ok, out, changes = _sanitize_svg(text, sink)
+        elements_before = text.count("<")
+        if not pre_ok:
+            report["finding_codes"] = sorted({f["code"] for f in sink.findings}
+                                             or {"F_MALFORMED"})
+            return False, "", report
+    else:
+        s = _StyleAwareSanitizer(sink)
+        try:
+            s.feed(text)
+        except Exception:
+            report["finding_codes"] = ["F_MALFORMED"]
+            return False, "", report
+        if s._refuse or s._drop_depth:
+            report["finding_codes"] = sorted({f["code"] for f in sink.findings}
+                                             or {"F_MALFORMED"})
+            return False, "", report
+        # Unterminated input: refuse rather than emit a repaired document.
+        out = "".join(s.out)
+        elements_before = s.elements_before
+        changes = s.change_counts
+        report["elements_before"] = s.elements_before
+        report["elements_after"] = s.elements_after
+        # Malformed nesting in the output is caught by the final check_text
+        # validation below; no separate stack check is needed here.
+
+    # Independent rendered-text comparison (D641-002): text extracted from
+    # the input and from the output by SEPARATE parses must agree.
+    extract = _extract_text_svg if is_svg else _extract_text_html
+    before = extract(text)
+    after = extract(out)
+    text_preserved = before == after
+    if not text_preserved:
+        report["finding_codes"] = ["TEXT_NOT_PRESERVED"]
+        report["text_nodes_before"] = len(before)
+        report["text_nodes_after"] = len(after)
+        return False, "", report
+
+    # Final-policy validation on the exact serialized output (D641-003).
+    ok, findings = check_text(out, path.suffix)
+    if not ok:
+        report["finding_codes"] = sorted({f["code"] for f in findings})
+        return False, "", report
+
+    report.update({
+        "ok": True,
+        "bytes_out": len(out.encode("utf-8")),
+        "text_nodes_before": len(before),
+        "text_nodes_after": len(after),
+        "text_preserved": True,
+        "changes": [{"code": c, "count": n}
+                    for c, n in sorted(changes.items())],
+    })
+    if not is_svg:
+        pass  # element counts already recorded above
+    else:
+        report["elements_before"] = elements_before
+        report["elements_after"] = out.count("<")
+    return True, out, report
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("src", type=Path, help="input diagram HTML")
-    parser.add_argument("dst", type=Path, help="offline output HTML path")
+    parser.add_argument("src", type=Path, help="input diagram file")
+    parser.add_argument("dst", type=Path, help="offline output path")
     parser.add_argument("--json", action="store_true",
                         help="print report as JSON")
     args = parser.parse_args()
-    html, report = sanitize(args.src)
-    args.dst.write_text(html, encoding="utf-8")
+    ok, out, report = sanitize(args.src)
+    # No source/destination paths in output: treated as potentially sensitive.
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print(f"sanitized {args.src} -> {args.dst}")
-        print(f"  changes: {len(report['changes'])}, "
-              f"text preserved: {report['text_preserved']}")
+        if ok:
+            print(f"sanitized: changes={sum(c['count'] for c in report['changes'])}, "
+                  f"text_preserved={report['text_preserved']}, "
+                  f"bytes={report['bytes_in']}->{report['bytes_out']}")
+        else:
+            print(f"REFUSED: {','.join(report.get('finding_codes', []))}")
+    if not ok:
+        # Failed conversion never replaces an existing valid destination.
+        return 1
+    # Atomic replacement: write temp file in the destination directory,
+    # then rename over the destination.
+    dst = args.dst
+    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=".sanitize-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(out)
+        os.replace(tmp, dst)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        print("REFUSED: destination write failed")
+        return 1
     return 0
 
 
