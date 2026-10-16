@@ -37,6 +37,9 @@ import { validateSourceRef, ROW_VALIDATORS } from "./schemas.js";
  * never charged.
  */
 function getDataDescriptor(obj, key) {
+  // M640-011: nullish input is structurally absent — never reach
+  // Object.getOwnPropertyDescriptor (which throws on null/undefined).
+  if (obj === null || obj === undefined) return undefined;
   const d = Object.getOwnPropertyDescriptor(obj, key);
   if (!d) return undefined;
   return "value" in d ? d : null;
@@ -85,7 +88,12 @@ export function resolveFixtures(task, context, sx) {
       throw sx.refused("ACCESSOR_REJECTED", `fixture ${JSON.stringify(ref.fixture_id)}: source_ref is accessor-backed (rejected without invocation)`);
     }
     const sourceRef = srDesc?.value;
-    if (typeof sourceRef !== "object") {
+    // M640-011: typeof null === "object", so null must be rejected
+    // explicitly BEFORE descriptor inspection — otherwise the
+    // identity-field loop would call getOwnPropertyDescriptor(null, f)
+    // and throw an unstructured TypeError out of run(). Missing/null
+    // source metadata refuses structurally, like an unregistered entry.
+    if (sourceRef === null || typeof sourceRef !== "object") {
       throw sx.refused("READ_DENIED", `fixture ${JSON.stringify(ref.fixture_id)} is not registered in the fixture store`);
     }
     // M640-001 (round 4): the same stable-admission rule for source
