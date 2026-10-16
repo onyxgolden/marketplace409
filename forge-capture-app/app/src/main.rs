@@ -1229,10 +1229,15 @@ fn begin_region_pick(
 /// The overlay window itself is opaque: it draws the frozen PNG, so no
 /// transparent-window compositing is required.
 ///
-/// At most one region pick is ever in flight: a second open while a session
-/// is pending is rejected, and a leftover overlay window from a dead
-/// session is fully closed (not just asked to close) before the new window
-/// is built, so two pages can never race against one context.
+/// At most one region pick is ever in flight: a second open while a LIVE
+/// session (one whose overlay window still exists) is pending is rejected,
+/// and a leftover overlay window from a dead session is fully closed (not
+/// just asked to close) before the new window is built, so two pages can
+/// never race against one context. An orphaned `pending_overlay` — its
+/// window already gone with no window left for the user to cancel, e.g. the
+/// page crashed before calling `cancel_region_pick` — is reclaimed here
+/// rather than rejected, so a crash can't lock Region out until the 60s
+/// watchdog eventually clears it.
 fn open_region_overlay(
     app: tauri::AppHandle,
     state: State<AppState>,
@@ -1240,14 +1245,16 @@ fn open_region_overlay(
     delay_ms: u64,
     include_cursor: bool,
 ) -> Result<(), String> {
-    if state.pending_overlay.lock().unwrap().is_some() {
+    let overlay_window_present = app.get_webview_window("overlay").is_some();
+    if state.pending_overlay.lock().unwrap().is_some() && overlay_window_present {
         return Err("a region pick is already in progress; cancel it first".to_string());
     }
-    // A leftover overlay window with no pending context (e.g. a session
-    // whose page died without reporting back). Close it and wait until it
-    // is really gone before building the new window on the same label —
-    // `close()` is asynchronous and the builder would otherwise race it.
-    if app.get_webview_window("overlay").is_some() {
+    // Either nothing is pending, or `pending_overlay` is orphaned (Some,
+    // but its window is already gone) — the check above let that case
+    // through deliberately. Close it and wait until it is really gone
+    // before building the new window on the same label — `close()` is
+    // asynchronous and the builder would otherwise race it.
+    if overlay_window_present {
         close_overlay_window(&app)?;
         if !wait_for_overlay_gone(&app, Duration::from_millis(1500)) {
             return Err(
