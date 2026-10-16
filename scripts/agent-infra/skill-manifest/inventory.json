@@ -1,0 +1,61 @@
+{
+  "tool": "skill-manifest-inventory",
+  "generated_at": "2026-10-16T16:43:44.727Z",
+  "note": "Read-only inventory. Paths are host-local observations, not portable identities.",
+  "skills": [
+    {
+      "label": "review-workflow",
+      "path": "/home/hatch/workspace/custom-skills/review_request_head_check",
+      "exists": true,
+      "file_count": 2,
+      "total_bytes": 3572,
+      "symlink_count": 0,
+      "has_skill_md": true,
+      "frontmatter_present": false,
+      "frontmatter_sha256": null,
+      "frontmatter_fields": [],
+      "license_declared": null,
+      "forge_block_present": false,
+      "notes": [
+        "SKILL.md has no frontmatter block"
+      ]
+    },
+    {
+      "label": "engineering-handoff",
+      "path": "/home/hatch/workspace/custom-skills/local-forge-bridge-remote",
+      "exists": true,
+      "file_count": 4,
+      "total_bytes": 5223,
+      "symlink_count": 0,
+      "has_skill_md": true,
+      "frontmatter_present": false,
+      "frontmatter_sha256": null,
+      "frontmatter_fields": [],
+      "license_declared": null,
+      "forge_block_present": false,
+      "notes": [
+        "SKILL.md has no frontmatter block"
+      ]
+    },
+    {
+      "label": "offline-artifact",
+      "path": "/home/hatch/workspace/custom-skills/diagram-design",
+      "exists": true,
+      "file_count": 287,
+      "total_bytes": 5305630,
+      "symlink_count": 0,
+      "has_skill_md": true,
+      "frontmatter_present": true,
+      "frontmatter_sha256": "fa172b73609ecaea970ff0a5d425985830df96f7de16be4df00818f2d99d4896",
+      "frontmatter_fields": [
+        "name",
+        "description",
+        "license",
+        "metadata"
+      ],
+      "license_declared": "MIT",
+      "forge_block_present": false,
+      "notes": []
+    }
+  ]
+}

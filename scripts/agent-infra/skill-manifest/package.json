@@ -1,0 +1,1 @@
+{"description":"Portable skill-manifest packaging linter: Agent Skills frontmatter validation plus FORGE policy extensions. Read-only; no execution, no network.","engines":{"node":">=24"},"name":"skill-manifest-linter","scripts":{"lint":"node src/linter.mjs","test":"node tests/run-tests.mjs"},"type":"module","version":"1.0.0"}

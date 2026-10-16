@@ -1,0 +1,64 @@
+---
+# Portable skill manifest template — Agent Skills format + FORGE policy extensions
+#
+# Upstream fields (name, description, license, compatibility, metadata,
+# allowed-tools) follow the open Agent Skills specification:
+#   https://agentskills.io/specification
+# The `forge:` block below is a FORGE policy extension, NOT part of the
+# upstream spec. The linter validates it separately and labels it as such.
+# Requested/allowed-tools metadata never grants actual tool permission.
+
+# --- Upstream: required -------------------------------------------------------
+name: my-skill
+description: >-
+  What the skill does and when to use it. Keep it to 1-1024 characters and
+  include keywords that help an agent pick this skill for the right task.
+
+# --- Upstream: optional -------------------------------------------------------
+# Short license name (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC,
+# CC0-1.0, Unlicense, 0BSD) or a reference to a bundled license file
+# (e.g. "see LICENSE"). Unknown license becomes REVIEW_REQUIRED, never an
+# inferred permissive license.
+license: MIT
+
+# Environment requirements, 1-500 chars when present (intended product,
+# system packages, network access, ...). Omit when there are none.
+compatibility: "Node 24+, no network, no credentials"
+
+# String-to-string map only. Keep key names unique to avoid collisions.
+metadata:
+  version: "1.0.0"
+
+# Space-separated, experimental. Metadata only — never grants permission.
+allowed-tools: ""
+
+# --- FORGE policy extensions (not upstream; required by FORGE) ---------------
+forge:
+  # Accountable owner of this skill (agent or team).
+  owner: "Muse"
+  # Where the skill content came from (e.g. forge-internal, vendored-upstream).
+  provenance: "forge-internal"
+  # verified | review_required | unknown. Unknown becomes REVIEW_REQUIRED.
+  license_status: "verified"
+  # What the skill consumes.
+  input_contract: "Task description plus referenced input files under the skill root."
+  # What the skill produces.
+  output_contract: "Deterministic report or artifact; no side effects outside declared outputs."
+  # Data classes the skill may touch (e.g. synthetic-engineering).
+  permitted_data_classes:
+    - "synthetic-engineering"
+  # Capabilities the skill requests. Metadata only; conflicts with denied
+  # capabilities or with permitted_data_classes are lint errors.
+  requested_capabilities: []
+  # How successful completion is evidenced (tests, receipts, review verdicts).
+  completion_evidence: "node tests/run-tests.mjs passes; ChatGPT exact-head review GO."
+  # Retirement/replacement policy. Replacements retain history; ordinary
+  # memory cleanup never retires a procedure.
+  retirement_policy: "Superseded only by a reviewed replacement manifest that references this version's history."
+---
+
+# My Skill
+
+Keep the overview concise; link detailed procedures for progressive
+disclosure. Reference other files with paths relative to the skill root,
+one level deep from this file.

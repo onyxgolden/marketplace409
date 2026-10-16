@@ -1,0 +1,43 @@
+# Proposed manifest diff — review workflow pilot (review_request_head_check)
+#
+# PROPOSAL ONLY. Not applied. No skill is installed, moved, or rewritten by
+# this file. License confirmation is Jason's call: the `license` line below
+# is commented out, so the linter will report LICENSE_REVIEW_REQUIRED
+# (unknown license becomes REVIEW_REQUIRED, never inferred permissive).
+#
+# After applying, the linter still reports:
+#   - ABSOLUTE_PATH_LINK / BROKEN_REFERENCE for the /opt/hatch and
+#     ~/workspace connector-doc links in the body (portability follow-up,
+#     not fixed here);
+#   - NAME_DIR_MISMATCH unless the directory is renamed: the upstream spec
+#     allows only lowercase letters, numbers and hyphens in `name`, so
+#     `review_request_head_check` must become `review-request-head-check`.
+#
+rename from custom-skills/review_request_head_check/SKILL.md
+rename to custom-skills/review-request-head-check/SKILL.md
+--- a/custom-skills/review_request_head_check/SKILL.md
++++ b/custom-skills/review-request-head-check/SKILL.md
+@@ -1,2 +1,30 @@
++---
++name: review-request-head-check
++description: Verify the pull request branch's live head SHA before filing a review request, so the reviewer judges the intended commit.
++# license: MIT  # uncomment once Jason confirms; unknown stays REVIEW_REQUIRED
++metadata:
++  version: "1.0"
++forge:
++  owner: "Muse"
++  provenance: "forge-internal"
++  license_status: "review_required"
++  input_contract: "PR number and intended review head SHA."
++  output_contract: "Verified live-head binding; branch ref moved when misaligned."
++  permitted_data_classes:
++    - "synthetic-engineering"
++  requested_capabilities:
++    - "network.read"
++  completion_evidence: "Review request filed naming the live head; zero re-files for head mismatch."
++  retirement_policy: "Superseded only by a reviewed replacement manifest that references this version's history."
++---
++
+ # Verify the review head
+
+ ## Resolve the live head
