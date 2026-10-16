@@ -1,0 +1,39 @@
+# Proposed manifest diff — engineering handoff pilot (local-forge-bridge-remote)
+#
+# PROPOSAL ONLY. Not applied. No skill is installed, moved, or rewritten by
+# this file. License confirmation is Jason's call: the `license` line below
+# is commented out, so the linter will report LICENSE_REVIEW_REQUIRED
+# (unknown license becomes REVIEW_REQUIRED, never inferred permissive).
+#
+# After applying, the linter reports conformance clean on packaging fields
+# (the directory name already satisfies the upstream `name` rules).
+# Body references to ~/.ssh and repo paths are prose, not links; the
+# linter never executes bin/* (verified by the no-execution test).
+#
+--- a/custom-skills/local-forge-bridge-remote/SKILL.md
++++ b/custom-skills/local-forge-bridge-remote/SKILL.md
+@@ -1,3 +1,29 @@
++---
++name: local-forge-bridge-remote
++description: Send commands to the FORGE Bridge daemon via the forge-ai-drop repo (SSH-signed git transport) and poll for results. Use when operating desktop applications through the bridge.
++# license: MIT  # uncomment once Jason confirms; unknown stays REVIEW_REQUIRED
++metadata:
++  version: "1.3"
++forge:
++  owner: "Muse"
++  provenance: "forge-internal"
++  license_status: "review_required"
++  input_contract: "Target machine, signed command JSON in bridge/commands/<machine>/inbox/."
++  output_contract: "Result JSON in bridge/commands/<machine>/outbox/; full action log on the daemon host."
++  permitted_data_classes:
++    - "synthetic-engineering"
++  requested_capabilities:
++    - "network.read"
++    - "network.write"
++  completion_evidence: "Outbox result file for the job id; daemon action log entry."
++  retirement_policy: "Superseded only by a reviewed replacement manifest that references this version's history."
++---
++
+ 
+ 
+ # FORGE Bridge Remote

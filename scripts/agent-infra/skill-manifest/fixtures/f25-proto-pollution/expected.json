@@ -1,0 +1,9 @@
+{
+  "diagnostics": [
+    "DANGEROUS_MAPPING_KEY",
+    "FORGE_EXTENSIONS_MISSING",
+    "LICENSE_REVIEW_REQUIRED",
+    "MISSING_DESCRIPTION",
+    "MISSING_NAME"
+  ]
+}

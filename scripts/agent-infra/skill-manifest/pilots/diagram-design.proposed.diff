@@ -1,0 +1,32 @@
+# Proposed manifest diff — offline artifact pilot (diagram-design)
+#
+# PROPOSAL ONLY. Not applied. The installed skill is never reinstalled or
+# replaced by this file (per scope: inventory the installed skill, do not
+# reinstall it). Adds only the FORGE policy-extension block to the existing
+# upstream frontmatter.
+#
+# After applying, the linter still reports:
+#   - FILE_BUDGET_EXCEEDED on full inventory (287 files / ~5.3 MiB): this is
+#     the linter's admission bound (64 files / 256 KiB), not a skill defect;
+#     the skill's own progressive-disclosure layout is unchanged.
+#
+--- a/custom-skills/diagram-design/SKILL.md
++++ b/custom-skills/diagram-design/SKILL.md
+@@ -5,5 +5,22 @@
+ license: MIT
+ metadata:
+   version: "2.6"
++forge:
++  owner: "Claude"
++  provenance: "vendored-upstream"
++  license_status: "verified"
++  input_contract: "Diagram type, content, and style-guide profile selection."
++  output_contract: "Self-contained HTML/SVG/PNG diagram artifact; no side effects."
++  permitted_data_classes:
++    - "synthetic-engineering"
++  requested_capabilities: []
++  completion_evidence: "Generated artifact file; offline export profile check passes."
++  retirement_policy: "Superseded only by a reviewed replacement manifest that references this version's history."
+ ---
+
+ # Diagram Design

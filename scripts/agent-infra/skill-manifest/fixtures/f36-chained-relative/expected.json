@@ -1,0 +1,6 @@
+{
+  "diagnostics": [
+    "DEEP_REFERENCE_CHAIN",
+    "PATH_TRAVERSAL_LINK"
+  ]
+}

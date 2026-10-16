@@ -1,0 +1,5 @@
+{
+  "diagnostics": [
+    "PATH_TRAVERSAL_LINK"
+  ]
+}
