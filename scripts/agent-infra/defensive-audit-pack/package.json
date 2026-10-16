@@ -1,0 +1,1 @@
+{"description":"Defensive infrastructure audit pack slice 1: read-only deterministic checkers over synthetic sanitized configuration exports (Bridge, Cloudflare, fleet SSH).","name":"@forge/defensive-audit-pack","private":true,"scripts":{"battery":"node tests/run-battery.js","test":"node tests/run-tests.js"},"type":"module","version":"1.0.0"}
