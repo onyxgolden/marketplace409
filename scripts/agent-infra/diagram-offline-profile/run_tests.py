@@ -128,7 +128,56 @@ for fname, code in EXPECTED_FAIL.items():
     check(f"static:{fname}:refused", (not ok) and code in codes,
           f"codes={sorted(codes)}")
 
-# --- 3. Dimension / structural bounds (D641-004) ---
+# --- 2b. D641-001 residuals: closed CSS/resource surface ---
+# image-set() function refused (closed function set).
+ok, findings = check_text(
+    '<style>div{background-image:image-set("https://example.invalid/x.png" 1x)}'
+    "</style><div>test</div>", ".html")
+check("css:imageset:refused",
+      (not ok) and "F_UNADMITTED_CSS" in {f["code"] for f in findings})
+# CSS comment splice must not hide @import from the checker.
+ok, findings = check_text(
+    '<style>@import/**/"https://example.invalid/x.css";</style><div>test</div>',
+    ".html")
+check("css:comment-spliced-import:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Resource-bearing presentation attribute with remote url().
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect x="1" y="1" width="10" height="10" '
+    'fill="url(https://example.invalid/paint.svg#x)"/></svg>', ".svg")
+check("css:remote-fill-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Local #fragment paint is still admitted.
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect x="1" y="1" width="10" height="10" fill="url(#g)"/></svg>', ".svg")
+check("css:local-fill-url:passes", ok)
+# XML stylesheet processing instruction refused before the XML parser
+# discards it.
+ok, findings = check_text(
+    '<?xml version="1.0"?><?xml-stylesheet type="text/css" '
+    'href="https://example.invalid/x.css"?>'
+    '<svg xmlns="http://www.w3.org/2000/svg"><text>t</text></svg>', ".svg")
+check("svg:stylesheet-pi:refused",
+      (not ok) and "F_UNADMITTED_PI" in {f["code"] for f in findings})
+# The XML declaration itself remains admitted.
+ok, _ = check_text(
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<svg xmlns="http://www.w3.org/2000/svg"><text>t</text></svg>', ".svg")
+check("svg:xml-declaration:passes", ok)
+# Unsupported logical sizing refused (closed property set); physical
+# sizing at the bound still passes.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg" '
+    'style="inline-size:9001px;block-size:20px"></svg>', ".svg")
+check("bounds:logical-sizing:refused",
+      (not ok) and "F_UNADMITTED_CSS" in {f["code"] for f in findings})
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg" '
+    'style="inline-size:8000px"></svg>', ".svg")
+check("bounds:logical-sizing-8000:refused",
+      (not ok) and "F_UNADMITTED_CSS" in {f["code"] for f in findings})
 ok, _ = check_text(_svg_doc("", viewBox="0 0 400 200", width="8000",
                              height="8000"), ".svg")
 check("bounds:dimension-8000:passes", ok)
@@ -143,6 +192,7 @@ ok, findings = check_text('<svg xmlns="http://www.w3.org/2000/svg" '
                           'style="width:8001px;height:20px"></svg>', ".svg")
 check("bounds:css-dimension-8001:refused",
       (not ok) and "F_OVERSIZED" in {f["code"] for f in findings})
+# --- 3. Dimension / structural bounds (D641-004) ---
 ok, findings = check_text('<svg xmlns="http://www.w3.org/2000/svg" '
                           'style="width:50%"></svg>', ".svg")
 check("bounds:css-percent:rejected",
@@ -262,6 +312,72 @@ def _run_cli_json(script: str, *args: str) -> tuple[int, str, str]:
     proc = subprocess.run([sys.executable, str(HERE / script), *args],
                           capture_output=True, text=True, timeout=60)
     return proc.returncode, proc.stdout, proc.stderr
+
+
+# --- 5b. D641-004 residuals: pre-traversal bounds in the sanitizer ---# Entity-before-parse canary: declarations must be refused before any
+# parser sees them, never expanded.
+ent_in = _tmp('<!DOCTYPE svg [<!ENTITY msg "EXPANDED">]>'
+              '<svg xmlns="http://www.w3.org/2000/svg">'
+              "<text>&msg;</text></svg>", ".svg")
+ok_ent, out_ent, rep_ent = sanitize(ent_in)
+check("sanitize:entity-before-parse:refused",
+      (not ok_ent) and "F_ENTITY_EXPANSION" in rep_ent.get("finding_codes", [])
+      and "EXPANDED" not in out_ent)
+# 1100-deep nesting: bounded refusal, never RecursionError.
+deep_in = _tmp('<?xml version="1.0" encoding="utf-8"?>\n'
+               '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+               + "<g>" * 1100 + "</g>" * 1100 + "</svg>", ".svg")
+try:
+    ok_deep, _, rep_deep = sanitize(deep_in)
+    deep_refused = (not ok_deep) and "F_OVERSIZED" in rep_deep.get(
+        "finding_codes", [])
+except RecursionError:
+    deep_refused = False
+check("sanitize:depth-1100:refused-not-crash", deep_refused)
+# Refused sanitize() produces no output and touches no destination.
+deep_dst = _tmp("SENTINEL-DEEP", ".html")
+proc_deep = subprocess.run([sys.executable, str(HERE / "sanitize_offline.py"),
+                            str(deep_in), str(deep_dst), "--json"],
+                           capture_output=True, text=True, timeout=120)
+check("sanitize:deep-refusal:no-destination-change",
+      proc_deep.returncode == 1
+      and deep_dst.read_text(encoding="utf-8") == "SENTINEL-DEEP")
+# Logical sizing refused at sanitize() level too (pre-gate policy).
+log_in = _tmp('<svg xmlns="http://www.w3.org/2000/svg" '
+              'style="inline-size:9001px"></svg>', ".svg")
+ok_log, _, rep_log = sanitize(log_in)
+check("sanitize:logical-sizing:refused",
+      (not ok_log) and "F_UNADMITTED_CSS" in rep_log.get("finding_codes", []))
+
+# --- 5c. D641-005 residuals: operational failures stay bounded ---
+# Missing destination parent with a private marker in the path: exit 1,
+# one fixed-code operational result, no path echo, no success-looking report.
+missing_parent = Path(tempfile.gettempdir()) / "CONFIDENTIAL-Vault-7-missing-dir"
+missing_dst = missing_parent / "out.html"
+valid_src = _tmp("<div>hello</div>", ".html")
+rc_m, out_m, err_m = _run_cli_json("sanitize_offline.py",
+                                   str(valid_src), str(missing_dst), "--json")
+leak_m = any(m in out_m or m in err_m for m in PRIVATE_MARKERS)
+try:
+    rep_m = json.loads(out_m)
+except Exception:  # noqa: BLE001
+    rep_m = {}
+check("sanitize:missing-parent:bounded-failure",
+      rc_m == 1 and not leak_m and rep_m.get("ok") is not True,
+      f"exit={rc_m}")
+# Human-readable form too.
+rc_mh, out_mh, err_mh = _run_cli_json("sanitize_offline.py",
+                                     str(valid_src), str(missing_dst))
+check("sanitize:missing-parent:human-bounded",
+      rc_mh == 1 and not any(m in out_mh or m in err_mh
+                             for m in PRIVATE_MARKERS))
+# Destination path that is a directory: bounded refusal, no traceback leak.
+dir_dst = Path(tempfile.mkdtemp())
+rc_d, out_d, err_d = _run_cli_json("sanitize_offline.py",
+                                   str(valid_src), str(dir_dst), "--json")
+check("sanitize:destination-is-dir:bounded-failure",
+      rc_d == 1 and not any(m in out_d or m in err_d
+                            for m in PRIVATE_MARKERS))
 
 
 # --- 6. Privacy: no source content in diagnostics (D641-005) ---
@@ -407,6 +523,22 @@ def main() -> int:
             run_network()
         except Exception as exc:  # noqa: BLE001
             check("network-denied:zero-requests", False, f"error: {exc!r}"[:80])
+        # Request canary: a newly-refused resource-bearing fixture must be
+        # stopped by the static gate before any renderer sees it.
+        canary = _tmp('<style>div{background-image:'
+                      'image-set("https://example.invalid/x.png" 1x)}</style>'
+                      "<div>t</div>", ".html")
+        try:
+            network_denied([canary])
+            check("network-denied:refused-never-rendered", False,
+                  "gate bypassed")
+        except AssertionError as exc:
+            held = "refused file reached the renderer" in str(exc)
+            check("network-denied:refused-never-rendered", held,
+                  "gate held" if held else "unexpected")
+        except Exception as exc:  # noqa: BLE001
+            check("network-denied:refused-never-rendered", False,
+                  f"error: {exc!r}"[:80])
     elif not args.network:
         print("note: network test skipped (pass --network to run)")
 

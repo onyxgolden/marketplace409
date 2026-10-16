@@ -66,6 +66,30 @@ this slice are new files under
 `scripts/agent-infra/diagram-offline-profile/`; nothing else in the repo
 is touched.
 
+## Validation state (fix round 3, 2026-10-16)
+
+- 65/65 checks via `python3 run_tests.py --network`: the 47 prior
+  non-browser checks retained plus 18 new regressions (D641-001 four
+  public negatives + local-fill admit + XML-declaration admit + logical
+  sizing; D641-004 entity-before-parse canary, depth-1100 no-crash
+  refusal, deep-refusal no-destination-change, logical sizing at
+  sanitize level; D641-005 missing-parent JSON+human bounded failure,
+  destination-is-dir bounded failure).
+- Closed CSS grammar: admitted property set (width/height/fill/stroke/
+  stroke-width/font-family/font-size/font-weight/text-anchor/opacity),
+  admitted function set (`url` only, classified), comments stripped before
+  detection, unadmitted @-rules/properties/functions refused.
+- Pre-flight bounds before any sanitization traversal: entity/DOCTYPE/
+  PI refusal + iterative element count/depth measurement; SVG rebuild is
+  iterative (no recursion).
+- Operational failures (missing parent, unwritable destination) produce a
+  single fixed-code report; success is printed only after the requested
+  write completes.
+- Playwright network-denied suite: zero attempted requests across the
+  valid fixtures; refused-resource canary held at the gate (never
+  rendered); pinned browser chromium-1234/151.0.7922.34; PNG export flow.
+  Byte-identical suite output across runs.
+
 ## Limitations
 
 - The checker is a narrow diagram-output conformance check, not a

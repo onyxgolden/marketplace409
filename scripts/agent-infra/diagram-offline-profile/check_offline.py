@@ -93,15 +93,40 @@ ENTITY_RE = re.compile(r"<!ENTITY\b", re.IGNORECASE)
 DOCTYPE_INTERNAL_RE = re.compile(r"<!DOCTYPE[^>\[]*\[", re.IGNORECASE | re.DOTALL)
 DOCTYPE_RE = re.compile(r"<!DOCTYPE\b", re.IGNORECASE)
 
-# CSS: url(...) / @import matchers run on CSS-UNESCAPED text, so escaped
-# spellings like u\72l(...) are caught.
+# CSS: url(...) / @import matchers run on CSS-UNESCAPED, COMMENT-STRIPPED
+# text, so escaped spellings like u\72l(...) and comment-spliced spellings
+# like @import/**/"" are caught.
 CSS_URL_RE = re.compile(r"url\(\s*([^)]*?)\s*\)", re.IGNORECASE)
 CSS_IMPORT_RE = re.compile(
-    r"@import\s+(?:url\(\s*([^)]*?)\s*\)|([\"'][^\"']*[\"']))",
+    r"@import\s*(?:url\(\s*([^)]*?)\s*\)|([\"'][^\"']*[\"']))",
     re.IGNORECASE,
 )
-CSS_DIM_RE = re.compile(
-    r"(min-|max-)?\b(width|height)\s*:\s*([^;}{!]+)", re.IGNORECASE)
+CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+CSS_ATRULE_RE = re.compile(r"@([a-zA-Z-]+)", re.IGNORECASE)
+CSS_DECL_RE = re.compile(r"([a-zA-Z][a-zA-Z-]*)\s*:\s*([^;}{]*)")
+CSS_FUNC_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9-]*)\s*\(")
+
+# Closed CSS property set: the only declarations admitted anywhere (style
+# blocks and style attributes). Anything else fails closed -- no general
+# browser sanitizer is intended (D641-001).
+ADMITTED_CSS_PROPS = frozenset({
+    "width", "height",
+    "fill", "stroke", "stroke-width",
+    "font-family", "font-size", "font-weight",
+    "text-anchor", "opacity",
+})
+
+# Functions admitted inside admitted declarations. url() is checked by
+# _url_codes (local #fragment and data:image: only); every other function
+# name is refused outright -- image-set() and friends cannot sneak in.
+ADMITTED_CSS_FUNCS = frozenset({"url"})
+
+# Unadmitted XML processing instructions (the XML declaration <?xml ...?>
+# is allowed; xml-stylesheet and everything else is refused before the
+# XML parser discards them).
+XML_PI_RE = re.compile(r"<\?(.*?)\?>", re.DOTALL)
+XML_DECL_RE = re.compile(r"^xml[\s?/]", re.IGNORECASE)
+HTML_PI_RE = re.compile(r"<\?", re.IGNORECASE)
 DIM_VALUE_RE = re.compile(
     r"^\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([a-zA-Z%]*)\s*$")
 VIEWBOX_SPLIT_RE = re.compile(r"[\s,]+")
@@ -228,6 +253,30 @@ def _check_viewbox(value: str) -> str | None:
     return None
 
 
+def _check_processing_instructions(text: str, sink: _FindingSink,
+                                   is_svg: bool) -> bool:
+    """Reject unadmitted processing instructions before parsers discard them.
+
+    The XML declaration (<?xml ...?>) is allowed. Everything else --
+    notably <?xml-stylesheet href="https://..."> -- is refused fail-closed.
+    Returns True when a refusal was recorded.
+    """
+    if is_svg:
+        for m in XML_PI_RE.finditer(text):
+            if XML_DECL_RE.match(m.group(1).strip()):
+                continue  # the XML declaration is admitted
+            sink.add("F_UNADMITTED_PI",
+                     "processing instruction not admitted by the offline profile")
+            return True
+    else:
+        if HTML_PI_RE.search(text):
+            sink.add("F_UNADMITTED_PI",
+                     "processing instruction not admitted by the offline profile")
+            return True
+    return False
+    """Internal: stop parsing early on structural excess (fail closed)."""
+
+
 class _StopScan(Exception):
     """Internal: stop parsing early on structural excess (fail closed)."""
 
@@ -240,31 +289,65 @@ class _FindingSink:
         self.findings.append({"code": code, "message": message, "loc": loc})
 
 
+def _css_strip_comments(text: str) -> str:
+    """Remove CSS /* ... */ comments before policy checks.
+
+    Comments can splice apart policy-significant spellings
+    (@import/**/"x.css" must read as @import "x.css"), so all detection
+    runs on comment-stripped text.
+    """
+    return CSS_COMMENT_RE.sub("", text)
+
+
 def _check_css_decls(css: str, sink: _FindingSink, loc: str) -> None:
-    """Check unescaped CSS for remote/active constructs and dimensions."""
-    text = _css_unescape(css)
+    """Check CSS under a CLOSED grammar.
+
+    The CSS is unescaped (CSS Syntax L3), then comments are stripped, then
+    every declaration is judged against the admitted property set and the
+    admitted function set. Anything outside the subset -- unadmitted
+    properties (inline-size, background-image, ...), unadmitted functions
+    (image-set, ...), unadmitted @-rules, remote url() -- fails closed.
+    """
+    text = _css_strip_comments(_css_unescape(css))
+
+    # @import is handled as a rule-level construct first.
     for m in CSS_IMPORT_RE.finditer(text):
         url = (m.group(1) or m.group(2) or "").strip().strip("'\"")
         for code in _url_codes(url):
             if code == "F_EXTERNAL_REFERENCE":
                 code = "F_REMOTE_CSS"
             sink.add(code, "remote CSS import not allowed offline", loc)
-    for m in CSS_URL_RE.finditer(text):
-        url = m.group(1).strip().strip("'\"")
-        for code in _url_codes(url):
-            if code == "F_EXTERNAL_REFERENCE":
-                code = "F_REMOTE_CSS"
-            sink.add(code, "remote url() in CSS not allowed offline", loc)
-    for m in CSS_DIM_RE.finditer(text):
-        prefix, _name, value = m.group(1), m.group(2), m.group(3)
-        if prefix:
-            sink.add("F_UNSUPPORTED_SIZING",
-                     "min-/max- sizing not supported by the offline profile",
-                     loc)
+    # Any other @-rule (media, font-face, charset, ...) is unadmitted.
+    for m in CSS_ATRULE_RE.finditer(text):
+        if m.group(1).lower() != "import":
+            sink.add("F_UNADMITTED_CSS",
+                     "CSS at-rule not admitted by the offline profile", loc)
+
+    for m in CSS_DECL_RE.finditer(text):
+        prop, value = m.group(1).lower(), m.group(2)
+        # Resource scan runs on every declaration, even unadmitted ones, so
+        # a remote url() is always classified as remote (never masked by a
+        # property refusal).
+        for um in CSS_URL_RE.finditer(value):
+            url = um.group(1).strip().strip("'\"")
+            for code in _url_codes(url):
+                if code == "F_EXTERNAL_REFERENCE":
+                    code = "F_REMOTE_CSS"
+                sink.add(code, "remote url() in CSS not allowed offline", loc)
+        if prop not in ADMITTED_CSS_PROPS:
+            sink.add("F_UNADMITTED_CSS",
+                     "CSS property not admitted by the offline profile", loc)
             continue
-        code = _check_dimension_value(value)
-        if code:
-            sink.add(code, "CSS dimension out of profile bounds", loc)
+        # Closed function set inside admitted declarations.
+        for fm in CSS_FUNC_RE.finditer(value):
+            if fm.group(1).lower() not in ADMITTED_CSS_FUNCS:
+                sink.add("F_UNADMITTED_CSS",
+                         "CSS function not admitted by the offline profile",
+                         loc)
+        if prop in ("width", "height"):
+            code = _check_dimension_value(value.split("!")[0])
+            if code:
+                sink.add(code, "CSS dimension out of profile bounds", loc)
 
 
 def _check_attr_value(element: str, attr: str, value: str,
@@ -275,6 +358,16 @@ def _check_attr_value(element: str, attr: str, value: str,
             sink.add(code, "external reference not allowed offline", loc)
     elif attr == "style":
         _check_css_decls(value, sink, loc)
+    elif attr in ("fill", "stroke"):
+        # Resource-bearing presentation attributes: plain colors and local
+        # #fragment / data:image: paints are admitted; remote url() is not.
+        for m in CSS_URL_RE.finditer(_css_unescape(value)):
+            url = m.group(1).strip().strip("'\"")
+            for code in _url_codes(url):
+                if code == "F_EXTERNAL_REFERENCE":
+                    code = "F_REMOTE_CSS"
+                sink.add(code,
+                         "remote paint reference not allowed offline", loc)
     elif attr in ("width", "height"):
         code = _check_dimension_value(value)
         if code:
@@ -420,12 +513,18 @@ def check_text(text: str, suffix: str) -> tuple[bool, list[dict]]:
     """
     sink = _FindingSink()
 
+    is_svg = suffix.lower() == ".svg"
+
+    # Unadmitted processing instructions are refused BEFORE parsers can
+    # discard them (e.g. <?xml-stylesheet href="https://...">).
+    if _check_processing_instructions(text, sink, is_svg):
+        return False, sink.findings
+
     if ENTITY_RE.search(text) or DOCTYPE_INTERNAL_RE.search(text):
         sink.add("F_ENTITY_EXPANSION",
                  "entity declarations / internal DTD subset not allowed")
         return False, sink.findings
 
-    is_svg = suffix.lower() == ".svg"
     if is_svg:
         if DOCTYPE_RE.search(text):
             sink.add("F_ENTITY_EXPANSION",

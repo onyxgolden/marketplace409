@@ -34,21 +34,28 @@ from check_offline import (
     ADMITTED_ATTRS,
     ELEMENT_ATTRS,
     HTML_ELEMENTS,
+    MAX_BYTES,
+    MAX_ELEMENTS,
+    MAX_NESTING,
     SVG_ELEMENTS,
     URL_ATTRS,
     VOID_ELEMENTS,
     _check_css_decls,
+    _check_processing_instructions,
+    _css_strip_comments,
     _css_unescape,
     _FindingSink,
     _is_xmlns_decl,
     _local,
     _url_codes,
     check_text,
+    DOCTYPE_INTERNAL_RE,
+    DOCTYPE_RE,
+    ENTITY_RE,
 )
 
+import io
 import xml.etree.ElementTree as ET
-
-MAX_BYTES = 2_000_000
 
 
 class _TextExtract(HTMLParser):
@@ -296,7 +303,8 @@ class _StyleAwareSanitizer(_Sanitizer):
 
 def _clean_style_block(css: str, s: _Sanitizer) -> tuple[str, bool]:
     """Remove remote @imports; refuse on remote url() or other violations."""
-    unescaped = _css_unescape(css)
+    from check_offline import _css_strip_comments
+    unescaped = _css_strip_comments(_css_unescape(css))
     probe = _FindingSink()
     _check_css_decls(css, probe, "")
     codes = {f["code"] for f in probe.findings}
@@ -305,7 +313,7 @@ def _clean_style_block(css: str, s: _Sanitizer) -> tuple[str, bool]:
         # remote url() inside declarations cannot -> refuse.
         import re as _re
         stripped = _re.sub(
-            r"@import\s+(?:url\(\s*[^)]*?\)|[\"'][^\"']*[\"'])\s*;",
+            r"@import\s*(?:url\(\s*[^)]*?\)|[\"'][^\"']*[\"'])\s*;",
             "", unescaped, flags=_re.IGNORECASE)
         reprobe = _FindingSink()
         _check_css_decls(stripped, reprobe, "")
@@ -325,7 +333,12 @@ def _clean_style_block(css: str, s: _Sanitizer) -> tuple[str, bool]:
 
 def _sanitize_svg(text: str, sink: _FindingSink
                   ) -> tuple[bool, str, dict[str, int]]:
-    """SVG sanitizer: rebuild from the admitted subset via ElementTree."""
+    """SVG sanitizer: rebuild from the admitted subset via ElementTree.
+
+    Uses an EXPLICIT stack (iterative) -- never recursion -- so deeply
+    nested input cannot raise RecursionError; the shared policy still
+    refuses input beyond the depth bound.
+    """
     try:
         root = ET.fromstring(text.encode("utf-8"))
     except ET.ParseError:
@@ -336,7 +349,7 @@ def _sanitize_svg(text: str, sink: _FindingSink
     def bump(code: str) -> None:
         changes[code] = changes.get(code, 0) + 1
 
-    def clean(el: ET.Element) -> ET.Element | None:
+    def clean_element(el: ET.Element) -> ET.Element | None:
         local = _local(el.tag)
         if local not in SVG_ELEMENTS:
             bump("REMOVED_UNADMITTED_ELEMENT")
@@ -356,7 +369,13 @@ def _sanitize_svg(text: str, sink: _FindingSink
             if k == "style":
                 probe = _FindingSink()
                 _check_css_decls(val, probe, "")
-                if probe.findings:
+                codes = {f["code"] for f in probe.findings}
+                if codes and not codes <= {"F_REMOTE_CSS", "F_GOOGLE_FONTS",
+                                           "F_EXECUTABLE_URL"}:
+                    # Unsupported/unadmitted CSS: refuse rather than mangle.
+                    sink.findings.extend(probe.findings)
+                    return None
+                if codes:
                     bump("REMOVED_REMOTE_CSS")
                     continue
             new.set(k, val)
@@ -367,16 +386,21 @@ def _sanitize_svg(text: str, sink: _FindingSink
             new.text = cleaned
         else:
             new.text = el.text
-        for child in list(el):
-            c = clean(child)
+        return new
+
+    cleaned_root = clean_element(root)
+    if cleaned_root is None:
+        return False, "", changes
+    # Iterative rebuild: (old, new) pairs on an explicit stack.
+    stack: list[tuple[ET.Element, ET.Element]] = [(root, cleaned_root)]
+    while stack:
+        old, new = stack.pop()
+        for child in list(old):
+            c = clean_element(child)
             if c is not None:
                 new.append(c)
                 c.tail = child.tail
-        return new
-
-    cleaned_root = clean(root)
-    if cleaned_root is None:
-        return False, "", changes
+                stack.append((child, c))
     # Preserve the SVG namespace declaration for well-formedness.
     cleaned_root.set("xmlns", "http://www.w3.org/2000/svg")
     out = ET.tostring(cleaned_root, encoding="unicode")
@@ -392,6 +416,54 @@ class _style_ctx:
 
     def _changed(self, code: str) -> None:
         self._changes[code] = self._changes.get(code, 0) + 1
+
+
+def _preflight(text: str, is_svg: bool, sink: _FindingSink) -> bool:
+    """Reject dangerous pre-parse constructs and enforce structural bounds.
+
+    Runs BEFORE any sanitization traversal: entity declarations/internal
+    DTD subsets and unadmitted processing instructions are refused before a
+    parser can expand or discard them, and element count/depth are bounded
+    with non-recursive measurement so unbounded input cannot crash the
+    rebuild (D641-004).
+
+    Returns True when the input may proceed; False with findings in sink
+    when it must be refused.
+    """
+    if ENTITY_RE.search(text) or DOCTYPE_INTERNAL_RE.search(text):
+        sink.add("F_ENTITY_EXPANSION",
+                 "entity declarations / internal DTD subset not allowed")
+        return False
+    if is_svg:
+        if DOCTYPE_RE.search(text):
+            sink.add("F_ENTITY_EXPANSION",
+                     "DOCTYPE not allowed in untrusted SVG")
+            return False
+        if _check_processing_instructions(text, sink, True):
+            return False
+        # Iterative depth/count measurement (no recursion, no tree build).
+        try:
+            depth = 0
+            count = 0
+            for event, el in ET.iterparse(io.BytesIO(text.encode("utf-8")),
+                                         events=("start", "end")):
+                if event == "start":
+                    depth += 1
+                    count += 1
+                    if count > MAX_ELEMENTS or depth > MAX_NESTING:
+                        sink.add("F_OVERSIZED",
+                                 "element count or depth exceeds profile bound")
+                        return False
+                    el.clear()
+                else:
+                    depth -= 1
+        except ET.ParseError:
+            sink.add("F_MALFORMED", "SVG is not well-formed XML")
+            return False
+    else:
+        if _check_processing_instructions(text, sink, False):
+            return False
+    return True
 
 
 def sanitize(path: Path) -> tuple[bool, str, dict]:
@@ -419,6 +491,16 @@ def sanitize(path: Path) -> tuple[bool, str, dict]:
     report["bytes_in"] = len(raw)
     sink: _FindingSink = _FindingSink()
     is_svg = path.suffix.lower() == ".svg"
+
+    # Pre-flight: refuse entities/PIs and bound structure BEFORE any
+    # traversal or recursive parsing (D641-004). The shared policy gate
+    # cannot run first here -- the sanitizer intentionally salvages
+    # policy-violating-but-safe content (e.g. remote font links are
+    # removed, not fatal) -- so only the structural bounds are pre-gated.
+    if not _preflight(text, is_svg, sink):
+        report["finding_codes"] = sorted({f["code"] for f in sink.findings}
+                                         or {"F_MALFORMED"})
+        return False, "", report
 
     if is_svg:
         pre_ok, out, changes = _sanitize_svg(text, sink)
@@ -465,6 +547,11 @@ def sanitize(path: Path) -> tuple[bool, str, dict]:
         report["finding_codes"] = sorted({f["code"] for f in findings})
         return False, "", report
 
+    # Byte bound applies to the exact serialized output too (D641-004).
+    if len(out.encode("utf-8")) > MAX_BYTES:
+        report["finding_codes"] = ["F_OVERSIZED"]
+        return False, "", report
+
     report.update({
         "ok": True,
         "bytes_out": len(out.encode("utf-8")),
@@ -482,6 +569,30 @@ def sanitize(path: Path) -> tuple[bool, str, dict]:
     return True, out, report
 
 
+def _write_destination(dst: Path, out: str) -> str | None:
+    """Atomically replace dst with out. Returns None on success, else a
+    fixed reason code. Never raises, never echoes paths (D641-005)."""
+    tmp = ""
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=".sanitize-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(out)
+            os.replace(tmp, dst)
+            tmp = ""  # replaced: nothing to clean up
+            return None
+        except OSError:
+            return "F_DESTINATION_WRITE_FAILED"
+    except OSError:
+        return "F_DESTINATION_WRITE_FAILED"
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("src", type=Path, help="input diagram file")
@@ -491,33 +602,31 @@ def main() -> int:
     args = parser.parse_args()
     ok, out, report = sanitize(args.src)
     # No source/destination paths in output: treated as potentially sensitive.
+    if not ok:
+        # Failed conversion never replaces an existing valid destination.
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"REFUSED: {','.join(report.get('finding_codes', []))}")
+        return 1
+    # Destination write is part of the operation: temp creation, write and
+    # replacement are all wrapped, and success is printed only AFTER the
+    # requested write completes (D641-005).
+    err = _write_destination(args.dst, out)
+    if err is not None:
+        report = {"ok": False, "finding_codes": [err]}
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"REFUSED: {err}")
+        return 1
+    report["ok"] = True
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        if ok:
-            print(f"sanitized: changes={sum(c['count'] for c in report['changes'])}, "
-                  f"text_preserved={report['text_preserved']}, "
-                  f"bytes={report['bytes_in']}->{report['bytes_out']}")
-        else:
-            print(f"REFUSED: {','.join(report.get('finding_codes', []))}")
-    if not ok:
-        # Failed conversion never replaces an existing valid destination.
-        return 1
-    # Atomic replacement: write temp file in the destination directory,
-    # then rename over the destination.
-    dst = args.dst
-    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=".sanitize-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(out)
-        os.replace(tmp, dst)
-    except OSError:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        print("REFUSED: destination write failed")
-        return 1
+        print(f"sanitized: changes={sum(c['count'] for c in report['changes'])}, "
+              f"text_preserved={report['text_preserved']}, "
+              f"bytes={report['bytes_in']}->{report['bytes_out']}")
     return 0
 
 
