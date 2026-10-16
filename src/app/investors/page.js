@@ -44,6 +44,14 @@ export default function InvestorsPage() {
       badge: "Free",
     },
     {
+      href: "/investors/dscr-loans",
+      icon: "🏦",
+      title: "DSCR Loan Providers",
+      description:
+        "Find DSCR lenders for investment property financing. Explainer, illustrative calculator, and a moderated provider directory.",
+      badge: "New",
+    },
+    {
       href: "/investors/rehab-estimator",
       icon: "🧮",
       title: "Rehab Estimator",
