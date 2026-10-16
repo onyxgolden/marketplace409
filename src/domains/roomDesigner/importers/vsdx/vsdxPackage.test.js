@@ -106,14 +106,38 @@ describe("vsdxPackage", () => {
     }
   });
 
-  it("rejects runaway expansion during streaming", () => {
-    // Declared metadata can lie; the streaming guard must abort anyway.
-    // Build entries that expand past the total cap.
-    const chunk = new Uint8Array(20 * 1024 * 1024); // 20 MB zeros each
-    const files = { ...minimalParts() };
-    for (let i = 0; i < 6; i += 1) files[`visio/pages/z${i}.bin`] = chunk;
-    const bytes = zipSync(files, { level: 9 });
-    expect(() => openVsdxPackage(bytes)).toThrow(/safety caps|expansion/i);
+  it("rejects runaway expansion during streaming when the declared sizes lie", () => {
+    // A hostile archive can under-declare its entries' uncompressed sizes,
+    // slipping past the pre-expansion checks; the streaming byte cap must
+    // still abort while decompressing. Forge the sizes of one 64 KB entry
+    // down to 16 bytes and run with small caps so the test stays fast.
+    const bytes = zipSync(
+      { ...minimalParts(), "visio/pages/big.bin": new Uint8Array(64 * 1024) },
+      { level: 9 },
+    );
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const name = strToU8("visio/pages/big.bin");
+    const matchesName = (at) => name.every((b, i) => bytes[at + i] === b);
+    let forged = 0;
+    for (let i = 0; i + 46 < bytes.length; i += 1) {
+      const sig = view.getUint32(i, true);
+      if (sig === 0x04034b50 && matchesName(i + 30)) {
+        view.setUint32(i + 22, 16, true); // local header: uncompressed size
+        forged += 1;
+      } else if (sig === 0x02014b50 && matchesName(i + 46)) {
+        view.setUint32(i + 24, 16, true); // central directory: uncompressed size
+        forged += 1;
+      }
+    }
+    expect(forged).toBe(2);
+    const limits = { ...VSDX_LIMITS, maxEntryUncompressedBytes: 32 * 1024, maxTotalUncompressedBytes: 32 * 1024 };
+    try {
+      openVsdxPackage(bytes, limits);
+      expect.unreachable("expected openVsdxPackage to throw");
+    } catch (err) {
+      expect(err.code).toBe("expansion-cap");
+      expect(err.message).toMatch(/while decompressing 'visio\/pages\/big\.bin'/);
+    }
   });
 
   it("rejects an XML part larger than the XML byte cap", () => {
