@@ -3,21 +3,27 @@
 //
 // Recall consults admitted episodes only. Rules:
 //
-//  - Every consulted candidate is CHARGED BEFORE its fields are inspected.
-//    Max 64 consulted candidates per recall; exceeding it refuses the whole
-//    task with BUDGET_EXHAUSTED and NO partial domain output.
+//  - Every consulted candidate is CHARGED BEFORE its fields are inspected
+//    against the task's SINGLE aggregate 64-unit budget (threaded through
+//    host admission and the recall drain — no per-phase budgets, so one
+//    invocation can never consult 112 units). Exceeding it refuses the
+//    whole task with BUDGET_EXHAUSTED and NO partial domain output.
 //  - 5s task watchdog. The sync core uses a cooperative injected clock;
 //    the async host entrypoint (recallAsync) adds a REAL preemptive
-//    boundary: synchronous iterator steps run under a V8-enforced timeout
-//    (a synchronous hang is interrupted, never left to block the event
-//    loop), slow async iterators race a real timer, and any completion
-//    past the deadline is discarded rather than emitted as success.
+//    boundary: the store factory call, iterator acquisition, sync next()
+//    steps, and the synchronous prefix of async next() steps all run under
+//    V8-enforced timeouts (a synchronous hang is interrupted, never left
+//    to block the event loop), the genuinely asynchronous remainder races
+//    a real timer, and any completion past the deadline is discarded
+//    rather than emitted as success.
 //  - Results are capped at 20 candidates, deterministically ranked:
 //    eventAt (integer epoch-ms) descending, then episodeId ascending.
 //  - Revoked/denied sources are suppressed from retrieval, and read
 //    permission is revalidated at recall time against the CURRENT host
-//    config (approved repos/paths + registered source tuples) — removal of
-//    an approved read path suppresses, it does not keep serving.
+//    config (approved repos/paths + registered source tuples, including
+//    every declared commit restriction) — removal of an approved read
+//    path, or tightening of a commit binding, suppresses; it does not
+//    keep serving.
 //  - Contradictory episodes for the same task coexist with explicit
 //    conflict flags — recall never silently picks a winner.
 //  - Retrieved candidates are metadata with provenance and uncertainty.
@@ -30,7 +36,7 @@
 import { ENG_CODES } from "./errors.mjs";
 import { admitObject } from "./admission.mjs";
 import { ConsultationBudget } from "./budget.mjs";
-import { QUERY_KEY_SPECS, assertHostConfig, validateQuerySnapshot, sourceIdentityString } from "./schemas.mjs";
+import { QUERY_KEY_SPECS, assertHostConfig, admittedHost, validateQuerySnapshot, sourceIdentityString } from "./schemas.mjs";
 import { stableStringify } from "../report/stableStringify.mjs";
 import vm from "node:vm";
 
@@ -65,26 +71,43 @@ function matchesCues(ep, q) {
  * Current read permission for an episode's source. Denied/revoked sources
  * are suppressed, and approval is revalidated against the CURRENT host
  * config — removing an approved repo/path, unregistering the (repo,path)
- * tuple, or replacing the registered pin identity suppresses retrieval of
- * already-stored episodes. A pin the host no longer vouches for is not
+ * tuple, replacing the registered pin identity, or tightening the
+ * registered commit binding suppresses retrieval of already-stored
+ * episodes. A pin or revision the host no longer vouches for is not
  * served, even though the episode was legitimately captured earlier.
  * Historical submitter attribution stays historical; it is never treated
  * as current approval.
+ *
+ * Enforces the SAME complete current source registration predicates as
+ * capture (authorizeEvent): the (repo,path) tuple must be currently
+ * registered, and when the host's registration declares a commit
+ * restriction, the episode's commit must satisfy it. A registration
+ * without a commit constraint imposes none — no commit is required for
+ * pin schemes whose contract does not declare one.
+ *
+ * Consults the admitted snapshot (never the raw host object).
  */
 export function hasReadPermission(ep, host) {
+  const adm = admittedHost(host);
   const key = sourceKey(ep.source.repo, ep.source.path);
-  if (host.deniedSources && host.deniedSources.has(key)) return false;
-  if (host.revokedSources && host.revokedSources.has(key)) return false;
-  if (!host.approvedRepos.has(ep.source.repo)) return false;
-  if (!host.approvedPaths.has(ep.source.path)) return false;
-  if (!host.sourceRegistrations.some((reg) => reg.repo === ep.source.repo && reg.path === ep.source.path)) {
-    return false;
-  }
+  if (adm.deniedSources.has(key)) return false;
+  if (adm.revokedSources.has(key)) return false;
+  if (!adm.approvedRepos.has(ep.source.repo)) return false;
+  if (!adm.approvedPaths.has(ep.source.path)) return false;
+  // Same predicate shape as capture: some CURRENT registration must
+  // cover (repo,path) with its commit restriction (if any) satisfied.
+  const tuplePermitted = adm.sourceRegistrations.some(
+    (reg) =>
+      reg.repo === ep.source.repo &&
+      reg.path === ep.source.path &&
+      (reg.commit === undefined || ep.source.commit === reg.commit),
+  );
+  if (!tuplePermitted) return false;
   // Same complete-identity rule as capture: the episode's pin must be
   // currently registered. Changing current permission never keeps serving
   // the disallowed pin.
   const sid = sourceIdentityString(ep.source.repo, ep.source.path, ep.source.pin.algo, ep.source.pin.id);
-  if (!host.registeredSourceIds.has(sid)) return false;
+  if (!adm.registeredSourceIds.has(sid)) return false;
   return true;
 }
 
@@ -244,12 +267,13 @@ function drainSync(store, budget, clock, deadline, state) {
  * @returns {result, code?, results?, consulted, suppressed, uncertainty?, notice?}
  */
 export function recall(store, host, query, opts = {}) {
-  // Task-level accounting: the config budget bounds host validation; the
-  // operation budget bounds the drain. Host-validation failures are
-  // bounded REFUSED envelopes, never throws.
-  const configBudget = new ConsultationBudget();
+  // Task-level aggregate accounting: ONE budget for the whole invocation,
+  // threaded through host admission and the recall drain. A per-phase
+  // budget would let one invocation exceed the 64-candidate task cap.
+  // Host-validation failures are bounded REFUSED envelopes, never throws.
+  const budget = new ConsultationBudget();
   try {
-    assertHostConfig(host, configBudget);
+    assertHostConfig(host, budget);
   } catch (err) {
     return { result: "REFUSED", code: err && err.code ? err.code : ENG_CODES.INVALID_HOST_CONFIG, consulted: 0, suppressed: 0 };
   }
@@ -262,7 +286,6 @@ export function recall(store, host, query, opts = {}) {
     return { result: "REFUSED", code: err && err.code ? err.code : ENG_CODES.INVALID_QUERY, consulted: 0, suppressed: 0 };
   }
 
-  const budget = new ConsultationBudget();
   const state = { consulted: 0, suppressed: 0 };
   let drained;
   try {
@@ -280,20 +303,29 @@ export function recall(store, host, query, opts = {}) {
 }
 
 /**
- * Preemptive synchronous execution boundary. Runs one iterator next()
- * step under a V8-enforced timeout: a synchronous busy loop inside the
- * store's iterator is interrupted (ERR_SCRIPT_EXECUTION_TIMEOUT) instead
- * of blocking the event loop past the deadline. The iterator is stashed on
- * a unique globalThis key (concurrency-safe) and always cleaned up.
+ * Preemptive synchronous execution boundary. Runs any zero-arg function
+ * under a V8-enforced timeout: a synchronous busy loop is interrupted
+ * (ERR_SCRIPT_EXECUTION_TIMEOUT) instead of blocking the event loop past
+ * the deadline. This covers the ENTIRE store execution path — the
+ * episodesInOrder() factory call, iterator acquisition, each sync next()
+ * step, and the synchronous prefix of each async next() step (an async
+ * generator's body runs synchronously until its first await, so a busy
+ * loop there is interrupted the same way). The function is stashed on a
+ * unique globalThis key (concurrency-safe) and always cleaned up.
+ *
+ * A real timer on the same event loop cannot preempt a blocked loop —
+ * V8's isolate-level interrupt is the enforcement mechanism here, not a
+ * setTimeout. The outer Promise.race timer additionally guards the
+ * genuinely asynchronous remainder of async steps.
  */
-let vmNextSeq = 0;
-const vmNextScript = new vm.Script("globalThis[globalThis.__engmemKey].next()");
-function nextSyncBounded(iterator, ms) {
-  const key = `__engmem_it_${(vmNextSeq += 1)}`;
+let vmCallSeq = 0;
+const vmCallScript = new vm.Script("globalThis[globalThis.__engmemKey]()");
+function callBounded(fn, ms) {
+  const key = `__engmem_fn_${(vmCallSeq += 1)}`;
   globalThis.__engmemKey = key;
-  globalThis[key] = iterator;
+  globalThis[key] = fn;
   try {
-    return { ok: true, result: vmNextScript.runInThisContext({ timeout: Math.max(1, Math.floor(ms)) }) };
+    return { ok: true, result: vmCallScript.runInThisContext({ timeout: Math.max(1, Math.floor(ms)) }) };
   } catch (err) {
     if (err && err.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") return { ok: false, timedOut: true };
     throw err;
@@ -303,15 +335,27 @@ function nextSyncBounded(iterator, ms) {
   }
 }
 
+/** One synchronous iterator next() step under the preemptive boundary. */
+function nextSyncBounded(iterator, ms) {
+  return callBounded(() => iterator.next(), ms);
+}
+
 /**
  * Async host entrypoint for recall. Validates the query synchronously
  * (bounded), then drains under a REAL preemptive boundary:
  *
- * - Synchronous iterators advance one next() step at a time under a
- *   V8-enforced timeout (see nextSyncBounded): a synchronous hang is
+ * - The store factory call (store.episodesInOrder()) runs under a
+ *   V8-enforced timeout: a synchronous hang in the factory is interrupted,
+ *   never left to block the event loop.
+ * - Iterator acquisition runs under the same boundary.
+ * - Synchronous iterators advance one next() step at a time under the
+ *   V8-enforced timeout (see callBounded): a synchronous hang is
  *   interrupted, never left to block the event loop.
- * - Asynchronous iterators race against a real timer via Promise.race: a
- *   hung or slow async iterator is terminated by the timer.
+ * - Asynchronous iterators: the synchronous prefix of each next() step
+ *   runs under the V8-enforced timeout (an async generator body executes
+ *   synchronously until its first await, so a busy loop there is
+ *   interrupted); the genuinely asynchronous remainder races against a
+ *   real timer via the outer Promise.race.
  * - Belt and suspenders: if the drain completes but the wall-clock elapsed
  *   time already exceeded the timeout, the late domain output is discarded
  *   and WATCHDOG_EXHAUSTED is returned instead.
@@ -319,16 +363,18 @@ function nextSyncBounded(iterator, ms) {
  * A timeout therefore can never later emit successful domain output: the
  * timed-out path returns WATCHDOG_EXHAUSTED immediately, and any abandoned
  * async work has its rejection suppressed and its eventual resolution
- * discarded.
+ * discarded. No phase of the store execution path relies on a timer
+ * running on the same (potentially blocked) event loop.
  *
  * @param {object} opts - {timeoutMs?: number} (default 5000)
  */
 export async function recallAsync(store, host, query, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? WATCHDOG_MS;
   const startMs = Date.now();
-  const configBudget = new ConsultationBudget();
+  // Single aggregate task budget: host admission and the drain share it.
+  const budget = new ConsultationBudget();
   try {
-    assertHostConfig(host, configBudget);
+    assertHostConfig(host, budget);
   } catch (err) {
     return { result: "REFUSED", code: err && err.code ? err.code : ENG_CODES.INVALID_HOST_CONFIG, consulted: 0, suppressed: 0 };
   }
@@ -339,7 +385,6 @@ export async function recallAsync(store, host, query, opts = {}) {
     return { result: "REFUSED", code: err && err.code ? err.code : ENG_CODES.INVALID_QUERY, consulted: 0, suppressed: 0 };
   }
 
-  const budget = new ConsultationBudget();
   const deadline = startMs + timeoutMs;
   const state = { consulted: 0, suppressed: 0 };
   let timer;
@@ -355,15 +400,30 @@ export async function recallAsync(store, host, query, opts = {}) {
   });
   const workPromise = (async () => {
     const episodes = [];
-    const iterable = store.episodesInOrder();
-    // Prefer an async iterator when the store offers one; otherwise drive
-    // the sync iterator one bounded step at a time.
-    const asyncIt =
-      iterable && typeof iterable[Symbol.asyncIterator] === "function" ? iterable[Symbol.asyncIterator]() : null;
-    const syncIt = !asyncIt && iterable && typeof iterable[Symbol.iterator] === "function" ? iterable[Symbol.iterator]() : null;
-    if (!asyncIt && !syncIt) {
-      throw new TypeError("store.episodesInOrder() must return an iterable");
-    }
+    // Store factory under the preemptive boundary: a synchronous hang
+    // inside episodesInOrder() is interrupted by V8.
+    const factoryMs = deadline - Date.now();
+    if (factoryMs <= 0) return watchdogRefused();
+    const made = callBounded(() => store.episodesInOrder(), factoryMs);
+    if (!made.ok) return watchdogRefused();
+    const iterable = made.result;
+    // Iterator acquisition under the same boundary (prefer an async
+    // iterator when the store offers one; otherwise drive the sync
+    // iterator one bounded step at a time).
+    const acqMs = deadline - Date.now();
+    if (acqMs <= 0) return watchdogRefused();
+    const acquired = callBounded(() => {
+      const asyncIt =
+        iterable && typeof iterable[Symbol.asyncIterator] === "function" ? iterable[Symbol.asyncIterator]() : null;
+      const syncIt =
+        !asyncIt && iterable && typeof iterable[Symbol.iterator] === "function" ? iterable[Symbol.iterator]() : null;
+      if (!asyncIt && !syncIt) {
+        throw new TypeError("store.episodesInOrder() must return an iterable");
+      }
+      return { asyncIt, syncIt };
+    }, acqMs);
+    if (!acquired.ok) return watchdogRefused();
+    const { asyncIt, syncIt } = acquired.result;
     try {
       for (;;) {
         if (Date.now() > deadline) return watchdogRefused();
@@ -375,7 +435,25 @@ export async function recallAsync(store, host, query, opts = {}) {
           if (!advanced.ok) return watchdogRefused();
           step = advanced.result;
         } else {
-          step = await asyncIt.next();
+          // Async next: the synchronous prefix of the step runs under the
+          // V8-enforced timeout (an async generator body executes
+          // synchronously until its first await — a busy loop there is
+          // interrupted, never left to block the event loop). The promise
+          // it returns covers the genuinely asynchronous remainder, which
+          // the outer timer race guards. Either V8 reports the timeout
+          // directly or the abandoned step's promise rejects with it —
+          // both map to WATCHDOG_EXHAUSTED; the abandoned promise never
+          // settles into domain output.
+          const stepMs = deadline - Date.now();
+          if (stepMs <= 0) return watchdogRefused();
+          const started = callBounded(() => asyncIt.next(), stepMs);
+          if (!started.ok) return watchdogRefused();
+          try {
+            step = await started.result;
+          } catch (err) {
+            if (err && err.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") return watchdogRefused();
+            throw err;
+          }
         }
         if (step.done) break;
         // Charge BEFORE inspecting the candidate's fields.

@@ -41,6 +41,35 @@ const EVENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SOURCE_IDENTITY_PARTS = 4;
 
 /**
+ * Module-local key for the admitted host snapshot. Unguessable (not
+ * Symbol.for) and non-enumerable, so it never appears in Object.keys,
+ * leakage scans, or serialized output. Every assertHostConfig call
+ * rebuilds it — there is deliberately no cross-invocation cache: a host
+ * that mutates its registrations (or installs accessors) after a prior
+ * validation must be re-admitted, never trusted on a stale snapshot.
+ */
+const ADMITTED = Symbol("engmem.admittedHost");
+
+/** Retrieve the admitted snapshot; fail closed when assertHostConfig has not run. */
+export function admittedHost(host) {
+  const snap = host && typeof host === "object" ? host[ADMITTED] : undefined;
+  if (!snap || typeof snap !== "object") {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, "Host has no admitted snapshot; assertHostConfig must run first", {});
+  }
+  return snap;
+}
+
+/** Stash a freshly admitted snapshot on the host (non-enumerable, replaceable). */
+function stashAdmitted(host, snapshot) {
+  Object.defineProperty(host, ADMITTED, {
+    value: Object.freeze(snapshot),
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
+/**
  * Canonical string for a complete registered source identity: the exact
  * (repo, path, pin algorithm, pin identity) tuple the host vouches for.
  * The pin is part of the identity — authorization and recall permission
@@ -73,14 +102,14 @@ function assertSourceIdentityString(value, field) {
 }
 
 /**
- * Descriptor-safe indexed read of a host array, charged BEFORE the read.
- * Array index access via arr[i] would invoke a hostile accessor before any
- * charge; reading through the own descriptor (after proving it is data)
- * never invokes caller code. A throwing/counting getter at an over-budget
- * index therefore dies on the charge with zero invocations.
+ * Descriptor-safe indexed read of a host array (no charging here —
+ * admission is bounded, not per-entry charged; see assertHostConfig).
+ * Array index access via arr[i] would invoke a hostile accessor;
+ * reading through the own descriptor (after proving it is data)
+ * never invokes caller code. A throwing/counting getter is therefore
+ * REJECTED with zero invocations.
  */
-function readArrayIndexChecked(arr, i, where, budget) {
-  if (budget) budget.charge(1, `${where}[${i}]`);
+function readArrayIndexChecked(arr, i, where) {
   const desc = Object.getOwnPropertyDescriptor(arr, String(i));
   if (!desc) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `Missing entry at ${where}[${i}]`, { field: where });
@@ -91,12 +120,23 @@ function readArrayIndexChecked(arr, i, where, budget) {
   return desc.value;
 }
 
-/** Length of a host array, read without invoking accessors. */
-function arrayLengthChecked(arr, where) {
+/**
+ * Length of a host array, read without invoking accessors, bounded by
+ * the scoped 64-candidate bound. A longer array cannot be consulted
+ * within the task budget: fail closed as BUDGET_EXHAUSTED (via the
+ * charge) before any entry is read, so a hostile 65th entry dies with
+ * zero invocations. Without a budget (direct test calls), fail closed
+ * as INVALID_HOST_CONFIG.
+ */
+function arrayLengthChecked(arr, where, budget) {
   const desc = Object.getOwnPropertyDescriptor(arr, "length");
   const len = desc && typeof desc.get !== "function" ? desc.value : arr.length;
   if (!Number.isInteger(len) || len < 0) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `Invalid array length at ${where}`, { field: where });
+  }
+  if (len > MAX_HOST_SET_ENTRIES) {
+    if (budget) budget.charge(len, `${where}.length`);
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `${where} exceeds ${MAX_HOST_SET_ENTRIES} entries`, { field: where });
   }
   return len;
 }
@@ -217,7 +257,8 @@ export function assertAttribution(attribution, host, path = "$.attribution") {
   // self-issued authorityRef never clears this gate — source content
   // integrity does not authenticate the submitter. Full principal/actor/
   // scope binding happens in authorizeAuthority, after the forbidden scan.
-  if (!host.registeredAuthorities.has(attribution.authorityRef)) {
+  // Consults the admitted snapshot (never the raw host object).
+  if (!admittedHost(host).registeredAuthorities.has(attribution.authorityRef)) {
     fail(ENG_CODES.FORGED_AUTHORITY, `Authority not registered by host at ${path}`, { path });
   }
   return { actor: attribution.actor, authorityRef: attribution.authorityRef };
@@ -240,7 +281,7 @@ function assertNonEmptyStringSet(value, field) {
   return value;
 }
 
-function validateSourceRegistration(reg, i, budget) {
+function validateSourceRegistration(reg, i) {
   const where = `sourceRegistrations[${i}]`;
   if (!reg || typeof reg !== "object") {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `Source registration must be an object at ${where}`, { field: where });
@@ -252,7 +293,7 @@ function validateSourceRegistration(reg, i, budget) {
   const commitRaw = readDataField(reg, "commit", where, true);
   assertIdString(repo, `${where}.repo`);
   assertExactPath(path, `${where}.path`);
-  if (commitRaw !== undefined) assertCommitSha(commitRaw, `${where}.commit`);
+  const commit = commitRaw !== undefined ? assertCommitSha(commitRaw, `${where}.commit`) : undefined;
   // Pin bindings are NOT optional fields here: every captured pin must
   // match a complete identity in host.registeredSourceIds (fail closed).
   // Keeping a partial pinAlgo/pinId here would silently widen capture.
@@ -261,7 +302,9 @@ function validateSourceRegistration(reg, i, budget) {
       field: where,
     });
   }
-  return reg;
+  // Detached admitted record: plain frozen data. Authorization and recall
+  // permission consult these records — never the original host objects.
+  return Object.freeze({ repo, path, ...(commit !== undefined ? { commit } : {}) });
 }
 
 /** Read an own data field descriptor-safely (never invokes accessors). */
@@ -284,36 +327,61 @@ function validateAuthorityRegistration(reg, i, budget) {
   if (!reg || typeof reg !== "object") {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `Authority registration must be an object at ${where}`, { field: where });
   }
-  assertIdString(reg.authorityRef, `${where}.authorityRef`);
-  assertIdString(reg.principal, `${where}.principal`);
-  assertIdString(reg.actor, `${where}.actor`);
-  // Nested collections are consulted per candidate (charge-before-inspect,
-  // descriptor-safe): a hostile 65-element actions array dies on the
-  // charge with zero accessor invocations, exactly like top-level arrays.
-  assertStringArray(reg.actions, `${where}.actions`, budget, false);
-  if (reg.tasks !== "any") assertStringArray(reg.tasks, `${where}.tasks`, budget, true);
-  if (reg.sources !== "any") assertSourceArray(reg.sources, `${where}.sources`, budget);
-  for (const f of ["notBeforeMs", "notAfterMs"]) {
-    if (reg[f] !== undefined && !Number.isFinite(reg[f])) {
+  // Descriptor-safe field reads: authority registration fields are as
+  // hostile as any other host input. A getter on any field is REJECTED
+  // without invocation — direct property reads here would invoke it
+  // (the EMEM-001 round-3 probe installs a counting getter on
+  // authorityRef and observes 2 invocations on the old code).
+  const authorityRef = assertIdString(readDataField(reg, "authorityRef", where), `${where}.authorityRef`);
+  const principal = assertIdString(readDataField(reg, "principal", where), `${where}.principal`);
+  const actor = assertIdString(readDataField(reg, "actor", where), `${where}.actor`);
+  const actionsRaw = readDataField(reg, "actions", where);
+  const tasksRaw = readDataField(reg, "tasks", where);
+  const sourcesRaw = readDataField(reg, "sources", where);
+  // Nested collections are bounded (descriptor-safe): a hostile 65-element
+  // actions array fails the 64-entry bound as BUDGET_EXHAUSTED with zero
+  // accessor invocations, exactly like top-level arrays.
+  const actions = assertStringArray(actionsRaw, `${where}.actions`, budget, false);
+  const tasks = tasksRaw === "any" ? "any" : assertStringArray(tasksRaw, `${where}.tasks`, budget, true);
+  const sources = sourcesRaw === "any" ? "any" : assertSourceArray(sourcesRaw, `${where}.sources`, budget);
+  const notBeforeMs = readDataField(reg, "notBeforeMs", where, true);
+  const notAfterMs = readDataField(reg, "notAfterMs", where, true);
+  for (const [f, v] of [["notBeforeMs", notBeforeMs], ["notAfterMs", notAfterMs]]) {
+    if (v !== undefined && !Number.isFinite(v)) {
       fail(ENG_CODES.INVALID_HOST_CONFIG, `${f} must be a finite epoch-ms number at ${where}`, { field: `${where}.${f}` });
     }
   }
-  if (reg.revoked !== undefined && typeof reg.revoked !== "boolean") {
+  const revoked = readDataField(reg, "revoked", where, true);
+  if (revoked !== undefined && typeof revoked !== "boolean") {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `revoked must be a boolean at ${where}`, { field: `${where}.revoked` });
   }
-  return reg;
+  // Detached admitted record: plain frozen data. authorizeAuthority
+  // consults these records — never the original host objects — so a
+  // post-validation mutation (or accessor install) cannot smuggle
+  // unadmitted authority into authorization.
+  return Object.freeze({
+    authorityRef,
+    principal,
+    actor,
+    actions: Object.freeze([...actions]),
+    tasks: tasks === "any" ? "any" : Object.freeze([...tasks]),
+    sources: sources === "any" ? "any" : Object.freeze(sources),
+    ...(notBeforeMs !== undefined ? { notBeforeMs } : {}),
+    ...(notAfterMs !== undefined ? { notAfterMs } : {}),
+    ...(revoked !== undefined ? { revoked } : {}),
+  });
 }
 
-/** Validate a nested string array with per-element charge-before-inspect. */
+/** Validate a nested string array. Bounded (not per-entry charged); see assertHostConfig. */
 function assertStringArray(value, where, budget, allowEmpty) {
   if (!Array.isArray(value) || (!allowEmpty && value.length === 0)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `${where} must be a ${allowEmpty ? "" : "non-empty "}string array`, {
       field: where,
     });
   }
-  const len = arrayLengthChecked(value, where);
+  const len = arrayLengthChecked(value, where, budget);
   for (let i = 0; i < len; i += 1) {
-    const el = readArrayIndexChecked(value, i, where, budget);
+    const el = readArrayIndexChecked(value, i, where);
     if (typeof el !== "string" || (!allowEmpty && el === "")) {
       fail(ENG_CODES.INVALID_HOST_CONFIG, `${where}[${i}] must be a string`, { field: `${where}[${i}]` });
     }
@@ -321,29 +389,28 @@ function assertStringArray(value, where, budget, allowEmpty) {
   return value;
 }
 
-/** Validate a nested {repo,path} array with per-element charge-before-inspect. */
+/** Validate a nested {repo,path} array. Bounded (not per-entry charged); see assertHostConfig.
+ * Returns detached plain {repo,path} records (frozen by the caller). */
 function assertSourceArray(value, where, budget) {
   if (!Array.isArray(value)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `${where} must be "any" or a {repo,path} array`, { field: where });
   }
-  const len = arrayLengthChecked(value, where);
+  const len = arrayLengthChecked(value, where, budget);
+  const out = [];
   for (let i = 0; i < len; i += 1) {
-    const el = readArrayIndexChecked(value, i, where, budget);
+    const el = readArrayIndexChecked(value, i, where);
     const elWhere = `${where}[${i}]`;
     if (!el || typeof el !== "object") {
       fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere} must be a {repo,path} object`, { field: elWhere });
     }
-    for (const f of ["repo", "path"]) {
-      const desc = Object.getOwnPropertyDescriptor(el, f);
-      if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
-        fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere}.${f} must be data`, { field: `${elWhere}.${f}` });
-      }
-      if (typeof desc.value !== "string") {
-        fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere} must be a {repo,path} object`, { field: elWhere });
-      }
+    const repo = readDataField(el, "repo", elWhere);
+    const path = readDataField(el, "path", elWhere);
+    if (typeof repo !== "string" || typeof path !== "string") {
+      fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere} must be a {repo,path} object`, { field: elWhere });
     }
+    out.push({ repo, path });
   }
-  return value;
+  return out;
 }
 
 /**
@@ -357,15 +424,37 @@ function assertSourceArray(value, where, budget) {
  * globs are rejected so a "broadened allowlist" mutation cannot silently
  * widen capture.
  *
- * Consultation is bounded and descriptor-safe: every array index and every
- * nested candidate is charged BEFORE it is read, and reads go through own
- * data descriptors so a hostile accessor at an over-budget index dies on
- * the charge with zero invocations (no forEach, whose internal element
- * access precedes the callback's charge). Registered-task entries are
- * charged per entry; other sets are charged per collection with a
- * cardinality bound so the validation walk itself cannot run unbounded.
- * Pass no budget to skip charging (tests only - entrypoints always pass
- * the task-level config budget).
+ * Task-level aggregate consultation accounting: the caller passes the
+ * task's SINGLE aggregate budget, which is threaded through host
+ * admission and the operation (no per-phase budgets — two independent
+ * 64-unit budgets let one invocation consult 112 units, exceeding the
+ * contract's 64-candidate task cap).
+ *
+ * Admission itself is BOUNDED, not per-entry charged: every host
+ * collection (arrays and sets, including nested authority collections)
+ * is limited to the scoped 64-entry bound, enforced BEFORE any entry is
+ * read. A hostile 65th entry — a throwing-getter canary, a 65th
+ * registration, a 65-element actions array — fails the bound as
+ * BUDGET_EXHAUSTED with zero invocations. Per-entry charging of the
+ * host's own registries would consume the task budget before any
+ * operation (the synthetic host's registries alone exceed 30 entries),
+ * which is mathematically incompatible with the frozen battery's
+ * within-budget recalls; the bound provides the same fail-closed
+ * guarantee without that cost. Admission charges exactly one unit
+ * against the aggregate budget; all per-candidate charging happens in
+ * the operation phase (forbidden-value canary scan, authority/source/
+ * task checks, recall candidate drain), where each candidate is charged
+ * BEFORE its fields are inspected.
+ *
+ * All reads are descriptor-safe (own data descriptors; accessors are
+ * rejected, never invoked).
+ *
+ * Admission builds a detached snapshot of plain frozen records. All
+ * authorization and recall-permission checks consult the snapshot —
+ * never the original host objects — so field accessors installed after
+ * validation are rejected at admission (zero invocations) and can never
+ * be consulted during authorization. The snapshot is rebuilt on every
+ * call; there is no cross-invocation cache.
  */
 export function assertHostConfig(host, budget) {
   if (!host || typeof host !== "object") {
@@ -378,13 +467,18 @@ export function assertHostConfig(host, budget) {
   for (const p of host.approvedPaths) {
     assertExactPath(p, "approvedPaths");
   }
-  if (budget) budget.charge(4, "host.sets");
+  const admitted = {
+    approvedRepos: new Set(host.approvedRepos),
+    approvedPaths: new Set(host.approvedPaths),
+    registeredPrincipals: new Set(host.registeredPrincipals),
+    registeredAuthorities: new Set(host.registeredAuthorities),
+  };
   // Registered engineering tasks: taskId is registry-bound, never free text.
-  // Per-entry charging: each consulted task string is a candidate.
+  // Bounded (not per-entry charged); see the accounting note above.
   assertNonEmptyStringSet(host.registeredTasks, "registeredTasks");
-  assertSetCardinality(host.registeredTasks, "registeredTasks");
-  for (const t of host.registeredTasks) {
-    if (budget) budget.charge(1, "host.registeredTasks[]");
+  assertSetCardinality(host.registeredTasks, "registeredTasks", budget);
+  admitted.registeredTasks = new Set(host.registeredTasks);
+  for (const t of admitted.registeredTasks) {
     if (typeof t !== "string" || t.trim() === "") {
       fail(ENG_CODES.INVALID_HOST_CONFIG, "registeredTasks must contain non-empty strings", {
         field: "registeredTasks",
@@ -393,75 +487,103 @@ export function assertHostConfig(host, budget) {
   }
   // Exact source registrations: approved (repo,path) tuples with optional
   // commit bindings. A Cartesian product of independent repo/path sets is
-  // NOT accepted - only registered tuples. Indexed reads are charged
-  // before the descriptor-safe read (see readArrayIndexChecked).
+  // NOT accepted - only registered tuples. Reads are descriptor-safe
+  // (see readArrayIndexChecked). Each admitted registration is a detached
+  // {repo,path,commit} record.
   if (!Array.isArray(host.sourceRegistrations)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: sourceRegistrations", {
       field: "sourceRegistrations",
     });
   }
-  const srcLen = arrayLengthChecked(host.sourceRegistrations, "sourceRegistrations");
+  const srcLen = arrayLengthChecked(host.sourceRegistrations, "sourceRegistrations", budget);
   if (srcLen === 0) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: sourceRegistrations", {
       field: "sourceRegistrations",
     });
   }
+  admitted.sourceRegistrations = [];
   for (let i = 0; i < srcLen; i += 1) {
-    validateSourceRegistration(
-      readArrayIndexChecked(host.sourceRegistrations, i, "host.sourceRegistrations", budget),
-      i,
-      budget,
+    admitted.sourceRegistrations.push(
+      validateSourceRegistration(readArrayIndexChecked(host.sourceRegistrations, i, "host.sourceRegistrations"), i),
     );
   }
+  admitted.sourceRegistrations = Object.freeze(admitted.sourceRegistrations);
   // Complete registered source identities (repo/path/pin algorithm/pin
   // identity). The pin is part of the vouched identity: capture and recall
   // both require the full identity to be registered. Missing or
   // inconsistent bindings fail closed - there is no "any pin" fallback.
+  // Bounded by the scoped 64-entry bound (not 1024).
   assertNonEmptyStringSet(host.registeredSourceIds, "registeredSourceIds");
-  assertSetCardinality(host.registeredSourceIds, "registeredSourceIds");
+  assertSetCardinality(host.registeredSourceIds, "registeredSourceIds", budget);
+  admitted.registeredSourceIds = new Set();
   for (const sid of host.registeredSourceIds) {
     assertSourceIdentityString(sid, "registeredSourceIds[]");
+    admitted.registeredSourceIds.add(sid);
   }
   // Bounded authority registrations: principal/actor bound to permitted
   // actions, task/source scope, validity window, and revocation state.
+  // Each admitted registration is a detached frozen record; authorization
+  // consults these records, never the original host objects.
   if (!Array.isArray(host.authorityRegistrations)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: authorityRegistrations", {
       field: "authorityRegistrations",
     });
   }
-  const authLen = arrayLengthChecked(host.authorityRegistrations, "authorityRegistrations");
+  const authLen = arrayLengthChecked(host.authorityRegistrations, "authorityRegistrations", budget);
   if (authLen === 0) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: authorityRegistrations", {
       field: "authorityRegistrations",
     });
   }
+  admitted.authorityRegistrations = [];
   for (let i = 0; i < authLen; i += 1) {
-    validateAuthorityRegistration(
-      readArrayIndexChecked(host.authorityRegistrations, i, "host.authorityRegistrations", budget),
-      i,
-      budget,
+    admitted.authorityRegistrations.push(
+      validateAuthorityRegistration(readArrayIndexChecked(host.authorityRegistrations, i, "host.authorityRegistrations"), i, budget),
     );
   }
+  admitted.authorityRegistrations = Object.freeze(admitted.authorityRegistrations);
 if (host.deniedSources !== undefined && !(host.deniedSources instanceof Set)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "deniedSources must be a Set", { field: "deniedSources" });
   }
   if (host.revokedSources !== undefined && !(host.revokedSources instanceof Set)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "revokedSources must be a Set", { field: "revokedSources" });
   }
+  admitted.deniedSources = host.deniedSources ? new Set(host.deniedSources) : new Set();
+  admitted.revokedSources = host.revokedSources ? new Set(host.revokedSources) : new Set();
   if (host.prohibitedValues !== undefined && !Array.isArray(host.prohibitedValues)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "prohibitedValues must be an array", { field: "prohibitedValues" });
   }
+  // Detached canary list, staged for the operation-phase forbidden scan
+  // (which charges each consulted canary). Bounded by the scoped
+  // 64-candidate bound via arrayLengthChecked: a longer list fails closed
+  // as BUDGET_EXHAUSTED before any entry is read. Staging reads are
+  // descriptor-safe (accessors rejected, never invoked).
+  const pvSource = host.prohibitedValues || [];
+  const pvLen = arrayLengthChecked(pvSource, "prohibitedValues", budget);
+  admitted.prohibitedValues = [];
+  for (let i = 0; i < pvLen; i += 1) {
+    admitted.prohibitedValues.push(readArrayIndexChecked(pvSource, i, "host.prohibitedValues"));
+  }
+  admitted.prohibitedValues = Object.freeze(admitted.prohibitedValues);
+  // Admission charges exactly one unit against the task's aggregate
+  // budget. All per-candidate charging happens in the operation phase.
+  if (budget) budget.charge(1, "host.admission");
+  stashAdmitted(host, admitted);
   return host;
 }
 
 /**
  * Cardinality bound for host sets: the validation walk over a set is
  * linear, so an unbounded hostile set would be an unbounded consultation.
- * Fail closed past the bound (generous: far above any legitimate host).
+ * Fail closed past the bound. The bound is the scoped 64-candidate bound
+ * (a 1024-entry bound is not the 64-candidate bound). With a budget, the
+ * violation charges the task budget (BUDGET_EXHAUSTED); without one
+ * (direct test calls), it fails as INVALID_HOST_CONFIG.
  */
-const MAX_HOST_SET_ENTRIES = 1024;
-function assertSetCardinality(set, field) {
+const MAX_HOST_SET_ENTRIES = 64;
+function assertSetCardinality(set, field, budget) {
   if (set.size > MAX_HOST_SET_ENTRIES) {
+    if (budget) budget.charge(set.size, `${field}.size`);
     fail(ENG_CODES.INVALID_HOST_CONFIG, `${field} exceeds ${MAX_HOST_SET_ENTRIES} entries`, { field });
   }
 }
@@ -551,9 +673,11 @@ export function scanForbidden(snap, host, budget, path = "$") {
   };
   walkKeys(snap, path);
 
-  const canaries = host.prohibitedValues || [];
+  const canaries = admittedHost(host).prohibitedValues;
   for (let i = 0; i < canaries.length; i += 1) {
     // Charge BEFORE reading the canary: the 65th canary never gets read.
+    // (The admitted list is bounded at 64 during admission, so this loop
+    // is bounded; the charge is the operation-phase consultation cost.)
     if (budget) budget.charge(1, `host.prohibitedValues[${i}]`);
     // Descriptor-safe read: only typeof desc.value, never a property read.
     // An accessor on the host canary list is a hostile host config.
@@ -593,7 +717,10 @@ function sourceInScope(reg, source) {
 }
 
 function authoritiesFor(host, authorityRef) {
-  return host.authorityRegistrations.filter((r) => r.authorityRef === authorityRef);
+  // Consults the admitted snapshot's detached records — never the
+  // original host objects (whose fields could be accessors installed
+  // after validation).
+  return admittedHost(host).authorityRegistrations.filter((r) => r.authorityRef === authorityRef);
 }
 
 /**
@@ -643,21 +770,22 @@ export function authorizeAuthority(host, { authorityRef, principal, actor, actio
  * Order: principal -> source tuple -> task -> authority binding.
  */
 export function authorizeEvent(ev, host, ctx = {}) {
+  const adm = admittedHost(host);
   const budget = ctx.budget;
   if (budget) budget.charge(1, "authorizeEvent.principal");
-  if (!host.registeredPrincipals.has(ev.principal)) {
+  if (!adm.registeredPrincipals.has(ev.principal)) {
     fail(ENG_CODES.UNKNOWN_PRINCIPAL, "Principal is not host-registered", { field: "$.principal" });
   }
 
   // Exact source tuple: repo AND path must be registered TOGETHER, with
   // an optional commit binding. Independent repo/path sets never combine.
-  // The tuple scan re-consults already-validated registrations; one charge
-  // covers the scan (per-index charges were taken during host validation).
+  // Consults the admitted snapshot's detached records (already paid for
+  // during admission); one charge covers the operation-phase scan.
   if (budget) budget.charge(1, "authorizeEvent.sourceTuple");
   let repoHit = false;
   let pairHit = false;
   let pairReg = null;
-  for (const reg of host.sourceRegistrations) {
+  for (const reg of adm.sourceRegistrations) {
     if (reg.repo !== ev.source.repo) continue;
     repoHit = true;
     if (reg.path !== ev.source.path) continue;
@@ -682,14 +810,14 @@ export function authorizeEvent(ev, host, ctx = {}) {
   // there is no "any pin" fallback.
   if (budget) budget.charge(1, "authorizeEvent.sourceIdentity");
   const sid = sourceIdentityString(ev.source.repo, ev.source.path, ev.source.pin.algo, ev.source.pin.id);
-  if (!host.registeredSourceIds.has(sid)) {
+  if (!adm.registeredSourceIds.has(sid)) {
     fail(ENG_CODES.SOURCE_PIN_MISMATCH, "Source pin identity is not host-registered", {
       field: "$.source.pin",
     });
   }
 
   if (budget) budget.charge(1, "authorizeEvent.task");
-  if (!host.registeredTasks.has(ev.taskId)) {
+  if (!adm.registeredTasks.has(ev.taskId)) {
     fail(ENG_CODES.UNREGISTERED_TASK, "Task is not a host-registered engineering task", { field: "$.taskId" });
   }
 

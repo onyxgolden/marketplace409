@@ -39,6 +39,32 @@ function validInput(overrides = {}) {
   };
 }
 
+// Module-scope seeded store (also defined locally in the recall block;
+// this copy serves the EMEM-001 verdict-probe tests).
+function seededStoreModule(n, host) {
+  const store = createFakeStore();
+  for (let i = 1; i <= n; i++) {
+    const totalMinutes = i - 1;
+    const r = captureEvent(
+      store,
+      host,
+      validInput({
+        eventId: `evt-seed-${i}-synthetic`,
+        taskId: `eng-task-${String(((i - 1) % 10) + 1).padStart(3, "0")}`,
+        eventAt: `2026-10-01T${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}:00Z`,
+        source: {
+          repo: "onyxgolden/marketplace409",
+          path: "scripts/team-brain/README.md",
+          pin: { algo: "git-blob-sha1", id: "f".repeat(40) },
+        },
+      }),
+      { caller: "principal:muse" },
+    );
+    if (r.result !== "CAPTURED") throw new Error(`seed failed: ${r.code}`);
+  }
+  return store;
+}
+
 function throwingGetter(obj, key) {
   let invocations = 0;
   const next = { ...obj };
@@ -820,6 +846,79 @@ describe("EMEM-001: scalar admission, budgets, async watchdog", () => {
     });
     expect(out).toMatch(/HANG_PROBE_PASS/);
   }, 30000);
+
+  it("verdict probe EMEM-001a: getter on authorityRegistrations[0].authorityRef refuses with zero invocations", () => {
+    // The getter returns the SAME registered string — the refusal must
+    // come from the accessor itself (rejected at admission, never
+    // invoked), not from a wrong value.
+    const host = syntheticHost();
+    const orig = host.authorityRegistrations[0];
+    let invocations = 0;
+    const evil = { ...orig };
+    Object.defineProperty(evil, "authorityRef", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        invocations += 1;
+        return orig.authorityRef;
+      },
+    });
+    host.authorityRegistrations[0] = evil;
+    const r = captureEvent(createFakeStore(), host, validInput(), CALLER_MUSE);
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.INVALID_HOST_CONFIG });
+    expect(invocations).toBe(0);
+  });
+
+  it("verdict probe EMEM-001b: single aggregate budget — 64-episode recall never exceeds 64 charged units", async () => {
+    // Instruments ConsultationBudget.charge: one invocation (admission +
+    // recall drain) must record at most 64 charged units total, and the
+    // 64-episode recall must refuse with BUDGET_EXHAUSTED (bounded
+    // refusal before the first excess candidate), never RECALLED.
+    const { ConsultationBudget } = await import("../budget.mjs");
+    const host = syntheticHost();
+    const store = seededStoreModule(64, host);
+    let charged = 0;
+    const origCharge = ConsultationBudget.prototype.charge;
+    ConsultationBudget.prototype.charge = function (n, ...rest) {
+      const result = origCharge.call(this, n, ...rest); // throws on exhaustion
+      charged += n; // only units actually debited count as consulted
+      return result;
+    };
+    try {
+      const r = recall(store, host, { kind: "FILED" });
+      expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.BUDGET_EXHAUSTED });
+      expect(r.results).toBeUndefined();
+      expect(charged).toBeLessThanOrEqual(64);
+    } finally {
+      ConsultationBudget.prototype.charge = origCharge;
+    }
+  });
+
+  it("verdict probe EMEM-001c: factory hang returns WATCHDOG_EXHAUSTED promptly (child process)", async () => {
+    // episodesInOrder() itself busy-loops. Must return WATCHDOG_EXHAUSTED
+    // via the V8 preemptive boundary — never ETIMEDOUT/SIGTERM from the
+    // parent watchdog.
+    const { execFile } = await import("node:child_process");
+    const out = await new Promise((resolve, reject) => {
+      execFile("node", [join(here, "hangProbe.factory.child.mjs")], { timeout: 10000 }, (err, stdout, stderr) =>
+        err ? reject(new Error(`factory hang probe failed: ${stderr || err.message}`)) : resolve(stdout),
+      );
+    });
+    expect(out).toMatch(/FACTORY_HANG_PROBE_PASS/);
+  }, 15000);
+
+  it("verdict probe EMEM-001c: async-next hang returns WATCHDOG_EXHAUSTED promptly (child process)", async () => {
+    // Async generator body busy-loops before its first await (synchronous
+    // within next()). Must return WATCHDOG_EXHAUSTED via the V8 boundary
+    // on the sync prefix — never ETIMEDOUT/SIGTERM.
+    const { execFile } = await import("node:child_process");
+    const out = await new Promise((resolve, reject) => {
+      execFile("node", [join(here, "hangProbe.asyncNext.child.mjs")], { timeout: 10000 }, (err, stdout, stderr) =>
+        err ? reject(new Error(`async-next hang probe failed: ${stderr || err.message}`)) : resolve(stdout),
+      );
+    });
+    expect(out).toMatch(/ASYNC_NEXT_HANG_PROBE_PASS/);
+  }, 15000);
 });
 
 describe("EMEM-002: caller binding and authority registrations", () => {
@@ -1033,6 +1132,73 @@ describe("EMEM-002: caller binding and authority registrations", () => {
     expect(r.results).toEqual([]);
     expect(r.suppressed).toBe(1);
     expect(store.episodeCount()).toBe(1);
+  });
+});
+
+describe("EMEM-002: commit restriction honored by recall", () => {
+  // The synthetic host's source registrations carry no commit bindings;
+  // these tests add one to the registration matching validInput()'s
+  // (repo,path), capture, then mutate the CURRENT binding and recall.
+  function commitHost(commit) {
+    const host = syntheticHost();
+    host.sourceRegistrations = host.sourceRegistrations.map((r) =>
+      r.repo === "onyxgolden/marketplace409" && r.path === "scripts/team-brain/README.md" ? { ...r, commit } : { ...r },
+    );
+    return host;
+  }
+
+  it("verdict probe: changed commit binding suppresses recall (returned:0, suppressed:1)", () => {
+    const c1 = "1".repeat(40);
+    const c2 = "2".repeat(40);
+    const host = commitHost(c1);
+    const store = createFakeStore();
+    const input = validInput();
+    input.source.commit = c1;
+    expect(captureEvent(store, host, input, CALLER_MUSE).result).toBe("CAPTURED");
+    // Tighten the CURRENT binding: the captured commit is no longer vouched for.
+    host.sourceRegistrations = commitHost(c2).sourceRegistrations;
+    const r = recall(store, host, { kind: "FILED" });
+    expect(r.result).toBe("RECALLED");
+    expect(r.returned).toBe(0);
+    expect(r.suppressed).toBe(1);
+    expect(r.results).toEqual([]);
+    expect(store.episodeCount()).toBe(1);
+  });
+
+  it("missing required commit suppresses recall", () => {
+    const c1 = "1".repeat(40);
+    const host = syntheticHost(); // no commit binding yet
+    const store = createFakeStore();
+    expect(captureEvent(store, host, validInput(), CALLER_MUSE).result).toBe("CAPTURED");
+    // Now the host declares a commit restriction: the commit-less episode
+    // no longer satisfies the current registration.
+    host.sourceRegistrations = commitHost(c1).sourceRegistrations;
+    const r = recall(store, host, { kind: "FILED" });
+    expect(r.result).toBe("RECALLED");
+    expect(r.returned).toBe(0);
+    expect(r.suppressed).toBe(1);
+  });
+
+  it("matching commit retains recall permission", () => {
+    const c1 = "1".repeat(40);
+    const host = commitHost(c1);
+    const store = createFakeStore();
+    const input = validInput();
+    input.source.commit = c1;
+    expect(captureEvent(store, host, input, CALLER_MUSE).result).toBe("CAPTURED");
+    const r = recall(store, host, { kind: "FILED" });
+    expect(r.result).toBe("RECALLED");
+    expect(r.returned).toBe(1);
+    expect(r.suppressed).toBe(0);
+  });
+
+  it("no commit required when the host declares no commit restriction", () => {
+    const host = syntheticHost(); // no commit bindings
+    const store = createFakeStore();
+    expect(captureEvent(store, host, validInput(), CALLER_MUSE).result).toBe("CAPTURED");
+    const r = recall(store, host, { kind: "FILED" });
+    expect(r.result).toBe("RECALLED");
+    expect(r.returned).toBe(1);
   });
 });
 

@@ -8,8 +8,10 @@
 // could happen — there is no body read at all.
 //
 // Flow:
-//   1. Host-config validation under the task-level config budget
+//   1. Host-config admission under the task's single aggregate budget
 //      (charge-before-inspect, descriptor-safe; failures are REFUSED).
+//      Admission builds a detached snapshot; all authorization consults
+//      the snapshot, never the original host objects.
 //   2. Descriptor-based admission (own data only, zero accessor invocation,
 //      unknown fields refused before their values are read; scalars must be
 //      primitive — getter-bearing objects/arrays/cycles at scalar positions
@@ -41,6 +43,7 @@ import {
   EVENT_KEY_SPECS,
   DENIAL_KEY_SPECS,
   assertHostConfig,
+  admittedHost,
   validateEventSnapshot,
   scanForbidden,
   authorizeEvent,
@@ -103,17 +106,17 @@ function reviewIdFor(trigger, repo, path) {
  * result: "CAPTURED" | "DUPLICATE_REPLAY" | "CONFLICT" | "REFUSED"
  */
 export function captureEvent(store, host, input, opts = {}) {
-  // Task-level accounting: one config budget for host validation and one
-  // operation budget for the capture operation itself. No phase resets.
-  const configBudget = new ConsultationBudget();
+  // Task-level aggregate accounting: ONE budget for the whole invocation,
+  // threaded through host admission and the operation. Two independent
+  // budgets would let one invocation exceed the 64-candidate task cap.
+  const budget = new ConsultationBudget();
   try {
-    assertHostConfig(host, configBudget);
+    assertHostConfig(host, budget);
   } catch (err) {
     // Host-validation failures (including BUDGET_EXHAUSTED on a hostile
     // host config) are bounded REFUSED envelopes, never throws.
     return refused(err);
   }
-  const budget = new ConsultationBudget();
   let snap;
   try {
     snap = admitObject(input, EVENT_KEY_SPECS);
@@ -149,10 +152,13 @@ export function captureEvent(store, host, input, opts = {}) {
     return refused(err);
   }
   const key = sourceKey(ev.source.repo, ev.source.path);
-  if (host.deniedSources && host.deniedSources.has(key)) {
+  // Denied/revoked checks consult the admitted snapshot (fresh per
+  // invocation, so a prior denySource/revokeSource mutation is visible).
+  const adm = admittedHost(host);
+  if (adm.deniedSources.has(key)) {
     return { result: "REFUSED", code: ENG_CODES.DENIED_SOURCE };
   }
-  if (host.revokedSources && host.revokedSources.has(key)) {
+  if (adm.revokedSources.has(key)) {
     // Idempotent review: repeated captures on a revoked source converge on
     // the revocation's single review record. Best-effort: suppression is
     // already in force (the revoked set), so a review-write failure still
@@ -297,13 +303,13 @@ export function denySource(store, host, input, opts = {}) {
   if (opts.caller === undefined) {
     return { result: "REFUSED", code: ENG_CODES.MISSING_CALLER };
   }
-  const configBudget = new ConsultationBudget();
+  // Single aggregate task budget: host admission and operation share it.
+  const budget = new ConsultationBudget();
   try {
-    assertHostConfig(host, configBudget);
+    assertHostConfig(host, budget);
   } catch (err) {
     return refused(err);
   }
-  const budget = new ConsultationBudget();
   let snap;
   try {
     snap = admitObject(input, DENIAL_KEY_SPECS);
@@ -363,13 +369,13 @@ export function revokeSource(store, host, input, opts = {}) {
   if (opts.caller === undefined) {
     return { result: "REFUSED", code: ENG_CODES.MISSING_CALLER };
   }
-  const configBudget = new ConsultationBudget();
+  // Single aggregate task budget: host admission and operation share it.
+  const budget = new ConsultationBudget();
   try {
-    assertHostConfig(host, configBudget);
+    assertHostConfig(host, budget);
   } catch (err) {
     return refused(err);
   }
-  const budget = new ConsultationBudget();
   let snap;
   try {
     snap = admitObject(input, DENIAL_KEY_SPECS);
