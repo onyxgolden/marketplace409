@@ -378,18 +378,54 @@ def _css_strip_comments_safe(text: str) -> tuple[str, bool]:
     return "".join(out), True
 
 
-def _css_ident_end(text: str, i: int) -> int:
-    """Raw end index of the identifier starting at i.
+_CSS_HEX = frozenset("0123456789abcdefABCDEF")
+_CSS_IDENT_WS = " \t\n\r\f"
 
-    Identifier characters are consumed raw (backslash escapes are kept as
-    source pairs here); the caller decodes with _css_unescape. This keeps
-    escape sequences from splitting identifiers during tokenization.
+
+def _css_ident_end(text: str, i: int) -> int:
+    """Raw end index of the identifier starting at i, or -1 on an invalid
+    terminal escape.
+
+    Consumes full CSS escapes per CSS Syntax Module Level 3 (D641-001
+    round 6): a backslash followed by 1-6 hex digits plus ONE optional
+    whitespace terminator (space/tab/newline; CRLF counts as one), or a
+    backslash plus one non-newline character. Identifier characters are
+    consumed raw (backslash escapes are kept as source pairs here); the
+    caller decodes with _css_unescape. This keeps escape sequences like
+    f\\69 ll (space terminates the hex escape; the identifier continues)
+    from splitting identifiers during tokenization.
+
+    A backslash at the very end of input, or a backslash followed by a
+    newline, is not a valid escape: returns -1 so every caller refuses
+    the input rather than making zero progress and spinning. Never
+    returns i when text[i] starts an identifier (the branch condition
+    guarantees at least one char is consumed or -1 is returned).
     """
     j, n = i, len(text)
     while j < n:
         d = text[j]
-        if d == "\\" and j + 1 < n:
-            j += 2
+        if d == "\\":
+            if j + 1 >= n:
+                return -1  # terminal backslash: invalid escape
+            nxt = text[j + 1]
+            if nxt == "\n" or nxt == "\r" or nxt == "\f":
+                return -1  # backslash-newline is never a valid escape
+            if nxt in _CSS_HEX:
+                k = j + 1
+                while k < n and k - (j + 1) < 6 and text[k] in _CSS_HEX:
+                    k += 1
+                # One optional whitespace terminates the hex escape
+                # (CSS Syntax L3); CRLF counts as a single newline.
+                if k < n and text[k] in " \t\n\f":
+                    k += 1
+                elif k < n and text[k] == "\r":
+                    if k + 1 < n and text[k + 1] == "\n":
+                        k += 2
+                    else:
+                        k += 1
+                j = k
+            else:
+                j += 2
         elif d.isalnum() or d in "-_":
             j += 1
         else:
@@ -401,10 +437,14 @@ def _css_decode_ident_at(text: str, i: int) -> tuple[str, int]:
     """Decode the identifier starting at i. Returns (decoded_lower, raw_end).
 
     Escapes are decoded per token (CSS Syntax L3), so u\\72l(...) spells
-    url(...) and f\\69ll spells fill. The raw end index lets the scanner
-    continue on the original text.
+    url(...) and f\\69 ll spells fill. The raw end index lets the scanner
+    continue on the original text. raw_end is -1 when the identifier
+    contains an invalid terminal escape; the caller must refuse the input
+    (never spin on zero progress).
     """
     j = _css_ident_end(text, i)
+    if j < 0:
+        return "", -1
     return _css_unescape(text[i:j]).lower(), j
 
 
@@ -429,6 +469,8 @@ def _css_extract_urls(value: str) -> tuple[list[str], bool]:
         elif (c.isalpha() or c in "-_" or c == "\\") and not (
                 i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_")):
             name, j = _css_decode_ident_at(value, i)
+            if j < 0:
+                return urls, False  # invalid terminal escape: fail closed
             if name == "url":
                 k = j
                 while k < n and value[k] in _CSS_WS:
@@ -499,6 +541,8 @@ def _css_extract_functions(value: str) -> tuple[list[str], bool]:
         elif (c.isalpha() or c in "-_" or c == "\\") and not (
                 i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_")):
             name, j = _css_decode_ident_at(value, i)
+            if j < 0:
+                return names, False  # invalid terminal escape: fail closed
             k = j
             while k < n and value[k] in _CSS_WS:
                 k += 1
@@ -573,13 +617,18 @@ def _css_scan_rules(text: str) -> tuple[list, list, bool]:
             return True  # selector text or junk: no resource surface
         # Decode identifier escapes in the property name before judging it:
         # f\69ll spells fill to the browser, and its url() must be
-        # classified. A name that is not a clean ident after decoding is
-        # not a declaration (e.g. pseudo-class selector).
+        # classified. An invalid terminal escape in the name fails closed.
         prop_raw = stmt[:ci].strip()
         decoded, rend = _css_decode_ident_at(prop_raw, 0)
+        if rend < 0:
+            return False
         if rend != len(prop_raw) or \
                 not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9-]*", decoded):
-            return True
+            # A colon outside strings/parens means declaration context, so
+            # an unrecognized name is unsupported syntax: refuse rather
+            # than silently skipping (D641-001 round 6 -- an escaped remote
+            # fill URL must never be dropped on the floor).
+            return False
         decls.append((decoded, stmt[ci + 1:].strip()))
         return True
 

@@ -351,6 +351,140 @@ ok, _ = check_text(
     "<style>rect{f\\69ll:url(#g)}</style>"
     '<rect width="10" height="10"/></svg>', ".svg")
 check("css:escaped-prop-spelling-local:passes", ok)
+# --- 2e. D641-001 round 6: escape token boundaries + tokenizer progress ---
+# A hex escape terminator space does not end the identifier: f\69 ll
+# spells fill, so the remote url() must be classified, never skipped.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{f\\69 ll:url(https://example.test/x)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:hex-terminator-prop-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Same probe in a style attribute (SVG), an HTML style attribute, and a
+# hex-spelled url() function name.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="10" height="10" '
+    'style="f\\69 ll:url(https://example.test/x)"/></svg>', ".svg")
+check("css:hex-terminator-prop-url-styleattr:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+ok, findings = check_text(
+    '<div style="f\\69 ll:url(https://example.test/x)">x</div>', ".html")
+check("css:hex-terminator-prop-url-htmlattr:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+ok, findings = check_text(
+    '<div style="fill:u\\72 l(https://example.test/x)">x</div>', ".html")
+check("css:hex-terminator-url-spelling-remote:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Six hex digits plus the whitespace terminator also spell the same ident.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{\\000066 ill:url(https://example.test/x)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:hex-terminator-6digit-prop-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# A newline also terminates a hex escape; the identifier continues.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{f\\69\nll:url(https://example.test/x)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:hex-terminator-newline-prop-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Positives: spaced hex escapes over local fragments still pass.
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{f\\69 ll:url(#g)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:hex-terminator-local:passes", ok)
+ok, _ = check_text(
+    '<div style="fill:u\\72 l(#g)">x</div>', ".html")
+check("css:hex-terminator-url-spelling-local:passes", ok)
+# Valid escaped-backslash control in a url() argument: \\ decodes to a
+# literal backslash inside a local fragment; the declaration passes.
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url(#a\\\\b)}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-backslash-url-arg:passes", ok)
+
+
+def _check_child(content: str, suffix: str, timeout: int = 10
+                 ) -> tuple[bool, list[str]]:
+    """Run check_text in a child process.
+
+    A tokenizer spin shows up as a subprocess.TimeoutExpired (failing the
+    check) instead of hanging the suite; crashes surface as failures.
+    """
+    code = (
+        "import json, sys; "
+        "from check_offline import check_text; "
+        "ok, findings = check_text(sys.stdin.read(), " + repr(suffix) + "); "
+        "print(json.dumps({'ok': ok, 'codes': [f['code'] for f in findings]}))"
+    )
+    proc = subprocess.run([sys.executable, "-c", code],
+                          input=content, capture_output=True, text=True,
+                          timeout=timeout, cwd=str(HERE))
+    if proc.returncode != 0:
+        raise RuntimeError(f"checker child failed: {proc.stderr[:200]}")
+    rep = json.loads(proc.stdout)
+    return rep["ok"], rep["codes"]
+
+
+# Trailing-backslash and incomplete-token probes run child-contained so a
+# nonterminating lexer fails the suite loudly (timeout) instead of
+# hanging it. The verdict's exact probe must refuse F_MALFORMED_CSS.
+try:
+    ok, codes = _check_child('<div style="fill: \\">Label</div>', ".html")
+    check("css:terminal-backslash-html:refused",
+          (not ok) and "F_MALFORMED_CSS" in codes, f"codes={codes}")
+    # A backslash at the very end of a declaration value (true terminal
+    # escape) must refuse, not spin: probe _check_css_decls directly.
+    code = (
+        "import json; "
+        "from check_offline import _check_css_decls, _FindingSink; "
+        "sink = _FindingSink(); "
+        "_check_css_decls('rect{fill:red' + chr(92), sink, ''); "
+        "print(json.dumps({'ok': not sink.findings, "
+        "'codes': [f['code'] for f in sink.findings]}))"
+    )
+    proc = subprocess.run([sys.executable, "-c", code],
+                          capture_output=True, text=True, timeout=10,
+                          cwd=str(HERE))
+    rep = json.loads(proc.stdout)
+    check("css:terminal-backslash-styleblock:refused",
+          (not rep["ok"]) and "F_MALFORMED_CSS" in rep["codes"],
+          f"codes={rep['codes']}")
+    # A backslash followed by a newline is never a valid CSS escape:
+    # refused, not spun and not classified.
+    ok, codes = _check_child(
+        '<div style="f\\\nill:url(https://example.test/x)">x</div>', ".html")
+    check("css:backslash-newline-ident:refused",
+          (not ok) and "F_MALFORMED_CSS" in codes, f"codes={codes}")
+    # Unterminated url() argument ending in an escape: refused.
+    ok, codes = _check_child(
+        '<div style="fill:url(#a\\">x</div>', ".html")
+    check("css:unterminated-urlarg-backslash:refused",
+          (not ok) and "F_MALFORMED_CSS" in codes, f"codes={codes}")
+except subprocess.TimeoutExpired:
+    check("css:terminal-backslash-nohang", False,
+          "checker hung: subprocess timeout expired")
+except RuntimeError as e:
+    check("css:terminal-backslash-nohang", False, str(e))
+# Sanitizer regressions for round 6: hex-terminator property refuses, and
+# a trailing backslash fails closed (never spins).
+probe_r6 = _tmp(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{f\\69 ll:url(https://example.test/x)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+ok_s, _, rep_s = sanitize(probe_r6)
+check("sanitize:hex-terminator-prop-url:refused",
+      (not ok_s) and "F_REMOTE_CSS" in rep_s.get("finding_codes", []))
+probe_r6.unlink(missing_ok=True)
+probe_r6b = _tmp('<div style="fill: \\">x</div>', ".html")
+ok_s, _, rep_s = sanitize(probe_r6b)
+check("sanitize:terminal-backslash-styleattr:refused",
+      (not ok_s) and "F_INVALID_DIMENSION" in rep_s.get("finding_codes", []))
+probe_r6b.unlink(missing_ok=True)
 # --- 3. Dimension / structural bounds (D641-004) ---
 ok, findings = check_text('<svg xmlns="http://www.w3.org/2000/svg" '
                           'style="width:50%"></svg>', ".svg")
