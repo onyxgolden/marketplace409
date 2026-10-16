@@ -135,6 +135,18 @@ pub fn composite_tiles(
     Ok(canvas)
 }
 
+/// True when every pixel of an RGBA buffer is byte-identical. A uniform
+/// frame usually means a dead/blank native capture (uninitialized bitmap,
+/// BitBlt from wrong coordinates) — but a genuinely solid-color desktop is
+/// also uniform, so callers record this as a *warning*, never a hard error.
+pub fn is_solid_color(rgba: &[u8]) -> bool {
+    if rgba.len() < 8 || rgba.len() % 4 != 0 {
+        return false;
+    }
+    let (first, rest) = rgba.split_at(4);
+    rest.chunks_exact(4).all(|px| px == first)
+}
+
 /// 2a native raster engine: full monitor, window, region, delayed.
 pub struct NativeRasterEngine;
 
@@ -279,6 +291,20 @@ impl NativeRasterEngine {
         }
 
         let canvas = composite_tiles(canvas_w, canvas_h, &tiles)?;
+        // White-frame diagnosability: a single solid color across the whole
+        // canvas almost always means the native pipeline produced a dead
+        // frame (uninitialized bitmap, BitBlt from the wrong coordinates).
+        // A genuinely solid-color desktop is legitimate but vanishingly
+        // rare — record it as a warning in the artifact/sidecar rather than
+        // failing the capture, so the preview dialog can surface it.
+        let mut warnings = Vec::new();
+        if is_solid_color(&canvas) {
+            warnings.push(
+                "captured frame is a single solid color — the capture pipeline \
+                 may have produced a blank frame; verify the saved PNG"
+                    .to_string(),
+            );
+        }
         let png_bytes = png::encode_rgba(canvas_w, canvas_h, &canvas)
             .map_err(|e| CaptureError::EncodeFailed(e.to_string()))?;
 
@@ -303,6 +329,7 @@ impl NativeRasterEngine {
             captured_at,
             if delay_ms > 0 { Some(delay_ms) } else { None },
         )
+        .map(|a| a.with_warnings(warnings))
         .map_err(|e| CaptureError::EncodeFailed(e.to_string()))
     }
 }

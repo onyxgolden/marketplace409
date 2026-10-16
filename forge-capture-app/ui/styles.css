@@ -235,6 +235,29 @@ dialog h2 { margin: 0 0 8px; font-size: 16px; }
 .dialog-sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
+/* Capture preview dialog: larger than the standard dialogs so the
+   screenshot is actually readable. The image scales down to fit. */
+#preview-dialog {
+  max-width: min(900px, calc(100vw - 60px));
+  width: min(900px, calc(100vw - 60px));
+}
+.preview-image-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#preview-image {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  display: block;
+}
+
 .help-body { font-size: 13px; }
 .help-body h3 { margin: 14px 0 6px; font-size: 13px; }
 .help-body p { margin: 6px 0; }

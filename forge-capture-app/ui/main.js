@@ -447,6 +447,90 @@ async function probeForgeSaveButtons() {
 window.ForgeSaveUI = { saveToForge, probeForgeSaveButtons };
 
 // ---------------------------------------------------------------------------
+// Capture preview dialog
+// ---------------------------------------------------------------------------
+// Opens automatically after every successful capture so the scribe workflow
+// (capture → preview → annotate → export) can start immediately. The dialog
+// shows the saved PNG, its metadata, and the same actions as the session
+// library row: Copy, Annotate (AI Edit), Save as… (export), Close.
+
+let previewCaptureId = null;
+
+function setPreviewStatus(text, kind) {
+  const el = $("preview-status");
+  el.textContent = text;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+async function openPreview(ref) {
+  if (!ref || !ref.id) return;
+  previewCaptureId = ref.id;
+  // Metadata line: dimensions, kind, saved path.
+  $("preview-meta").textContent =
+    `${ref.kind} — ${ref.width}×${ref.height} — ${ref.png_path || ""}`;
+  setPreviewStatus("", "");
+  // Load the PNG bytes through the existing upload-payload command and
+  // render as a data URL. The image is already saved to disk; this is
+  // purely for display.
+  try {
+    const payload = await invoke("get_capture_upload_payload", { id: ref.id });
+    $("preview-image").src = `data:${payload.mime};base64,${payload.bytes_b64}`;
+  } catch (e) {
+    setPreviewStatus(`Could not load preview image: ${e}`, "error");
+    $("preview-image").removeAttribute("src");
+  }
+  // Surface any engine warnings (e.g. solid-color frame) from the sidecar
+  // so a blank capture is diagnosable right in the preview.
+  try {
+    const sidecar = JSON.parse(await invoke("get_sidecar", { id: ref.id }));
+    const warnings = sidecar.warnings || [];
+    if (warnings.length > 0) {
+      setPreviewStatus(`Warning: ${warnings.join("; ")}`, "warning");
+    }
+  } catch {
+    /* sidecar warnings are best-effort; the image preview is what matters */
+  }
+  const dlg = $("preview-dialog");
+  if (!dlg.open) dlg.showModal();
+}
+
+function closePreview() {
+  $("preview-dialog").close();
+  previewCaptureId = null;
+}
+
+async function onPreviewCopy() {
+  if (!previewCaptureId) return;
+  try {
+    await invoke("copy_to_clipboard", { id: previewCaptureId });
+    setPreviewStatus("Copied to clipboard.", "ok");
+  } catch (e) {
+    setPreviewStatus(`Copy failed: ${e}`, "error");
+  }
+}
+
+async function onPreviewSaveAs() {
+  if (!previewCaptureId) return;
+  try {
+    const path = await invoke("export_capture", { id: previewCaptureId });
+    setPreviewStatus(`Exported to ${path}`, "ok");
+  } catch (e) {
+    setPreviewStatus(`Export failed: ${e}`, "error");
+  }
+}
+
+function onPreviewAnnotate() {
+  if (!previewCaptureId) return;
+  // The dedicated manual-annotation canvas is the next scribe step; for now
+  // route through the AI Edit dialog, which is the existing image-edit path.
+  // Close the preview first so the dialogs don't stack.
+  const id = previewCaptureId;
+  closePreview();
+  // Reuse the session-library ref shape the AI Edit dialog expects.
+  openAiEditDialog({ id });
+}
+
+// ---------------------------------------------------------------------------
 // Capture
 // ---------------------------------------------------------------------------
 
@@ -493,6 +577,9 @@ async function doCapture() {
     });
     captureItem(ref);
     setStatus(`Saved ${ref.width}x${ref.height}.`, "ok");
+    // Scribe workflow: show the preview immediately so the user can
+    // verify, annotate, or export without hunting the session list.
+    void openPreview(ref);
   } catch (e) {
     setStatus(`Capture failed: ${e}`, "error");
   } finally {
@@ -511,7 +598,13 @@ async function doCapture() {
 // @tauri-apps/api dependency. Non-fatal if the internals ever change.
 async function listenCaptureSaved() {
   await listenEvent("capture-saved", (msg) => {
-    if (msg && msg.payload) captureItem(msg.payload);
+    if (msg && msg.payload) {
+      captureItem(msg.payload);
+      // Region captures originate from the overlay window: the main window
+      // only learns about them here, so the preview must open from this
+      // event too.
+      void openPreview(msg.payload);
+    }
   });
 }
 
@@ -586,6 +679,11 @@ async function init() {
   $("help-btn").addEventListener("click", () => $("help-dialog").showModal());
   $("ai-edit-submit").addEventListener("click", onAiEditSubmit);
   $("ai-edit-cancel").addEventListener("click", onAiEditCancel);
+  // Capture preview dialog buttons.
+  $("preview-close").addEventListener("click", closePreview);
+  $("preview-copy").addEventListener("click", () => void onPreviewCopy());
+  $("preview-save-as").addEventListener("click", () => void onPreviewSaveAs());
+  $("preview-edit").addEventListener("click", onPreviewAnnotate);
   onModeChange();
   onScrollTargetChange();
   await listenCaptureSaved();
