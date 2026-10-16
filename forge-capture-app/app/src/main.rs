@@ -1483,17 +1483,19 @@ fn stored_backdrop_png(ctx: Option<&OverlayContext>) -> Result<&[u8], String> {
 /// Retry the frozen backdrop for the in-flight region pick (the page's
 /// blank-frame warning "Retry" button). The overlay window is hidden — not
 /// closed — while the fresh frame is captured, so the retry frame cannot
-/// catch the picker itself; on any failure the window is shown again and
-/// the previous frame stays in place, so the user is never stranded on a
-/// dead overlay with no way back.
+/// catch the picker itself. The commit is session-guarded: if the pick was
+/// cancelled mid-retry, the window stays down and the retry reports it
+/// instead of resurrecting a dead picker. If the capture itself failed, the
+/// window is reshown with the previous frame intact, so the user is never
+/// stranded on a dead overlay with no way back.
 #[tauri::command]
 fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
-    let monitor_id = {
+    let (monitor_id, retry_session) = {
         let guard = state.pending_overlay.lock().unwrap();
         let ctx = guard
             .as_ref()
             .ok_or_else(|| "no pending region overlay; call begin_region_pick first".to_string())?;
-        ctx.monitor_id.clone()
+        (ctx.monitor_id.clone(), ctx.session_id)
     };
     let monitors = current_monitors()?;
     if !monitors.iter().any(|m| m.id == monitor_id) {
@@ -1509,24 +1511,27 @@ fn retry_region_backdrop(app: tauri::AppHandle, state: State<AppState>) -> Resul
     // the next frame; without this the retry could capture the picker.
     std::thread::sleep(Duration::from_millis(250));
     let fresh = capture_region_backdrop(&monitors, &monitor_id);
-    // Restore the picker window before reporting anything: on failure the
-    // user keeps picking on the previous frame instead of staring at
-    // nothing.
+    // Commit the retry only if this is still the same session. The lock is
+    // held across the session check AND the window restore: `cancel_region_pick`
+    // must take this same lock to clear the session, so a cancel during the
+    // capture cannot slip between the check and the show — a cancelled retry
+    // never resurrects the picker (no zombie overlay, no show-vs-close flash).
+    // If instead the capture itself failed, the session is still ours: the
+    // window is reshown and the previous frame stays in place, so the user
+    // keeps picking instead of staring at nothing.
+    let mut guard = state.pending_overlay.lock().unwrap();
+    let ctx = match guard.as_mut() {
+        Some(ctx) if ctx.session_id == retry_session => ctx,
+        _ => return Err("region pick was cancelled during retry".to_string()),
+    };
     let _ = window.show();
     let _ = window.set_focus();
     let backdrop_png = fresh.map_err(|e| format!("retry capture failed: {e}"))?;
     let (_, _, rgba) =
         decode_own(&backdrop_png).map_err(|e| format!("retry backdrop decode failed: {e}"))?;
-    let backdrop_blank = solid_frame_rgba(&rgba);
-    let mut guard = state.pending_overlay.lock().unwrap();
-    match guard.as_mut() {
-        Some(ctx) => {
-            ctx.backdrop_png = Some(backdrop_png);
-            ctx.backdrop_blank = backdrop_blank;
-            Ok(())
-        }
-        None => Err("region pick was cancelled during retry".to_string()),
-    }
+    ctx.backdrop_png = Some(backdrop_png);
+    ctx.backdrop_blank = solid_frame_rgba(&rgba);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
