@@ -1,0 +1,292 @@
+/**
+ * oracle.js — INDEPENDENT re-derivation of the Maintenance Manager
+ * Agent's rules, written fresh from the brief's text for scoring the
+ * battery. This file does NOT import src/index.js, src/audit.js or any
+ * other scored module — it recomputes expected structural projections
+ * directly from the raw fixture register JSON, using its own date
+ * arithmetic (Date.UTC, not canonical.js's dayIndexOfMs), so a bug
+ * shared between implementation and oracle cannot hide a real defect.
+ *
+ * Only used by corpus/make-battery.js (an authoring tool, not part of
+ * the scored path) to author corpus/battery.json's `expected` field.
+ */
+
+const STATUS_VALUES = new Set(["OPEN", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
+const PRIORITY_VALUES = new Set(["P1", "P2", "P3"]);
+const RECORD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function civilDayIndex(dateStr) {
+  // Independent of canonical.js: computes the UTC day index straight
+  // from Date.UTC(y, m-1, d), not by parsing an ISO midnight string.
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+}
+
+function isRealDate(dateStr) {
+  if (!DATE_RE.test(dateStr)) return false;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+function ageBinOf(ageDays) {
+  if (ageDays <= 7) return "bin_0_7";
+  if (ageDays <= 30) return "bin_8_30";
+  if (ageDays <= 90) return "bin_31_90";
+  return "bin_91_plus";
+}
+
+const INJECTION_NEEDLES = [
+  "dispatch a technician", "close this work order", "schedule the", "purchase parts",
+  "mark this work order", "approve this", "predict failure", "<img", "onerror=",
+  "ignore previous instructions", "act as the technician", "fetch http", "javascript:",
+];
+function isInjected(text) {
+  const low = (text ?? "").toLowerCase();
+  return INJECTION_NEEDLES.some((n) => low.includes(n));
+}
+
+function registerIsStructurallyValid(reg) {
+  if (typeof reg !== "object" || reg === null) return false;
+  if (!Array.isArray(reg.assets) || !Array.isArray(reg.work_orders) || !Array.isArray(reg.pm_occurrences)) return false;
+  for (const wo of reg.work_orders) {
+    if (!RECORD_ID_RE.test(wo.work_order_id ?? "")) return false;
+    if (!RECORD_ID_RE.test(wo.asset_id ?? "")) return false;
+    if (!STATUS_VALUES.has(wo.status)) return false;
+    if (!PRIORITY_VALUES.has(wo.priority)) return false;
+    if (!isRealDate(wo.created_date ?? "")) return false;
+    if (wo.completed_date !== null && !isRealDate(wo.completed_date)) return false;
+    if (wo.due_date !== null && !isRealDate(wo.due_date)) return false;
+  }
+  for (const occ of reg.pm_occurrences) {
+    if (!RECORD_ID_RE.test(occ.occurrence_id ?? "")) return false;
+    if (!RECORD_ID_RE.test(occ.asset_id ?? "")) return false;
+    if (!isRealDate(occ.due_date ?? "")) return false;
+    if (!isRealDate(occ.window_start ?? "")) return false;
+    if (!isRealDate(occ.window_end ?? "")) return false;
+    if (occ.linked_work_order_id !== null && !RECORD_ID_RE.test(occ.linked_work_order_id)) return false;
+  }
+  return true;
+}
+
+function hasDuplicates(arr) {
+  return new Set(arr).size !== arr.length;
+}
+
+function refusedShape(code) {
+  return {
+    status: "REFUSED",
+    complete: false,
+    diagnostic_codes: [code],
+    quarantined_work_order_ids: [],
+    source_ref_count: 0,
+    population: { declared_total: 0, complete: false, actual_total: 0, evidence_state: "unverifiable" },
+    backlog: { total: 0, by_priority: { P1: 0, P2: 0, P3: 0 }, by_bin: { bin_0_7: 0, bin_8_30: 0, bin_31_90: 0, bin_91_plus: 0 } },
+    overdue: { total: 0, unknown_due_count: 0, by_priority: { P1: 0, P2: 0, P3: 0 } },
+    cancelled_count: 0,
+    pm_compliance: { basis_state: "UNVERIFIABLE", denominator: null, numerator: null, ratio: null, display_percent: null, early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0, poisoning_occurrence_ids: [] },
+    integrity_findings: [],
+    excluded_ids: { future_created: [], orphan_asset_work_orders: [], invalid_completion: [], orphan_asset_pm_occurrences: [] },
+    coverage: { state: "UNKNOWN", admitted_count: 0, excluded_count: 0 },
+  };
+}
+
+function reduceFrac(n, d) {
+  const g = (a, b) => (b === 0 ? a : g(b, a % b));
+  const gg = Math.abs(g(n, d)) || 1;
+  return { num: (n / gg).toString(), den: (d / gg).toString() };
+}
+
+function percentHalfAwayFromZero(n, d) {
+  // n/d * 100, rounded to 2 decimals, half-away-from-zero, via integer
+  // arithmetic scaled by 10^4 then divided by 100 at display time.
+  const scaled = Math.round((n * 1000000) / d) / 10000; // 2-decimal precision via careful rounding
+  // Use a precise integer-based half-away-from-zero at 2 decimals instead
+  // of floating rounding above (kept only as a sanity cross-check).
+  const num = n * 10000;
+  const den = d;
+  let q = Math.floor(num / den);
+  const rem = num - q * den;
+  if (rem * 2 >= den) q += 1;
+  const cents = q; // n/d*100 scaled by 100 (i.e. this is the value * 100 * 100)
+  const whole = Math.floor(cents / 100);
+  const frac = Math.abs(cents % 100);
+  return `${whole}.${frac.toString().padStart(2, "0")}`;
+}
+
+/**
+ * computeExpected(register, task, assetsComplete) -> structural
+ * projection matching tests/harness.js's structuralOf() shape, derived
+ * independently from the brief's rules.
+ *
+ * `assetsComplete` carries task.options.population as given (declared
+ * total + complete flag) — the oracle checks it against the register's
+ * actual asset count itself, exactly as the brief specifies.
+ */
+export function computeExpected(register, task) {
+  if (!registerIsStructurallyValid(register)) return refusedShape("INVALID_INPUT");
+
+  const woIds = register.work_orders.map((w) => w.work_order_id);
+  const occIds = register.pm_occurrences.map((o) => o.occurrence_id);
+  if (hasDuplicates(register.assets)) return refusedShape("INVALID_INPUT");
+  if (hasDuplicates(woIds)) return refusedShape("INVALID_INPUT");
+  if (hasDuplicates(occIds)) return refusedShape("INVALID_INPUT");
+
+  const assetSet = new Set(register.assets);
+  const asOfDay = civilDayIndex(task.options.as_of_date);
+  const asOfDate = task.options.as_of_date;
+  const winStart = task.options.window.start_date;
+  const winEnd = task.options.window.end_date;
+
+  const quarantined_work_order_ids = [];
+  const classified = [];
+  const woById = new Map();
+  const integrityIdsByType = { future_created: [], orphan_asset_work_orders: [], invalid_completion: [] };
+
+  for (const wo of register.work_orders) {
+    if (isInjected(wo.notes ?? "")) quarantined_work_order_ids.push(wo.work_order_id);
+
+    let kind;
+    if (!assetSet.has(wo.asset_id)) {
+      kind = "integrity"; integrityIdsByType.orphan_asset_work_orders.push(wo.work_order_id);
+    } else if (wo.created_date > asOfDate) {
+      kind = "integrity"; integrityIdsByType.future_created.push(wo.work_order_id);
+    } else if (wo.status === "COMPLETED") {
+      if (wo.completed_date === null || wo.completed_date < wo.created_date || wo.completed_date > asOfDate) {
+        kind = "integrity"; integrityIdsByType.invalid_completion.push(wo.work_order_id);
+      } else {
+        kind = "completed";
+      }
+    } else if (wo.status === "CANCELLED") {
+      kind = "cancelled";
+    } else {
+      kind = "backlog";
+    }
+    const entry = { wo, kind };
+    classified.push(entry);
+    woById.set(wo.work_order_id, entry);
+  }
+
+  const backlog = { total: 0, by_priority: { P1: 0, P2: 0, P3: 0 }, by_bin: { bin_0_7: 0, bin_8_30: 0, bin_31_90: 0, bin_91_plus: 0 } };
+  const overdue = { total: 0, unknown_due_count: 0, by_priority: { P1: 0, P2: 0, P3: 0 } };
+  let cancelled_count = 0;
+  const integrityFindings = [];
+  for (const c of classified) {
+    if (c.kind === "integrity") continue;
+    if (c.kind === "cancelled") { cancelled_count += 1; continue; }
+    if (c.kind === "completed") continue;
+    backlog.total += 1;
+    backlog.by_priority[c.wo.priority] += 1;
+    const age = asOfDay - civilDayIndex(c.wo.created_date);
+    backlog.by_bin[ageBinOf(age)] += 1;
+    if (c.wo.due_date === null) {
+      overdue.unknown_due_count += 1;
+    } else if (c.wo.due_date < asOfDate) {
+      overdue.total += 1;
+      overdue.by_priority[c.wo.priority] += 1;
+    }
+  }
+  for (const code of ["FUTURE_CREATED"]) {
+    for (const id of integrityIdsByType.future_created) integrityFindings.push({ code, record_type: "work_order", record_id: id });
+  }
+  for (const id of integrityIdsByType.orphan_asset_work_orders) integrityFindings.push({ code: "ORPHAN_ASSET", record_type: "work_order", record_id: id });
+  for (const id of integrityIdsByType.invalid_completion) integrityFindings.push({ code: "INVALID_COMPLETION", record_type: "work_order", record_id: id });
+
+  // PM compliance.
+  const dueMembers = register.pm_occurrences.filter((o) => o.due_date >= winStart && o.due_date <= winEnd && o.due_date <= asOfDate);
+  const orphanPmIds = [];
+  const danglingLinkIds = [];
+  const invalidLinkIds = [];
+  let pmSection;
+  if (dueMembers.length === 0) {
+    const popComplete = task.options.population.complete === true && task.options.population.declared_total === register.assets.length;
+    pmSection = popComplete
+      ? { basis_state: "NO_DUE_OCCURRENCES", denominator: 0, numerator: 0, ratio: null, display_percent: null, early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0, poisoning_occurrence_ids: [] }
+      : { basis_state: "UNVERIFIABLE", denominator: null, numerator: null, ratio: null, display_percent: null, early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0, poisoning_occurrence_ids: [] };
+  } else {
+    let numerator = 0, early = 0, late = 0, cancelledLink = 0, unlinked = 0;
+    const poisoning = [];
+    for (const occ of dueMembers) {
+      if (!assetSet.has(occ.asset_id)) {
+        poisoning.push(occ.occurrence_id);
+        orphanPmIds.push(occ.occurrence_id);
+        continue;
+      }
+      if (occ.linked_work_order_id === null) { unlinked += 1; continue; }
+      const linked = woById.get(occ.linked_work_order_id);
+      if (!linked) { poisoning.push(occ.occurrence_id); danglingLinkIds.push(occ.occurrence_id); continue; }
+      if (linked.kind === "integrity") { poisoning.push(occ.occurrence_id); invalidLinkIds.push(occ.occurrence_id); continue; }
+      if (linked.kind === "cancelled") { cancelledLink += 1; continue; }
+      if (linked.kind !== "completed") continue;
+      const cd = linked.wo.completed_date;
+      if (cd < occ.window_start) early += 1;
+      else if (cd > occ.window_end || cd > asOfDate) late += 1;
+      else numerator += 1;
+    }
+    if (poisoning.length > 0) {
+      pmSection = { basis_state: "UNVERIFIABLE", denominator: null, numerator: null, ratio: null, display_percent: null, early_count: early, late_count: late, cancelled_link_count: cancelledLink, unlinked_count: unlinked, poisoning_occurrence_ids: [...poisoning].sort() };
+    } else {
+      const denominator = dueMembers.length;
+      const frac = reduceFrac(numerator, denominator);
+      pmSection = { basis_state: "VERIFIED", denominator, numerator, ratio: frac, display_percent: `${percentHalfAwayFromZero(numerator, denominator)}%`, early_count: early, late_count: late, cancelled_link_count: cancelledLink, unlinked_count: unlinked, poisoning_occurrence_ids: [] };
+    }
+  }
+  for (const id of orphanPmIds) integrityFindings.push({ code: "ORPHAN_ASSET", record_type: "pm_occurrence", record_id: id });
+  for (const id of danglingLinkIds) integrityFindings.push({ code: "DANGLING_PM_LINK", record_type: "pm_occurrence", record_id: id });
+  for (const id of invalidLinkIds) integrityFindings.push({ code: "PM_LINK_TO_INVALID_WORK_ORDER", record_type: "pm_occurrence", record_id: id });
+
+  // population.evidence_state reflects the asset/work-order register's
+  // OWN cleanliness only (future_created/orphan_asset_work_orders/
+  // invalid_completion) — PM link-poisoning findings are tracked
+  // separately and do not retroactively flip this field; they instead
+  // block fullyComplete/REPORT_READY on their own, below.
+  const woIntegrityCount = integrityIdsByType.future_created.length + integrityIdsByType.orphan_asset_work_orders.length + integrityIdsByType.invalid_completion.length;
+  const populationMatches = task.options.population.declared_total === register.assets.length;
+  const populationEvidence = !task.options.population.complete ? "unverifiable" : woIntegrityCount > 0 ? "mismatch" : populationMatches ? "verified" : "mismatch";
+  const population = { declared_total: task.options.population.declared_total, complete: task.options.population.complete, actual_total: register.assets.length, evidence_state: populationEvidence };
+
+  const totalRecords = register.work_orders.length + register.pm_occurrences.length;
+  const excludedCount = integrityFindings.length;
+  const fullyComplete = populationEvidence === "verified" && woIntegrityCount === 0 && pmSection.poisoning_occurrence_ids.length === 0;
+  let status, coverageState;
+  if (totalRecords === 0) {
+    status = "EMPTY";
+    coverageState = populationEvidence === "verified" ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY";
+  } else {
+    status = fullyComplete ? "REPORT_READY" : "PARTIAL";
+    coverageState = fullyComplete ? "COMPLETE" : "PARTIAL";
+  }
+
+  const refKey = (r) => `${r.repo}|${r.path}|${r.commit}|${r.blob}`;
+  const seenRefs = new Set([refKey(task.fixture_refs.register)]);
+  const quarantinedSet = new Set(quarantined_work_order_ids);
+  for (const wo of register.work_orders) {
+    if (quarantinedSet.has(wo.work_order_id)) continue;
+    seenRefs.add(refKey(wo.content_ref));
+  }
+  for (const occ of register.pm_occurrences) seenRefs.add(refKey(occ.content_ref));
+
+  return {
+    status,
+    complete: true,
+    diagnostic_codes: [],
+    quarantined_work_order_ids: quarantined_work_order_ids.sort(),
+    source_ref_count: seenRefs.size,
+    population,
+    backlog,
+    overdue,
+    cancelled_count,
+    pm_compliance: pmSection,
+    integrity_findings: integrityFindings.map((f) => ({ code: f.code, record_type: f.record_type, record_id: f.record_id })).sort((a, b) => (a.record_id < b.record_id ? -1 : 1)),
+    excluded_ids: {
+      future_created: [...integrityIdsByType.future_created].sort(),
+      orphan_asset_work_orders: [...integrityIdsByType.orphan_asset_work_orders].sort(),
+      invalid_completion: [...integrityIdsByType.invalid_completion].sort(),
+      orphan_asset_pm_occurrences: [...orphanPmIds].sort(),
+    },
+    coverage: { state: coverageState, admitted_count: totalRecords - excludedCount, excluded_count: excludedCount },
+  };
+}
+
+export { refusedShape, civilDayIndex, ageBinOf };

@@ -1,0 +1,13 @@
+{
+  "description": "Maintenance Manager Agent Phase 2 slice 1 synthetic prototype: fixture-only maintenance-health audit (backlog, aging, overdue, PM compliance with denominator-poisoning protection, integrity findings) over a synthetic asset/work-order/PM-occurrence register. Advisory only; no dispatch, no scheduling, no work closure, no purchasing, no reliability prediction, no network, no model calls.",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "maintenance-manager-prototype",
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}
