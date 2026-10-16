@@ -15,11 +15,12 @@
  * Exits 0 when every check passes, 1 otherwise.
  */
 
-import { readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync, existsSync, symlinkSync, unlinkSync, lstatSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { lintSkill } from "../src/linter.mjs";
+import { inventoryOne } from "../src/inventory.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -28,6 +29,12 @@ const FIXTURES = join(ROOT, "fixtures");
 let passed = 0;
 let failed = 0;
 const failures = [];
+
+// The f14 fixture needs a real escaping symlink, which cannot be stored
+// reliably through the API-based push path (it arrives as a regular file).
+// Create it transiently at test time and remove it afterwards.
+const F14_LINK = join(FIXTURES, "f14-escaping-symlink", "evil");
+let f14Created = false;
 
 function check(name, cond, detail) {
   if (cond) {
@@ -42,6 +49,16 @@ function codesOf(report) {
   return report.diagnostics.map((d) => d.code).sort();
 }
 
+function runAll() {
+  // The f14 fixture needs a real escaping symlink, which cannot be stored
+  // reliably through the API-based push path (it arrives as a regular file).
+  // Create it transiently at test time; remove it afterwards.
+  if (!existsSync(F14_LINK)) {
+    symlinkSync("/tmp", F14_LINK);
+    f14Created = true;
+  }
+
+  try {
 // --- 1. Fixture conformance: 100% expected-diagnostic match -----------------
 const fixtureDirs = readdirSync(FIXTURES).sort();
 check("fixture-count", fixtureDirs.length === 24, `expected 24 fixtures, found ${fixtureDirs.length}`);
@@ -143,11 +160,18 @@ check(
 rmSync(specRoot, { recursive: true, force: true });
 
 // --- 6. Pilot inventory sanity (read-only) ------------------------------------
-import { inventoryOne } from "../src/inventory.mjs";
 const probe = inventoryOne("probe", FIXTURES + "/f02-valid-full");
 check("inventory-readonly", probe.has_skill_md && probe.frontmatter_present, "inventory probe failed");
 
 // --- Report ------------------------------------------------------------------
+} finally {
+  if (f14Created && existsSync(F14_LINK)) {
+    try {
+      if (lstatSync(F14_LINK).isSymbolicLink()) unlinkSync(F14_LINK);
+    } catch { /* best effort cleanup */ }
+  }
+}
+
 console.log(`\nskill-manifest tests: ${passed} passed, ${failed} failed`);
 if (failures.length) {
   console.log("FAILURES:");
@@ -155,3 +179,6 @@ if (failures.length) {
   process.exit(1);
 }
 console.log("ALL GREEN");
+}
+
+runAll();
