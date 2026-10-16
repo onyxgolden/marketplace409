@@ -204,6 +204,152 @@ test("budget: registry poison with a THROWING GETTER at the tail is never read �
   assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
 });
 
+// ---------------------------------------------------------------------
+// EM-001: nested statements[]/metrics[]/header_claims[] candidates must
+// each be charged via budget.countObject() BEFORE validateStatement/
+// validateMetricLine/validateHeaderClaim is called on that candidate —
+// not after an eager whole-array validation pass (the exact bug
+// ChatGPT's review found in the original validateReport()). These
+// candidates arrive as parsed JSON from the report-set's resolved TEXT
+// bytes (run() does `JSON.parse(bundleResolved.text)`), so a live
+// Object.defineProperty getter trap — the technique used above for the
+// context registry/grants, which ARE passed as live JS objects — cannot
+// survive that JSON round-trip (a getter is not JSON-serializable). The
+// equivalent, achievable proof for JSON-sourced nested data is the SAME
+// technique this file's own "poisoning it does not change the outcome"
+// report-level test above already uses: plant a value that WOULD throw
+// SchemaError if its candidate were ever handed to its validator, place
+// it at the exact index that is the 65th charged candidate overall, and
+// assert the outcome is a clean BUDGET_EXCEEDED — never the
+// INVALID_INPUT/MALFORMED_RECORD outcome that candidate would otherwise
+// produce. Each nested array type is schema-capped per report
+// (MAX_STATEMENTS_PER_REPORT / MAX_METRICS_PER_REPORT /
+// MAX_HEADER_CLAIMS_PER_REPORT = 32/32/16), so hitting the 64-object
+// cap requires SPREADING items across multiple reports, not one giant
+// report. buildMultiReportBoundary computes the exact split at runtime
+// (not hand-derived) so it stays correct if BUDGET_LIMITS ever changes.
+// ---------------------------------------------------------------------
+
+function buildMultiReportBoundary(nestedKey, makeItem, makePoisonItem, capPerReport, { includePoison = true } = {}) {
+  const maxObjects = BUDGET_LIMITS.maxObjects;
+  const fixedOverhead = 9; // per this file's header comment
+  const sharedText = "Boundary item: verified complete.\n";
+  const sharedRef = { repo: "edu-sources", path: `content/${nestedKey}-shared.txt`, commit: commitId(`${nestedKey}-shared`), blob: gitBlobId(Buffer.from(sharedText, "utf8")), algorithm: "git-sha1", revision: "v1" };
+
+  function emptyReport(id) {
+    return { report_id: id, content_ref: sharedRef, source_principal: "x", workstream: "delivery", scope: "programwide", period: "2026-q3", statements: [], metrics: [], header_claims: [] };
+  }
+
+  const reports = [];
+  let used = fixedOverhead;
+  let reportIndex = 0;
+  let firstReport = true;
+
+  // Fill whole reports at capPerReport until doing so would leave less
+  // than 2 charges of headroom (so the final report can still hold its
+  // own object charge plus at least one successful item before poison).
+  while (true) {
+    const overheadThisReport = firstReport ? 2 : 1; // +1 content-resolution only on the very first report
+    const afterFull = used + overheadThisReport + capPerReport;
+    if (afterFull > maxObjects - 2) break;
+    const report = emptyReport(`rep-filler-${reportIndex++}`);
+    report[nestedKey] = Array.from({ length: capPerReport }, (_, i) => makeItem(i));
+    reports.push(report);
+    used = afterFull;
+    firstReport = false;
+  }
+
+  const overheadFinal = firstReport ? 2 : 1;
+  used += overheadFinal;
+  const successfulInFinal = maxObjects - used;
+  if (successfulInFinal < 0 || successfulInFinal >= capPerReport) {
+    throw new Error(`buildMultiReportBoundary: bad arithmetic, successfulInFinal=${successfulInFinal}`);
+  }
+  const finalReport = emptyReport("rep-final");
+  const items = Array.from({ length: successfulInFinal }, (_, i) => makeItem(i));
+  if (includePoison) items.push(makePoisonItem(successfulInFinal));
+  finalReport[nestedKey] = items;
+  reports.push(finalReport);
+
+  const setText = JSON.stringify({ reports });
+  const setRef = { repo: "edu-sources", path: `report-sets/${nestedKey}-boundary.json`, commit: commitId(`${nestedKey}-set`), blob: gitBlobId(Buffer.from(setText, "utf8")), algorithm: "git-sha1", revision: "v1" };
+  const sources = {
+    [`edu-sources|report-sets/${nestedKey}-boundary.json`]: { revisions: { [setRef.commit]: { text: setText, blob: setRef.blob } } },
+    [`edu-sources|content/${nestedKey}-shared.txt`]: { revisions: { [sharedRef.commit]: { text: sharedText, blob: sharedRef.blob } } },
+  };
+  const task = { schema_version: "1", task_id: `${nestedKey}-boundary`, operation: "analyze", fixture_refs: { report_set: setRef }, options: { population: { declared_total: reports.length, complete: true } } };
+  const context = {
+    clock: Date.parse("2026-07-15T12:00:00Z"),
+    sources,
+    readGrants: [{ repo: "edu-sources", path: `report-sets/${nestedKey}-boundary.json` }, { repo: "edu-sources", path: `content/${nestedKey}-shared.txt` }],
+    principal: { principal_id: "p1", role: "JASON", registered_by: "jason", valid_from: "2026-01-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked: false },
+    criteria: { criteria_version: "v1", population_groups: [] },
+  };
+  return { task, context, reportCount: reports.length, successfulInFinal };
+}
+
+test("budget (EM-001): statements spread across multiple reports succeed up through the exact 64th charge", () => {
+  const makeItem = (i) => ({ item_id: `item-ok-${i}`, support_strength: "verified", flags: [], span: { start_byte: 0, end_byte: 8 } });
+  const makePoison = () => ({ item_id: "item-poison", support_strength: "verified", flags: ["totally_bogus_flag"], span: { start_byte: 0, end_byte: 8 } });
+  const { task, context, reportCount } = buildMultiReportBoundary("statements", makeItem, makePoison, 10);
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
+  assert.ok(reportCount > 1, "test should actually spread across multiple reports");
+});
+
+test("budget (EM-001): the same scenario WITHOUT the extra poisoned item succeeds cleanly at exactly 64 charges — isolates the poison, not an off-by-one in the harness", () => {
+  const makeItem = (i) => ({ item_id: `item-ok-${i}`, support_strength: "verified", flags: [], span: { start_byte: 0, end_byte: 8 } });
+  const { task, context, successfulInFinal } = buildMultiReportBoundary("statements", makeItem, makeItem, 10, { includePoison: false });
+  const r = run(task, context);
+  assert.equal(r.status, "REPORT_READY");
+  const totalAdmitted = r.report.source_reports.reduce((s, sr) => s + sr.statements.length, 0);
+  assert.ok(totalAdmitted >= successfulInFinal);
+});
+
+test("budget (EM-001): metrics spread across multiple reports refuse BUDGET_EXCEEDED at the poisoned 65th charge, never MALFORMED_RECORD", () => {
+  const makeItem = (i) => ({ line_item_id: `line-ok-${i}`, metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: null, value: 1, span: { start_byte: 0, end_byte: 8 } });
+  // currency must be null when unit !== "currency" — validateMetricLine
+  // throws SchemaError on this if the poisoned candidate is ever read.
+  const makePoison = () => ({ line_item_id: "line-poison", metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: "usd", value: 1, span: { start_byte: 0, end_byte: 8 } });
+  const { task, context, reportCount } = buildMultiReportBoundary("metrics", makeItem, makePoison, 10);
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
+  assert.ok(reportCount > 1);
+});
+
+test("budget (EM-001): the same metrics scenario WITHOUT the extra poisoned item succeeds cleanly — isolates the poison", () => {
+  const makeItem = (i) => ({ line_item_id: `line-ok-${i}`, metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: null, value: 1, span: { start_byte: 0, end_byte: 8 } });
+  const { task, context } = buildMultiReportBoundary("metrics", makeItem, makeItem, 10, { includePoison: false });
+  const r = run(task, context);
+  assert.equal(r.status, "REPORT_READY");
+});
+
+test("budget (EM-001): header claims spread across multiple reports refuse BUDGET_EXCEEDED at the poisoned 65th charge, never MALFORMED_RECORD", () => {
+  const makeItem = (i) => ({ claim_id: `claim-ok-${i}`, metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: null, claimed_value: 1, span: { start_byte: 0, end_byte: 8 } });
+  const makePoison = () => ({ claim_id: "claim-poison", metric_key: "spend", population_id: "pop-a", unit: "count", period: "Q3-2026", currency: null, claimed_value: 1, span: { start_byte: 0, end_byte: 8 } });
+  const { task, context, reportCount } = buildMultiReportBoundary("header_claims", makeItem, makePoison, 10);
+  const r = run(task, context);
+  assert.equal(r.status, "REFUSED");
+  assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
+  assert.ok(reportCount > 1);
+});
+
+test("budget (EM-001): the same header-claims scenario WITHOUT the extra poisoned item succeeds cleanly — isolates the poison", () => {
+  const makeItem = (i) => ({ claim_id: `claim-ok-${i}`, metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: null, claimed_value: 1, span: { start_byte: 0, end_byte: 8 } });
+  const { task, context, successfulInFinal } = buildMultiReportBoundary("header_claims", makeItem, makeItem, 10, { includePoison: false });
+  const r = run(task, context);
+  // Not REPORT_READY: these header claims reference no matching metric
+  // (this scenario has none), so every comparison is legitimately
+  // unverifiable — PARTIAL, not REFUSED. The budget boundary itself is
+  // what's under test: no BUDGET_EXCEEDED, and every header claim was
+  // actually admitted (not silently dropped).
+  assert.equal(r.status, "PARTIAL");
+  const totalAdmitted = r.report.source_reports.reduce((s, sr) => s + sr.header_claims.length, 0);
+  assert.ok(totalAdmitted >= successfulInFinal);
+});
+
 test("budget: BUDGET_LIMITS constants match the brief's stated caps", () => {
   assert.equal(BUDGET_LIMITS.maxPayloadBytes, 262144);
   assert.equal(BUDGET_LIMITS.maxObjects, 64);

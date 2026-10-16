@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   validateTask,
   validateReport,
+  validateStatement,
+  validateMetricLine,
+  validateHeaderClaim,
   validateSourceRef,
   validatePrincipal,
   validatePopulationGroup,
@@ -87,16 +90,25 @@ test("validateReport: rejects workstream that isn't a slug", () => {
   assert.throws(() => validateReport({ ...goodReport(), workstream: "Not A Slug!" }, "x"), SchemaError);
 });
 
-test("validateReport: rejects unknown flag value", () => {
-  const r = goodReport();
-  r.statements[0].flags = ["bogus_flag"];
-  assert.throws(() => validateReport(r, "x"), SchemaError);
+// EM-001 fix: validateReport() is container-level only now (it never
+// walks nested statement/metric/header_claim fields) — per-candidate
+// validation is the caller's job (src/index.js, charged before each
+// call), exercised directly here via validateStatement/
+// validateMetricLine/validateHeaderClaim.
+
+test("validateStatement: rejects unknown flag value", () => {
+  const s = { item_id: "item-1", support_strength: "verified", flags: ["bogus_flag"], span: { start_byte: 0, end_byte: 5 } };
+  assert.throws(() => validateStatement(s, "x", new Set()), SchemaError);
 });
 
-test("validateReport: rejects duplicate flags on one statement", () => {
-  const r = goodReport();
-  r.statements[0].flags = ["mismatch", "mismatch"];
-  assert.throws(() => validateReport(r, "x"), SchemaError);
+test("validateStatement: rejects duplicate flags on one statement", () => {
+  const s = { item_id: "item-1", support_strength: "verified", flags: ["mismatch", "mismatch"], span: { start_byte: 0, end_byte: 5 } };
+  assert.throws(() => validateStatement(s, "x", new Set()), SchemaError);
+});
+
+test("validateStatement: rejects span end_byte <= start_byte", () => {
+  const s = { item_id: "item-1", support_strength: "verified", flags: [], span: { start_byte: 5, end_byte: 5 } };
+  assert.throws(() => validateStatement(s, "x", new Set()), SchemaError);
 });
 
 test("validateReport: support_strength null is accepted (flag-only)", () => {
@@ -114,22 +126,46 @@ test("validateReport: support_strength unknown string is accepted at schema laye
   assert.equal(out.statements[0].support_strength, "green");
 });
 
-test("validateReport: metric currency must be null when unit is not 'currency'", () => {
-  const r = goodReport();
-  r.metrics = [{ line_item_id: "L1", metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: "usd", value: 1, span: { start_byte: 0, end_byte: 1 } }];
-  assert.throws(() => validateReport(r, "x"), SchemaError);
+test("validateMetricLine: currency must be null when unit is not 'currency'", () => {
+  const m = { line_item_id: "L1", metric_key: "spend", population_id: "pop-a", unit: "count", period: "2026-q3", currency: "usd", value: 1, span: { start_byte: 0, end_byte: 1 } };
+  assert.throws(() => validateMetricLine(m, "x", new Set()), SchemaError);
 });
 
-test("validateReport: currency metric value must be an integer (minor units)", () => {
-  const r = goodReport();
-  r.metrics = [{ line_item_id: "L1", metric_key: "spend", population_id: "pop-a", unit: "currency", currency: "usd", period: "2026-q3", value: 1.5, span: { start_byte: 0, end_byte: 1 } }];
-  assert.throws(() => validateReport(r, "x"), SchemaError);
+test("validateMetricLine: currency value must be an integer (minor units)", () => {
+  const m = { line_item_id: "L1", metric_key: "spend", population_id: "pop-a", unit: "currency", currency: "usd", period: "2026-q3", value: 1.5, span: { start_byte: 0, end_byte: 1 } };
+  assert.throws(() => validateMetricLine(m, "x", new Set()), SchemaError);
 });
 
-test("validateReport: rejects span end_byte <= start_byte", () => {
-  const r = goodReport();
-  r.statements[0].span = { start_byte: 5, end_byte: 5 };
-  assert.throws(() => validateReport(r, "x"), SchemaError);
+// EM-002 fix: percentage metrics carry an exact numerator/denominator
+// pair instead of a float `value` — see src/schemas.js.
+test("validateMetricLine: percentage metric requires numerator/denominator, not value", () => {
+  const m = { line_item_id: "L1", metric_key: "sla", population_id: "pop-a", unit: "percentage", currency: null, period: "2026-q3", numerator: 29, denominator: 40, span: { start_byte: 0, end_byte: 1 } };
+  const out = validateMetricLine(m, "x", new Set());
+  assert.equal(out.value, null);
+  assert.equal(out.numerator, 29);
+  assert.equal(out.denominator, 40);
+});
+
+test("validateMetricLine: percentage metric rejects a `value` field", () => {
+  const m = { line_item_id: "L1", metric_key: "sla", population_id: "pop-a", unit: "percentage", currency: null, period: "2026-q3", value: 72.5, numerator: 29, denominator: 40, span: { start_byte: 0, end_byte: 1 } };
+  assert.throws(() => validateMetricLine(m, "x", new Set()), SchemaError);
+});
+
+test("validateMetricLine: percentage metric rejects numerator greater than denominator", () => {
+  const m = { line_item_id: "L1", metric_key: "sla", population_id: "pop-a", unit: "percentage", currency: null, period: "2026-q3", numerator: 41, denominator: 40, span: { start_byte: 0, end_byte: 1 } };
+  assert.throws(() => validateMetricLine(m, "x", new Set()), SchemaError);
+});
+
+test("validateMetricLine: percentage metric allows an exact zero denominator (typed-undefined handled in rollup)", () => {
+  const m = { line_item_id: "L1", metric_key: "sla", population_id: "pop-a", unit: "percentage", currency: null, period: "2026-q3", numerator: 0, denominator: 0, span: { start_byte: 0, end_byte: 1 } };
+  const out = validateMetricLine(m, "x", new Set());
+  assert.equal(out.numerator, 0);
+  assert.equal(out.denominator, 0);
+});
+
+test("validateMetricLine: non-percentage metric rejects a numerator/denominator field", () => {
+  const m = { line_item_id: "L1", metric_key: "spend", population_id: "pop-a", unit: "count", currency: null, period: "2026-q3", value: 1, numerator: 1, denominator: 2, span: { start_byte: 0, end_byte: 1 } };
+  assert.throws(() => validateMetricLine(m, "x", new Set()), SchemaError);
 });
 
 test("validatePrincipal: rejects registered_by other than 'jason'", () => {

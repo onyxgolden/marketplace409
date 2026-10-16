@@ -13,7 +13,7 @@
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -192,7 +192,7 @@
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -632,7 +632,7 @@
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -724,7 +724,7 @@
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -855,20 +855,256 @@
     }
   },
   {
-    "case_id": "C008-header-mismatch",
+    "case_id": "C008-percentage-dedup-same-value",
+    "category": "nominal",
+    "set": "percentage-dedup-same-value",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-percentage-dedup-same-value-8",
+      "operation": "analyze",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/percentage-dedup-same-value.json",
+          "commit": "458e807f10dcd36b14fded01d4a5f3a731f90a10",
+          "blob": "37f27ad38fa41c347d20a99102563a23ed63e87f",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REPORT_READY",
+      "complete": true,
+      "diagnostic_codes": [],
+      "quarantined_report_ids": [],
+      "source_ref_count": 3,
+      "source_reports": [
+        {
+          "report_id": "rep-pctdedup-a",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 0
+        },
+        {
+          "report_id": "rep-pctdedup-b",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 0
+        }
+      ],
+      "derived_statements": [],
+      "dedup_links": [
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-core-team",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-100",
+          "value": null,
+          "occurrence_count": 2
+        }
+      ],
+      "metric_totals": [
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-core-team",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "72.50",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-100"
+          ]
+        }
+      ],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "COMPLETE",
+        "admitted_count": 2,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 2,
+        "complete": true,
+        "actual_total": 2,
+        "evidence_state": "verified"
+      }
+    }
+  },
+  {
+    "case_id": "C009-percentage-disjoint-sum",
+    "category": "nominal",
+    "set": "percentage-disjoint-sum",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-percentage-disjoint-sum-9",
+      "operation": "analyze",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/percentage-disjoint-sum.json",
+          "commit": "0fee112e1d4c75c9977fdbee589f4926965394b1",
+          "blob": "12456608dfedc678699990350e8e050bffa04e22",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REPORT_READY",
+      "complete": true,
+      "diagnostic_codes": [],
+      "quarantined_report_ids": [],
+      "source_ref_count": 3,
+      "source_reports": [
+        {
+          "report_id": "rep-pctdisj-a",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 1
+        },
+        {
+          "report_id": "rep-pctdisj-b",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 1
+        }
+      ],
+      "derived_statements": [],
+      "dedup_links": [
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-team-alpha",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-A",
+          "value": null,
+          "occurrence_count": 1
+        },
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-team-beta",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-B",
+          "value": null,
+          "occurrence_count": 1
+        }
+      ],
+      "metric_totals": [
+        {
+          "scope": "group",
+          "metric_key": "sla_compliance",
+          "key": "pct-alpha-beta-combined",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "88.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "pct-team-alpha",
+            "pct-team-beta"
+          ]
+        },
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-team-alpha",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "80.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-A"
+          ]
+        },
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-team-beta",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "90.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-B"
+          ]
+        }
+      ],
+      "header_comparisons": [
+        {
+          "claim_id": "hdr-pctalpha-sla",
+          "claimed_value": 80,
+          "computed_value": "80.00",
+          "match": true,
+          "evidence_state": "verified"
+        },
+        {
+          "claim_id": "hdr-pctcombined-sla",
+          "claimed_value": 88,
+          "computed_value": "88.00",
+          "match": true,
+          "evidence_state": "verified"
+        }
+      ],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "COMPLETE",
+        "admitted_count": 2,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 2,
+        "complete": true,
+        "actual_total": 2,
+        "evidence_state": "verified"
+      }
+    }
+  },
+  {
+    "case_id": "C010-header-mismatch",
     "category": "nominal",
     "set": "header-mismatch",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-8",
+      "task_id": "em-battery-header-mismatch-10",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -948,20 +1184,20 @@
     }
   },
   {
-    "case_id": "C009-bulk-small",
+    "case_id": "C011-bulk-small",
     "category": "nominal",
     "set": "bulk-small",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-bulk-small-9",
+      "task_id": "em-battery-bulk-small-11",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/bulk-small.json",
           "commit": "4c27b855cc6818f9fbd5d4d7016eb0df16251943",
-          "blob": "12720039024bfb1aa5e4214388b410bbd98ae476",
+          "blob": "76541004fbe775085c9f0ff14dd35559807812f0",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -1065,20 +1301,20 @@
     }
   },
   {
-    "case_id": "C010-span-out-of-bounds",
+    "case_id": "C012-span-out-of-bounds",
     "category": "nominal",
     "set": "span-out-of-bounds",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-span-out-of-bounds-10",
+      "task_id": "em-battery-span-out-of-bounds-12",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/span-out-of-bounds.json",
           "commit": "377b8b94a21865223e859c400def3ab9abbefaed",
-          "blob": "5df9c03718030c89f2dcf7a9d15f2384718f8ee8",
+          "blob": "fad5b4e794a223d21133fae3d600b1c7f151166f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -1140,13 +1376,13 @@
     }
   },
   {
-    "case_id": "C011-empty",
+    "case_id": "C013-empty",
     "category": "nominal",
     "set": "empty",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-empty-11",
+      "task_id": "em-battery-empty-13",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -1192,20 +1428,20 @@
     }
   },
   {
-    "case_id": "C012-single-baseline",
+    "case_id": "C014-single-baseline",
     "category": "nominal",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-12",
+      "task_id": "em-battery-single-baseline-14",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -1267,20 +1503,20 @@
     }
   },
   {
-    "case_id": "C013-nominal-two-report",
+    "case_id": "C015-nominal-two-report",
     "category": "nominal",
     "set": "nominal-two-report",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-13",
+      "task_id": "em-battery-nominal-two-report-15",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -1445,13 +1681,13 @@
     }
   },
   {
-    "case_id": "C014-min-wins-two-tier",
+    "case_id": "C016-min-wins-two-tier",
     "category": "nominal",
     "set": "min-wins-two-tier",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-14",
+      "task_id": "em-battery-min-wins-two-tier-16",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -1533,20 +1769,20 @@
     }
   },
   {
-    "case_id": "C015-metric-dedup-same-value",
+    "case_id": "C017-metric-dedup-same-value",
     "category": "nominal",
     "set": "metric-dedup-same-value",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-15",
+      "task_id": "em-battery-metric-dedup-same-value-17",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -1625,20 +1861,20 @@
     }
   },
   {
-    "case_id": "C016-disjoint-populations-sum",
+    "case_id": "C018-disjoint-populations-sum",
     "category": "nominal",
     "set": "disjoint-populations-sum",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-16",
+      "task_id": "em-battery-disjoint-populations-sum-18",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -1769,13 +2005,13 @@
     }
   },
   {
-    "case_id": "C017-flag-only-item",
+    "case_id": "C019-flag-only-item",
     "category": "nominal",
     "set": "flag-only-item",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-only-item-17",
+      "task_id": "em-battery-flag-only-item-19",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -1848,13 +2084,13 @@
     }
   },
   {
-    "case_id": "C018-flag-union-two-sources",
+    "case_id": "C020-flag-union-two-sources",
     "category": "nominal",
     "set": "flag-union-two-sources",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-union-two-sources-18",
+      "task_id": "em-battery-flag-union-two-sources-20",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -1943,20 +2179,20 @@
     }
   },
   {
-    "case_id": "C019-header-mismatch",
+    "case_id": "C021-header-mismatch",
     "category": "nominal",
     "set": "header-mismatch",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-19",
+      "task_id": "em-battery-header-mismatch-21",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2036,20 +2272,20 @@
     }
   },
   {
-    "case_id": "C020-single-baseline",
+    "case_id": "C022-single-baseline",
     "category": "nominal",
     "set": "single-baseline",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-20",
+      "task_id": "em-battery-single-baseline-22",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2111,20 +2347,20 @@
     }
   },
   {
-    "case_id": "C021-nominal-two-report",
+    "case_id": "C023-nominal-two-report",
     "category": "nominal",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-21",
+      "task_id": "em-battery-nominal-two-report-23",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2289,13 +2525,13 @@
     }
   },
   {
-    "case_id": "C022-min-wins-two-tier",
+    "case_id": "C024-min-wins-two-tier",
     "category": "nominal",
     "set": "min-wins-two-tier",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-22",
+      "task_id": "em-battery-min-wins-two-tier-24",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -2377,20 +2613,20 @@
     }
   },
   {
-    "case_id": "C023-metric-dedup-same-value",
+    "case_id": "C025-metric-dedup-same-value",
     "category": "nominal",
     "set": "metric-dedup-same-value",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-23",
+      "task_id": "em-battery-metric-dedup-same-value-25",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2469,20 +2705,20 @@
     }
   },
   {
-    "case_id": "C024-disjoint-populations-sum",
+    "case_id": "C026-disjoint-populations-sum",
     "category": "nominal",
     "set": "disjoint-populations-sum",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-24",
+      "task_id": "em-battery-disjoint-populations-sum-26",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2613,13 +2849,13 @@
     }
   },
   {
-    "case_id": "C025-flag-only-item",
+    "case_id": "C027-flag-only-item",
     "category": "nominal",
     "set": "flag-only-item",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-only-item-25",
+      "task_id": "em-battery-flag-only-item-27",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -2692,13 +2928,13 @@
     }
   },
   {
-    "case_id": "C026-flag-union-two-sources",
+    "case_id": "C028-flag-union-two-sources",
     "category": "nominal",
     "set": "flag-union-two-sources",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-union-two-sources-26",
+      "task_id": "em-battery-flag-union-two-sources-28",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -2787,20 +3023,20 @@
     }
   },
   {
-    "case_id": "C027-header-mismatch",
+    "case_id": "C029-header-mismatch",
     "category": "nominal",
     "set": "header-mismatch",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-27",
+      "task_id": "em-battery-header-mismatch-29",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2880,20 +3116,20 @@
     }
   },
   {
-    "case_id": "C028-single-baseline",
+    "case_id": "C030-single-baseline",
     "category": "nominal",
     "set": "single-baseline",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-28",
+      "task_id": "em-battery-single-baseline-30",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -2955,20 +3191,20 @@
     }
   },
   {
-    "case_id": "C029-nominal-two-report",
+    "case_id": "C031-nominal-two-report",
     "category": "nominal",
     "set": "nominal-two-report",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-29",
+      "task_id": "em-battery-nominal-two-report-31",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -3133,13 +3369,13 @@
     }
   },
   {
-    "case_id": "C030-min-wins-two-tier",
+    "case_id": "C032-min-wins-two-tier",
     "category": "nominal",
     "set": "min-wins-two-tier",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-30",
+      "task_id": "em-battery-min-wins-two-tier-32",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -3221,20 +3457,20 @@
     }
   },
   {
-    "case_id": "C031-metric-dedup-same-value",
+    "case_id": "C033-metric-dedup-same-value",
     "category": "nominal",
     "set": "metric-dedup-same-value",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-31",
+      "task_id": "em-battery-metric-dedup-same-value-33",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -3313,20 +3549,20 @@
     }
   },
   {
-    "case_id": "C032-disjoint-populations-sum",
+    "case_id": "C034-disjoint-populations-sum",
     "category": "nominal",
     "set": "disjoint-populations-sum",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-32",
+      "task_id": "em-battery-disjoint-populations-sum-34",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -3457,13 +3693,13 @@
     }
   },
   {
-    "case_id": "C033-flag-only-item",
+    "case_id": "C035-flag-only-item",
     "category": "nominal",
     "set": "flag-only-item",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-only-item-33",
+      "task_id": "em-battery-flag-only-item-35",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -3536,13 +3772,13 @@
     }
   },
   {
-    "case_id": "C034-flag-union-two-sources",
+    "case_id": "C036-flag-union-two-sources",
     "category": "nominal",
     "set": "flag-union-two-sources",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-union-two-sources-34",
+      "task_id": "em-battery-flag-union-two-sources-36",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -3631,20 +3867,20 @@
     }
   },
   {
-    "case_id": "C035-header-mismatch",
+    "case_id": "C037-header-mismatch",
     "category": "nominal",
     "set": "header-mismatch",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-35",
+      "task_id": "em-battery-header-mismatch-37",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -3724,20 +3960,20 @@
     }
   },
   {
-    "case_id": "C036-single-baseline",
+    "case_id": "C038-single-baseline",
     "category": "nominal",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-36",
+      "task_id": "em-battery-single-baseline-38",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -3799,20 +4035,20 @@
     }
   },
   {
-    "case_id": "C037-nominal-two-report",
+    "case_id": "C039-nominal-two-report",
     "category": "nominal",
     "set": "nominal-two-report",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-37",
+      "task_id": "em-battery-nominal-two-report-39",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -3977,13 +4213,13 @@
     }
   },
   {
-    "case_id": "C038-min-wins-two-tier",
+    "case_id": "C040-min-wins-two-tier",
     "category": "nominal",
     "set": "min-wins-two-tier",
     "clock": "2026-12-31T23:59:59Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-38",
+      "task_id": "em-battery-min-wins-two-tier-40",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -4065,20 +4301,20 @@
     }
   },
   {
-    "case_id": "C039-metric-dedup-same-value",
+    "case_id": "C041-metric-dedup-same-value",
     "category": "nominal",
     "set": "metric-dedup-same-value",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-39",
+      "task_id": "em-battery-metric-dedup-same-value-41",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4157,20 +4393,20 @@
     }
   },
   {
-    "case_id": "C040-disjoint-populations-sum",
+    "case_id": "C042-disjoint-populations-sum",
     "category": "nominal",
     "set": "disjoint-populations-sum",
     "clock": "2026-01-02T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-40",
+      "task_id": "em-battery-disjoint-populations-sum-42",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4301,13 +4537,13 @@
     }
   },
   {
-    "case_id": "C041-unknown-support-label",
+    "case_id": "C043-unknown-support-label",
     "category": "contradiction",
     "set": "unknown-support-label",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-unknown-support-label-41",
+      "task_id": "em-battery-unknown-support-label-43",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -4376,13 +4612,13 @@
     }
   },
   {
-    "case_id": "C042-contradictory-strengths-flagged",
+    "case_id": "C044-contradictory-strengths-flagged",
     "category": "contradiction",
     "set": "contradictory-strengths-flagged",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-contradictory-strengths-flagged-42",
+      "task_id": "em-battery-contradictory-strengths-flagged-44",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -4468,20 +4704,20 @@
     }
   },
   {
-    "case_id": "C043-metric-contradiction",
+    "case_id": "C045-metric-contradiction",
     "category": "contradiction",
     "set": "metric-contradiction",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-contradiction-43",
+      "task_id": "em-battery-metric-contradiction-45",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-contradiction.json",
           "commit": "6e4409ae5b4e88a313263fe1aa2de19dbfca0c8a",
-          "blob": "79b3ff3da2c519a65ae3a35032f81f5ed64056fa",
+          "blob": "f633ab7be9e900050886346a73da3eafa0c1ef46",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4555,20 +4791,20 @@
     }
   },
   {
-    "case_id": "C044-ambiguous-overlap-populations",
+    "case_id": "C046-ambiguous-overlap-populations",
     "category": "contradiction",
     "set": "ambiguous-overlap-populations",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-ambiguous-overlap-populations-44",
+      "task_id": "em-battery-ambiguous-overlap-populations-46",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/ambiguous-overlap-populations.json",
           "commit": "8749d61960993b73170e476147d2d5ed362b2548",
-          "blob": "7f2f1b570b925fa4a2a8a1e5c54d0cfcc5a10738",
+          "blob": "8abc36ab50f9242aba1fa5344573f90625cdcbea",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4692,20 +4928,460 @@
     }
   },
   {
-    "case_id": "C045-header-unknown-population",
+    "case_id": "C047-percentage-contradiction",
+    "category": "contradiction",
+    "set": "percentage-contradiction",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-percentage-contradiction-47",
+      "operation": "analyze",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/percentage-contradiction.json",
+          "commit": "be556896c004fa872790a2e98010534fb2079172",
+          "blob": "8adee50da96500ddd660c9f117897cb2c4b0adf2",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "PARTIAL",
+      "complete": true,
+      "diagnostic_codes": [],
+      "quarantined_report_ids": [],
+      "source_ref_count": 3,
+      "source_reports": [
+        {
+          "report_id": "rep-pctconflict-a",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 0
+        },
+        {
+          "report_id": "rep-pctconflict-b",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 0
+        }
+      ],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-core-team",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": null,
+          "evidence_state": "unverifiable",
+          "contributing": []
+        }
+      ],
+      "header_comparisons": [],
+      "contradictions": [
+        {
+          "line_item_id": "SLA-200",
+          "values": [
+            null,
+            null
+          ]
+        }
+      ],
+      "exceptions": [],
+      "coverage": {
+        "state": "PARTIAL",
+        "admitted_count": 2,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 2,
+        "complete": true,
+        "actual_total": 2,
+        "evidence_state": "verified"
+      }
+    }
+  },
+  {
+    "case_id": "C048-percentage-ambiguous-overlap",
+    "category": "contradiction",
+    "set": "percentage-ambiguous-overlap",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-percentage-ambiguous-overlap-48",
+      "operation": "analyze",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/percentage-ambiguous-overlap.json",
+          "commit": "d055a5cc0fcf7ed04bd7d955b4b5e1353beeb02a",
+          "blob": "9bbc0a2d16f4eec5d9ae2a8043da0aa631e03aee",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "PARTIAL",
+      "complete": true,
+      "diagnostic_codes": [],
+      "quarantined_report_ids": [],
+      "source_ref_count": 3,
+      "source_reports": [
+        {
+          "report_id": "rep-pctambig-a",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 0
+        },
+        {
+          "report_id": "rep-pctambig-b",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 1
+        }
+      ],
+      "derived_statements": [],
+      "dedup_links": [
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-region-north",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-N",
+          "value": null,
+          "occurrence_count": 1
+        },
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-region-south",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-S",
+          "value": null,
+          "occurrence_count": 1
+        }
+      ],
+      "metric_totals": [
+        {
+          "scope": "group",
+          "metric_key": "sla_compliance",
+          "key": "pct-north-south-unregistered",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": null,
+          "evidence_state": "unverifiable",
+          "contributing": [
+            "pct-region-north",
+            "pct-region-south"
+          ]
+        },
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-region-north",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "50.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-N"
+          ]
+        },
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-region-south",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "70.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-S"
+          ]
+        }
+      ],
+      "header_comparisons": [
+        {
+          "claim_id": "hdr-pctcombined-northsouth",
+          "claimed_value": 60,
+          "computed_value": null,
+          "match": null,
+          "evidence_state": "unverifiable"
+        }
+      ],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "PARTIAL",
+        "admitted_count": 2,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 2,
+        "complete": true,
+        "actual_total": 2,
+        "evidence_state": "verified"
+      }
+    }
+  },
+  {
+    "case_id": "C049-percentage-zero-denominator",
+    "category": "contradiction",
+    "set": "percentage-zero-denominator",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-percentage-zero-denominator-49",
+      "operation": "analyze",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/percentage-zero-denominator.json",
+          "commit": "75d301b4966612708b990c5053e9ae90f15f31f0",
+          "blob": "fffb708e86adf162b9987c377a580c8f296d8d40",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 1,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REPORT_READY",
+      "complete": true,
+      "diagnostic_codes": [],
+      "quarantined_report_ids": [],
+      "source_ref_count": 2,
+      "source_reports": [
+        {
+          "report_id": "rep-pctzero",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 0
+        }
+      ],
+      "derived_statements": [],
+      "dedup_links": [
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-zero-pop",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-ZERO",
+          "value": null,
+          "occurrence_count": 1
+        }
+      ],
+      "metric_totals": [
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-zero-pop",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": null,
+          "evidence_state": "unverifiable",
+          "contributing": [
+            "SLA-ZERO"
+          ]
+        }
+      ],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "COMPLETE",
+        "admitted_count": 1,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 1,
+        "complete": true,
+        "actual_total": 1,
+        "evidence_state": "verified"
+      }
+    }
+  },
+  {
+    "case_id": "C050-percentage-disjoint-sum",
+    "category": "contradiction",
+    "set": "percentage-disjoint-sum",
+    "clock": "2026-07-15T12:00:00Z",
+    "criteria": "noGroups",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-percentage-disjoint-sum-50",
+      "operation": "analyze",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/percentage-disjoint-sum.json",
+          "commit": "0fee112e1d4c75c9977fdbee589f4926965394b1",
+          "blob": "12456608dfedc678699990350e8e050bffa04e22",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "PARTIAL",
+      "complete": true,
+      "diagnostic_codes": [],
+      "quarantined_report_ids": [],
+      "source_ref_count": 3,
+      "source_reports": [
+        {
+          "report_id": "rep-pctdisj-a",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 1
+        },
+        {
+          "report_id": "rep-pctdisj-b",
+          "quarantined": false,
+          "statements": [],
+          "metric_count": 1,
+          "header_claim_count": 1
+        }
+      ],
+      "derived_statements": [],
+      "dedup_links": [
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-team-alpha",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-A",
+          "value": null,
+          "occurrence_count": 1
+        },
+        {
+          "metric_key": "sla_compliance",
+          "population_id": "pct-team-beta",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "line_item_id": "SLA-B",
+          "value": null,
+          "occurrence_count": 1
+        }
+      ],
+      "metric_totals": [
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-team-alpha",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "80.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-A"
+          ]
+        },
+        {
+          "scope": "population",
+          "metric_key": "sla_compliance",
+          "key": "pct-team-beta",
+          "unit": "percentage",
+          "period": "2026-q3",
+          "currency": null,
+          "total_value": "90.00",
+          "evidence_state": "verified",
+          "contributing": [
+            "SLA-B"
+          ]
+        }
+      ],
+      "header_comparisons": [
+        {
+          "claim_id": "hdr-pctalpha-sla",
+          "claimed_value": 80,
+          "computed_value": "80.00",
+          "match": true,
+          "evidence_state": "verified"
+        },
+        {
+          "claim_id": "hdr-pctcombined-sla",
+          "claimed_value": 88,
+          "computed_value": null,
+          "match": null,
+          "evidence_state": "unverifiable"
+        }
+      ],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "PARTIAL",
+        "admitted_count": 2,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 2,
+        "complete": true,
+        "actual_total": 2,
+        "evidence_state": "verified"
+      }
+    }
+  },
+  {
+    "case_id": "C051-header-unknown-population",
     "category": "contradiction",
     "set": "header-unknown-population",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-unknown-population-45",
+      "task_id": "em-battery-header-unknown-population-51",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-unknown-population.json",
           "commit": "b4ad4fd5b29b3b2a742ceeea43430267262de06b",
-          "blob": "78351dde729617039f9d0f099e60e56a44a78d88",
+          "blob": "4e3050038e1d8aa7ea63062e6b2daf9870477068",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4760,20 +5436,20 @@
     }
   },
   {
-    "case_id": "C046-one-malformed-one-clean",
+    "case_id": "C052-one-malformed-one-clean",
     "category": "contradiction",
     "set": "one-malformed-one-clean",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-one-malformed-one-clean-46",
+      "task_id": "em-battery-one-malformed-one-clean-52",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/one-malformed-one-clean.json",
           "commit": "8e22aeedb18f46c4ea24588dcb40b56d7d76abf3",
-          "blob": "8312ef662708b41a08ffaf876bbb85466cacbb58",
+          "blob": "073e2df97f2503cf6ebd9a09a85e21b15d00f195",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4840,20 +5516,20 @@
     }
   },
   {
-    "case_id": "C047-duplicate-report-id",
+    "case_id": "C053-duplicate-report-id",
     "category": "contradiction",
     "set": "duplicate-report-id",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-duplicate-report-id-47",
+      "task_id": "em-battery-duplicate-report-id-53",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/duplicate-report-id.json",
           "commit": "041904a1cdd6528db32119272e9ebd7822679230",
-          "blob": "adf1c6c0c37253f8a5673644d713ba6cf2d48ef9",
+          "blob": "b68e2864d8d3c9e2b131da0e8f8ff01e8652a8c4",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -4894,21 +5570,21 @@
     }
   },
   {
-    "case_id": "C048-disjoint-populations-sum",
+    "case_id": "C054-disjoint-populations-sum",
     "category": "contradiction",
     "set": "disjoint-populations-sum",
     "clock": "2026-07-15T12:00:00Z",
     "criteria": "noGroups",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-48",
+      "task_id": "em-battery-disjoint-populations-sum-54",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5025,20 +5701,20 @@
     }
   },
   {
-    "case_id": "C049-nominal-two-report",
+    "case_id": "C055-nominal-two-report",
     "category": "contradiction",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-49",
+      "task_id": "em-battery-nominal-two-report-55",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5203,13 +5879,13 @@
     }
   },
   {
-    "case_id": "C050-min-wins-two-tier",
+    "case_id": "C056-min-wins-two-tier",
     "category": "contradiction",
     "set": "min-wins-two-tier",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-50",
+      "task_id": "em-battery-min-wins-two-tier-56",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -5291,20 +5967,20 @@
     }
   },
   {
-    "case_id": "C051-metric-dedup-same-value",
+    "case_id": "C057-metric-dedup-same-value",
     "category": "contradiction",
     "set": "metric-dedup-same-value",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-51",
+      "task_id": "em-battery-metric-dedup-same-value-57",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5383,13 +6059,13 @@
     }
   },
   {
-    "case_id": "C052-flag-only-item",
+    "case_id": "C058-flag-only-item",
     "category": "contradiction",
     "set": "flag-only-item",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-only-item-52",
+      "task_id": "em-battery-flag-only-item-58",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -5462,20 +6138,20 @@
     }
   },
   {
-    "case_id": "C053-single-baseline",
+    "case_id": "C059-single-baseline",
     "category": "contradiction",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-53",
+      "task_id": "em-battery-single-baseline-59",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5537,20 +6213,20 @@
     }
   },
   {
-    "case_id": "C054-header-mismatch",
+    "case_id": "C060-header-mismatch",
     "category": "contradiction",
     "set": "header-mismatch",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-54",
+      "task_id": "em-battery-header-mismatch-60",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5630,20 +6306,20 @@
     }
   },
   {
-    "case_id": "C055-disjoint-populations-sum",
+    "case_id": "C061-disjoint-populations-sum",
     "category": "contradiction",
     "set": "disjoint-populations-sum",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-55",
+      "task_id": "em-battery-disjoint-populations-sum-61",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5774,20 +6450,20 @@
     }
   },
   {
-    "case_id": "C056-nominal-two-report",
+    "case_id": "C062-nominal-two-report",
     "category": "contradiction",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-56",
+      "task_id": "em-battery-nominal-two-report-62",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -5952,13 +6628,13 @@
     }
   },
   {
-    "case_id": "C057-min-wins-two-tier",
+    "case_id": "C063-min-wins-two-tier",
     "category": "contradiction",
     "set": "min-wins-two-tier",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-57",
+      "task_id": "em-battery-min-wins-two-tier-63",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -6040,20 +6716,20 @@
     }
   },
   {
-    "case_id": "C058-metric-dedup-same-value",
+    "case_id": "C064-metric-dedup-same-value",
     "category": "contradiction",
     "set": "metric-dedup-same-value",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-58",
+      "task_id": "em-battery-metric-dedup-same-value-64",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -6132,13 +6808,13 @@
     }
   },
   {
-    "case_id": "C059-flag-only-item",
+    "case_id": "C065-flag-only-item",
     "category": "contradiction",
     "set": "flag-only-item",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-only-item-59",
+      "task_id": "em-battery-flag-only-item-65",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -6211,20 +6887,20 @@
     }
   },
   {
-    "case_id": "C060-single-baseline",
+    "case_id": "C066-single-baseline",
     "category": "contradiction",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-60",
+      "task_id": "em-battery-single-baseline-66",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -6286,20 +6962,20 @@
     }
   },
   {
-    "case_id": "C061-header-mismatch",
+    "case_id": "C067-header-mismatch",
     "category": "contradiction",
     "set": "header-mismatch",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-61",
+      "task_id": "em-battery-header-mismatch-67",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -6379,20 +7055,20 @@
     }
   },
   {
-    "case_id": "C062-disjoint-populations-sum",
+    "case_id": "C068-disjoint-populations-sum",
     "category": "contradiction",
     "set": "disjoint-populations-sum",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-62",
+      "task_id": "em-battery-disjoint-populations-sum-68",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -6523,20 +7199,20 @@
     }
   },
   {
-    "case_id": "C063-nominal-two-report",
+    "case_id": "C069-nominal-two-report",
     "category": "contradiction",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-63",
+      "task_id": "em-battery-nominal-two-report-69",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -6701,13 +7377,13 @@
     }
   },
   {
-    "case_id": "C064-min-wins-two-tier",
+    "case_id": "C070-min-wins-two-tier",
     "category": "contradiction",
     "set": "min-wins-two-tier",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-64",
+      "task_id": "em-battery-min-wins-two-tier-70",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -6789,20 +7465,20 @@
     }
   },
   {
-    "case_id": "C065-metric-dedup-same-value",
+    "case_id": "C071-metric-dedup-same-value",
     "category": "contradiction",
     "set": "metric-dedup-same-value",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-65",
+      "task_id": "em-battery-metric-dedup-same-value-71",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -6881,13 +7557,13 @@
     }
   },
   {
-    "case_id": "C066-flag-only-item",
+    "case_id": "C072-flag-only-item",
     "category": "contradiction",
     "set": "flag-only-item",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-flag-only-item-66",
+      "task_id": "em-battery-flag-only-item-72",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -6960,20 +7636,20 @@
     }
   },
   {
-    "case_id": "C067-single-baseline",
+    "case_id": "C073-single-baseline",
     "category": "contradiction",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-67",
+      "task_id": "em-battery-single-baseline-73",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7035,20 +7711,20 @@
     }
   },
   {
-    "case_id": "C068-header-mismatch",
+    "case_id": "C074-header-mismatch",
     "category": "contradiction",
     "set": "header-mismatch",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-header-mismatch-68",
+      "task_id": "em-battery-header-mismatch-74",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/header-mismatch.json",
           "commit": "01a8a2a402265259da1d134e0e17f31358a01f98",
-          "blob": "3c1b0288ef03078c1b5e24d9fed7f1c420f0cd57",
+          "blob": "96fc2ad4c20bfda6f0020a4ec6ef6d346fcd5bb5",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7128,20 +7804,20 @@
     }
   },
   {
-    "case_id": "C069-disjoint-populations-sum",
+    "case_id": "C075-disjoint-populations-sum",
     "category": "contradiction",
     "set": "disjoint-populations-sum",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-69",
+      "task_id": "em-battery-disjoint-populations-sum-75",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7272,20 +7948,20 @@
     }
   },
   {
-    "case_id": "C070-nominal-two-report",
+    "case_id": "C076-nominal-two-report",
     "category": "contradiction",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-70",
+      "task_id": "em-battery-nominal-two-report-76",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7450,20 +8126,20 @@
     }
   },
   {
-    "case_id": "C071-malicious-suppress-directive",
+    "case_id": "C077-malicious-suppress-directive",
     "category": "injection",
     "set": "malicious-suppress-directive",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-malicious-suppress-directive-71",
+      "task_id": "em-battery-malicious-suppress-directive-77",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/malicious-suppress-directive.json",
           "commit": "028aee915988368aeacadc285241b13d611dacc3",
-          "blob": "14b971638d2b0fa3b6eb363dfbc12bd54e9c5a48",
+          "blob": "f773e5a61adadc911390b6289f05e06b06409bc2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7534,20 +8210,20 @@
     }
   },
   {
-    "case_id": "C072-html-injection",
+    "case_id": "C078-html-injection",
     "category": "injection",
     "set": "html-injection",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-html-injection-72",
+      "task_id": "em-battery-html-injection-78",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/html-injection.json",
           "commit": "aa7a98eb85b0a7610651f31c524f33089e95f0fd",
-          "blob": "fbf26f973f6ae2293e1cf6edc47583c730d8c3dc",
+          "blob": "37891f114b4d4a808148df1ce1f4640ccfaa9b59",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7596,20 +8272,20 @@
     }
   },
   {
-    "case_id": "C073-task-directive-injection",
+    "case_id": "C079-task-directive-injection",
     "category": "injection",
     "set": "task-directive-injection",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-task-directive-injection-73",
+      "task_id": "em-battery-task-directive-injection-79",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/task-directive-injection.json",
           "commit": "b42effe03dd1018e971b431197b8e86ff0edc109",
-          "blob": "efa10fec837b87d8389810320ed0f7e8de0ef9e0",
+          "blob": "ab3f835e6ad484577919bc026c99acc1293c5d8d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -7658,330 +8334,6 @@
     }
   },
   {
-    "case_id": "C074-single-baseline",
-    "category": "injection",
-    "set": "single-baseline",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-single-baseline-74",
-      "operation": "task",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/single-baseline.json",
-          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 1,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
-    "case_id": "C075-single-baseline",
-    "category": "injection",
-    "set": "single-baseline",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-single-baseline-75",
-      "operation": "suppress",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/single-baseline.json",
-          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 1,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
-    "case_id": "C076-single-baseline",
-    "category": "injection",
-    "set": "single-baseline",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-single-baseline-76",
-      "operation": "approve",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/single-baseline.json",
-          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 1,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
-    "case_id": "C077-single-baseline",
-    "category": "injection",
-    "set": "single-baseline",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-single-baseline-77",
-      "operation": "deploy",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/single-baseline.json",
-          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 1,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
-    "case_id": "C078-single-baseline",
-    "category": "injection",
-    "set": "single-baseline",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-single-baseline-78",
-      "operation": "contact",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/single-baseline.json",
-          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 1,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
-    "case_id": "C079-single-baseline",
-    "category": "injection",
-    "set": "single-baseline",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-single-baseline-79",
-      "operation": "publish",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/single-baseline.json",
-          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 1,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
     "case_id": "C080-single-baseline",
     "category": "injection",
     "set": "single-baseline",
@@ -7989,13 +8341,13 @@
     "task": {
       "schema_version": "1",
       "task_id": "em-battery-single-baseline-80",
-      "operation": "activate",
+      "operation": "task",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8036,81 +8388,27 @@
     }
   },
   {
-    "case_id": "C081-nominal-two-report",
+    "case_id": "C081-single-baseline",
     "category": "injection",
-    "set": "nominal-two-report",
+    "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-81",
-      "operation": "task",
-      "fixture_refs": {
-        "report_set": {
-          "repo": "edu-sources",
-          "path": "report-sets/nominal-two-report.json",
-          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
-          "algorithm": "git-sha1",
-          "revision": "v1"
-        }
-      },
-      "options": {
-        "population": {
-          "declared_total": 2,
-          "complete": true
-        }
-      }
-    },
-    "expected": {
-      "status": "REFUSED",
-      "complete": false,
-      "diagnostic_codes": [
-        "ACTION_DENIED"
-      ],
-      "quarantined_report_ids": [],
-      "source_ref_count": 0,
-      "source_reports": [],
-      "derived_statements": [],
-      "dedup_links": [],
-      "metric_totals": [],
-      "header_comparisons": [],
-      "contradictions": [],
-      "exceptions": [],
-      "coverage": {
-        "state": "UNKNOWN",
-        "admitted_count": 0,
-        "excluded_count": 0
-      },
-      "population": {
-        "declared_total": 0,
-        "complete": false,
-        "actual_total": 0,
-        "evidence_state": "unverifiable"
-      }
-    }
-  },
-  {
-    "case_id": "C082-nominal-two-report",
-    "category": "injection",
-    "set": "nominal-two-report",
-    "clock": "2026-07-15T12:00:00Z",
-    "task": {
-      "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-82",
+      "task_id": "em-battery-single-baseline-81",
       "operation": "suppress",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
-          "path": "report-sets/nominal-two-report.json",
-          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "path": "report-sets/single-baseline.json",
+          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 2,
+          "declared_total": 1,
           "complete": true
         }
       }
@@ -8144,27 +8442,27 @@
     }
   },
   {
-    "case_id": "C083-nominal-two-report",
+    "case_id": "C082-single-baseline",
     "category": "injection",
-    "set": "nominal-two-report",
+    "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-83",
+      "task_id": "em-battery-single-baseline-82",
       "operation": "approve",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
-          "path": "report-sets/nominal-two-report.json",
-          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "path": "report-sets/single-baseline.json",
+          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 2,
+          "declared_total": 1,
           "complete": true
         }
       }
@@ -8198,27 +8496,27 @@
     }
   },
   {
-    "case_id": "C084-nominal-two-report",
+    "case_id": "C083-single-baseline",
     "category": "injection",
-    "set": "nominal-two-report",
+    "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-84",
+      "task_id": "em-battery-single-baseline-83",
       "operation": "deploy",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
-          "path": "report-sets/nominal-two-report.json",
-          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "path": "report-sets/single-baseline.json",
+          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 2,
+          "declared_total": 1,
           "complete": true
         }
       }
@@ -8252,27 +8550,27 @@
     }
   },
   {
-    "case_id": "C085-nominal-two-report",
+    "case_id": "C084-single-baseline",
     "category": "injection",
-    "set": "nominal-two-report",
+    "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-85",
+      "task_id": "em-battery-single-baseline-84",
       "operation": "contact",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
-          "path": "report-sets/nominal-two-report.json",
-          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "path": "report-sets/single-baseline.json",
+          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 2,
+          "declared_total": 1,
           "complete": true
         }
       }
@@ -8306,27 +8604,81 @@
     }
   },
   {
-    "case_id": "C086-nominal-two-report",
+    "case_id": "C085-single-baseline",
     "category": "injection",
-    "set": "nominal-two-report",
+    "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-86",
+      "task_id": "em-battery-single-baseline-85",
       "operation": "publish",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
-          "path": "report-sets/nominal-two-report.json",
-          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "path": "report-sets/single-baseline.json",
+          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 2,
+          "declared_total": 1,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C086-single-baseline",
+    "category": "injection",
+    "set": "single-baseline",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-single-baseline-86",
+      "operation": "activate",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/single-baseline.json",
+          "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 1,
           "complete": true
         }
       }
@@ -8367,13 +8719,13 @@
     "task": {
       "schema_version": "1",
       "task_id": "em-battery-nominal-two-report-87",
-      "operation": "activate",
+      "operation": "task",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8414,21 +8766,345 @@
     }
   },
   {
-    "case_id": "C088-malicious-suppress-directive",
+    "case_id": "C088-nominal-two-report",
+    "category": "injection",
+    "set": "nominal-two-report",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-nominal-two-report-88",
+      "operation": "suppress",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/nominal-two-report.json",
+          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C089-nominal-two-report",
+    "category": "injection",
+    "set": "nominal-two-report",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-nominal-two-report-89",
+      "operation": "approve",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/nominal-two-report.json",
+          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C090-nominal-two-report",
+    "category": "injection",
+    "set": "nominal-two-report",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-nominal-two-report-90",
+      "operation": "deploy",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/nominal-two-report.json",
+          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C091-nominal-two-report",
+    "category": "injection",
+    "set": "nominal-two-report",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-nominal-two-report-91",
+      "operation": "contact",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/nominal-two-report.json",
+          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C092-nominal-two-report",
+    "category": "injection",
+    "set": "nominal-two-report",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-nominal-two-report-92",
+      "operation": "publish",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/nominal-two-report.json",
+          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C093-nominal-two-report",
+    "category": "injection",
+    "set": "nominal-two-report",
+    "clock": "2026-07-15T12:00:00Z",
+    "task": {
+      "schema_version": "1",
+      "task_id": "em-battery-nominal-two-report-93",
+      "operation": "activate",
+      "fixture_refs": {
+        "report_set": {
+          "repo": "edu-sources",
+          "path": "report-sets/nominal-two-report.json",
+          "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
+          "algorithm": "git-sha1",
+          "revision": "v1"
+        }
+      },
+      "options": {
+        "population": {
+          "declared_total": 2,
+          "complete": true
+        }
+      }
+    },
+    "expected": {
+      "status": "REFUSED",
+      "complete": false,
+      "diagnostic_codes": [
+        "ACTION_DENIED"
+      ],
+      "quarantined_report_ids": [],
+      "source_ref_count": 0,
+      "source_reports": [],
+      "derived_statements": [],
+      "dedup_links": [],
+      "metric_totals": [],
+      "header_comparisons": [],
+      "contradictions": [],
+      "exceptions": [],
+      "coverage": {
+        "state": "UNKNOWN",
+        "admitted_count": 0,
+        "excluded_count": 0
+      },
+      "population": {
+        "declared_total": 0,
+        "complete": false,
+        "actual_total": 0,
+        "evidence_state": "unverifiable"
+      }
+    }
+  },
+  {
+    "case_id": "C094-malicious-suppress-directive",
     "category": "injection",
     "set": "malicious-suppress-directive",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "museRelayActive",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-malicious-suppress-directive-88",
+      "task_id": "em-battery-malicious-suppress-directive-94",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/malicious-suppress-directive.json",
           "commit": "028aee915988368aeacadc285241b13d611dacc3",
-          "blob": "14b971638d2b0fa3b6eb363dfbc12bd54e9c5a48",
+          "blob": "f773e5a61adadc911390b6289f05e06b06409bc2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8499,20 +9175,20 @@
     }
   },
   {
-    "case_id": "C089-html-injection",
+    "case_id": "C095-html-injection",
     "category": "injection",
     "set": "html-injection",
     "clock": "2026-08-01T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-html-injection-89",
+      "task_id": "em-battery-html-injection-95",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/html-injection.json",
           "commit": "aa7a98eb85b0a7610651f31c524f33089e95f0fd",
-          "blob": "fbf26f973f6ae2293e1cf6edc47583c730d8c3dc",
+          "blob": "37891f114b4d4a808148df1ce1f4640ccfaa9b59",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8561,20 +9237,20 @@
     }
   },
   {
-    "case_id": "C090-task-directive-injection",
+    "case_id": "C096-task-directive-injection",
     "category": "injection",
     "set": "task-directive-injection",
     "clock": "2026-08-01T00:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-task-directive-injection-90",
+      "task_id": "em-battery-task-directive-injection-96",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/task-directive-injection.json",
           "commit": "b42effe03dd1018e971b431197b8e86ff0edc109",
-          "blob": "efa10fec837b87d8389810320ed0f7e8de0ef9e0",
+          "blob": "ab3f835e6ad484577919bc026c99acc1293c5d8d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8623,20 +9299,20 @@
     }
   },
   {
-    "case_id": "C091-single-baseline",
+    "case_id": "C097-single-baseline",
     "category": "injection",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-91",
+      "task_id": "em-battery-single-baseline-97",
       "operation": "unsupported_free_text_request",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8677,20 +9353,20 @@
     }
   },
   {
-    "case_id": "C092-malformed-task-bad-schema-version",
+    "case_id": "C098-malformed-task-bad-schema-version",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "2",
-      "task_id": "em-battery-single-baseline-92",
+      "task_id": "em-battery-single-baseline-98",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8731,20 +9407,20 @@
     }
   },
   {
-    "case_id": "C093-malformed-task-unknown-field",
+    "case_id": "C099-malformed-task-unknown-field",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-93",
+      "task_id": "em-battery-single-baseline-99",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8786,7 +9462,7 @@
     }
   },
   {
-    "case_id": "C094-malformed-task-missing-task-id",
+    "case_id": "C100-malformed-task-missing-task-id",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
@@ -8798,7 +9474,7 @@
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8839,20 +9515,20 @@
     }
   },
   {
-    "case_id": "C095-malformed-task-bad-fixture-ref-path",
+    "case_id": "C101-malformed-task-bad-fixture-ref-path",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-95",
+      "task_id": "em-battery-single-baseline-101",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "../escape.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8893,20 +9569,20 @@
     }
   },
   {
-    "case_id": "C096-malformed-task-bad-fixture-ref-commit",
+    "case_id": "C102-malformed-task-bad-fixture-ref-commit",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-96",
+      "task_id": "em-battery-single-baseline-102",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "not-hex",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -8947,20 +9623,20 @@
     }
   },
   {
-    "case_id": "C097-malformed-task-bad-population-type",
+    "case_id": "C103-malformed-task-bad-population-type",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-97",
+      "task_id": "em-battery-single-baseline-103",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9001,20 +9677,20 @@
     }
   },
   {
-    "case_id": "C098-malformed-task-negative-population",
+    "case_id": "C104-malformed-task-negative-population",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-98",
+      "task_id": "em-battery-single-baseline-104",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9055,20 +9731,20 @@
     }
   },
   {
-    "case_id": "C099-malformed-task-missing-options",
+    "case_id": "C105-malformed-task-missing-options",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-99",
+      "task_id": "em-battery-single-baseline-105",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9103,7 +9779,7 @@
     }
   },
   {
-    "case_id": "C100-single-baseline",
+    "case_id": "C106-single-baseline",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
@@ -9114,14 +9790,14 @@
     },
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-100",
+      "task_id": "em-battery-single-baseline-106",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9162,21 +9838,21 @@
     }
   },
   {
-    "case_id": "C101-single-baseline",
+    "case_id": "C107-single-baseline",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "revoked",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-101",
+      "task_id": "em-battery-single-baseline-107",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9217,21 +9893,21 @@
     }
   },
   {
-    "case_id": "C102-single-baseline",
+    "case_id": "C108-single-baseline",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "expired",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-102",
+      "task_id": "em-battery-single-baseline-108",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9272,21 +9948,21 @@
     }
   },
   {
-    "case_id": "C103-single-baseline",
+    "case_id": "C109-single-baseline",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "notYetValid",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-103",
+      "task_id": "em-battery-single-baseline-109",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "fb2cbccaf90ab2172817e41a588090e7ca58e3f3",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9327,20 +10003,20 @@
     }
   },
   {
-    "case_id": "C104-span-out-of-bounds",
+    "case_id": "C110-span-out-of-bounds",
     "category": "schema",
     "set": "span-out-of-bounds",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-span-out-of-bounds-104",
+      "task_id": "em-battery-span-out-of-bounds-110",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/span-out-of-bounds.json",
           "commit": "377b8b94a21865223e859c400def3ab9abbefaed",
-          "blob": "5df9c03718030c89f2dcf7a9d15f2384718f8ee8",
+          "blob": "fad5b4e794a223d21133fae3d600b1c7f151166f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9402,20 +10078,20 @@
     }
   },
   {
-    "case_id": "C105-one-malformed-one-clean",
+    "case_id": "C111-one-malformed-one-clean",
     "category": "schema",
     "set": "one-malformed-one-clean",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-one-malformed-one-clean-105",
+      "task_id": "em-battery-one-malformed-one-clean-111",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/one-malformed-one-clean.json",
           "commit": "8e22aeedb18f46c4ea24588dcb40b56d7d76abf3",
-          "blob": "8312ef662708b41a08ffaf876bbb85466cacbb58",
+          "blob": "073e2df97f2503cf6ebd9a09a85e21b15d00f195",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9482,13 +10158,13 @@
     }
   },
   {
-    "case_id": "C106-hash-mismatch",
+    "case_id": "C112-hash-mismatch",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-106",
+      "task_id": "em-battery-single-baseline-112",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -9536,20 +10212,20 @@
     }
   },
   {
-    "case_id": "C107-unregistered-commit",
+    "case_id": "C113-unregistered-commit",
     "category": "schema",
     "set": "single-baseline",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-single-baseline-107",
+      "task_id": "em-battery-single-baseline-113",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/single-baseline.json",
           "commit": "0000000000000000000000000000000000000000",
-          "blob": "ad63a7f5aea06ea89101e9e6d8614ff26cc3acad",
+          "blob": "35f1de496d788f30e81e400a231da9e79e2316d2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9590,21 +10266,21 @@
     }
   },
   {
-    "case_id": "C108-nominal-two-report",
+    "case_id": "C114-nominal-two-report",
     "category": "schema",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "revoked",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-108",
+      "task_id": "em-battery-nominal-two-report-114",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9645,14 +10321,14 @@
     }
   },
   {
-    "case_id": "C109-min-wins-two-tier",
+    "case_id": "C115-min-wins-two-tier",
     "category": "schema",
     "set": "min-wins-two-tier",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "revoked",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-min-wins-two-tier-109",
+      "task_id": "em-battery-min-wins-two-tier-115",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
@@ -9700,21 +10376,21 @@
     }
   },
   {
-    "case_id": "C110-metric-dedup-same-value",
+    "case_id": "C116-metric-dedup-same-value",
     "category": "schema",
     "set": "metric-dedup-same-value",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "revoked",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-metric-dedup-same-value-110",
+      "task_id": "em-battery-metric-dedup-same-value-116",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/metric-dedup-same-value.json",
           "commit": "cb666c81edcc21ef4b809a02c6a0534ffb17c1c9",
-          "blob": "dcd1cd36e1aa6b7f55300571a67e3bf23970c5b7",
+          "blob": "69ea799c6b5e59eb734f1ed328c647098a2131a2",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9755,21 +10431,21 @@
     }
   },
   {
-    "case_id": "C111-disjoint-populations-sum",
+    "case_id": "C117-disjoint-populations-sum",
     "category": "schema",
     "set": "disjoint-populations-sum",
     "clock": "2026-07-15T12:00:00Z",
     "principal": "revoked",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-disjoint-populations-sum-111",
+      "task_id": "em-battery-disjoint-populations-sum-117",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/disjoint-populations-sum.json",
           "commit": "52c3ca083dbb7356235d6b182b754568882a603d",
-          "blob": "ee2ae30ccbf735aa8be6e315ffb766186a9aff79",
+          "blob": "57806ab1a2bb14dc2f80149d53cd94305536ad3d",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9810,20 +10486,20 @@
     }
   },
   {
-    "case_id": "C112-bulk-small",
+    "case_id": "C118-bulk-small",
     "category": "budget",
     "set": "bulk-small",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-bulk-small-112",
+      "task_id": "em-battery-bulk-small-118",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/bulk-small.json",
           "commit": "4c27b855cc6818f9fbd5d4d7016eb0df16251943",
-          "blob": "12720039024bfb1aa5e4214388b410bbd98ae476",
+          "blob": "76541004fbe775085c9f0ff14dd35559807812f0",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9927,20 +10603,20 @@
     }
   },
   {
-    "case_id": "C113-poisoned-tail-reports",
+    "case_id": "C119-poisoned-tail-reports",
     "category": "budget",
     "set": "poisoned-tail-reports",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-poisoned-tail-reports-113",
+      "task_id": "em-battery-poisoned-tail-reports-119",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/poisoned-tail-reports.json",
           "commit": "91331b51f78a4d24b37d2867284552339c4bf0da",
-          "blob": "690f4e2fd17d55e254cee520be791aa56d456046",
+          "blob": "09f8741158e70685b5a79d842b5629cf9fe1eb01",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -9981,21 +10657,21 @@
     }
   },
   {
-    "case_id": "C114-nominal-two-report",
+    "case_id": "C120-nominal-two-report",
     "category": "budget",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "sourcesKey": "nominal-two-report+unused-sources",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-114",
+      "task_id": "em-battery-nominal-two-report-120",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10036,21 +10712,21 @@
     }
   },
   {
-    "case_id": "C115-nominal-two-report",
+    "case_id": "C121-nominal-two-report",
     "category": "budget",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "grantsKey": "nominal-two-report+unused-grants",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-115",
+      "task_id": "em-battery-nominal-two-report-121",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10091,20 +10767,20 @@
     }
   },
   {
-    "case_id": "C116-nominal-two-report",
+    "case_id": "C122-nominal-two-report",
     "category": "budget",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-116",
+      "task_id": "em-battery-nominal-two-report-122",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10269,20 +10945,20 @@
     }
   },
   {
-    "case_id": "C117-nominal-two-report",
+    "case_id": "C123-nominal-two-report",
     "category": "budget",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-117",
+      "task_id": "em-battery-nominal-two-report-123",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10447,20 +11123,20 @@
     }
   },
   {
-    "case_id": "C118-nominal-two-report",
+    "case_id": "C124-nominal-two-report",
     "category": "budget",
     "set": "nominal-two-report",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-nominal-two-report-118",
+      "task_id": "em-battery-nominal-two-report-124",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/nominal-two-report.json",
           "commit": "d12efed87cb14ae1a3d857ddf921c73d2438244c",
-          "blob": "a9be2f2d8b6c10df740c7d8d281d682dd4df5bf4",
+          "blob": "9ab113a58373a011b08cf5f048c7512ade89d0e9",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10625,20 +11301,20 @@
     }
   },
   {
-    "case_id": "C119-bulk-small",
+    "case_id": "C125-bulk-small",
     "category": "budget",
     "set": "bulk-small",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-bulk-small-119",
+      "task_id": "em-battery-bulk-small-125",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/bulk-small.json",
           "commit": "4c27b855cc6818f9fbd5d4d7016eb0df16251943",
-          "blob": "12720039024bfb1aa5e4214388b410bbd98ae476",
+          "blob": "76541004fbe775085c9f0ff14dd35559807812f0",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10742,20 +11418,20 @@
     }
   },
   {
-    "case_id": "C120-bulk-small",
+    "case_id": "C126-bulk-small",
     "category": "budget",
     "set": "bulk-small",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-bulk-small-120",
+      "task_id": "em-battery-bulk-small-126",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/bulk-small.json",
           "commit": "4c27b855cc6818f9fbd5d4d7016eb0df16251943",
-          "blob": "12720039024bfb1aa5e4214388b410bbd98ae476",
+          "blob": "76541004fbe775085c9f0ff14dd35559807812f0",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
@@ -10859,20 +11535,20 @@
     }
   },
   {
-    "case_id": "C121-span-out-of-bounds",
+    "case_id": "C127-span-out-of-bounds",
     "category": "budget",
     "set": "span-out-of-bounds",
     "clock": "2026-07-15T12:00:00Z",
     "task": {
       "schema_version": "1",
-      "task_id": "em-battery-span-out-of-bounds-121",
+      "task_id": "em-battery-span-out-of-bounds-127",
       "operation": "analyze",
       "fixture_refs": {
         "report_set": {
           "repo": "edu-sources",
           "path": "report-sets/span-out-of-bounds.json",
           "commit": "377b8b94a21865223e859c400def3ab9abbefaed",
-          "blob": "5df9c03718030c89f2dcf7a9d15f2384718f8ee8",
+          "blob": "fad5b4e794a223d21133fae3d600b1c7f151166f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }

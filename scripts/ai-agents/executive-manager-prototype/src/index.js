@@ -34,7 +34,7 @@
  */
 
 import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
-import { validateTask, validateReport, validateReportSetShape, SchemaError } from "./schemas.js";
+import { validateTask, validateReport, validateReportSetShape, validateStatement, validateMetricLine, validateHeaderClaim, SchemaError } from "./schemas.js";
 import { resolveSourceRef, verifySpanBounds, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { chargeContext } from "./contextGuard.js";
 import { scanAnyDocText } from "./injection.js";
@@ -246,11 +246,29 @@ export function run(task, context) {
       usedContentRefs.push(rep.content_ref);
     }
 
+    // ---- EM-001 fix: buffer this report's nested results LOCALLY. Each
+    // nested candidate is charged via budget.countObject() BEFORE
+    // validateStatement/validateMetricLine/validateHeaderClaim is called
+    // on its raw, not-yet-validated value — never after. A schema failure
+    // on any one nested candidate still invalidates the WHOLE report (the
+    // same all-or-nothing granularity the prior eager validateReport()
+    // had), but it's now determined AFTER each candidate was properly
+    // charged first, not before. Nothing is merged into the global
+    // itemOccurrences/metricsFlat/headerClaimsFlat/source_reports
+    // accumulators until this report's nested pass completes cleanly —
+    // budget charges already spent on this report's candidates are NOT
+    // rolled back (charging happened; that's the point), only the
+    // reported RESULT for this report is discarded. ----
     const statementsOut = [];
     const metricsOut = [];
     const headerClaimsOut = [];
+    const localItemOccs = []; // [{item_id, report_id, support_strength, flags, source_label}]
+    const localMetricsFlat = [];
+    const localHeaderClaimsFlat = [];
+    let reportMalformed = false;
 
     if (!isQuarantined) {
+      const seenItemIds = new Set();
       for (let i = 0; i < rep.statements.length; i++) {
         try {
           budget.countObject(`report[${ri}].statements[${i}]`);
@@ -261,7 +279,16 @@ export function run(task, context) {
           }
           throw e;
         }
-        const s = rep.statements[i];
+        let s;
+        try {
+          s = validateStatement(rep.statements[i], `report[${ri}].statements[${i}]`, seenItemIds);
+        } catch (e) {
+          if (e instanceof SchemaError) {
+            reportMalformed = true;
+            break;
+          }
+          throw e;
+        }
         let source_label = null;
         try {
           const span = verifySpanBounds(resolved.bytes, s.span, budget, `report[${ri}].statements[${i}].span`);
@@ -278,92 +305,127 @@ export function run(task, context) {
           }
         }
         statementsOut.push({ item_id: s.item_id, support_strength: s.support_strength, flags: s.flags, source_label });
-        const occList = itemOccurrences.get(s.item_id) ?? itemOccurrences.set(s.item_id, []).get(s.item_id);
-        occList.push({ report_id: rep.report_id, support_strength: s.support_strength, flags: s.flags, source_label });
+        localItemOccs.push({ item_id: s.item_id, report_id: rep.report_id, support_strength: s.support_strength, flags: s.flags, source_label });
       }
       if (budgetExceeded) {
         return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining statements`);
       }
 
-      for (let i = 0; i < rep.metrics.length; i++) {
-        try {
-          budget.countObject(`report[${ri}].metrics[${i}]`);
-        } catch (e) {
-          if (e instanceof BudgetError) {
-            budgetExceeded = true;
-            break;
+      const seenLineItemIds = new Set();
+      if (!reportMalformed) {
+        for (let i = 0; i < rep.metrics.length; i++) {
+          try {
+            budget.countObject(`report[${ri}].metrics[${i}]`);
+          } catch (e) {
+            if (e instanceof BudgetError) {
+              budgetExceeded = true;
+              break;
+            }
+            throw e;
           }
-          throw e;
-        }
-        const m = rep.metrics[i];
-        let span;
-        try {
-          span = verifySpanBounds(resolved.bytes, m.span, budget, `report[${ri}].metrics[${i}].span`);
-        } catch (e) {
-          if (e instanceof ResolutionError) {
-            // out-of-bounds metric citation: excluded from totals/dedup
-            // entirely (a metric value with no verifiable citation cannot
-            // support any claim).
-            continue;
+          let m;
+          try {
+            m = validateMetricLine(rep.metrics[i], `report[${ri}].metrics[${i}]`, seenLineItemIds);
+          } catch (e) {
+            if (e instanceof SchemaError) {
+              reportMalformed = true;
+              break;
+            }
+            throw e;
           }
-          if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-          throw e;
+          let span;
+          try {
+            span = verifySpanBounds(resolved.bytes, m.span, budget, `report[${ri}].metrics[${i}].span`);
+          } catch (e) {
+            if (e instanceof ResolutionError) {
+              // out-of-bounds metric citation: excluded from totals/dedup
+              // entirely (a metric value with no verifiable citation cannot
+              // support any claim).
+              continue;
+            }
+            if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+            throw e;
+          }
+          const citation = {
+            repo: rep.content_ref.repo,
+            path: rep.content_ref.path,
+            commit: rep.content_ref.commit,
+            blob: rep.content_ref.blob,
+            algorithm: "git-sha1",
+            revision: rep.content_ref.revision,
+            quoted_span: span.quoted_text,
+            span,
+            verification: "VERIFIED",
+          };
+          metricsOut.push({ line_item_id: m.line_item_id, metric_key: m.metric_key, population_id: m.population_id, unit: m.unit, period: m.period, currency: m.currency, value: m.value, numerator: m.numerator, denominator: m.denominator });
+          localMetricsFlat.push({ report_id: rep.report_id, line_item_id: m.line_item_id, metric_key: m.metric_key, population_id: m.population_id, unit: m.unit, period: m.period, currency: m.currency, value: m.value, numerator: m.numerator, denominator: m.denominator, citation });
         }
-        const citation = {
-          repo: rep.content_ref.repo,
-          path: rep.content_ref.path,
-          commit: rep.content_ref.commit,
-          blob: rep.content_ref.blob,
-          algorithm: "git-sha1",
-          revision: rep.content_ref.revision,
-          quoted_span: span.quoted_text,
-          span,
-          verification: "VERIFIED",
-        };
-        metricsOut.push({ line_item_id: m.line_item_id, metric_key: m.metric_key, population_id: m.population_id, unit: m.unit, period: m.period, currency: m.currency, value: m.value });
-        metricsFlat.push({ report_id: rep.report_id, line_item_id: m.line_item_id, metric_key: m.metric_key, population_id: m.population_id, unit: m.unit, period: m.period, currency: m.currency, value: m.value, citation });
       }
       if (budgetExceeded) {
         return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining metrics`);
       }
 
-      for (let i = 0; i < rep.header_claims.length; i++) {
-        try {
-          budget.countObject(`report[${ri}].header_claims[${i}]`);
-        } catch (e) {
-          if (e instanceof BudgetError) {
-            budgetExceeded = true;
-            break;
+      const seenClaimIds = new Set();
+      if (!reportMalformed) {
+        for (let i = 0; i < rep.header_claims.length; i++) {
+          try {
+            budget.countObject(`report[${ri}].header_claims[${i}]`);
+          } catch (e) {
+            if (e instanceof BudgetError) {
+              budgetExceeded = true;
+              break;
+            }
+            throw e;
           }
-          throw e;
+          let h;
+          try {
+            h = validateHeaderClaim(rep.header_claims[i], `report[${ri}].header_claims[${i}]`, seenClaimIds);
+          } catch (e) {
+            if (e instanceof SchemaError) {
+              reportMalformed = true;
+              break;
+            }
+            throw e;
+          }
+          let span;
+          try {
+            span = verifySpanBounds(resolved.bytes, h.span, budget, `report[${ri}].header_claims[${i}].span`);
+          } catch (e) {
+            if (e instanceof ResolutionError) continue; // out-of-bounds header citation: excluded
+            if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+            throw e;
+          }
+          const citation = {
+            repo: rep.content_ref.repo,
+            path: rep.content_ref.path,
+            commit: rep.content_ref.commit,
+            blob: rep.content_ref.blob,
+            algorithm: "git-sha1",
+            revision: rep.content_ref.revision,
+            quoted_span: span.quoted_text,
+            span,
+            verification: "VERIFIED",
+          };
+          headerClaimsOut.push({ claim_id: h.claim_id, metric_key: h.metric_key, population_id: h.population_id, unit: h.unit, period: h.period, currency: h.currency, claimed_value: h.claimed_value });
+          localHeaderClaimsFlat.push({ report_id: rep.report_id, claim_id: h.claim_id, metric_key: h.metric_key, population_id: h.population_id, unit: h.unit, period: h.period, currency: h.currency, claimed_value: h.claimed_value, citation });
         }
-        const h = rep.header_claims[i];
-        let span;
-        try {
-          span = verifySpanBounds(resolved.bytes, h.span, budget, `report[${ri}].header_claims[${i}].span`);
-        } catch (e) {
-          if (e instanceof ResolutionError) continue; // out-of-bounds header citation: excluded
-          if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-          throw e;
-        }
-        const citation = {
-          repo: rep.content_ref.repo,
-          path: rep.content_ref.path,
-          commit: rep.content_ref.commit,
-          blob: rep.content_ref.blob,
-          algorithm: "git-sha1",
-          revision: rep.content_ref.revision,
-          quoted_span: span.quoted_text,
-          span,
-          verification: "VERIFIED",
-        };
-        headerClaimsOut.push({ claim_id: h.claim_id, metric_key: h.metric_key, population_id: h.population_id, unit: h.unit, period: h.period, currency: h.currency, claimed_value: h.claimed_value });
-        headerClaimsFlat.push({ report_id: rep.report_id, claim_id: h.claim_id, metric_key: h.metric_key, population_id: h.population_id, unit: h.unit, period: h.period, currency: h.currency, claimed_value: h.claimed_value, citation });
       }
       if (budgetExceeded) {
         return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining header claims`);
       }
     }
+
+    if (reportMalformed) {
+      malformed.push({ report_id: rep.report_id, reason: "MALFORMED_RECORD" });
+      continue; // discard this report's buffered results; budget charges already spent stand.
+    }
+
+    for (const occ of localItemOccs) {
+      const occList = itemOccurrences.get(occ.item_id) ?? itemOccurrences.set(occ.item_id, []).get(occ.item_id);
+      occList.push({ report_id: occ.report_id, support_strength: occ.support_strength, flags: occ.flags, source_label: occ.source_label });
+    }
+    metricsFlat.push(...localMetricsFlat);
+    headerClaimsFlat.push(...localHeaderClaimsFlat);
 
     source_reports.push({
       report_id: rep.report_id,
@@ -398,8 +460,12 @@ export function run(task, context) {
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
 
+  // EM-001 fix: a report can now become malformed during the LATER
+  // charged nested-candidate pass (not only in the earlier container-
+  // level validateReport() call), so true admission is source_reports
+  // (reports that made it all the way through), not provisional.length.
   const exceptions = [...malformed];
-  const admittedCount = provisional.length;
+  const admittedCount = source_reports.length;
   const excludedCount = exceptions.length;
   const totalPopulation = rawSet.reports.length;
   const hasMalformed = malformed.length > 0;

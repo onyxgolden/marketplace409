@@ -266,7 +266,7 @@ function validateSpan(value, where) {
 /** One statement record. support_strength is string|null, NOT enum-
  *  restricted here (see module header). flags IS enum-restricted: an
  *  unrecognized flag token makes the whole record malformed. */
-function validateStatement(value, where, seenItemIds) {
+export function validateStatement(value, where, seenItemIds) {
   if (!isPlainObject(value)) fail(where, "statement must be an object");
   exactKeys(value, ["item_id", "support_strength", "flags", "span"], where);
   const item_id = validateRecordId(value.item_id, where);
@@ -288,9 +288,16 @@ function validateStatement(value, where, seenItemIds) {
   return { item_id, support_strength, flags, span };
 }
 
-function validateMetricLine(value, where, seenLineItemIds) {
+/** Nonnegative integer, required. Used for percentage numerator/denominator —
+ *  these must be exact counts, never floats, so pooled sums stay exact. */
+function reqNonnegInt(value, where, label) {
+  if (!Number.isInteger(value) || value < 0) fail(where, `'${label}' must be a nonnegative integer`);
+  return value;
+}
+
+export function validateMetricLine(value, where, seenLineItemIds) {
   if (!isPlainObject(value)) fail(where, "metric line must be an object");
-  exactKeys(value, ["line_item_id", "metric_key", "population_id", "unit", "period", "currency", "value", "span"], where);
+  exactKeys(value, ["line_item_id", "metric_key", "population_id", "unit", "period", "currency", "value", "numerator", "denominator", "span"], where);
   const line_item_id = validateRecordId(value.line_item_id, where);
   if (seenLineItemIds.has(line_item_id)) fail(where, `duplicate line_item_id '${line_item_id}' within one report`);
   seenLineItemIds.add(line_item_id);
@@ -305,13 +312,42 @@ function validateMetricLine(value, where, seenLineItemIds) {
     if (value.currency !== null) fail(where, "currency must be null when unit is not 'currency'");
     currency = null;
   }
-  if (typeof value.value !== "number" || !Number.isFinite(value.value)) fail(where, "value must be a finite number");
-  if (unit === "currency" && !Number.isInteger(value.value)) fail(where, "currency value must be an integer (minor units) for exact arithmetic");
+
+  // EM-002 fix: percentage metrics carry an exact numerator/denominator
+  // pair instead of a single float `value` — the brief requires
+  // percentages to aggregate by summing DEDUPLICATED numerators and
+  // denominators over disjoint populations, never by summing/averaging
+  // the percentage VALUE itself. A plain `value` number cannot be pooled
+  // that way (it's lost the two counts that produced it). denominator
+  // may be exactly 0 (a trivially empty line, e.g. "0 of 0") — the typed
+  // undefined-zero-denominator case is handled at the aggregate level in
+  // rollup.js, not rejected here.
+  // numerator/denominator are new fields (added for this fix); existing
+  // non-percentage fixtures predate them and never set them at all, so
+  // ABSENT and explicit null are both accepted as "not applicable" here
+  // — unlike `currency` above, which fixtures already set explicitly.
+  let numerator = null;
+  let denominator = null;
+  let numericValue = null;
+  if (unit === "percentage") {
+    if (value.value !== undefined && value.value !== null) fail(where, "value must be absent or null when unit is 'percentage' (use numerator/denominator instead)");
+    numerator = reqNonnegInt(value.numerator, where, "numerator");
+    denominator = reqNonnegInt(value.denominator, where, "denominator");
+    if (denominator > 0 && numerator > denominator) fail(where, "numerator cannot exceed denominator");
+  } else {
+    if ((value.numerator !== undefined && value.numerator !== null) || (value.denominator !== undefined && value.denominator !== null)) {
+      fail(where, "numerator/denominator must be absent or null when unit is not 'percentage'");
+    }
+    if (typeof value.value !== "number" || !Number.isFinite(value.value)) fail(where, "value must be a finite number");
+    if (unit === "currency" && !Number.isInteger(value.value)) fail(where, "currency value must be an integer (minor units) for exact arithmetic");
+    numericValue = value.value;
+  }
+
   const span = validateSpan(value.span, `${where}.span`);
-  return { line_item_id, metric_key, population_id, unit, period, currency, value: value.value, span };
+  return { line_item_id, metric_key, population_id, unit, period, currency, value: numericValue, numerator, denominator, span };
 }
 
-function validateHeaderClaim(value, where, seenClaimIds) {
+export function validateHeaderClaim(value, where, seenClaimIds) {
   if (!isPlainObject(value)) fail(where, "header claim must be an object");
   exactKeys(value, ["claim_id", "metric_key", "population_id", "unit", "period", "currency", "claimed_value", "span"], where);
   const claim_id = validateRecordId(value.claim_id, where);
@@ -334,7 +370,21 @@ function validateHeaderClaim(value, where, seenClaimIds) {
   return { claim_id, metric_key, population_id, unit, period, currency, claimed_value: value.claimed_value, span };
 }
 
-/** One report record, as read from the resolved report-set fixture. */
+/** One report record, as read from the resolved report-set fixture.
+ *
+ * EM-001 fix: this is now a CONTAINER-LEVEL preflight only — it validates
+ * the report's own scalar fields and checks that statements/metrics/
+ * header_claims are arrays within the schema-level length bound (the same
+ * "bounded preflight may inspect containers/lengths, never walk uncharged
+ * candidates" rule already applied to validateReportSetShape below). It
+ * returns the RAW, not-yet-validated nested arrays. The caller (src/
+ * index.js) charges the monotonic budget for each individual statement,
+ * metric line and header claim via budget.countObject() BEFORE calling
+ * validateStatement/validateMetricLine/validateHeaderClaim on that one
+ * raw candidate — never before. The previous version of this function
+ * eagerly mapped and fully validated every nested candidate here, which
+ * read every candidate's fields before any budget charge ever happened
+ * (EM-001: ChatGPT's exact-head review, 2026-10-15). */
 export function validateReport(value, where) {
   if (!isPlainObject(value)) fail(where, "report must be an object");
   exactKeys(value, ["report_id", "content_ref", "source_principal", "workstream", "scope", "period", "statements", "metrics", "header_claims"], where);
@@ -346,18 +396,20 @@ export function validateReport(value, where) {
   const period = validatePeriod(value.period, `${where}.period`);
 
   if (!Array.isArray(value.statements) || value.statements.length > MAX_STATEMENTS_PER_REPORT) fail(where, `statements must be an array of at most ${MAX_STATEMENTS_PER_REPORT} entries`);
-  const seenItemIds = new Set();
-  const statements = value.statements.map((s, i) => validateStatement(s, `${where}.statements[${i}]`, seenItemIds));
-
   if (!Array.isArray(value.metrics) || value.metrics.length > MAX_METRICS_PER_REPORT) fail(where, `metrics must be an array of at most ${MAX_METRICS_PER_REPORT} entries`);
-  const seenLineItemIds = new Set();
-  const metrics = value.metrics.map((m, i) => validateMetricLine(m, `${where}.metrics[${i}]`, seenLineItemIds));
-
   if (!Array.isArray(value.header_claims) || value.header_claims.length > MAX_HEADER_CLAIMS_PER_REPORT) fail(where, `header_claims must be an array of at most ${MAX_HEADER_CLAIMS_PER_REPORT} entries`);
-  const seenClaimIds = new Set();
-  const header_claims = value.header_claims.map((h, i) => validateHeaderClaim(h, `${where}.header_claims[${i}]`, seenClaimIds));
 
-  return { report_id, content_ref, source_principal, workstream, scope, period, statements, metrics, header_claims };
+  return {
+    report_id,
+    content_ref,
+    source_principal,
+    workstream,
+    scope,
+    period,
+    statements: value.statements, // raw, unvalidated — see doc comment above
+    metrics: value.metrics, // raw, unvalidated
+    header_claims: value.header_claims, // raw, unvalidated
+  };
 }
 
 /** Outer report-set shape: {reports:[...]}. Only the array shape and

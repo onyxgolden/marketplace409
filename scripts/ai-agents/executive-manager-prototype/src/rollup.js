@@ -45,6 +45,8 @@
  *    disjoint:true). Any other reference is UNVERIFIABLE.
  */
 
+import { rational, rEquals, rToFixed, numberToExactRational } from "./canonical.js";
+
 export const SUPPORT_RANK = { unverifiable: 0, attributed_only: 1, verified: 2 };
 export const SUPPORT_NAME_BY_RANK = ["unverifiable", "attributed_only", "verified"];
 export const SUPPORT_VALUES_SET = new Set(["verified", "attributed_only", "unverifiable"]);
@@ -54,6 +56,14 @@ function metricGroupKey(m) {
 }
 function fullIdentityKey(m) {
   return `${metricGroupKey(m)}|${m.line_item_id}`;
+}
+
+/** Comparable-value key for dedup/contradiction detection (EM-002 fix):
+ *  percentage metrics carry numerator/denominator instead of `value`, so
+ *  "same identity, same reported value" must compare the exact fraction,
+ *  not a null `value` field. */
+function valueKeyOf(m) {
+  return m.unit === "percentage" ? `${m.numerator}/${m.denominator}` : String(m.value);
 }
 
 /**
@@ -114,7 +124,7 @@ export function computeMetricDedupAndContradictions(metrics) {
   const contradictions = [];
   const resolvedByFullKey = new Map();
   for (const [k, occs] of byFullKey) {
-    const distinctValues = new Set(occs.map((o) => o.value));
+    const distinctValues = new Set(occs.map(valueKeyOf));
     const sortedOccs = [...occs].sort((a, b) => (a.report_id < b.report_id ? -1 : a.report_id > b.report_id ? 1 : 0));
     if (distinctValues.size === 1) {
       dedupLinks.push({
@@ -125,9 +135,11 @@ export function computeMetricDedupAndContradictions(metrics) {
         currency: occs[0].currency,
         line_item_id: occs[0].line_item_id,
         value: occs[0].value,
+        numerator: occs[0].numerator,
+        denominator: occs[0].denominator,
         occurrences: sortedOccs.map((o) => ({ report_id: o.report_id, citation: o.citation })),
       });
-      resolvedByFullKey.set(k, { value: occs[0].value, sample: occs[0] });
+      resolvedByFullKey.set(k, { value: occs[0].value, numerator: occs[0].numerator, denominator: occs[0].denominator, sample: occs[0] });
     } else {
       contradictions.push({
         metric_key: occs[0].metric_key,
@@ -137,7 +149,7 @@ export function computeMetricDedupAndContradictions(metrics) {
         currency: occs[0].currency,
         line_item_id: occs[0].line_item_id,
         evidence_state: "mismatch",
-        occurrences: sortedOccs.map((o) => ({ report_id: o.report_id, value: o.value, citation: o.citation })),
+        occurrences: sortedOccs.map((o) => ({ report_id: o.report_id, value: o.value, numerator: o.numerator, denominator: o.denominator, citation: o.citation })),
       });
       // contradicted full-identity is excluded from any total (no winner).
     }
@@ -164,7 +176,10 @@ export function computePopulationTotals(metrics, resolvedByFullKey) {
   const totals = new Map(); // groupKey -> {metric_key,population_id,unit,period,currency,total,contributing_line_item_ids,evidence_state}
   for (const [gk, g] of byGroup) {
     const contributing = [];
+    const isPercentage = g.sample.unit === "percentage";
     let sum = 0;
+    let sumNum = 0n;
+    let sumDen = 0n;
     let hasContradiction = false;
     for (const fk of g.lineItemIds) {
       const resolved = resolvedByFullKey.get(fk);
@@ -172,22 +187,57 @@ export function computePopulationTotals(metrics, resolvedByFullKey) {
         hasContradiction = true;
         continue;
       }
-      sum += resolved.value;
+      if (isPercentage) {
+        sumNum += BigInt(resolved.numerator);
+        sumDen += BigInt(resolved.denominator);
+      } else {
+        sum += resolved.value;
+      }
       contributing.push(resolved.sample.line_item_id);
     }
     contributing.sort();
-    totals.set(gk, {
-      metric_key: g.sample.metric_key,
-      population_id: g.sample.population_id,
-      unit: g.sample.unit,
-      period: g.sample.period,
-      currency: g.sample.currency,
-      total_value: hasContradiction ? null : sum,
-      contributing_line_item_ids: contributing,
-      evidence_state: hasContradiction ? "unverifiable" : "verified",
-    });
+    if (isPercentage) {
+      // EM-002 fix: pooled sum of numerators/denominators — NOT a sum or
+      // average of reported percentage values. Zero total denominator
+      // (e.g. no contributing lines, or all contributing lines were
+      // trivially 0/0) is a typed undefined result, per the brief, not a
+      // crash or a silently-wrong 0%.
+      const zeroDenominator = !hasContradiction && sumDen === 0n;
+      totals.set(gk, {
+        metric_key: g.sample.metric_key,
+        population_id: g.sample.population_id,
+        unit: g.sample.unit,
+        period: g.sample.period,
+        currency: g.sample.currency,
+        total_value: hasContradiction || zeroDenominator ? null : rToFixedPercent(sumNum, sumDen),
+        numerator: hasContradiction ? null : sumNum.toString(),
+        denominator: hasContradiction ? null : sumDen.toString(),
+        zero_denominator: zeroDenominator,
+        contributing_line_item_ids: contributing,
+        evidence_state: hasContradiction || zeroDenominator ? "unverifiable" : "verified",
+      });
+    } else {
+      totals.set(gk, {
+        metric_key: g.sample.metric_key,
+        population_id: g.sample.population_id,
+        unit: g.sample.unit,
+        period: g.sample.period,
+        currency: g.sample.currency,
+        total_value: hasContradiction ? null : sum,
+        numerator: null,
+        denominator: null,
+        zero_denominator: false,
+        contributing_line_item_ids: contributing,
+        evidence_state: hasContradiction ? "unverifiable" : "verified",
+      });
+    }
   }
   return totals;
+}
+
+/** Decimal-percent display (2dp) from a pooled numerator/denominator sum. */
+function rToFixedPercent(num, den) {
+  return rToFixed(rational(num * 100n, den), 2);
 }
 
 /**
@@ -215,7 +265,28 @@ export function computeGroupTotals(populationTotals, populationGroups) {
       const allMembersPresent = members.length === group.member_population_ids.length;
       const allVerified = members.every((p) => byPop.get(p).evidence_state === "verified");
       const licensed = group.disjoint === true && allMembersPresent && allVerified;
-      const sum = licensed ? members.reduce((s, p) => s + byPop.get(p).total_value, 0) : null;
+      const isPercentage = unit === "percentage";
+      let total_value = null;
+      let numerator = null;
+      let denominator = null;
+      let zero_denominator = false;
+      if (licensed && isPercentage) {
+        // EM-002 fix: pool each member population's own numerator/
+        // denominator (already an exact pooled sum at layer 1), never
+        // sum/average the members' displayed percentage values.
+        let sumNum = 0n;
+        let sumDen = 0n;
+        for (const p of members) {
+          sumNum += BigInt(byPop.get(p).numerator);
+          sumDen += BigInt(byPop.get(p).denominator);
+        }
+        zero_denominator = sumDen === 0n;
+        numerator = sumNum.toString();
+        denominator = sumDen.toString();
+        total_value = zero_denominator ? null : rToFixedPercent(sumNum, sumDen);
+      } else if (licensed) {
+        total_value = members.reduce((s, p) => s + byPop.get(p).total_value, 0);
+      }
       groupTotals.set(`${metric_key}|${group.group_id}|${unit}|${period}|${currency ?? ""}`, {
         metric_key,
         group_id: group.group_id,
@@ -225,8 +296,11 @@ export function computeGroupTotals(populationTotals, populationGroups) {
         member_population_ids: group.member_population_ids,
         present_member_population_ids: members.sort(),
         disjoint_declared: group.disjoint,
-        total_value: sum,
-        evidence_state: licensed ? "verified" : "unverifiable",
+        total_value,
+        numerator,
+        denominator,
+        zero_denominator,
+        evidence_state: licensed && !zero_denominator ? "verified" : "unverifiable",
       });
     }
   }
@@ -248,21 +322,38 @@ export function computeHeaderComparisons(headerClaims, populationTotals, groupTo
     const groupKey = `${h.metric_key}|${h.population_id}|${h.unit}|${h.period}|${h.currency ?? ""}`;
     const grpTotal = groupTotals.get(groupKey);
     let computed = null;
+    let computedTotal = null;
     let evidence_state = "unverifiable";
     let basis = null;
     if (popTotal && popTotal.evidence_state === "verified") {
       computed = popTotal.total_value;
+      computedTotal = popTotal;
       evidence_state = "verified";
       basis = "population";
     } else if (grpTotal && grpTotal.evidence_state === "verified") {
       computed = grpTotal.total_value;
+      computedTotal = grpTotal;
       evidence_state = "verified";
       basis = "group";
     } else if (popTotal || grpTotal) {
       // Recognized target, but its own total is unresolved (contradiction
-      // in a contributing line, or group not licensed) — unverifiable,
-      // not silently passed.
+      // in a contributing line, zero denominator, or group not licensed)
+      // — unverifiable, not silently passed.
       basis = popTotal ? "population" : "group";
+    }
+    // EM-002 fix: for percentage metrics `computed` is a decimal display
+    // STRING (e.g. "72.50"), derived from a pooled numerator/denominator
+    // — compare the claim against the exact pooled rational, never via
+    // `===` against the display string (which would never match a
+    // float). claimed_value is a percent NUMBER (80 means 80%), matching
+    // computed_value's own percent-scaled display — so the comparison
+    // rational is scaled by 100 too, not the raw 0..1 numerator/denominator
+    // ratio.
+    let match = null;
+    if (evidence_state === "verified") {
+      match = h.unit === "percentage"
+        ? rEquals(numberToExactRational(h.claimed_value), rational(BigInt(computedTotal.numerator) * 100n, BigInt(computedTotal.denominator)))
+        : h.claimed_value === computed;
     }
     out.push({
       claim_id: h.claim_id,
@@ -275,7 +366,7 @@ export function computeHeaderComparisons(headerClaims, populationTotals, groupTo
       claimed_value: h.claimed_value,
       computed_value: computed,
       basis,
-      match: evidence_state === "verified" ? h.claimed_value === computed : null,
+      match,
       evidence_state,
       citation: h.citation,
     });

@@ -104,6 +104,10 @@ addCase("nominal", "flag-only-item");
 addCase("nominal", "flag-union-two-sources");
 addCase("nominal", "metric-dedup-same-value");
 addCase("nominal", "disjoint-populations-sum");
+// EM-002: percentage metrics aggregate by pooling numerator/denominator,
+// never by summing/averaging the reported percentage value.
+addCase("nominal", "percentage-dedup-same-value");
+addCase("nominal", "percentage-disjoint-sum"); // pooled 88% != naive average of 80%/90% (=85%)
 addCase("nominal", "header-mismatch");
 addCase("nominal", "bulk-small");
 addCase("nominal", "span-out-of-bounds");
@@ -127,6 +131,11 @@ addCase("contradiction", "unknown-support-label");
 addCase("contradiction", "contradictory-strengths-flagged");
 addCase("contradiction", "metric-contradiction");
 addCase("contradiction", "ambiguous-overlap-populations");
+// EM-002: percentage-specific contradiction/overlap/zero-denominator cases.
+addCase("contradiction", "percentage-contradiction"); // same identity, different numerator/denominator -> no winner
+addCase("contradiction", "percentage-ambiguous-overlap"); // not registered disjoint -> combined unverifiable
+addCase("contradiction", "percentage-zero-denominator"); // 0 of 0 -> typed undefined, not a crash or silent 0%
+addCase("contradiction", "percentage-disjoint-sum", { ctx: { criteria: "noGroups" } }); // combined becomes unverifiable with no registered group, same pattern as the count/currency case above
 addCase("contradiction", "header-unknown-population");
 addCase("contradiction", "one-malformed-one-clean");
 addCase("contradiction", "duplicate-report-id", { refusalCode: "INVALID_INPUT" });

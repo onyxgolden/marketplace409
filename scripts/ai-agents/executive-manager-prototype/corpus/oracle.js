@@ -176,11 +176,16 @@ export function computeExpected({ reportSet, declared_total, populationComplete,
     const k = `${m.metric_key}|${m.population_id}|${m.unit}|${m.period}|${m.currency ?? ""}|${m.line_item_id}`;
     (byFullKey.get(k) ?? byFullKey.set(k, []).get(k)).push(m);
   }
+  // EM-002: percentage metrics carry numerator/denominator instead of
+  // value (which stays null for them) — the dedup comparator must key
+  // off the exact fraction for those, never the always-null `value`.
+  const valueKeyOf = (m) => (m.unit === "percentage" ? `${m.numerator}/${m.denominator}` : String(m.value));
+
   const dedupLinks = [];
   const contradictions = [];
-  const resolvedLines = new Map(); // fullKey -> {value, line}
+  const resolvedLines = new Map(); // fullKey -> {value, numerator, denominator, sample}
   for (const [k, occs] of byFullKey) {
-    const distinctValues = new Set(occs.map((o) => o.value));
+    const distinctValues = new Set(occs.map(valueKeyOf));
     if (distinctValues.size === 1) {
       dedupLinks.push({
         metric_key: occs[0].metric_key,
@@ -192,7 +197,7 @@ export function computeExpected({ reportSet, declared_total, populationComplete,
         value: occs[0].value,
         occurrence_count: occs.length,
       });
-      resolvedLines.set(k, { value: occs[0].value, sample: occs[0] });
+      resolvedLines.set(k, { value: occs[0].value, numerator: occs[0].numerator ?? null, denominator: occs[0].denominator ?? null, sample: occs[0] });
     } else {
       contradictions.push({ line_item_id: occs[0].line_item_id, values: occs.map((o) => o.value).sort((a, b) => a - b) });
     }
@@ -210,7 +215,10 @@ export function computeExpected({ reportSet, declared_total, populationComplete,
   }
   const populationTotals = new Map(); // gk -> {value|null, evidence_state, metric_key, unit, period, currency, population_id}
   for (const [gk, g] of byGroupKey) {
+    const isPercentage = g.sample.unit === "percentage";
     let sum = 0;
+    let sumNum = 0;
+    let sumDen = 0;
     let hasContradiction = false;
     const contributing = [];
     for (const fk of g.lineKeys) {
@@ -219,19 +227,47 @@ export function computeExpected({ reportSet, declared_total, populationComplete,
         hasContradiction = true;
         continue;
       }
-      sum += resolved.value;
+      if (isPercentage) {
+        sumNum += resolved.numerator;
+        sumDen += resolved.denominator;
+      } else {
+        sum += resolved.value;
+      }
       contributing.push(resolved.sample.line_item_id);
     }
-    populationTotals.set(gk, {
-      metric_key: g.sample.metric_key,
-      population_id: g.sample.population_id,
-      unit: g.sample.unit,
-      period: g.sample.period,
-      currency: g.sample.currency,
-      total_value: hasContradiction ? null : sum,
-      evidence_state: hasContradiction ? "unverifiable" : "verified",
-      contributing: contributing.sort(),
-    });
+    if (isPercentage) {
+      // EM-002: pooled sum of numerators/denominators — NOT a sum or
+      // average of reported percentage values. Zero total denominator
+      // is a typed undefined result.
+      const zeroDenominator = !hasContradiction && sumDen === 0;
+      populationTotals.set(gk, {
+        metric_key: g.sample.metric_key,
+        population_id: g.sample.population_id,
+        unit: g.sample.unit,
+        period: g.sample.period,
+        currency: g.sample.currency,
+        total_value: hasContradiction || zeroDenominator ? null : ((sumNum * 100) / sumDen).toFixed(2),
+        numerator: hasContradiction ? null : sumNum,
+        denominator: hasContradiction ? null : sumDen,
+        zero_denominator: zeroDenominator,
+        evidence_state: hasContradiction || zeroDenominator ? "unverifiable" : "verified",
+        contributing: contributing.sort(),
+      });
+    } else {
+      populationTotals.set(gk, {
+        metric_key: g.sample.metric_key,
+        population_id: g.sample.population_id,
+        unit: g.sample.unit,
+        period: g.sample.period,
+        currency: g.sample.currency,
+        total_value: hasContradiction ? null : sum,
+        numerator: null,
+        denominator: null,
+        zero_denominator: false,
+        evidence_state: hasContradiction ? "unverifiable" : "verified",
+        contributing: contributing.sort(),
+      });
+    }
   }
 
   const groupTotals = new Map(); // "metric|group|unit|period|currency" -> entry
@@ -244,16 +280,39 @@ export function computeExpected({ reportSet, declared_total, populationComplete,
   }
   for (const [dk, byPop] of byDims) {
     const [metric_key, unit, period, currencyRaw] = dk.split("|");
+    const isPercentage = unit === "percentage";
     for (const group of populationGroups ?? []) {
       const members = group.member_population_ids.filter((p) => byPop.has(p));
       if (members.length === 0) continue;
       const allPresent = members.length === group.member_population_ids.length;
       const allVerified = members.every((p) => byPop.get(p).evidence_state === "verified");
       const licensed = group.disjoint === true && allPresent && allVerified;
-      const sum = licensed ? members.reduce((s, p) => s + byPop.get(p).total_value, 0) : null;
+      let total_value = null;
+      let numerator = null;
+      let denominator = null;
+      let zero_denominator = false;
+      if (licensed && isPercentage) {
+        // EM-002: pool each member's own numerator/denominator, never
+        // sum/average the members' displayed percentage values.
+        let sumNum = 0;
+        let sumDen = 0;
+        for (const p of members) {
+          sumNum += byPop.get(p).numerator;
+          sumDen += byPop.get(p).denominator;
+        }
+        zero_denominator = sumDen === 0;
+        numerator = sumNum;
+        denominator = sumDen;
+        total_value = zero_denominator ? null : ((sumNum * 100) / sumDen).toFixed(2);
+      } else if (licensed) {
+        total_value = members.reduce((s, p) => s + byPop.get(p).total_value, 0);
+      }
       groupTotals.set(`${metric_key}|${group.group_id}|${unit}|${period}|${currencyRaw}`, {
-        evidence_state: licensed ? "verified" : "unverifiable",
-        total_value: sum,
+        evidence_state: licensed && !zero_denominator ? "verified" : "unverifiable",
+        total_value,
+        numerator,
+        denominator,
+        zero_denominator,
         contributing: members.sort(),
       });
     }
@@ -279,14 +338,25 @@ export function computeExpected({ reportSet, declared_total, populationComplete,
       const grp = groupTotals.get(grpKey);
       let computed = null;
       let evidence_state = "unverifiable";
+      let totalEntry = null;
       if (pop && pop.evidence_state === "verified") {
         computed = pop.total_value;
+        totalEntry = pop;
         evidence_state = "verified";
       } else if (grp && grp.evidence_state === "verified") {
         computed = grp.total_value;
+        totalEntry = grp;
         evidence_state = "verified";
       }
-      return { claim_id: h.claim_id, claimed_value: h.claimed_value, computed_value: computed, match: evidence_state === "verified" ? h.claimed_value === computed : null, evidence_state };
+      // EM-002: claimed_value is a percent NUMBER (80 means 80%);
+      // computed is a decimal display STRING for percentage metrics —
+      // compare against the exact pooled numerator/denominator (scaled
+      // by 100, same as the display), never claimed_value === computed.
+      let match = null;
+      if (evidence_state === "verified") {
+        match = h.unit === "percentage" ? h.claimed_value === (totalEntry.numerator * 100) / totalEntry.denominator : h.claimed_value === computed;
+      }
+      return { claim_id: h.claim_id, claimed_value: h.claimed_value, computed_value: computed, match, evidence_state };
     })
     .sort((a, b) => (a.claim_id < b.claim_id ? -1 : 1));
 

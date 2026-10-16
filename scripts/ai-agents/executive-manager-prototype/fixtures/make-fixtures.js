@@ -55,7 +55,20 @@ function span(text, needle) {
 function report({ report_id, source_principal = "Program Manager - synthetic", workstream = "delivery", scope = "programwide", period = "2026-q3", content, contentTag, statements = [], metrics = [], headerClaims = [], sharedContentRef }) {
   const ref = sharedContentRef ?? contentRef(content, contentTag ?? report_id);
   const statementsOut = statements.map((s) => ({ item_id: s.item_id, support_strength: s.support_strength ?? null, flags: s.flags ?? [], span: span(content, s.needle) }));
-  const metricsOut = metrics.map((m) => ({ line_item_id: m.line_item_id, metric_key: m.metric_key, population_id: m.population_id, unit: m.unit, period: m.period ?? period, currency: m.currency ?? null, value: m.value, span: span(content, m.needle) }));
+  const metricsOut = metrics.map((m) => ({
+    line_item_id: m.line_item_id,
+    metric_key: m.metric_key,
+    population_id: m.population_id,
+    unit: m.unit,
+    period: m.period ?? period,
+    currency: m.currency ?? null,
+    // EM-002: percentage metrics carry numerator/denominator instead of
+    // value; m.value stays undefined/null for those.
+    value: m.unit === "percentage" ? null : m.value,
+    numerator: m.unit === "percentage" ? m.numerator : null,
+    denominator: m.unit === "percentage" ? m.denominator : null,
+    span: span(content, m.needle),
+  }));
   const headerClaimsOut = headerClaims.map((h) => ({ claim_id: h.claim_id, metric_key: h.metric_key, population_id: h.population_id, unit: h.unit, period: h.period ?? period, currency: h.currency ?? null, claimed_value: h.claimed_value, span: span(content, h.needle) }));
   return { report_id, content_ref: ref, source_principal, workstream, scope, period, statements: statementsOut, metrics: metricsOut, header_claims: headerClaimsOut };
 }
@@ -202,6 +215,73 @@ const cConflictB = "Defects closed: 15 count, line DEF-200, population core-team
 addSet("metric-contradiction", [
   report({ report_id: "rep-conflict-a", contentTag: "conflict-a", content: cConflictA, metrics: [{ line_item_id: "DEF-200", metric_key: "defects_closed", population_id: "core-team", unit: "count", value: 12, needle: "Defects closed: 12 count, line DEF-200, population core-team." }] }),
   report({ report_id: "rep-conflict-b", contentTag: "conflict-b", content: cConflictB, metrics: [{ line_item_id: "DEF-200", metric_key: "defects_closed", population_id: "core-team", unit: "count", value: 15, needle: "Defects closed: 15 count, line DEF-200, population core-team." }] }),
+]);
+
+// EM-002: percentage metric dedup — same full identity (incl.
+// line_item_id) + same numerator/denominator reported by two sources ->
+// dedup to one, both occurrences kept.
+const cPctDedupA = "SLA compliance: 29 of 40, line SLA-100, population pct-core-team.\n";
+const cPctDedupB = "SLA compliance (confirmed by ops): 29 of 40, line SLA-100, population pct-core-team.\n";
+addSet("percentage-dedup-same-value", [
+  report({ report_id: "rep-pctdedup-a", contentTag: "pctdedup-a", content: cPctDedupA, metrics: [{ line_item_id: "SLA-100", metric_key: "sla_compliance", population_id: "pct-core-team", unit: "percentage", numerator: 29, denominator: 40, needle: "SLA compliance: 29 of 40, line SLA-100, population pct-core-team." }] }),
+  report({ report_id: "rep-pctdedup-b", contentTag: "pctdedup-b", content: cPctDedupB, metrics: [{ line_item_id: "SLA-100", metric_key: "sla_compliance", population_id: "pct-core-team", unit: "percentage", numerator: 29, denominator: 40, needle: "SLA compliance (confirmed by ops): 29 of 40, line SLA-100, population pct-core-team." }] }),
+]);
+
+// EM-002: percentage metric contradiction — same full identity, DIFFERENT
+// numerator/denominator -> both shown, no winner, excluded from totals.
+const cPctConflictA = "SLA compliance: 29 of 40, line SLA-200, population pct-core-team.\n";
+const cPctConflictB = "SLA compliance: 30 of 40, line SLA-200, population pct-core-team.\n";
+addSet("percentage-contradiction", [
+  report({ report_id: "rep-pctconflict-a", contentTag: "pctconflict-a", content: cPctConflictA, metrics: [{ line_item_id: "SLA-200", metric_key: "sla_compliance", population_id: "pct-core-team", unit: "percentage", numerator: 29, denominator: 40, needle: "SLA compliance: 29 of 40, line SLA-200, population pct-core-team." }] }),
+  report({ report_id: "rep-pctconflict-b", contentTag: "pctconflict-b", content: cPctConflictB, metrics: [{ line_item_id: "SLA-200", metric_key: "sla_compliance", population_id: "pct-core-team", unit: "percentage", numerator: 30, denominator: 40, needle: "SLA compliance: 30 of 40, line SLA-200, population pct-core-team." }] }),
+]);
+
+// EM-002: percentage disjoint-population pooled sum — two distinct
+// populations, registered group disjoint:true -> combined header claim
+// verifiable via POOLED numerator/denominator (8+36)/(10+40) = 44/50 =
+// 88%, deliberately NOT the naive average of 80%/90% (=85%), proving
+// the fix pools counts rather than averaging percentages.
+const cPctDisjA = "SLA compliance: 8 of 10, line SLA-A, population pct-team-alpha.\n" + "Header: pct-team-alpha SLA total is 80.\n";
+const cPctDisjB = "SLA compliance: 36 of 40, line SLA-B, population pct-team-beta.\n" + "Header: combined alpha+beta SLA total is 88.\n";
+addSet("percentage-disjoint-sum", [
+  report({
+    report_id: "rep-pctdisj-a",
+    contentTag: "pctdisj-a",
+    content: cPctDisjA,
+    metrics: [{ line_item_id: "SLA-A", metric_key: "sla_compliance", population_id: "pct-team-alpha", unit: "percentage", numerator: 8, denominator: 10, needle: "SLA compliance: 8 of 10, line SLA-A, population pct-team-alpha." }],
+    headerClaims: [{ claim_id: "hdr-pctalpha-sla", metric_key: "sla_compliance", population_id: "pct-team-alpha", unit: "percentage", claimed_value: 80, needle: "Header: pct-team-alpha SLA total is 80." }],
+  }),
+  report({
+    report_id: "rep-pctdisj-b",
+    contentTag: "pctdisj-b",
+    content: cPctDisjB,
+    metrics: [{ line_item_id: "SLA-B", metric_key: "sla_compliance", population_id: "pct-team-beta", unit: "percentage", numerator: 36, denominator: 40, needle: "SLA compliance: 36 of 40, line SLA-B, population pct-team-beta." }],
+    headerClaims: [{ claim_id: "hdr-pctcombined-sla", metric_key: "sla_compliance", population_id: "pct-alpha-beta-combined", unit: "percentage", claimed_value: 88, needle: "Header: combined alpha+beta SLA total is 88." }],
+  }),
+]);
+
+// EM-002: percentage ambiguous overlap — two populations NOT registered
+// disjoint -> combined total/header unverifiable, per-population totals
+// still shown individually.
+const cPctAmbigA = "SLA compliance: 5 of 10, line SLA-N, population pct-region-north.\n";
+const cPctAmbigB = "SLA compliance: 21 of 30, line SLA-S, population pct-region-south.\n" + "Header: combined north+south SLA total is 60.\n";
+addSet("percentage-ambiguous-overlap", [
+  report({ report_id: "rep-pctambig-a", contentTag: "pctambig-a", content: cPctAmbigA, metrics: [{ line_item_id: "SLA-N", metric_key: "sla_compliance", population_id: "pct-region-north", unit: "percentage", numerator: 5, denominator: 10, needle: "SLA compliance: 5 of 10, line SLA-N, population pct-region-north." }] }),
+  report({
+    report_id: "rep-pctambig-b",
+    contentTag: "pctambig-b",
+    content: cPctAmbigB,
+    metrics: [{ line_item_id: "SLA-S", metric_key: "sla_compliance", population_id: "pct-region-south", unit: "percentage", numerator: 21, denominator: 30, needle: "SLA compliance: 21 of 30, line SLA-S, population pct-region-south." }],
+    headerClaims: [{ claim_id: "hdr-pctcombined-northsouth", metric_key: "sla_compliance", population_id: "pct-north-south-unregistered", unit: "percentage", claimed_value: 60, needle: "Header: combined north+south SLA total is 60." }],
+  }),
+]);
+
+// EM-002: percentage exact zero denominator — a trivially empty "0 of 0"
+// line -> typed undefined aggregate (zero_denominator:true), never a
+// crash or a silently-wrong 0%.
+const cPctZero = "SLA compliance: 0 of 0, line SLA-ZERO, population pct-zero-pop.\n";
+addSet("percentage-zero-denominator", [
+  report({ report_id: "rep-pctzero", contentTag: "pctzero", content: cPctZero, metrics: [{ line_item_id: "SLA-ZERO", metric_key: "sla_compliance", population_id: "pct-zero-pop", unit: "percentage", numerator: 0, denominator: 0, needle: "SLA compliance: 0 of 0, line SLA-ZERO, population pct-zero-pop." }] }),
 ]);
 
 // Disjoint-population sum: two distinct populations, registered group
@@ -397,7 +477,7 @@ const principals = {
 };
 
 const criteria = {
-  standard: { criteria_version: "v1", population_groups: [{ group_id: "east-west-combined", member_population_ids: ["east-region", "west-region"], disjoint: true }, { group_id: "alpha-beta-combined", member_population_ids: ["team-alpha", "team-beta"], disjoint: true }, { group_id: "north-south-unregistered", member_population_ids: ["region-north", "region-south"], disjoint: false }] },
+  standard: { criteria_version: "v1", population_groups: [{ group_id: "east-west-combined", member_population_ids: ["east-region", "west-region"], disjoint: true }, { group_id: "alpha-beta-combined", member_population_ids: ["team-alpha", "team-beta"], disjoint: true }, { group_id: "north-south-unregistered", member_population_ids: ["region-north", "region-south"], disjoint: false }, { group_id: "pct-alpha-beta-combined", member_population_ids: ["pct-team-alpha", "pct-team-beta"], disjoint: true }, { group_id: "pct-north-south-unregistered", member_population_ids: ["pct-region-north", "pct-region-south"], disjoint: false }] },
   noGroups: { criteria_version: "v1", population_groups: [] },
 };
 
