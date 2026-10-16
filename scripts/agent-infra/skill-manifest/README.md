@@ -10,13 +10,15 @@ FORGE policy extension, not upstream.
 - `src/linter.mjs` — validates a skill directory's `SKILL.md` frontmatter
   (bounded YAML subset; tags never evaluated), checks link/portability
   hygiene, enforces 64-file / 256 KiB admission caps, and emits a
-  deterministic JSON report. Never executes scripts, never touches the
+  deterministic JSON report. Conformance is derived from the full diagnostic
+  set before the 200-entry presentation cap is applied (omitted totals are
+  preserved). Never executes scripts, never touches the
   network, never rewrites the skill. Packaging conformance only — never a
   security approval.
 - `src/inventory.mjs` — read-only inventory of installed playbooks.
 - `frontmatter-template.yaml` — portable template (upstream fields +
   documented FORGE extensions).
-- `fixtures/` — 24 frozen fixtures, each with an independent expected
+- `fixtures/` — 36 frozen fixtures, each with an independent expected
   diagnostic list.
 - `pilots/` — proposed (not applied) manifest diffs for the three pilot
   playbooks: review workflow, engineering handoff, offline artifact.
