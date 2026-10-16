@@ -10,16 +10,22 @@
 // 64 never returns, wherever it occurs.
 //
 // The single budget (cap CONSULTATION_CAP = 64) covers:
-//   - host admission (assertHostConfig): exactly one unit. Admission is
-//     BOUNDED, not per-entry charged — every host collection is limited
-//     to the scoped 64-entry bound, enforced before any entry is read,
-//     so a hostile 65th entry fails closed as BUDGET_EXHAUSTED with zero
-//     invocations. Per-entry charging of the host's own registries would
-//     consume the task budget before any operation; the bound provides
-//     the same fail-closed guarantee without that cost.
-//   - operation consultation: forbidden-value canary scan, authority/
-//     source/task checks, and the recall candidate drain — each candidate
-//     charged BEFORE its fields are inspected.
+//   - host admission: structural validation (exactly one unit) plus every
+//     registration RECORD consulted on demand by the operation-phase
+//     lookups — each charged BEFORE the record is read (see lazyRecords
+//     in schemas.mjs). Admission never eagerly walks the registries: a
+//     64+64 two-collection host consults only the records the task
+//     actually needs, and the 65th consultation — whichever collection it
+//     falls in — fails closed as BUDGET_EXHAUSTED with the record unread.
+//   - operation consultation: forbidden-value canary scan and the recall
+//     candidate drain — each candidate charged BEFORE its fields are
+//     inspected (the drain's per-candidate charges are accounted
+//     centrally even when the drain runs in a worker thread).
+//
+// Candidate definition: a top-level registration record, a recall
+// candidate episode, or a host canary. Nested scalar collections inside a
+// record (actions/tasks/sources arrays) are bounded structural data
+// under the 64-entry bound, not separately charged candidates.
 //
 // Exceeding the cap throws (caught by the entrypoint and mapped to a
 // REFUSED result), so no partial domain output is ever produced.

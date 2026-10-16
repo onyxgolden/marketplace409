@@ -46,15 +46,16 @@ Production baseline mapped (first acceptance step):
 | `admission.mjs` | Descriptor-based admission: own data only, zero accessor invocation, unknown fields refused before value reads, `__proto__`/depth/key-count bounds, scalars proven primitive (getter-bearing objects/arrays/cycles refused with zero invocations) |
 | `schemas.mjs` | Closed event/query/denial schemas, pin validation, host-config validation (exact-literal paths, no globs), registered tasks, exact source-tuple registrations, bounded authority registrations, caller binding, forbidden-data scan |
 | `errors.mjs` | `ENG_CODES` (reuses `TeamBrainError`/`fail` from `../ledger/errors.mjs`) |
-| `budget.mjs` | `ConsultationBudget`: per-phase 64-unit charge-before-inspect budgets (host-config, capture validation, recall) |
+| `budget.mjs` | `ConsultationBudget`: single aggregate 64-unit task budget, charge-before-inspect; lazy per-record registration consultation (see schemas.mjs lazyRecords) |
+| `recallWorker.mjs` | Worker-thread drain for recallAsync's async stores: factory re-executed from source, per-candidate charges accounted centrally on the caller thread, caller timer terminates the worker (no dependence on the blocked thread's timer) |
 | `store.mjs` | Fake in-memory store, repository-adapter-shaped (episodes append-only and detached on every boundary; idempotent retention reviews) |
 | `capture.mjs` | Intake: admit → byte budget → schema + caller binding → forbidden scan → registration/authority checks → deny/revoke → idempotent persist / conflict-preserving persist |
-| `recall.mjs` | Read-only recall: charge-before-inspect (64), 5s watchdog (sync cooperative clock + `recallAsync` real-timer host entrypoint), 20-result cap, 256KiB payload accounting, deterministic epoch-ms ranking, conflict flags, uncertainty + truncation reporting, read-permission revalidation |
+| `recall.mjs` | Read-only recall: charge-before-inspect (64, aggregate), 5s watchdog (sync cooperative clock + `recallAsync` real preemptive boundary: V8 timeouts for sync stores, worker-thread drain with caller-timer termination for async stores), 20-result cap, 256KiB payload accounting, deterministic epoch-ms ranking, conflict flags, uncertainty + truncation reporting, read-permission revalidation |
 | `leakage.mjs` | Forbidden-content scanner over outputs/logs/persisted artifacts |
 | `battery.mjs` | Import-safe battery core (100 frozen cases + 5 gold queries + leakage scan over full actual outputs) |
 | `runBattery.mjs` | CLI: 3-run byte-identical determinism check → JSON report |
 | `fixtures/generateBattery.mjs` | Deterministic generator for `fixtures/battery-cases.json` (+ pinned `.sha256`) |
-| `__tests__/engMemory.test.mjs` | 79 unit/adversarial/determinism tests |
+| `__tests__/engMemory.test.mjs` | 101 unit/adversarial/determinism tests (incl. child-process hang probes and the aggregate two-collection sentinel) |
 
 ## Data contract
 

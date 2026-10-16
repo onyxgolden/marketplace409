@@ -6,16 +6,21 @@
 //  - Every consulted candidate is CHARGED BEFORE its fields are inspected
 //    against the task's SINGLE aggregate 64-unit budget (threaded through
 //    host admission and the recall drain — no per-phase budgets, so one
-//    invocation can never consult 112 units). Exceeding it refuses the
-//    whole task with BUDGET_EXHAUSTED and NO partial domain output.
-//  - 5s task watchdog. The sync core uses a cooperative injected clock;
-//    the async host entrypoint (recallAsync) adds a REAL preemptive
-//    boundary: the store factory call, iterator acquisition, sync next()
-//    steps, and the synchronous prefix of async next() steps all run under
-//    V8-enforced timeouts (a synchronous hang is interrupted, never left
-//    to block the event loop), the genuinely asynchronous remainder races
-//    a real timer, and any completion past the deadline is discarded
-//    rather than emitted as success.
+//    invocation can never consult 112 units). Registration records are
+//    consulted lazily, on demand, each charged before inspection —
+//    admission never eagerly walks the registries. Exceeding the budget
+//    refuses the whole task with BUDGET_EXHAUSTED and NO partial domain
+//    output.
+//  - 5s task watchdog. The sync core uses a cooperative injected clock.
+//    The async host entrypoint (recallAsync) adds a REAL preemptive
+//    boundary chosen by store shape: synchronous stores drain in-thread
+//    with every next() step under a V8-enforced timeout; asynchronous
+//    stores drain entirely in a worker thread (recallWorker.mjs), so a
+//    busy loop AFTER an await blocks the worker thread — never the
+//    caller's event loop — and the caller's own timer terminates the
+//    worker with WATCHDOG_EXHAUSTED. The boundary has no dependence on
+//    the blocked execution thread's timer, and termination (not ignoring)
+//    proves no late domain output.
 //  - Results are capped at 20 candidates, deterministically ranked:
 //    eventAt (integer epoch-ms) descending, then episodeId ascending.
 //  - Revoked/denied sources are suppressed from retrieval, and read
@@ -39,6 +44,7 @@ import { ConsultationBudget } from "./budget.mjs";
 import { QUERY_KEY_SPECS, assertHostConfig, admittedHost, validateQuerySnapshot, sourceIdentityString } from "./schemas.mjs";
 import { stableStringify } from "../report/stableStringify.mjs";
 import vm from "node:vm";
+import { Worker } from "node:worker_threads";
 
 export const MAX_CONSULTED_CANDIDATES = 64;
 export const RECALL_RESULT_CAP = 20;
@@ -87,7 +93,7 @@ function matchesCues(ep, q) {
  *
  * Consults the admitted snapshot (never the raw host object).
  */
-export function hasReadPermission(ep, host) {
+export function hasReadPermission(ep, host, budget) {
   const adm = admittedHost(host);
   const key = sourceKey(ep.source.repo, ep.source.path);
   if (adm.deniedSources.has(key)) return false;
@@ -96,16 +102,24 @@ export function hasReadPermission(ep, host) {
   if (!adm.approvedPaths.has(ep.source.path)) return false;
   // Same predicate shape as capture: some CURRENT registration must
   // cover (repo,path) with its commit restriction (if any) satisfied.
-  const tuplePermitted = adm.sourceRegistrations.some(
-    (reg) =>
-      reg.repo === ep.source.repo &&
-      reg.path === ep.source.path &&
-      (reg.commit === undefined || ep.source.commit === reg.commit),
-  );
+  // Lazy scan with charge-before-inspect: only relevant registrations
+  // are consulted, each against the task's aggregate budget; the
+  // per-invocation cache means a registration consulted for one episode
+  // is not re-charged for the next.
+  let tuplePermitted = false;
+  for (let i = 0; i < adm.sourceRegistrationCount; i += 1) {
+    const reg = adm.sourceRegistrationAt(i, budget);
+    if (reg.repo !== ep.source.repo) continue;
+    if (reg.path !== ep.source.path) continue;
+    if (reg.commit !== undefined && ep.source.commit !== reg.commit) continue;
+    tuplePermitted = true;
+    break;
+  }
   if (!tuplePermitted) return false;
   // Same complete-identity rule as capture: the episode's pin must be
   // currently registered. Changing current permission never keeps serving
-  // the disallowed pin.
+  // the disallowed pin. Set membership on admitted bounded config: not a
+  // per-record candidate, no charge.
   const sid = sourceIdentityString(ep.source.repo, ep.source.path, ep.source.pin.algo, ep.source.pin.id);
   if (!adm.registeredSourceIds.has(sid)) return false;
   return true;
@@ -116,12 +130,17 @@ export function hasReadPermission(ep, host) {
  * cue matching, conflict flags, deterministic ranking, the 20-result cap,
  * detached projection, payload accounting, and uncertainty/truncation
  * reporting all live here so sync and async recall cannot diverge.
+ *
+ * The task's aggregate budget is threaded through: read-permission
+ * revalidation consults source registrations lazily, charging each
+ * before inspection (see hasReadPermission). Without a budget (direct
+ * test calls), records validate uncharged.
  */
-export function matchAndProject(episodes, host, q, counts = {}) {
+export function matchAndProject(episodes, host, q, counts = {}, budget) {
   let suppressed = counts.suppressed || 0;
   const matched = [];
   for (const ep of episodes) {
-    if (!hasReadPermission(ep, host)) {
+    if (!hasReadPermission(ep, host, budget)) {
       suppressed += 1;
       continue;
     }
@@ -299,7 +318,16 @@ export function recall(store, host, query, opts = {}) {
   if (drained.watchdog) {
     return { result: "REFUSED", code: ENG_CODES.WATCHDOG_EXCEEDED, consulted: state.consulted, suppressed: state.suppressed };
   }
-  return matchAndProject(drained.episodes, host, q, state);
+  try {
+    return matchAndProject(drained.episodes, host, q, state, budget);
+  } catch (err) {
+    // Exhaustion during read-permission revalidation refuses the whole
+    // task — no partial domain output — same as drain exhaustion.
+    if (err && err.code === ENG_CODES.BUDGET_EXHAUSTED) {
+      return { result: "REFUSED", code: ENG_CODES.BUDGET_EXHAUSTED, consulted: state.consulted, suppressed: state.suppressed };
+    }
+    throw err;
+  }
 }
 
 /**
@@ -342,29 +370,43 @@ function nextSyncBounded(iterator, ms) {
 
 /**
  * Async host entrypoint for recall. Validates the query synchronously
- * (bounded), then drains under a REAL preemptive boundary:
+ * (bounded), then drains under a REAL preemptive boundary chosen by the
+ * store's shape:
  *
- * - The store factory call (store.episodesInOrder()) runs under a
- *   V8-enforced timeout: a synchronous hang in the factory is interrupted,
- *   never left to block the event loop.
- * - Iterator acquisition runs under the same boundary.
- * - Synchronous iterators advance one next() step at a time under the
- *   V8-enforced timeout (see callBounded): a synchronous hang is
- *   interrupted, never left to block the event loop.
- * - Asynchronous iterators: the synchronous prefix of each next() step
- *   runs under the V8-enforced timeout (an async generator body executes
- *   synchronously until its first await, so a busy loop there is
- *   interrupted); the genuinely asynchronous remainder races against a
- *   real timer via the outer Promise.race.
- * - Belt and suspenders: if the drain completes but the wall-clock elapsed
- *   time already exceeded the timeout, the late domain output is discarded
- *   and WATCHDOG_EXHAUSTED is returned instead.
+ * - SYNCHRONOUS stores (sync generator / sync iterable): the in-thread
+ *   path below. The store factory call, iterator acquisition, and each
+ *   sync next() step run under V8-enforced timeouts (callBounded): a
+ *   synchronous hang is interrupted, never left to block the event loop.
+ *   There is no await anywhere, so no continuation can resume outside
+ *   the timed region.
+ * - ASYNCHRONOUS stores (async generator function, async function, or a
+ *   synchronous factory returning an async iterable): the ENTIRE drain —
+ *   factory, acquisition, and every next() step including post-await
+ *   continuations — runs in a dedicated worker thread
+ *   (drainAsyncInWorker / recallWorker.mjs). A busy loop after an await
+ *   blocks the WORKER thread, never the caller's event loop, so the
+ *   caller's own timer always fires: the worker is terminated and
+ *   WATCHDOG_EXHAUSTED is returned. The execution boundary therefore has
+ *   no dependence on the blocked execution thread's timer.
+ *
+ * The worker receives only the store factory's source text
+ * (reconstructed there) plus opaque control messages; episode data
+ * crosses back as structured-cloned plain data. Per-candidate
+ * consultation charges are accounted centrally on the caller's thread
+ * (one RPC per candidate), so the task's single aggregate 64-unit budget
+ * still bounds the whole drain. Match/project (read-permission
+ * revalidation with lazy registration consultation) runs on the caller's
+ * thread after the drain.
  *
  * A timeout therefore can never later emit successful domain output: the
- * timed-out path returns WATCHDOG_EXHAUSTED immediately, and any abandoned
- * async work has its rejection suppressed and its eventual resolution
- * discarded. No phase of the store execution path relies on a timer
- * running on the same (potentially blocked) event loop.
+ * timed-out worker is TERMINATED (its eventual settlement is destroyed,
+ * not merely ignored), and any abandoned in-thread work has its
+ * rejection suppressed and its eventual resolution discarded.
+ *
+ * Async stores whose factory cannot be reconstructed across the worker
+ * boundary (bound native functions, closures over caller state) are
+ * refused with STORE_BOUNDARY_REFUSED — fail closed, never silently
+ * downgraded to an unguarded path.
  *
  * @param {object} opts - {timeoutMs?: number} (default 5000)
  */
@@ -387,74 +429,65 @@ export async function recallAsync(store, host, query, opts = {}) {
 
   const deadline = startMs + timeoutMs;
   const state = { consulted: 0, suppressed: 0 };
-  let timer;
-  const timeoutPromise = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
-    if (timer.unref) timer.unref();
-  });
   const watchdogRefused = () => ({
     result: "REFUSED",
     code: ENG_CODES.WATCHDOG_EXHAUSTED,
     consulted: state.consulted,
     suppressed: state.suppressed,
   });
+  const workerOpts = { timeoutMs, startMs, budget, state, watchdogRefused };
+
+  const factoryFn = store ? store.episodesInOrder : undefined;
+  if (isAsyncFactory(factoryFn)) {
+    // Async factory: its post-await continuations would resume on this
+    // thread — the whole drain goes to the worker boundary.
+    return drainAsyncInWorker(store, host, q, workerOpts);
+  }
+
+  // Synchronous factory probe under the V8 preemptive boundary: a
+  // synchronous hang in the factory is interrupted, never left to block
+  // the event loop.
+  const factoryMs = deadline - Date.now();
+  if (factoryMs <= 0) return watchdogRefused();
+  const made = callBounded(() => store.episodesInOrder(), factoryMs);
+  if (!made.ok) return watchdogRefused();
+  const iterable = made.result;
+  if (iterable && typeof iterable[Symbol.asyncIterator] === "function") {
+    // Exotic: a synchronous factory returned an async iterable. Its
+    // post-await continuations would resume on this thread — delegate to
+    // the worker boundary (the factory is re-executed there from source).
+    return drainAsyncInWorker(store, host, q, workerOpts);
+  }
+
+  let timer;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    if (timer.unref) timer.unref();
+  });
   const workPromise = (async () => {
     const episodes = [];
-    // Store factory under the preemptive boundary: a synchronous hang
-    // inside episodesInOrder() is interrupted by V8.
-    const factoryMs = deadline - Date.now();
-    if (factoryMs <= 0) return watchdogRefused();
-    const made = callBounded(() => store.episodesInOrder(), factoryMs);
-    if (!made.ok) return watchdogRefused();
-    const iterable = made.result;
-    // Iterator acquisition under the same boundary (prefer an async
-    // iterator when the store offers one; otherwise drive the sync
-    // iterator one bounded step at a time).
+    // Iterator acquisition under the preemptive boundary (sync iterators
+    // only from here: async iterables were routed to the worker above).
     const acqMs = deadline - Date.now();
     if (acqMs <= 0) return watchdogRefused();
     const acquired = callBounded(() => {
-      const asyncIt =
-        iterable && typeof iterable[Symbol.asyncIterator] === "function" ? iterable[Symbol.asyncIterator]() : null;
       const syncIt =
-        !asyncIt && iterable && typeof iterable[Symbol.iterator] === "function" ? iterable[Symbol.iterator]() : null;
-      if (!asyncIt && !syncIt) {
+        iterable && typeof iterable[Symbol.iterator] === "function" ? iterable[Symbol.iterator]() : null;
+      if (!syncIt) {
         throw new TypeError("store.episodesInOrder() must return an iterable");
       }
-      return { asyncIt, syncIt };
+      return { syncIt };
     }, acqMs);
     if (!acquired.ok) return watchdogRefused();
-    const { asyncIt, syncIt } = acquired.result;
+    const { syncIt } = acquired.result;
     try {
       for (;;) {
         if (Date.now() > deadline) return watchdogRefused();
-        let step;
-        if (syncIt) {
-          // Preemptive boundary: a synchronous hang inside next() is
-          // interrupted by V8 instead of blocking the event loop.
-          const advanced = nextSyncBounded(syncIt, deadline - Date.now());
-          if (!advanced.ok) return watchdogRefused();
-          step = advanced.result;
-        } else {
-          // Async next: the synchronous prefix of the step runs under the
-          // V8-enforced timeout (an async generator body executes
-          // synchronously until its first await — a busy loop there is
-          // interrupted, never left to block the event loop). The promise
-          // it returns covers the genuinely asynchronous remainder, which
-          // the outer timer race guards. Either V8 reports the timeout
-          // directly or the abandoned step's promise rejects with it —
-          // both map to WATCHDOG_EXHAUSTED; the abandoned promise never
-          // settles into domain output.
-          const stepMs = deadline - Date.now();
-          if (stepMs <= 0) return watchdogRefused();
-          const started = callBounded(() => asyncIt.next(), stepMs);
-          if (!started.ok) return watchdogRefused();
-          try {
-            step = await started.result;
-          } catch (err) {
-            if (err && err.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") return watchdogRefused();
-            throw err;
-          }
-        }
+        // Preemptive boundary: a synchronous hang inside next() is
+        // interrupted by V8 instead of blocking the event loop.
+        const advanced = nextSyncBounded(syncIt, deadline - Date.now());
+        if (!advanced.ok) return watchdogRefused();
+        const step = advanced.result;
         if (step.done) break;
         // Charge BEFORE inspecting the candidate's fields.
         budget.charge(1, "recall-candidate");
@@ -474,7 +507,19 @@ export async function recallAsync(store, host, query, opts = {}) {
     }
     // Late completion past the deadline is not a success: discard it.
     if (Date.now() - startMs > timeoutMs) return watchdogRefused();
-    return matchAndProject(episodes, host, q, state);
+    try {
+      return matchAndProject(episodes, host, q, state, budget);
+    } catch (err) {
+      if (err && err.code === ENG_CODES.BUDGET_EXHAUSTED) {
+        return {
+          result: "REFUSED",
+          code: ENG_CODES.BUDGET_EXHAUSTED,
+          consulted: state.consulted,
+          suppressed: state.suppressed,
+        };
+      }
+      throw err;
+    }
   })();
   // If the timer wins, the abandoned work must not surface as an
   // unhandled rejection later, and its eventual resolution is discarded.
@@ -488,5 +533,151 @@ export async function recallAsync(store, host, query, opts = {}) {
   if (outcome && outcome.timedOut) {
     return watchdogRefused();
   }
+  return outcome;
+}
+
+/**
+ * True for async generator functions and async functions: their bodies
+ * can suspend at an await and resume later, so their continuations can
+ * execute outside any timed region on the calling thread. Such stores
+ * must drain off-thread (drainAsyncInWorker).
+ */
+function isAsyncFactory(fn) {
+  if (typeof fn !== "function") return false;
+  const name = fn.constructor && fn.constructor.name;
+  return name === "AsyncGeneratorFunction" || name === "AsyncFunction";
+}
+
+/**
+ * Worker-thread drain for asynchronous stores (EMEM-001b).
+ *
+ * The store's factory is re-executed inside a dedicated worker thread
+ * (recallWorker.mjs) from its source text; the worker drives the
+ * (async) iterator there and streams raw episodes back. The caller's
+ * thread stays free for the whole drain, so the caller's own timer is
+ * the enforcement mechanism — it does not depend on the (possibly
+ * blocked) worker thread's event loop:
+ *
+ * - Per-candidate consultation is charged centrally here, before the
+ *   worker is allowed to keep the candidate (one RPC per candidate).
+ * - On timeout the worker is TERMINATED, not merely ignored: a
+ *   post-await busy loop blocking the worker thread is destroyed, and
+ *   its eventual settlement can never surface as late domain output.
+ * - A store whose factory cannot be reconstructed across the boundary
+ *   is refused with STORE_BOUNDARY_REFUSED.
+ *
+ * Match/project runs here on the caller's thread after the drain, with
+ * the task's aggregate budget (drain charges already applied).
+ */
+async function drainAsyncInWorker(store, host, q, opts) {
+  const { timeoutMs, startMs, budget, state, watchdogRefused } = opts;
+  let worker;
+  try {
+    worker = new Worker(new URL("./recallWorker.mjs", import.meta.url), {
+      workerData: { fnSource: store.episodesInOrder.toString() },
+    });
+  } catch (err) {
+    return {
+      result: "REFUSED",
+      code: ENG_CODES.STORE_BOUNDARY_REFUSED,
+      consulted: state.consulted,
+      suppressed: state.suppressed,
+    };
+  }
+  const outcome = await new Promise((resolve) => {
+    let done = false;
+    let timer;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    timer = setTimeout(() => {
+      // The worker thread may be blocked indefinitely (e.g. a busy loop
+      // after an await). This timer runs on the CALLER's thread, which is
+      // free — terminate the worker so no late domain output can surface.
+      worker.terminate().catch(() => {});
+      finish(watchdogRefused());
+    }, Math.max(1, Math.floor(timeoutMs)));
+    if (timer.unref) timer.unref();
+    worker.on("message", (msg) => {
+      if (done || !msg || typeof msg !== "object") return;
+      if (msg.t === "consultCandidate") {
+        // Central charge-before-inspect: the worker holds the raw
+        // candidate but may not keep it until this charge succeeds.
+        let ok = true;
+        try {
+          budget.charge(1, "recall-candidate");
+          state.consulted += 1;
+        } catch (err) {
+          if (err && err.code === ENG_CODES.BUDGET_EXHAUSTED) {
+            ok = false;
+          } else {
+            finish({ threw: err });
+            return;
+          }
+        }
+        worker.postMessage({ t: "consultReply", seq: msg.seq, ok });
+        return;
+      }
+      if (msg.t === "drained") {
+        if (msg.budgetExhausted) {
+          finish({
+            result: "REFUSED",
+            code: ENG_CODES.BUDGET_EXHAUSTED,
+            consulted: state.consulted,
+            suppressed: state.suppressed,
+          });
+          return;
+        }
+        // Late completion past the deadline is not a success: discard it.
+        if (Date.now() - startMs > timeoutMs) {
+          finish(watchdogRefused());
+          return;
+        }
+        try {
+          finish(matchAndProject(msg.episodes, host, q, state, budget));
+        } catch (err) {
+          if (err && err.code === ENG_CODES.BUDGET_EXHAUSTED) {
+            finish({
+              result: "REFUSED",
+              code: ENG_CODES.BUDGET_EXHAUSTED,
+              consulted: state.consulted,
+              suppressed: state.suppressed,
+            });
+          } else {
+            finish({ threw: err });
+          }
+        }
+        return;
+      }
+      if (msg.t === "drainError") {
+        if (msg.code === ENG_CODES.STORE_BOUNDARY_REFUSED) {
+          finish({
+            result: "REFUSED",
+            code: ENG_CODES.STORE_BOUNDARY_REFUSED,
+            consulted: state.consulted,
+            suppressed: state.suppressed,
+          });
+        } else {
+          finish({ threw: new Error(msg.message || "store drain failed in worker") });
+        }
+        return;
+      }
+    });
+    worker.on("error", (err) => finish({ threw: err }));
+    // Fail closed: a worker that exits without reporting is treated as
+    // a watchdog exhaustion, never as a silent success.
+    worker.on("exit", () => finish(watchdogRefused()));
+  });
+  // The worker must be dead before returning: termination (not merely
+  // ignoring its messages) is what proves no late domain output.
+  try {
+    await worker.terminate();
+  } catch {
+    // Already dead.
+  }
+  if (outcome && outcome.threw) throw outcome.threw;
   return outcome;
 }

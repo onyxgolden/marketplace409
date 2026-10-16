@@ -919,6 +919,133 @@ describe("EMEM-001: scalar admission, budgets, async watchdog", () => {
     });
     expect(out).toMatch(/ASYNC_NEXT_HANG_PROBE_PASS/);
   }, 15000);
+
+  it("verdict probe EMEM-001b: post-await busy loop returns WATCHDOG_EXHAUSTED promptly (child process)", async () => {
+    // The async generator awaits once, then busy-loops forever: the
+    // continuation resumes on the driving thread, so no timer on that
+    // thread can fire. recallAsync must drain async stores in a worker
+    // thread — the loop blocks the worker, the caller's own timer fires,
+    // the worker is terminated, WATCHDOG_EXHAUSTED is returned promptly —
+    // never ETIMEDOUT/SIGTERM from an external parent kill.
+    const { execFile } = await import("node:child_process");
+    const out = await new Promise((resolve, reject) => {
+      execFile("node", [join(here, "hangProbe.asyncNextAfterAwait.child.mjs")], { timeout: 10000 }, (err, stdout, stderr) =>
+        err ? reject(new Error(`post-await hang probe failed: ${stderr || err.message}`)) : resolve(stdout),
+      );
+    });
+    expect(out).toMatch(/ASYNC_NEXT_AFTER_AWAIT_HANG_PROBE_PASS/);
+  }, 15000);
+
+  it("async timed-out run that later settles emits no late domain output", async () => {
+    // The store would yield a valid episode after 800ms; the timeout is
+    // 150ms. recallAsync must return WATCHDOG_EXHAUSTED promptly, and the
+    // abandoned worker — terminated, not merely ignored — must never
+    // surface the late episode as a successful result.
+    const host = syntheticHost();
+    const slowStore = {
+      async *episodesInOrder() {
+        await new Promise((r) => setTimeout(r, 800));
+        yield {
+          episodeId: "em-late-1",
+          taskId: "eng-task-001",
+          source: {
+            repo: "onyxgolden/marketplace409",
+            path: "scripts/team-brain/README.md",
+            pin: { algo: "git-blob-sha1", id: "a".repeat(40) },
+          },
+          principal: "principal:muse",
+          eventAt: "2026-10-16T10:00:00Z",
+          eventAtMs: 1760608800000,
+          kind: "FILED",
+          status: "OPEN",
+          attribution: { actor: "Muse", authorityRef: "auth:jason:eng-memory:1" },
+        };
+      },
+    };
+    const t0 = Date.now();
+    const r = await recallAsync(slowStore, host, { taskId: "eng-task-001" }, { timeoutMs: 150 });
+    const elapsed = Date.now() - t0;
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.WATCHDOG_EXHAUSTED });
+    expect(r.results).toBeUndefined();
+    expect(elapsed).toBeLessThan(1500);
+    // Let the abandoned drain's settlement window pass: nothing late may surface.
+    await new Promise((r2) => setTimeout(r2, 1200));
+    // No worker leaked: a subsequent recall on a healthy store still works.
+    const store = createFakeStore();
+    captureEvent(store, host, validInput(), CALLER_MUSE);
+    const r2 = await recallAsync(store, host, { taskId: "eng-task-001" }, { timeoutMs: 2000 });
+    expect(r2.result).toBe("RECALLED");
+    expect(r2.results).toHaveLength(1);
+  }, 15000);
+
+  it("closure-bound async store is refused at the worker boundary, never silently downgraded", async () => {
+    // An async store whose factory closes over caller-side state cannot
+    // be reconstructed in the worker thread. recallAsync must fail
+    // closed with STORE_BOUNDARY_REFUSED — never silently downgrade to
+    // an unguarded in-thread drain.
+    const host = syntheticHost();
+    const realStore = createFakeStore();
+    const closureStore = {
+      async *episodesInOrder() {
+        yield* realStore.episodesInOrder();
+      },
+    };
+    const r = await recallAsync(closureStore, host, { taskId: "eng-task-001" }, { timeoutMs: 2000 });
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.STORE_BOUNDARY_REFUSED });
+    expect(r.results).toBeUndefined();
+  });
+
+  it("aggregate two-collection sentinel: the 65th record is unread when each collection is within bound", () => {
+    // EMEM-001a: 32 source + 32 authority registrations (each collection
+    // within its 64-entry bound). The capture needs the source at index
+    // 31 and the authority at index 31; the aggregate 64-candidate budget
+    // is exhausted first: the 65th consultation charge fires BEFORE the
+    // record is read, so authority[31] is never inspected — a
+    // per-collection scheme would have allowed 32+32=64 records plus the
+    // rest, but the aggregate cap refuses.
+    const host = syntheticHost();
+    host.prohibitedValues = [];
+    const sources = [];
+    for (let i = 0; i < 31; i += 1) {
+      sources.push({ repo: "onyxgolden/marketplace409", path: `scripts/team-brain/synth-${i}.mjs` });
+    }
+    sources.push({ repo: "onyxgolden/marketplace409", path: "scripts/team-brain/README.md" });
+    host.sourceRegistrations = sources;
+    let invocations = 0;
+    const authorities = [];
+    for (let i = 0; i < 31; i += 1) {
+      authorities.push({
+        authorityRef: `auth:other:${i}`,
+        principal: "principal:muse",
+        actor: "Muse",
+        actions: ["*"],
+        tasks: "any",
+        sources: "any",
+      });
+    }
+    const unread = {
+      principal: "principal:muse",
+      actor: "Muse",
+      actions: ["*"],
+      tasks: "any",
+      sources: "any",
+    };
+    Object.defineProperty(unread, "authorityRef", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        invocations += 1;
+        return "auth:jason:eng-memory:1";
+      },
+    });
+    authorities.push(unread);
+    host.authorityRegistrations = authorities;
+    const r = captureEvent(createFakeStore(), host, validInput(), CALLER_MUSE);
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.BUDGET_EXHAUSTED });
+    // The first excess record was never read: zero accessor invocations.
+    expect(invocations).toBe(0);
+    expect(r.results).toBeUndefined();
+  });
 });
 
 describe("EMEM-002: caller binding and authority registrations", () => {

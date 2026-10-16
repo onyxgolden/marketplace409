@@ -8,10 +8,12 @@
 // could happen — there is no body read at all.
 //
 // Flow:
-//   1. Host-config admission under the task's single aggregate budget
-//      (charge-before-inspect, descriptor-safe; failures are REFUSED).
-//      Admission builds a detached snapshot; all authorization consults
-//      the snapshot, never the original host objects.
+//   1. Host-config admission under the task's single aggregate budget:
+//      structural validation (one unit, descriptor-safe; failures are
+//      REFUSED), then lazy on-demand registration consultation — each
+//      record charged BEFORE it is read (failures are REFUSED).
+//      Admission builds the snapshot; all authorization consults
+//      lazily-validated detached records, never the original host objects.
 //   2. Descriptor-based admission (own data only, zero accessor invocation,
 //      unknown fields refused before their values are read; scalars must be
 //      primitive — getter-bearing objects/arrays/cycles at scalar positions

@@ -103,7 +103,7 @@ function assertSourceIdentityString(value, field) {
 
 /**
  * Descriptor-safe indexed read of a host array (no charging here —
- * admission is bounded, not per-entry charged; see assertHostConfig).
+ * the caller charges BEFORE calling; see lazyRecords).
  * Array index access via arr[i] would invoke a hostile accessor;
  * reading through the own descriptor (after proving it is data)
  * never invokes caller code. A throwing/counting getter is therefore
@@ -121,12 +121,59 @@ function readArrayIndexChecked(arr, i, where) {
 }
 
 /**
- * Length of a host array, read without invoking accessors, bounded by
- * the scoped 64-candidate bound. A longer array cannot be consulted
- * within the task budget: fail closed as BUDGET_EXHAUSTED (via the
- * charge) before any entry is read, so a hostile 65th entry dies with
- * zero invocations. Without a budget (direct test calls), fail closed
- * as INVALID_HOST_CONFIG.
+ * Lazy, charge-before-inspect access to one host record collection.
+ *
+ * Admission does NOT eagerly walk the host's registries: consulting every
+ * record up front (128 records across two 64-entry collections) and then
+ * charging a flat unit lets one task exceed the 64-candidate aggregate
+ * cap while the accounting claims compliance. Instead, each record is
+ * consulted ON DEMAND by the operation-phase lookups, and each
+ * consultation charges the task's SINGLE aggregate budget BEFORE the
+ * record is read: the charge that would cross the cap never returns, so
+ * the over-budget record is never inspected — even when every individual
+ * collection is within its 64-entry bound.
+ *
+ * The per-invocation cache means a record consulted twice in one task is
+ * validated (and charged) once; re-consultation is not a new
+ * consultation. There is deliberately no cross-invocation cache: the
+ * cache is rebuilt on every assertHostConfig call, so a host that mutates
+ * its registrations between invocations is re-admitted, never trusted on
+ * a stale snapshot.
+ *
+ * Candidate definition: a top-level registration record (one source or
+ * authority registration). Nested scalar collections inside a record
+ * (actions/tasks/sources arrays, canary strings) are bounded structural
+ * data under the 64-entry bound, not separately charged candidates.
+ *
+ * Without a budget (direct test calls), records validate uncharged.
+ */
+function lazyRecords(rawArray, count, validate, where) {
+  const cache = new Array(count);
+  const consulted = new Array(count).fill(false);
+  return function at(i, budget) {
+    if (i < 0 || i >= count) {
+      fail(ENG_CODES.INVALID_HOST_CONFIG, `Record index out of range at ${where}[${i}]`, { field: where });
+    }
+    if (consulted[i]) return cache[i];
+    // Charge BEFORE inspection: the over-budget record is never read.
+    if (budget) budget.charge(1, `${where}[${i}]`);
+    const raw = readArrayIndexChecked(rawArray, i, `host.${where}`);
+    const rec = validate(raw, i, budget);
+    cache[i] = rec;
+    consulted[i] = true;
+    return rec;
+  };
+}
+
+/**
+ * Length of a host array, read without invoking accessors. Reading the
+ * length is structural, not a record consultation: the per-collection
+ * 64-entry bound is enforced here as ADDITIVE defense-in-depth (a hostile
+ * 65th entry fails closed as BUDGET_EXHAUSTED with zero invocations, via
+ * the charge of the violating length). Aggregate accounting across
+ * collections happens per consulted record (see lazyRecords) — a
+ * preflight cardinality rejection alone cannot substitute for it.
+ * Without a budget (direct test calls), fail closed as INVALID_HOST_CONFIG.
  */
 function arrayLengthChecked(arr, where, budget) {
   const desc = Object.getOwnPropertyDescriptor(arr, "length");
@@ -430,31 +477,31 @@ function assertSourceArray(value, where, budget) {
  * 64-unit budgets let one invocation consult 112 units, exceeding the
  * contract's 64-candidate task cap).
  *
- * Admission itself is BOUNDED, not per-entry charged: every host
- * collection (arrays and sets, including nested authority collections)
- * is limited to the scoped 64-entry bound, enforced BEFORE any entry is
- * read. A hostile 65th entry — a throwing-getter canary, a 65th
- * registration, a 65-element actions array — fails the bound as
- * BUDGET_EXHAUSTED with zero invocations. Per-entry charging of the
- * host's own registries would consume the task budget before any
- * operation (the synthetic host's registries alone exceed 30 entries),
- * which is mathematically incompatible with the frozen battery's
- * within-budget recalls; the bound provides the same fail-closed
- * guarantee without that cost. Admission charges exactly one unit
- * against the aggregate budget; all per-candidate charging happens in
- * the operation phase (forbidden-value canary scan, authority/source/
- * task checks, recall candidate drain), where each candidate is charged
- * BEFORE its fields are inspected.
+ * Admission is STRUCTURAL plus LAZY, never eagerly per-record charged:
+ * every host collection (arrays and sets, including nested authority
+ * collections) is limited to the scoped 64-entry bound, enforced BEFORE
+ * any entry is read — a hostile 65th entry fails the bound as
+ * BUDGET_EXHAUSTED with zero invocations. Registration RECORDS are not
+ * walked here at all: each record is consulted on demand by the
+ * operation-phase lookups (authorizeEvent, authorizeAuthority,
+ * hasReadPermission) through the admitted snapshot's lazy accessors,
+ * which charge the task's aggregate budget BEFORE the record is read.
+ * The charge that would cross the 64-candidate cap never returns, so
+ * the over-budget record is never inspected — even when every
+ * individual collection is within its 64-entry bound. A preflight
+ * cardinality bound is additive; it cannot substitute for this
+ * aggregate accounting.
  *
  * All reads are descriptor-safe (own data descriptors; accessors are
  * rejected, never invoked).
  *
- * Admission builds a detached snapshot of plain frozen records. All
- * authorization and recall-permission checks consult the snapshot —
- * never the original host objects — so field accessors installed after
- * validation are rejected at admission (zero invocations) and can never
- * be consulted during authorization. The snapshot is rebuilt on every
- * call; there is no cross-invocation cache.
+ * Admission builds a detached snapshot of lazily-validated plain frozen
+ * records. All authorization and recall-permission checks consult the
+ * snapshot — never the original host objects — so field accessors
+ * installed after validation are rejected at consultation (zero
+ * invocations) and can never be consulted during authorization. The
+ * snapshot (including its per-invocation consultation cache) is rebuilt
+ * on every call; there is no cross-invocation cache.
  */
 export function assertHostConfig(host, budget) {
   if (!host || typeof host !== "object") {
@@ -487,9 +534,11 @@ export function assertHostConfig(host, budget) {
   }
   // Exact source registrations: approved (repo,path) tuples with optional
   // commit bindings. A Cartesian product of independent repo/path sets is
-  // NOT accepted - only registered tuples. Reads are descriptor-safe
-  // (see readArrayIndexChecked). Each admitted registration is a detached
-  // {repo,path,commit} record.
+  // NOT accepted - only registered tuples. Records are NOT walked here:
+  // the operation-phase lookups consult them on demand through the lazy
+  // admitted accessor (charge-before-inspect against the task budget).
+  // Each admitted registration validates to a detached {repo,path,commit}
+  // record at consultation time.
   if (!Array.isArray(host.sourceRegistrations)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: sourceRegistrations", {
       field: "sourceRegistrations",
@@ -501,13 +550,13 @@ export function assertHostConfig(host, budget) {
       field: "sourceRegistrations",
     });
   }
-  admitted.sourceRegistrations = [];
-  for (let i = 0; i < srcLen; i += 1) {
-    admitted.sourceRegistrations.push(
-      validateSourceRegistration(readArrayIndexChecked(host.sourceRegistrations, i, "host.sourceRegistrations"), i),
-    );
-  }
-  admitted.sourceRegistrations = Object.freeze(admitted.sourceRegistrations);
+  admitted.sourceRegistrationCount = srcLen;
+  admitted.sourceRegistrationAt = lazyRecords(
+    host.sourceRegistrations,
+    srcLen,
+    validateSourceRegistration,
+    "sourceRegistrations",
+  );
   // Complete registered source identities (repo/path/pin algorithm/pin
   // identity). The pin is part of the vouched identity: capture and recall
   // both require the full identity to be registered. Missing or
@@ -522,8 +571,9 @@ export function assertHostConfig(host, budget) {
   }
   // Bounded authority registrations: principal/actor bound to permitted
   // actions, task/source scope, validity window, and revocation state.
-  // Each admitted registration is a detached frozen record; authorization
-  // consults these records, never the original host objects.
+  // Records are NOT walked here: each admitted registration validates to
+  // a detached frozen record at consultation time (charge-before-inspect);
+  // authorization consults these records, never the original host objects.
   if (!Array.isArray(host.authorityRegistrations)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: authorityRegistrations", {
       field: "authorityRegistrations",
@@ -535,13 +585,13 @@ export function assertHostConfig(host, budget) {
       field: "authorityRegistrations",
     });
   }
-  admitted.authorityRegistrations = [];
-  for (let i = 0; i < authLen; i += 1) {
-    admitted.authorityRegistrations.push(
-      validateAuthorityRegistration(readArrayIndexChecked(host.authorityRegistrations, i, "host.authorityRegistrations"), i, budget),
-    );
-  }
-  admitted.authorityRegistrations = Object.freeze(admitted.authorityRegistrations);
+  admitted.authorityRegistrationCount = authLen;
+  admitted.authorityRegistrationAt = lazyRecords(
+    host.authorityRegistrations,
+    authLen,
+    validateAuthorityRegistration,
+    "authorityRegistrations",
+  );
 if (host.deniedSources !== undefined && !(host.deniedSources instanceof Set)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "deniedSources must be a Set", { field: "deniedSources" });
   }
@@ -716,13 +766,6 @@ function sourceInScope(reg, source) {
   );
 }
 
-function authoritiesFor(host, authorityRef) {
-  // Consults the admitted snapshot's detached records — never the
-  // original host objects (whose fields could be accessors installed
-  // after validation).
-  return admittedHost(host).authorityRegistrations.filter((r) => r.authorityRef === authorityRef);
-}
-
 /**
  * Shared authority authorization for capture AND denial/revocation.
  * Binds (authorityRef, principal, actor) to a host authority registration
@@ -731,17 +774,33 @@ function authoritiesFor(host, authorityRef) {
  * only this registration — injected by the host, never derived from the
  * request — can.
  *
- * Lookup is staged: unknown authorityRef -> FORGED_AUTHORITY; known
- * authorityRef but unbound principal -> AUTHORITY_PRINCIPAL_MISMATCH;
- * bound (authorityRef, principal) but unbound actor ->
- * AUTHORITY_ACTOR_MISMATCH.
+ * Lookup is staged and lazy: each consulted record charges the task's
+ * aggregate budget BEFORE it is read (see lazyRecords). The scan stops
+ * at the first (authorityRef, principal) match; the staged negatives
+ * (unknown authorityRef -> FORGED_AUTHORITY; known authorityRef but
+ * unbound principal -> AUTHORITY_PRINCIPAL_MISMATCH; bound
+ * (authorityRef, principal) but unbound actor ->
+ * AUTHORITY_ACTOR_MISMATCH) require consulting every record, so negative
+ * lookups cost the full collection — still bounded by the aggregate cap.
  */
 export function authorizeAuthority(host, { authorityRef, principal, actor, action, taskId, source }, ctx = {}) {
-  const candidates = authoritiesFor(host, authorityRef);
-  if (candidates.length === 0) {
+  const adm = admittedHost(host);
+  const budget = ctx.budget;
+  let refSeen = false;
+  let reg = null;
+  for (let i = 0; i < adm.authorityRegistrationCount; i += 1) {
+    // Charge-before-inspect: the over-budget record is never read.
+    const candidate = adm.authorityRegistrationAt(i, budget);
+    if (candidate.authorityRef !== authorityRef) continue;
+    refSeen = true;
+    if (candidate.principal === principal) {
+      reg = candidate;
+      break;
+    }
+  }
+  if (!refSeen) {
     fail(ENG_CODES.FORGED_AUTHORITY, "Authority not registered by host", {});
   }
-  const reg = candidates.find((r) => r.principal === principal);
   if (!reg) {
     fail(ENG_CODES.AUTHORITY_PRINCIPAL_MISMATCH, "Authority registration is not bound to this principal", {});
   }
@@ -768,24 +827,32 @@ export function authorizeAuthority(host, { authorityRef, principal, actor, actio
  * Host registration checks for a validated event. Runs AFTER the
  * forbidden scan so PROHIBITED_DATA keeps its frozen precedence.
  * Order: principal -> source tuple -> task -> authority binding.
+ *
+ * Record consultations are lazy and charge-before-inspect against the
+ * task's single aggregate budget: the source-tuple scan stops at the
+ * first commit-satisfying match, and the authority scan stops at the
+ * first (authorityRef, principal) binding. Set-membership checks
+ * (principals, tasks, complete source identities) consult already-
+ * admitted bounded config, not per-record candidates, and carry no
+ * per-check charge.
  */
 export function authorizeEvent(ev, host, ctx = {}) {
   const adm = admittedHost(host);
   const budget = ctx.budget;
-  if (budget) budget.charge(1, "authorizeEvent.principal");
   if (!adm.registeredPrincipals.has(ev.principal)) {
     fail(ENG_CODES.UNKNOWN_PRINCIPAL, "Principal is not host-registered", { field: "$.principal" });
   }
 
   // Exact source tuple: repo AND path must be registered TOGETHER, with
   // an optional commit binding. Independent repo/path sets never combine.
-  // Consults the admitted snapshot's detached records (already paid for
-  // during admission); one charge covers the operation-phase scan.
-  if (budget) budget.charge(1, "authorizeEvent.sourceTuple");
+  // Lazy scan: each consulted record charges the aggregate budget BEFORE
+  // it is read; the scan stops at the first commit-satisfying match, so
+  // only relevant registrations are ever consulted.
   let repoHit = false;
   let pairHit = false;
   let pairReg = null;
-  for (const reg of adm.sourceRegistrations) {
+  for (let i = 0; i < adm.sourceRegistrationCount; i += 1) {
+    const reg = adm.sourceRegistrationAt(i, budget);
     if (reg.repo !== ev.source.repo) continue;
     repoHit = true;
     if (reg.path !== ev.source.path) continue;
@@ -807,8 +874,8 @@ export function authorizeEvent(ev, host, ctx = {}) {
   // Complete source identity: the (repo, path, pin algorithm, pin identity)
   // tuple must be host-registered. A syntactically valid pin the host never
   // vouched for is caller-invented integrity metadata and fails closed -
-  // there is no "any pin" fallback.
-  if (budget) budget.charge(1, "authorizeEvent.sourceIdentity");
+  // there is no "any pin" fallback. Set membership on admitted bounded
+  // config: not a per-record candidate, no charge.
   const sid = sourceIdentityString(ev.source.repo, ev.source.path, ev.source.pin.algo, ev.source.pin.id);
   if (!adm.registeredSourceIds.has(sid)) {
     fail(ENG_CODES.SOURCE_PIN_MISMATCH, "Source pin identity is not host-registered", {
@@ -816,12 +883,10 @@ export function authorizeEvent(ev, host, ctx = {}) {
     });
   }
 
-  if (budget) budget.charge(1, "authorizeEvent.task");
   if (!adm.registeredTasks.has(ev.taskId)) {
     fail(ENG_CODES.UNREGISTERED_TASK, "Task is not a host-registered engineering task", { field: "$.taskId" });
   }
 
-  if (budget) budget.charge(1, "authorizeEvent.authority");
   authorizeAuthority(
     host,
     {
