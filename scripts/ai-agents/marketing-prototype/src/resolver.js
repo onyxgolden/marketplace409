@@ -19,6 +19,35 @@ import { BudgetError, StructuralError, presplitRows } from "./budget.js";
 import { validateSourceRef, ROW_VALIDATORS } from "./schemas.js";
 
 /**
+ * getDataDescriptor(obj, key) — descriptor-based stable admission.
+ *
+ * Returns the data descriptor for `key` (own property first, then the
+ * prototype chain), or null when the property is accessor-backed anywhere
+ * on the chain, or undefined when the property is absent entirely.
+ * NEVER invokes a getter/setter: Object.getOwnPropertyDescriptor does not
+ * call user code.
+ *
+ * M640-001 (round 4): the input-byte pre-scan (measureCanonicalBytes)
+ * deliberately skips accessors without invoking them, so an
+ * accessor-backed fixture field would admit an unmeasured, unlimited
+ * payload past the input cap. Fixture bytes and source identity metadata
+ * are admitted ONLY through data descriptors; accessor-backed fields
+ * refuse ACCESSOR_REJECTED without invocation.
+ */
+function getDataDescriptor(obj, key) {
+  let o = obj;
+  while (o !== null) {
+    const d = Object.getOwnPropertyDescriptor(o, key);
+    if (d) return "value" in d ? d : null;
+    o = Object.getPrototypeOf(o);
+  }
+  return undefined;
+}
+
+/** Source identity fields compared against the host-registered tuple. */
+const SOURCE_IDENTITY_FIELDS = ["repo", "path", "commit", "blob", "algorithm", "revision"];
+
+/**
  * Resolve every fixture_ref. Returns Map fixture_id -> {kind, bytes,
  * source_ref, rows:[{row, fixture_id, source_ref}]}. Throws RefusalSignal /
  * InputSignal / BudgetError / StructuralError on any failure — always
@@ -31,15 +60,53 @@ export function resolveFixtures(task, context, sx) {
     if (!Array.isArray(context.grants) || !context.grants.includes(ref.fixture_id)) {
       throw sx.refused("READ_DENIED", `fixture ${JSON.stringify(ref.fixture_id)} is not in the scoped read grants`);
     }
-    const entry = context.fixtures?.[ref.fixture_id];
-    if (!entry || typeof entry.bytes !== "string" || typeof entry.source_ref !== "object") {
+    // M640-001 (round 4): stable admission. The store entry, the bytes
+    // payload, and every source-identity field are admitted ONLY through
+    // data descriptors — checked BEFORE any read, WITHOUT invoking a
+    // getter. An accessor-backed field refuses ACCESSOR_REJECTED here.
+    // The grant check above runs first, so a DENIED fixture's accessors
+    // stay unread (zero invocations).
+    const entryDesc = getDataDescriptor(context.fixtures, ref.fixture_id);
+    if (entryDesc === null) {
+      throw sx.refused("ACCESSOR_REJECTED", `fixture ${JSON.stringify(ref.fixture_id)}: store entry is accessor-backed (rejected without invocation)`);
+    }
+    const entry = entryDesc?.value;
+    if (entry === null || typeof entry !== "object") {
       throw sx.refused("READ_DENIED", `fixture ${JSON.stringify(ref.fixture_id)} is not registered in the fixture store`);
     }
-    const vsr = validateSourceRef(entry.source_ref);
+    const bytesDesc = getDataDescriptor(entry, "bytes");
+    if (bytesDesc === null) {
+      throw sx.refused("ACCESSOR_REJECTED", `fixture ${JSON.stringify(ref.fixture_id)}: bytes is accessor-backed (rejected without invocation)`);
+    }
+    const bytesValue = bytesDesc?.value;
+    if (typeof bytesValue !== "string") {
+      throw sx.refused("READ_DENIED", `fixture ${JSON.stringify(ref.fixture_id)} is not registered in the fixture store`);
+    }
+    const srDesc = getDataDescriptor(entry, "source_ref");
+    if (srDesc === null) {
+      throw sx.refused("ACCESSOR_REJECTED", `fixture ${JSON.stringify(ref.fixture_id)}: source_ref is accessor-backed (rejected without invocation)`);
+    }
+    const sourceRef = srDesc?.value;
+    if (typeof sourceRef !== "object") {
+      throw sx.refused("READ_DENIED", `fixture ${JSON.stringify(ref.fixture_id)} is not registered in the fixture store`);
+    }
+    // M640-001 (round 4): the same stable-admission rule for source
+    // identity metadata, not just the body string. Every compared field
+    // must be a data descriptor before validateSourceRef reads it.
+    for (const f of SOURCE_IDENTITY_FIELDS) {
+      if (getDataDescriptor(sourceRef, f) === null) {
+        throw sx.refused("ACCESSOR_REJECTED", `fixture ${JSON.stringify(ref.fixture_id)}: source_ref.${f} is accessor-backed (rejected without invocation)`);
+      }
+    }
+    const vsr = validateSourceRef(sourceRef);
     if (!vsr.ok) {
       throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)} source_ref invalid: ${vsr.errors.join("; ")}`);
     }
-    const bytes = Buffer.from(entry.bytes, "utf8");
+    // Single stable read of the admitted payload: the value came from a
+    // data descriptor, so it is the same immutable string the public-entry
+    // pre-scan measured and charged. No getter can fire here and the
+    // payload cannot change between measurement and admission.
+    const bytes = Buffer.from(bytesValue, "utf8");
     // M640-001: byte length was ALREADY counted by the public-entry
     // pre-scan (the fixture bytes string is opaque until grant admission).
     // Do NOT chargeInputBytes here — that would double-bill.
@@ -47,10 +114,10 @@ export function resolveFixtures(task, context, sx) {
     // nested spans), which the pre-scan could not see inside the opaque
     // string.
     const recomputed = gitBlobSha1(bytes);
-    if (recomputed !== entry.source_ref.blob) {
+    if (recomputed !== sourceRef.blob) {
       throw sx.refused(
         "HASH_MISMATCH",
-        `fixture ${JSON.stringify(ref.fixture_id)}: recomputed git blob ${recomputed} != pinned ${entry.source_ref.blob}`
+        `fixture ${JSON.stringify(ref.fixture_id)}: recomputed git blob ${recomputed} != pinned ${sourceRef.blob}`
       );
     }
     // M640-007: source membership — the COMPLETE registered source
@@ -62,7 +129,7 @@ export function resolveFixtures(task, context, sx) {
     // The registry is host-injected separately — never rebuilt by
     // candidate code from the entry being authenticated.
     const registered = sx.sourceRegistry?.get(ref.fixture_id);
-    const sr = entry.source_ref;
+    const sr = sourceRef;
     if (
       !registered ||
       registered.repo !== sr.repo ||
@@ -121,15 +188,15 @@ export function resolveFixtures(task, context, sx) {
       }
       const vr = validate(parsed, i);
       if (!vr.ok) {
-        throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)}: ${vr.errors.join("; ")}`, entry.source_ref, null);
+        throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)}: ${vr.errors.join("; ")}`, sourceRef, null);
       }
       // Retain the raw byte span for citation construction. The citation
       // quotes the exact UTF-8 bytes of this row.
-      rows.push({ row: vr.value, fixture_id: ref.fixture_id, source_ref: entry.source_ref, byte_span: [s, e] });
+      rows.push({ row: vr.value, fixture_id: ref.fixture_id, source_ref: sourceRef, byte_span: [s, e] });
     });
     sx.fixtureBytes.set(ref.fixture_id, bytes);
-    sx.fixtureSourceRefs.set(ref.fixture_id, entry.source_ref);
-    out.set(ref.fixture_id, { kind: ref.kind, bytes, source_ref: entry.source_ref, rows });
+    sx.fixtureSourceRefs.set(ref.fixture_id, sourceRef);
+    out.set(ref.fixture_id, { kind: ref.kind, bytes, source_ref: sourceRef, rows });
   }
   return out;
 }
