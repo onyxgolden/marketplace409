@@ -1,0 +1,1 @@
+{"fixture_id":"benefit-registry-v1","kind":"benefit_registry","rows":[{"benefit_id":"ben-durable","benefit_text":"built for daily use"},{"benefit_id":"ben-save-time","benefit_text":"saves an hour a week"},{"benefit_id":"ben-quiet","benefit_text":"runs quietly in the background"},{"benefit_id":"ben-simple","benefit_text":"simple enough for a first-timer"}],"schema_version":"1"}
