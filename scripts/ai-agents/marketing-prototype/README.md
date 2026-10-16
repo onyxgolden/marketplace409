@@ -33,8 +33,12 @@ targets, or activates anything.
 ## Usage
 
 ```bash
-MK_APPROVED_ROOT=<digest-from-corpus-digest.txt> npm test     # unit suites (trust-authenticated)
-MK_APPROVED_ROOT=<digest-from-corpus-digest.txt> npm run battery  # 120-case acceptance battery (trust-authenticated)
+# Official invocations — DIRECT node, never via npm. `npm test` / `npm run battery`
+# must never be used: npm executes candidate lifecycle scripts (pretest/posttest)
+# before trust authentication. Direct invocation guarantees the builtins-only
+# authenticator runs first.
+MK_APPROVED_ROOT=<digest-from-corpus-digest.txt> node tests/run-tests.js     # unit suites (trust-authenticated)
+MK_APPROVED_ROOT=<digest-from-corpus-digest.txt> node tests/run-battery.js  # 120-case acceptance battery (trust-authenticated)
 node runner/run-manual.js <task.json> <context.json> md
 ```
 

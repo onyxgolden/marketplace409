@@ -41,7 +41,7 @@ function authenticateTrustRoot() {
     }
   }
   for (const p of want.sort()) assert.ok(seen.has(p), `trust: unlisted file: ${p}`);
-  const digest = sha(Buffer.from(JSON.stringify(files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))), "utf8"));
+  const digest = sha(Buffer.from(JSON.stringify(files.map((e) => ({ path: e.path, sha256: e.sha256 }))), "utf8"));
   assert.equal(digest, manifest.corpus_digest);
   assert.equal(readFileSync(join(ROOT, "corpus", "corpus_digest.txt"), "utf8").trim(), manifest.corpus_digest);
   assert.equal(digest, approved);

@@ -78,11 +78,20 @@ export function resolveFixtures(task, context, sx) {
       } catch {
         throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)} row ${i}: not valid JSON`);
       }
+      // Charge every nested evidence_span candidate BEFORE the row
+      // validator inspects them. The span budget is enforced here, not
+      // after schema traversal.
+      const spans = parsed?.evidence_spans;
+      if (Array.isArray(spans)) {
+        for (const sp of spans) sx.budget.chargeSpan(1);
+      }
       const vr = validate(parsed, i);
       if (!vr.ok) {
         throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)}: ${vr.errors.join("; ")}`, entry.source_ref, null);
       }
-      rows.push({ row: vr.value, fixture_id: ref.fixture_id, source_ref: entry.source_ref });
+      // Retain the raw byte span for citation construction. The citation
+      // quotes the exact UTF-8 bytes of this row.
+      rows.push({ row: vr.value, fixture_id: ref.fixture_id, source_ref: entry.source_ref, byte_span: [s, e] });
     });
     sx.fixtureBytes.set(ref.fixture_id, bytes);
     sx.fixtureSourceRefs.set(ref.fixture_id, entry.source_ref);

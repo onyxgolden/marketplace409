@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 /**
- * run-battery.js — `npm run battery`: verify the corpus root, run all 120
- * frozen cases, and print the acceptance summary. Any trust mismatch stops
- * the run before a single case executes.
+ * run-battery.js — official battery entrypoint. Invoke DIRECTLY, never via npm:
+ *
+ *   MK_APPROVED_ROOT=<64-hex> node tests/run-battery.js
+ *
+ * `npm run battery` must NEVER be the official path: npm executes candidate
+ * lifecycle scripts BEFORE this file runs. Direct node invocation guarantees
+ * the builtins-only authenticator runs first. Verifies the corpus root,
+ * runs all frozen cases, and prints the acceptance summary. Any trust
+ * mismatch stops the run before a single case executes.
  *
  * Bootstrap order: the approved root is a SEPARATELY TRUSTED host input
  * (MK_APPROVED_ROOT env, supplied by the reviewer or CI pipeline at
  * invocation time — never by this package's own scripts or any file in
  * the candidate tree). The full corpus digest, covering EVERY pinned file
- * including the scorer itself, is recomputed with node:fs / node:crypto
- * ONLY and authenticated against that root BEFORE the agent module or any
+ * including package.json, is recomputed with node:fs / node:crypto ONLY
+ * and authenticated against that root BEFORE the agent module or any
  * scored code is imported. Refuse (exit 3) on any mismatch: no import, no
  * case execution.
  */
@@ -71,7 +77,7 @@ if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) 
   }
   if (!bad) {
     const canonical = JSON.stringify(
-      files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+      files.map((e) => ({ path: e.path, sha256: e.sha256 }))
     );
     const digest = sha(Buffer.from(canonical, "utf8"));
     if (digest !== manifest.corpus_digest) bad = "manifest corpus_digest does not match recomputed digest";

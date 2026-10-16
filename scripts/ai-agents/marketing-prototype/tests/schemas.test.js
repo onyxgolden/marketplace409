@@ -115,9 +115,10 @@ describe("row validators", () => {
     assert.equal(validateEventRow({ ...base, kind: "NOPE" }, 0).ok, false);
   });
   it("header claims validate evidence spans", () => {
-    const base = { claim_id: "cl", campaign_id: "c", metric: "CTR", claimed_value: "5.00%" };
+    const base = { claim_id: "cl", campaign_id: "c", metric: "CTR", claimed_value: "5.00%", period_start: "2026-10-01T00:00:00Z", period_end: "2026-10-08T00:00:00Z", currency: "USD" };
     assert.equal(validateHeaderClaimRow(base, 0).ok, true);
     assert.equal(validateHeaderClaimRow({ ...base, evidence_spans: [{ start_byte: 5, end_byte: 2, quoted_text: "x" }] }, 0).ok, false);
     assert.equal(validateHeaderClaimRow({ ...base, metric: "NOPE" }, 0).ok, false);
+    assert.equal(validateHeaderClaimRow({ claim_id: "cl", campaign_id: "c", metric: "CTR", claimed_value: "5.00%" }, 0).ok, false);
   });
 });

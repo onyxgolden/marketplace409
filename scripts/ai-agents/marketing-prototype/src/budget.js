@@ -93,19 +93,38 @@ function isWs(b) {
 /**
  * Scan a JSON string starting at index i (bytes[i] === 0x22).
  * Returns the index just past the closing quote. Throws StructuralError
- * on unterminated strings. Escape-aware: \" \\ \/ \b \f \n \r \t \uXXXX.
+ * on unterminated strings or invalid escapes. Strict: only the JSON
+ * escapes \" \\ \/ \b \f \n \r \t \uXXXX are accepted.
  */
 function scanString(bytes, i) {
   let j = i + 1;
   while (j < bytes.length) {
     const c = bytes[j];
     if (c === 0x5c) {
-      // backslash: skip the escaped char (\" etc.)
-      if (bytes[j + 1] === 0x75) j += 6; // \uXXXX
-      else j += 2;
+      // backslash: validate the escape
+      const e = bytes[j + 1];
+      if (e === 0x75) {
+        // \uXXXX: 4 hex digits required
+        if (j + 5 >= bytes.length) throw new StructuralError("INVALID_INPUT", "fixture: truncated \\u escape");
+        for (let k = j + 2; k <= j + 5; k++) {
+          const h = bytes[k];
+          const isHex = (h >= 0x30 && h <= 0x39) || (h >= 0x41 && h <= 0x46) || (h >= 0x61 && h <= 0x66);
+          if (!isHex) throw new StructuralError("INVALID_INPUT", "fixture: invalid \\u escape");
+        }
+        j += 6;
+      } else if (
+        e === 0x22 || e === 0x5c || e === 0x2f || // " \ /
+        e === 0x62 || e === 0x66 || e === 0x6e || e === 0x72 || e === 0x74 // b f n r t
+      ) {
+        j += 2;
+      } else {
+        throw new StructuralError("INVALID_INPUT", "fixture: invalid string escape");
+      }
       continue;
     }
     if (c === 0x22) return j + 1;
+    // Unescaped control characters are invalid in JSON strings
+    if (c < 0x20) throw new StructuralError("INVALID_INPUT", "fixture: unescaped control character in string");
     j += 1;
   }
   throw new StructuralError("INVALID_INPUT", "fixture: unterminated string");
@@ -182,12 +201,17 @@ export function presplitRows(input) {
   const header = {};
   const seen = new Set();
   let rowSpans = null;
+  let expectPair = true; // strict: no leading comma, no trailing comma
   for (;;) {
     i = skipWs(bytes, i);
     if (bytes[i] === 0x7d) {
+      if (expectPair && seen.size > 0) {
+        throw new StructuralError("INVALID_INPUT", "fixture: trailing comma in top-level object");
+      }
       i += 1;
       break;
     }
+    if (!expectPair) throw new StructuralError("INVALID_INPUT", "fixture: malformed object");
     if (bytes[i] !== 0x22) throw new StructuralError("INVALID_INPUT", "fixture: object keys must be strings");
     const keyEnd = scanString(bytes, i);
     const key = JSON.parse(bytes.toString("utf8", i, keyEnd));
@@ -200,18 +224,25 @@ export function presplitRows(input) {
       if (bytes[i] !== 0x5b) throw new StructuralError("INVALID_INPUT", 'fixture: "rows" must be an array');
       rowSpans = [];
       i += 1; // past '['
+      let expectValue = true; // strict: no leading comma, no trailing comma
       for (;;) {
         i = skipWs(bytes, i);
         if (bytes[i] === 0x5d) {
+          if (expectValue && rowSpans.length > 0) {
+            throw new StructuralError("INVALID_INPUT", 'fixture: trailing comma in "rows" array');
+          }
           i += 1;
           break;
         }
+        if (!expectValue) throw new StructuralError("INVALID_INPUT", 'fixture: malformed "rows" array');
         const start = i;
         const end = skipValue(bytes, i, 2); // elements live at depth 2
         rowSpans.push([start, end]);
         i = skipWs(bytes, end);
+        expectValue = false;
         if (bytes[i] === 0x2c) {
           i += 1;
+          expectValue = true;
           continue;
         }
         if (bytes[i] === 0x5d) {
@@ -229,8 +260,10 @@ export function presplitRows(input) {
       throw new StructuralError("INVALID_INPUT", `fixture: unknown top-level property ${JSON.stringify(key)}`);
     }
     i = skipWs(bytes, i);
+    expectPair = false;
     if (bytes[i] === 0x2c) {
       i += 1;
+      expectPair = true;
       continue;
     }
     if (bytes[i] === 0x7d) {

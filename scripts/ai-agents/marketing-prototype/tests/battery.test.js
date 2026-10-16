@@ -66,7 +66,7 @@ function authenticateTrustRoot() {
   }
   for (const p of want.sort()) assert.ok(seen.has(p), `trust: unlisted file: ${p}`);
   const canonical = JSON.stringify(
-    files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+    files.map((e) => ({ path: e.path, sha256: e.sha256 }))
   );
   const digest = sha(Buffer.from(canonical, "utf8"));
   assert.equal(digest, manifest.corpus_digest, "trust: manifest corpus_digest does not match recomputed digest");

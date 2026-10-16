@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 /**
- * run-tests.js — `npm test` entrypoint: builtins-only trust authentication
- * BEFORE any scored test/helper is imported.
+ * run-tests.js — official test entrypoint. Invoke DIRECTLY, never via npm:
+ *
+ *   MK_APPROVED_ROOT=<64-hex> node tests/run-tests.js
+ *
+ * `npm test` must NEVER be the official path: npm executes candidate
+ * lifecycle scripts (pretest/posttest) BEFORE this file runs, so a
+ * tampered package.json could execute arbitrary code before trust
+ * authentication. Direct node invocation guarantees this builtins-only
+ * authenticator runs first.
  *
  * The separately trusted approval root is a host input (MK_APPROVED_ROOT
  * env, supplied by the reviewer or CI pipeline at invocation time — never
  * by this package's own scripts or any file in the candidate tree). The
- * full corpus digest, covering EVERY pinned file including the scored
- * tests themselves, is recomputed with node:fs / node:crypto ONLY and
- * authenticated against that root BEFORE the real `node --test`
- * entrypoints are spawned.
+ * full corpus digest, covering EVERY pinned file including package.json,
+ * README.md and the scored tests themselves, is recomputed with node:fs /
+ * node:crypto ONLY and authenticated against that root BEFORE the real
+ * `node --test` entrypoints are spawned.
  *
  * Refuse (exit 3) on any mismatch: no test file is imported, no helper
  * executes, no canary can fire. This file imports node builtins only.
@@ -74,7 +81,7 @@ if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) 
   }
   if (!bad) {
     const canonical = JSON.stringify(
-      files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))
+      files.map((e) => ({ path: e.path, sha256: e.sha256 }))
     );
     const digest = sha(Buffer.from(canonical, "utf8"));
     if (digest !== manifest.corpus_digest) bad = "manifest corpus_digest does not match recomputed digest";

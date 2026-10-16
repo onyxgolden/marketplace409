@@ -358,8 +358,8 @@ export function validateHeaderClaimRow(row, i) {
   if (!rowBase(row, label, errors)) return { ok: false, errors };
   checkProps(
     row,
-    new Set(["claim_id", "campaign_id", "metric", "claimed_value", "rationale", "evidence_spans"]),
-    ["claim_id", "campaign_id", "metric", "claimed_value"],
+    new Set(["claim_id", "campaign_id", "metric", "claimed_value", "rationale", "evidence_spans", "period_start", "period_end", "currency"]),
+    ["claim_id", "campaign_id", "metric", "claimed_value", "period_start", "period_end", "currency"],
     label,
     errors
   );
@@ -369,6 +369,11 @@ export function validateHeaderClaimRow(row, i) {
     errors.push(`${label}.metric: must be one of ${[...METRIC_NAMES].join(",")}`);
   }
   checkText(row.claimed_value, `${label}.claimed_value`, errors, 64);
+  if (parseTimestamp(row.period_start) === null) errors.push(`${label}.period_start: invalid UTC instant`);
+  if (parseTimestamp(row.period_end) === null) errors.push(`${label}.period_end: invalid UTC instant`);
+  if (typeof row.currency !== "string" || !CURRENCY_RE.test(row.currency)) {
+    errors.push(`${label}.currency: must be ISO-4217 3-letter code`);
+  }
   if ("rationale" in row) checkText(row.rationale, `${label}.rationale`, errors, 2000);
   if ("evidence_spans" in row) {
     if (!Array.isArray(row.evidence_spans) || row.evidence_spans.length > 1024) {

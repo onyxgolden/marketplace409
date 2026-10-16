@@ -9,6 +9,7 @@ import { canonicalJson } from "./canonical.js";
 import { rat, ratEq, parseDecimal, formatPercent, formatRoas, exactString } from "./rational.js";
 import { parseTimestamp, CONVERSION_KINDS, MONEY_KINDS } from "./schemas.js";
 import { scanRow } from "./injection.js";
+import { makeCitation, unavailableCitation } from "./citations.js";
 
 export const UNKNOWN_TAG = "UNKNOWN_TAG";
 
@@ -22,6 +23,8 @@ const unverifiableRate = () => ({ status: "UNVERIFIABLE", display: "UNVERIFIABLE
  * Classify campaigns from the EXACT structured objective tag. Unknown
  * tags become UNKNOWN_TAG (never forced); no semantics are inferred
  * from copy. 2 spans per campaign: identity + classification evidence.
+ * Each classification carries a verified citation to the exact source
+ * row bytes.
  */
 export function classifyCampaigns(wrappedRows, tags, sx) {
   const seen = new Set();
@@ -43,6 +46,16 @@ export function classifyCampaigns(wrappedRows, tags, sx) {
     if (classification === UNKNOWN_TAG) {
       sx.diag("UNKNOWN_OBJECTIVE_TAG", "info", w.source_ref, row.campaign_id, `objective tag ${JSON.stringify(tag)} not in taxonomy v1; classified UNKNOWN_TAG`);
     }
+    // Verified citation to the exact source row bytes.
+    const bytes = sx.fixtureBytes.get(w.fixture_id);
+    let citation;
+    if (bytes && w.byte_span) {
+      sx.budget.chargeSpan(1); // citation evidence span
+      citation = makeCitation(bytes, w.byte_span[0], w.byte_span[1], w.source_ref);
+    } else {
+      citation = unavailableCitation("source row bytes not retained", w.source_ref);
+    }
+    sx.markUsed(w.fixture_id);
     sx.campaigns.set(row.campaign_id, {
       row,
       classification,
@@ -50,6 +63,7 @@ export function classifyCampaigns(wrappedRows, tags, sx) {
       quarantinedNotes: hits.length > 0,
       fixture_id: w.fixture_id,
       source_ref: w.source_ref,
+      citation,
     });
   }
 }
@@ -93,29 +107,52 @@ export function processEventRows(wrappedRows, sx) {
       sx.diag("EVENT_UNREGISTERED_CAMPAIGN", "warning", w.source_ref, row.event_id, `campaign ${JSON.stringify(row.campaign_id)} not registered; event excluded`);
       continue;
     }
-    valid.push({ ...row, _fixture_id: w.fixture_id, _source_ref: w.source_ref });
+    valid.push({ ...row, _fixture_id: w.fixture_id, _source_ref: w.source_ref, _byte_span: w.byte_span });
   }
   return valid;
 }
 
 /**
  * Conversion dedup: one conversion_id counted once per campaign/period.
- * Different event ids with the same conversion_id and identical payloads
- * count once; conflicting payloads (or ambiguous binding) are excluded.
+ * The grouping key is (campaign_id, reporting period, conversion_id):
+ * the same conversion_id in two different campaigns (or periods) is two
+ * independent conversions, never a cross-campaign conflict. Different
+ * event ids with the same conversion_id and identical payloads count
+ * once; conflicting payloads (or ambiguous binding) are excluded.
  * 1 span per duplicate group.
  */
 export function dedupeConversions(validEvents, sx) {
   const withCid = validEvents.filter((e) => CONVERSION_KINDS.has(e.kind) && e.conversion_id);
+  const periodKey = `${sx.periodIsoStart}\0${sx.periodIsoEnd}`;
   const groups = new Map();
   for (const e of withCid) {
-    if (!groups.has(e.conversion_id)) groups.set(e.conversion_id, []);
-    groups.get(e.conversion_id).push(e);
+    const gkey = `${e.campaign_id}\0${periodKey}\0${e.conversion_id}`;
+    if (!groups.has(gkey)) groups.set(gkey, []);
+    groups.get(gkey).push(e);
   }
   const excludedEventIds = new Set();
   const countedOnceIds = new Set();
-  for (const [cid, evts] of [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  for (const [gkey, evts] of [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
     if (evts.length === 1) continue;
     sx.budget.chargeSpan(1);
+    const cid = evts[0].conversion_id;
+    const campaignId = evts[0].campaign_id;
+    // Verified citations to each duplicate event row.
+    const citations = [];
+    for (const e of evts) {
+      if (e._byte_span && e._fixture_id) {
+        const bytes = sx.fixtureBytes?.get(e._fixture_id);
+        if (bytes) {
+          sx.budget.chargeSpan(1);
+          try {
+            citations.push(makeCitation(bytes, e._byte_span[0], e._byte_span[1], e._source_ref));
+            sx.markUsed(e._fixture_id);
+          } catch {
+            // byte span invalid; skip citation for this row
+          }
+        }
+      }
+    }
     const payloads = evts.map((e) =>
       canonicalJson({
         kind: e.kind,
@@ -130,11 +167,11 @@ export function dedupeConversions(validEvents, sx) {
     if (allIdentical) {
       countedOnceIds.add(ids[0]);
       for (const id of ids.slice(1)) excludedEventIds.add(id);
-      sx.duplicateGroups.push({ conversion_id: cid, event_ids: ids, resolution: "COUNTED_ONCE", counted: 1 });
+      sx.duplicateGroups.push({ conversion_id: cid, campaign_id: campaignId, period: { start: sx.periodIsoStart, end: sx.periodIsoEnd }, event_ids: ids, resolution: "COUNTED_ONCE", counted: 1, citations });
       sx.diag("DUPLICATE_CONVERSION_COUNTED_ONCE", "info", evts[0]._source_ref, cid, `${ids.length} events share conversion_id with identical payloads; counted once`);
     } else {
       for (const id of ids) excludedEventIds.add(id);
-      sx.duplicateGroups.push({ conversion_id: cid, event_ids: ids, resolution: "CONFLICT_EXCLUDED", counted: 0 });
+      sx.duplicateGroups.push({ conversion_id: cid, campaign_id: campaignId, period: { start: sx.periodIsoStart, end: sx.periodIsoEnd }, event_ids: ids, resolution: "CONFLICT_EXCLUDED", counted: 0, citations });
       sx.diag("DUPLICATE_CONVERSION_CONFLICT", "warning", evts[0]._source_ref, cid, "same conversion_id with conflicting payloads; excluded, counted zero");
     }
   }
@@ -204,12 +241,17 @@ function finalizeRates(m, sx) {
     m.roas =
       m.spendMinor === 0n ? undefinedRate() : definedRate(rat(m.revenueMinor, m.spendMinor), formatRoas(rat(m.revenueMinor, m.spendMinor)));
   }
-  // integrity flags under the deliberately simple funnel model
+  // integrity flags under the deliberately simple funnel model.
+  // An impossible funnel is not a READY funnel: it blocks completeness.
   if (m.clicks > m.impressions) m.integrity_flags.push("CLICKS_EXCEED_IMPRESSIONS");
   if (m.conversions > m.clicks) m.integrity_flags.push("CONVERSIONS_EXCEED_CLICKS");
   if (m.integrity_flags.length > 0) {
     sx.budget.chargeSpan(1);
-    sx.diag("INTEGRITY_FLAG", "warning", null, m.campaign_id, `funnel integrity: ${m.integrity_flags.join(",")}; no complete funnel claimed`);
+    sx.diag("INTEGRITY_FLAG", "error", null, m.campaign_id, `funnel integrity failure: ${m.integrity_flags.join(",")}; metric not READY, report cannot be complete`);
+    m.status = "UNVERIFIABLE";
+    m.ctr = unverifiableRate();
+    m.conversion_rate = unverifiableRate();
+    m.roas = unverifiableRate();
   }
   m.spend_minor = m.spendMinor.toString();
   m.revenue_minor = m.revenueMinor.toString();
@@ -218,18 +260,38 @@ function finalizeRates(m, sx) {
   return m;
 }
 
-/** Event-mode metrics, grouped by campaign (+period+currency). */
+/** Event-mode metrics, grouped by campaign (+period+currency). Each metric
+ *  carries verified citations to its material input rows. */
 export function computeEventMetrics(events, unattributedByCampaign, sx) {
   const acc = new Map();
+  const citationsByCampaign = new Map(); // campaign_id -> Citation[]
   for (const c of sx.campaigns.values()) {
     const m = baseMetricRow(c.row.campaign_id, c.currency, "event_rows", sx);
     m.spendMinor = 0n;
     m.revenueMinor = 0n;
     acc.set(c.row.campaign_id, m);
+    citationsByCampaign.set(c.row.campaign_id, []);
+    // Cite the campaign registration as a material input.
+    if (c.citation) citationsByCampaign.get(c.row.campaign_id).push(c.citation);
   }
   for (const e of events) {
     const m = acc.get(e.campaign_id);
     if (!m) continue;
+    // Cite each material event row.
+    if (e._byte_span && e._fixture_id) {
+      const bytes = sx.fixtureBytes?.get(e._fixture_id);
+      if (bytes) {
+        sx.budget.chargeSpan(1);
+        try {
+          citationsByCampaign.get(e.campaign_id).push(
+            makeCitation(bytes, e._byte_span[0], e._byte_span[1], e._source_ref)
+          );
+          sx.markUsed(e._fixture_id);
+        } catch {
+          // byte span invalid; citation unavailable for this row
+        }
+      }
+    }
     if (e.kind === "IMPRESSION") m.impressions += 1;
     else if (e.kind === "CLICK") m.clicks += 1;
     else if (e.kind === "SPEND") m.spendMinor += BigInt(e.amount_minor);
@@ -251,11 +313,13 @@ export function computeEventMetrics(events, unattributedByCampaign, sx) {
     }
     const fin = finalizeRates(m, sx);
     if (m.status === "UNAVAILABLE") fin.revenue_minor = null; // unattributed revenue is not a usable total
+    fin.citations = citationsByCampaign.get(cid);
     sx.metrics.set(cid, fin);
   }
 }
 
-/** Aggregate-count mode: claimed primary counts, arithmetic verification via header claims. */
+/** Aggregate-count mode: claimed primary counts, arithmetic verification via header claims.
+ *  Each metric carries a verified citation to its aggregate row bytes. */
 export function computeAggregateMetrics(wrappedRows, sx) {
   const seen = new Set();
   for (const w of wrappedRows) {
@@ -287,6 +351,16 @@ export function computeAggregateMetrics(wrappedRows, sx) {
       sx.diag("AGGREGATE_CURRENCY_MISMATCH", "warning", w.source_ref, row.campaign_id, "aggregate row currency differs from campaign currency; excluded");
       continue;
     }
+    // Verified citation to the exact aggregate row bytes.
+    const bytes = sx.fixtureBytes.get(w.fixture_id);
+    let citation;
+    if (bytes && w.byte_span) {
+      sx.budget.chargeSpan(1);
+      citation = makeCitation(bytes, w.byte_span[0], w.byte_span[1], w.source_ref);
+      sx.markUsed(w.fixture_id);
+    } else {
+      citation = unavailableCitation("source row bytes not retained", w.source_ref);
+    }
     const declaredComplete = sx.completeness.get(row.campaign_id) === true;
     const m = baseMetricRow(row.campaign_id, row.currency, "aggregate_counts", sx);
     m.impressions = row.impressions;
@@ -294,6 +368,8 @@ export function computeAggregateMetrics(wrappedRows, sx) {
     m.conversions = row.conversions;
     m.spendMinor = BigInt(row.spend_minor);
     m.revenueMinor = BigInt(row.revenue_minor);
+    m.citations = [citation];
+    if (camp.citation) m.citations.push(camp.citation);
     if (!declaredComplete) {
       // Empty/missing line items behind claimed totals => UNVERIFIABLE, complete:false.
       m.status = "UNVERIFIABLE";
@@ -310,24 +386,23 @@ export function computeAggregateMetrics(wrappedRows, sx) {
     }
     sx.metrics.set(row.campaign_id, m);
   }
-  // Registered campaigns with no aggregate row: zero-observation rows.
+  // Registered campaigns with no aggregate row: absent primary counts are
+  // NOT evidence of zero. Without an explicit supported evidenced zero
+  // row, the metric is UNVERIFIABLE and the report cannot be complete.
   for (const c of sx.campaigns.values()) {
     if (!sx.metrics.has(c.row.campaign_id)) {
       const m = baseMetricRow(c.row.campaign_id, c.currency, "aggregate_counts", sx);
       m.spendMinor = 0n;
       m.revenueMinor = 0n;
-      if (sx.completeness.get(c.row.campaign_id) !== true) {
-        m.status = "UNVERIFIABLE";
-        m.ctr = unverifiableRate();
-        m.conversion_rate = unverifiableRate();
-        m.roas = unverifiableRate();
-        m.spend_minor = "0";
-        m.revenue_minor = "0";
-        delete m.spendMinor;
-        delete m.revenueMinor;
-      } else {
-        finalizeRates(m, sx);
-      }
+      m.status = "UNVERIFIABLE";
+      m.ctr = unverifiableRate();
+      m.conversion_rate = unverifiableRate();
+      m.roas = unverifiableRate();
+      m.spend_minor = "0";
+      m.revenue_minor = "0";
+      delete m.spendMinor;
+      delete m.revenueMinor;
+      sx.diag("METRICS_UNVERIFIABLE", "warning", null, c.row.campaign_id, "no aggregate row for registered campaign; absent counts are not evidence of zero; metrics UNVERIFIABLE");
       sx.metrics.set(c.row.campaign_id, m);
     }
   }
@@ -361,25 +436,25 @@ export function poolMetrics(poolGroups, sx) {
       pooled.push({ pool_id: poolId, members: [...members].sort(), currency: rows[0].campaign.currency, status: "UNAVAILABLE", reason: "member not ready", ctr: unavailableRate(), roas: unavailableRate() });
       return;
     }
-    let I = 0, C = 0, V = 0, S = 0n, R = 0n;
+    let I = 0n, C = 0n, V = 0n, S = 0n, R = 0n;
     for (const r of rows) {
-      I += r.metric.impressions;
-      C += r.metric.clicks;
-      V += r.metric.conversions;
+      I += BigInt(r.metric.impressions);
+      C += BigInt(r.metric.clicks);
+      V += BigInt(r.metric.conversions);
       S += BigInt(r.metric.spend_minor);
       R += BigInt(r.metric.revenue_minor);
     }
-    const ctrR = I === 0 ? null : rat(C, I);
-    const cvrR = C === 0 ? null : rat(V, C);
+    const ctrR = I === 0n ? null : rat(C, I);
+    const cvrR = C === 0n ? null : rat(V, C);
     const roasR = S === 0n ? null : rat(R, S);
     pooled.push({
       pool_id: poolId,
       members: [...members].sort(),
       currency: rows[0].campaign.currency,
       status: "READY",
-      impressions: I,
-      clicks: C,
-      conversions: V,
+      impressions: I.toString(),
+      clicks: C.toString(),
+      conversions: V.toString(),
       spend_minor: S.toString(),
       revenue_minor: R.toString(),
       ctr: ctrR ? { status: "DEFINED", numerator: ctrR.n.toString(), denominator: ctrR.d.toString(), display: formatPercent(ctrR) } : undefinedRate(),
@@ -417,7 +492,9 @@ function computedMetricValue(metric, metricName) {
  * Header-claim comparison at the same grain (campaign + task period +
  * campaign currency). Exact rational/integer comparison — display
  * rounding is never used. Mismatches preserve both values. Quarantined
- * claims are never compared (evidence is never upgraded).
+ * claims are never compared (evidence is never upgraded). A claim whose
+ * period/currency does not match the task/campaign grain is UNCOMPARABLE.
+ * Null/unavailable computed counts yield UNCOMPARABLE, never an exception.
  */
 export function compareHeaderClaims(wrappedRows, sx) {
   const out = [];
@@ -425,18 +502,33 @@ export function compareHeaderClaims(wrappedRows, sx) {
     const row = w.row;
     // 2 spans: claim identity + comparison. Evidence spans add 1 each.
     sx.budget.chargeSpan(2);
+    // Cite the claim row bytes (even if quarantined — the bytes exist).
+    const bytes = sx.fixtureBytes.get(w.fixture_id);
+    let rowCitation;
+    if (bytes && w.byte_span) {
+      sx.budget.chargeSpan(1);
+      try {
+        rowCitation = makeCitation(bytes, w.byte_span[0], w.byte_span[1], w.source_ref);
+      } catch {
+        rowCitation = unavailableCitation("source row bytes not retained", w.source_ref);
+      }
+    } else {
+      rowCitation = unavailableCitation("source row bytes not retained", w.source_ref);
+    }
+    sx.markUsed(w.fixture_id);
     const hits = scanRow("header_claims", row);
     if (hits.length > 0) {
       const h = hits[0];
       sx.quarantine(w.fixture_id, row.claim_id, h.family, `header_claims.${h.field} matched injection family ${h.family}; claim quarantined, never compared`, w.source_ref);
       sx.diag("INSTRUCTION_INJECTION", "warning", w.source_ref, row.claim_id, `quarantined header claim (${h.family}); not compared`);
-      out.push({ claim_id: row.claim_id, campaign_id: row.campaign_id, metric: row.metric, status: "QUARANTINED", match: null, claimed: row.claimed_value, computed: null });
+      out.push({ claim_id: row.claim_id, campaign_id: row.campaign_id, metric: row.metric, status: "QUARANTINED", match: null, claimed: row.claimed_value, computed: null, citations: [rowCitation] });
       continue;
     }
     // Evidence-span verification: half-open UTF-8 byte ranges of the
     // claim's own fixture bytes; quoted_span must equal the slice.
-    const bytes = sx.fixtureBytes.get(w.fixture_id);
+    // Construct verified Citations for the evidence spans.
     let spansOk = true;
+    const evidenceCitations = [];
     for (const sp of row.evidence_spans ?? []) {
       sx.budget.chargeSpan(1);
       const slice = bytes.toString("utf8", sp.start_byte, sp.end_byte);
@@ -445,21 +537,41 @@ export function compareHeaderClaims(wrappedRows, sx) {
         sx.diag("SPAN_MISMATCH", "warning", w.source_ref, row.claim_id, `evidence span [${sp.start_byte},${sp.end_byte}) does not match fixture bytes`);
         break;
       }
+      sx.budget.chargeSpan(1); // citation evidence span
+      evidenceCitations.push(makeCitation(bytes, sp.start_byte, sp.end_byte, w.source_ref));
     }
+    const allCitations = [rowCitation, ...evidenceCitations];
     const metric = sx.metrics.get(row.campaign_id);
-    if (!spansOk || !metric) {
-      out.push({ claim_id: row.claim_id, campaign_id: row.campaign_id, metric: row.metric, status: "UNCOMPARABLE", match: null, claimed: row.claimed_value, computed: null });
+    const campaign = sx.campaigns.get(row.campaign_id);
+    // Grain enforcement: claim period/currency must match task/campaign.
+    const grainOk =
+      spansOk &&
+      metric !== undefined &&
+      campaign !== undefined &&
+      row.period_start === sx.periodIsoStart &&
+      row.period_end === sx.periodIsoEnd &&
+      row.currency === campaign.currency;
+    if (!grainOk) {
+      if (spansOk && metric !== undefined && campaign !== undefined) {
+        sx.diag("HEADER_GRAIN_MISMATCH", "warning", w.source_ref, row.claim_id, `header claim grain (period/currency) does not match task/campaign grain; uncomparable`);
+      }
+      out.push({ claim_id: row.claim_id, campaign_id: row.campaign_id, metric: row.metric, status: "UNCOMPARABLE", match: null, claimed: row.claimed_value, computed: null, citations: allCitations });
       continue;
     }
     const computed = computedMetricValue(metric, row.metric);
+    // Null/unavailable computed values: UNCOMPARABLE, never an exception.
+    if (computed === null || computed === undefined) {
+      out.push({ claim_id: row.claim_id, campaign_id: row.campaign_id, metric: row.metric, status: "UNCOMPARABLE", match: null, claimed: row.claimed_value, computed: null, citations: allCitations });
+      continue;
+    }
     const computedDisplay =
-      computed !== null && typeof computed === "object" ? computed.display : String(computed);
+      typeof computed === "object" ? computed.display : String(computed);
     const claimedUndefined = row.claimed_value === "UNDEFINED";
     let status;
     let match = null;
-    if (computed !== null && typeof computed === "object" && (computed.status === "UNAVAILABLE" || computed.status === "UNVERIFIABLE")) {
+    if (typeof computed === "object" && (computed.status === "UNAVAILABLE" || computed.status === "UNVERIFIABLE")) {
       status = "UNCOMPARABLE";
-    } else if (computed !== null && typeof computed === "object" && computed.status === "UNDEFINED") {
+    } else if (typeof computed === "object" && computed.status === "UNDEFINED") {
       status = claimedUndefined ? "MATCH" : "MISMATCH";
       match = claimedUndefined;
     } else if (claimedUndefined) {
@@ -471,9 +583,20 @@ export function compareHeaderClaims(wrappedRows, sx) {
       match = claimed !== null && ratEq(claimed, exact);
       status = match ? "MATCH" : "MISMATCH";
     } else {
-      const m = /^(\d+)$/.exec(row.claimed_value.trim());
-      match = m !== null && BigInt(m[1]).toString() === BigInt(computed).toString();
-      status = match ? "MATCH" : "MISMATCH";
+      // Integer metrics: guard null/undefined before BigInt.
+      if (computed === null || computed === undefined) {
+        status = "UNCOMPARABLE";
+      } else {
+        const m = /^(\d+)$/.exec(String(row.claimed_value).trim());
+        let cmpOk = false;
+        try {
+          cmpOk = m !== null && BigInt(m[1]).toString() === BigInt(computed).toString();
+        } catch {
+          cmpOk = false;
+        }
+        match = cmpOk;
+        status = match ? "MATCH" : "MISMATCH";
+      }
     }
     if (status === "MISMATCH") {
       sx.diag("HEADER_MISMATCH", "warning", w.source_ref, row.claim_id, `header claims ${row.claimed_value} but recomputed ${computedDisplay} for ${row.metric}; both preserved`);
@@ -486,6 +609,7 @@ export function compareHeaderClaims(wrappedRows, sx) {
       match,
       claimed: row.claimed_value,
       computed: computedDisplay,
+      citations: allCitations,
     });
   }
   return out;

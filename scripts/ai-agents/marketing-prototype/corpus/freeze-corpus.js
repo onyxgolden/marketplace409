@@ -4,9 +4,11 @@
  *
  * Recomputes corpus/manifest.json (sorted per-file SHA-256 pins) and the
  * corpus digest, and writes corpus/corpus_digest.txt. The digest covers
- * every pinned file EXCEPT package.json, which carries the separately
- * trusted root only via the host environment (self-carry circularity);
- * package.json is still hash-pinned in the manifest.
+ * EVERY pinned file INCLUDING package.json, so any lifecycle-script
+ * tampering changes the digest and requires a new separately trusted
+ * approval root. manifest.json and corpus_digest.txt are protected by
+ * the digest chain + external approved root, not by self-pinning
+ * (circular).
  *
  * Run after any corpus-affecting change, then supply the new digest to
  * the reviewer as the separately trusted MK_APPROVED_ROOT.
@@ -37,7 +39,7 @@ for (const dir of ["corpus", "src", "runner", "fixtures", "tests"]) {
 files.sort();
 
 const entries = files.map((p) => ({ path: p, sha256: sha(readFileSync(join(ROOT, p))) }));
-const canonical = JSON.stringify(entries.filter((e) => e.path !== "package.json"));
+const canonical = JSON.stringify(entries);
 const digest = sha(Buffer.from(canonical, "utf8"));
 
 writeFileSync(join(ROOT, "corpus", "manifest.json"), JSON.stringify({ corpus_digest: digest, files: entries }, null, 2) + "\n");

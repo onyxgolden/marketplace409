@@ -133,6 +133,7 @@ function makeSession(task, context, budget) {
   const diagnostics = [];
   const quarantined = [];
   const quarantinedFixtureIds = new Set();
+  const usedFixtureIds = new Set(); // fixtures actually consulted for domain output
   const exclusionMap = new Map(); // key -> {reason, count, kinds, campaign_id}
   const sx = {
     budget,
@@ -161,6 +162,11 @@ function makeSession(task, context, budget) {
     fixtureSourceRefs: new Map(),
     eventsSeen: 0,
     aggregateRows: 0,
+    /** Mark a fixture as actually used for domain output (not just resolved). */
+    markUsed(fixtureId) {
+      usedFixtureIds.add(fixtureId);
+    },
+    _usedFixtureIds: usedFixtureIds,
     diag(code, severity, sourceRef, recordId, reason) {
       diagnostics.push({ code, severity, source_ref: sourceRef ?? null, record_id: recordId ?? null, reason });
     },
@@ -216,22 +222,37 @@ function checkAuthority(task, context, sx) {
 function singleFixture(fixtures, task, kind, sx) {
   const ids = [...fixtures.entries()].filter(([, f]) => f.kind === kind).map(([id]) => id);
   if (ids.length > 1) sx.invalid(`more than one ${kind} fixture referenced: ${ids.join(",")}`);
-  return ids.length === 1 ? fixtures.get(ids[0]) : null;
+  if (ids.length === 1) {
+    sx.markUsed(ids[0]); // the fixture is consulted for domain output
+    return fixtures.get(ids[0]);
+  }
+  return null;
 }
 
-function runInner(task, context, taskId) {
-  // 1. task envelope: depth-bounded, schema-valid, then budgeted.
+function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
+  // 1. task envelope: depth-bounded, schema-valid. The budget pre-charge
+  //    (envelopes + bytes) already happened in run() before any inspection.
   if (task === null || typeof task !== "object" || Array.isArray(task)) {
     throw new InputSignal("task: must be an object");
+  }
+  // Charge every fixture_ref candidate BEFORE validateTask traverses them.
+  if (Array.isArray(task.fixture_refs)) {
+    for (const ref of task.fixture_refs) budget.chargeObject(1);
+  }
+  // Charge every pool_group and member BEFORE validateTask traverses them.
+  const poolGroupsOpt = task.options?.pool_groups;
+  if (Array.isArray(poolGroupsOpt)) {
+    for (const g of poolGroupsOpt) {
+      budget.chargeObject(1); // the group candidate
+      if (Array.isArray(g)) {
+        for (const m of g) budget.chargeObject(1); // each member candidate
+      }
+    }
   }
   const depth = measureDepth(task);
   if (!depth.ok) throw new RefusalSignal("INPUT_TOO_DEEP", `task envelope refused before traversal: ${depth.reason}`);
   const tv = validateTask(task);
   if (!tv.ok) throw new InputSignal(`task invalid: ${tv.errors.join("; ")}`);
-
-  const budget = new Budget();
-  budget.chargeObject(1); // the task envelope, before inspection
-  budget.chargeInputBytes(utf8ByteLength(canonicalJson(task)));
 
   // 2. operation gate: only the scoped advisory action is allowed.
   if (task.operation !== "analyze") {
@@ -243,8 +264,17 @@ function runInner(task, context, taskId) {
 
   // 3. context: separately trusted host injection (fixed clock, fixture
   //    store, grants, authority table). Task content cannot replace it.
+  //    Every context candidate is charged BEFORE any of its fields are read.
+  //    Grants are ID strings (membership check only); relays are full
+  //    objects (relay_id is read during .find()).
   if (context === null || typeof context !== "object" || Array.isArray(context)) {
     throw new InputSignal("context: must be an object");
+  }
+  budget.chargeObject(1); // context.clock candidate
+  budget.chargeObject(1); // context.principal candidate
+  budget.chargeObject(1); // context.grants list candidate (membership check)
+  if (Array.isArray(context.relays)) {
+    for (const r of context.relays) budget.chargeObject(1); // each relay candidate
   }
   const cv = validateClock(context.clock);
   if (!cv.ok) throw new InputSignal(`context invalid: ${cv.errors.join("; ")}`);
@@ -378,9 +408,15 @@ function runInner(task, context, taskId) {
       taxonomy_version: TAXONOMY_VERSION,
       currency: c.currency,
       drafts: draftsByCampaign.get(c.row.campaign_id) ?? [],
+      citations: c.citation ? [c.citation] : [],
     }))
     .sort((a, b) => (a.campaign_id < b.campaign_id ? -1 : 1));
-  const metricsOut = [...sx.metrics.values()].sort((a, b) => (a.campaign_id < b.campaign_id ? -1 : 1));
+  const metricsOut = [...sx.metrics.values()]
+    .map((m) => {
+      const { spendMinor, revenueMinor, ...rest } = m;
+      return rest;
+    })
+    .sort((a, b) => (a.campaign_id < b.campaign_id ? -1 : 1));
   const exclusions = [...sx._exclusionMap.values()].sort((a, b) =>
     a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : (a.campaign_id ?? "") < (b.campaign_id ?? "") ? -1 : 1
   );
@@ -419,9 +455,13 @@ function runInner(task, context, taskId) {
   }
 
   const diagnostics = sortDiagnostics(sx._diagnostics);
+  // source_refs contains ONLY verified sources actually used for domain
+  // output. Resolved-but-unused fixtures are excluded (M640-007).
   const source_refs = [];
   for (const [fid, ref] of sx.fixtureSourceRefs) {
-    if (!sx._quarantinedFixtureIds.has(fid)) source_refs.push({ ...ref });
+    if (!sx._quarantinedFixtureIds.has(fid) && sx._usedFixtureIds.has(fid)) {
+      source_refs.push({ ...ref });
+    }
   }
   const routing_flags = [];
 
@@ -470,11 +510,34 @@ function runInner(task, context, taskId) {
  * run(task, context) -> result. Malformed requests, budget exhaustion,
  * prohibited actions and unsupported tasks yield structured REFUSED
  * denials — never an exception and never a default success.
+ *
+ * The task_id is derived AFTER the budget pre-charge: hashing the task
+ * before charging would inspect it before its charge.
  */
 export function run(task, context) {
+  const budget = new Budget();
+  // Pre-charge task/context envelopes and bytes BEFORE any inspection,
+  // including task_id derivation.
+  let taskBytes, contextBytes;
+  try {
+    taskBytes = canonicalJson(task);
+    contextBytes = canonicalJson(context);
+  } catch {
+    return denialEnvelope("mkt-invalid-task", "INVALID_INPUT", "error", "task/context: not serializable to canonical JSON", null, null);
+  }
+  try {
+    budget.chargeObject(1); // the task envelope, before inspection
+    budget.chargeObject(1); // the context envelope, before inspection
+    budget.chargeInputBytes(utf8ByteLength(taskBytes) + utf8ByteLength(contextBytes));
+  } catch (e) {
+    if (e instanceof BudgetError) {
+      return denialEnvelope("mkt-invalid-task", e.code, "error", e.message, null, null);
+    }
+    throw e;
+  }
   const taskId = deriveTaskId(task);
   try {
-    return runInner(task, context, taskId);
+    return runInner(task, context, taskId, budget, taskBytes, contextBytes);
   } catch (e) {
     if (e instanceof RefusalSignal || e instanceof InputSignal || e instanceof BudgetError) {
       return denialEnvelope(taskId, e.code, e.severity ?? "error", e.message, e.sourceRef ?? null, e.recordId ?? null);

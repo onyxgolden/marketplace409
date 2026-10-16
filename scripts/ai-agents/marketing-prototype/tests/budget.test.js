@@ -44,7 +44,11 @@ function fx(fixture_id, kind, rows) {
   };
 }
 
-/** Minimal scenario with n impression events; hand-counted objects = 11 + n. */
+/** Minimal scenario with n impression events; hand-counted objects = 19 + n.
+ *  Charges: run() task(1)+context(1)=2; runInner fixture_refs(4)+clock(1)+
+ *  principal(1)+grants list(1)=7; resolveFixtures store entries(4);
+ *  taxonomy rows(4); campaigns row(1); completeness row(1); events rows(n).
+ *  Total 19+n. */
 function scenario(nEvents, { poisonTail = false } = {}) {
   const events = [];
   for (let i = 0; i < nEvents; i++) {
@@ -69,8 +73,8 @@ function scenario(nEvents, { poisonTail = false } = {}) {
     fixture_refs: [
       { fixture_id: "taxonomy-v1", kind: "taxonomy" },
       { fixture_id: "campaigns-01", kind: "campaigns" },
-      { fixture_id: "events-01", kind: "events" },
       { fixture_id: "complete-01", kind: "completeness" },
+      { fixture_id: "events-01", kind: "events" },
     ],
     options: { period: { ...PERIOD }, mode: "event_rows", include_drafts: false },
   };
@@ -85,19 +89,18 @@ function scenario(nEvents, { poisonTail = false } = {}) {
 }
 
 describe("object budget", () => {
-  it("exactly 64 charged objects succeeds (53 events: 11 + 53)", () => {
-    const { task, context } = scenario(53);
+  it("exactly 64 charged objects succeeds (45 events: 19 + 45)", () => {
+    const { task, context } = scenario(45);
     const r = run(task, context);
     assert.equal(r.status, "REPORT_READY");
-    assert.equal(r.report.metrics[0].impressions, 53);
+    assert.equal(r.report.metrics[0].impressions, 45);
   });
 
-  it("the 65th charged object refuses BEFORE inspection (56 events, poison tail)", () => {
-    // Charges: task(1) + taxonomy(5) + campaigns(2) + events entry(1) = 9;
-    // event row k is charge 9+k. Row 56 is charge 65 and refuses before
-    // parsing. If it were inspected, the bogus kind would yield
-    // INVALID_INPUT instead of BUDGET_EXCEEDED.
-    const { task, context } = scenario(56, { poisonTail: true });
+  it("the 65th charged object refuses BEFORE inspection (46 events, poison tail)", () => {
+    // Charges: 19 fixed + event row k is charge 19+k. Row 46 is charge 65
+    // and refuses before parsing. If it were inspected, the bogus kind
+    // would yield INVALID_INPUT instead of BUDGET_EXCEEDED.
+    const { task, context } = scenario(46, { poisonTail: true });
     const r = run(task, context);
     assert.equal(r.status, "REFUSED");
     assert.deepEqual(r.diagnostics.map((d) => d.code), ["BUDGET_EXCEEDED"]);

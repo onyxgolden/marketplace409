@@ -25,7 +25,7 @@ function authenticateTrustRoot() {
   const sha = (b) => createHash("sha256").update(b).digest("hex");
   const manifest = JSON.parse(readFileSync(join(ROOT, "corpus", "manifest.json"), "utf8"));
   for (const e of manifest.files) assert.equal(sha(readFileSync(join(ROOT, e.path))), e.sha256);
-  assert.equal(sha(Buffer.from(JSON.stringify(manifest.files.filter((e) => e.path !== "package.json").map((e) => ({ path: e.path, sha256: e.sha256 }))), "utf8")), manifest.corpus_digest);
+  assert.equal(sha(Buffer.from(JSON.stringify(manifest.files.map((e) => ({ path: e.path, sha256: e.sha256 }))), "utf8")), manifest.corpus_digest);
   assert.equal(manifest.corpus_digest, approved);
 }
 

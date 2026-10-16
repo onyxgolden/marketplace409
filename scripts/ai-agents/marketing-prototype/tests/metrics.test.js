@@ -42,7 +42,16 @@ function runCase({ campaigns, events = [], bindings = [], claims = [], complete 
     "events-01": fx("events-01", "events", events),
   };
   if (bindings.length) fixtures["bindings-01"] = fx("bindings-01", "bindings", bindings);
-  if (claims.length) fixtures["header-01"] = fx("header-01", "header_claims", claims);
+  if (claims.length) {
+    // Header claims require period/currency grain (M640-005).
+    const enriched = claims.map((cl) => ({
+      period_start: PERIOD.start,
+      period_end: PERIOD.end,
+      currency: "USD",
+      ...cl,
+    }));
+    fixtures["header-01"] = fx("header-01", "header_claims", enriched);
+  }
   if (complete !== null) {
     fixtures["complete-01"] = fx("complete-01", "completeness", campaigns.map((c) => ({ campaign_id: c.campaign_id, complete })));
   }
