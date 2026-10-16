@@ -32,6 +32,9 @@ import {
   lstatSync,
   readlinkSync,
   existsSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { join, resolve, relative, dirname, basename, sep } from "node:path";
 import { createHash } from "node:crypto";
@@ -52,7 +55,14 @@ const MAX_FRONTMATTER_BYTES = 64 * 1024;
 const MAX_DEPTH = 8;
 const MAX_DIAGNOSTICS = 200;
 const MAX_EVIDENCE_CHARS = 200;
-const MAX_SPECTRE_BYTES = 256 * 1024;
+export const MAX_SPECTRE_BYTES = 256 * 1024;
+// Attachment structural bound: parsed findings deeper than this are
+// refused before attachment so serialization can never blow the stack.
+const MAX_SPECTRE_DEPTH = 100;
+// Exact serialized-output bound: the emitted report (pretty-printed JSON)
+// is never larger than this; over-bound output falls back to a bounded
+// report that omits the attachment with a named status.
+const MAX_REPORT_BYTES = 4 * 1024 * 1024;
 // Enumeration bounds: the linter must reach its first admission decision
 // without being exhausted by a deeply nested or huge directory tree.
 const MAX_DIR_DEPTH = 16;
@@ -157,12 +167,26 @@ function stripComment(line) {
 
 /**
  * Parse one scalar. diags receives MALFORMED_SCALAR / DEEP_STRUCTURE.
- * flowDepth counts flow-sequence nesting for this scalar (0 at top level).
- * Returns PARSE_FAILED when the scalar is malformed — callers must not store
- * the raw text, so an unsupported form can never masquerade as a valid
- * value and bypass validation.
+ *
+ * One explicit depth convention: containerDepth is the depth of the
+ * mapping/sequence that directly contains this scalar (the document root
+ * is 0); flowDepth counts flow-sequence nesting above this scalar (0 for
+ * the scalar itself). A flow sequence at combined depth
+ * (containerDepth + flowDepth + 1) beyond MAX_DEPTH is refused, so mixed
+ * block/flow nesting shares the single MAX_DEPTH budget instead of each
+ * syntax path counting from zero independently.
+ *
+ * Quoted scalars are consumed completely: the closing quote must
+ * terminate the scalar — trailing tokens and unescaped interior quotes
+ * are MALFORMED_SCALAR. Backslash escapes (\n \t \r \" \\) decode in
+ * double-quoted scalars; '' decodes to ' in single-quoted scalars;
+ * unrecognized escapes are preserved verbatim.
+ *
+ * Returns PARSE_FAILED when the scalar is malformed — callers must not
+ * store the raw text, so an unsupported form can never masquerade as a
+ * valid value and bypass validation.
  */
-function parseScalar(raw, diags, flowDepth = 0) {
+function parseScalar(raw, diags, flowDepth = 0, containerDepth = 0) {
   const bad = (message, evidence) => {
     diags.push(makeDiag("MALFORMED_SCALAR", "error", "SKILL.md:frontmatter", message, evidence));
     return PARSE_FAILED;
@@ -174,19 +198,45 @@ function parseScalar(raw, diags, flowDepth = 0) {
   if (s === "false" || s === "False" || s === "FALSE") return false;
   if (s[0] === '"' || s[0] === "'") {
     const q = s[0];
-    if (s.length < 2 || s[s.length - 1] !== q) {
+    let out = "";
+    let i = 1;
+    let closed = false;
+    while (i < s.length) {
+      const c = s[i];
+      if (q === '"' && c === "\\") {
+        if (i + 1 >= s.length) {
+          return bad("Malformed quoted scalar: trailing backslash.", s.slice(0, 60));
+        }
+        const e = s[i + 1];
+        if (e === "n") out += "\n";
+        else if (e === "t") out += "\t";
+        else if (e === "r") out += "\r";
+        else if (e === '"') out += '"';
+        else if (e === "\\") out += "\\";
+        else out += c + e; // preserve unrecognized escapes verbatim
+        i += 2;
+        continue;
+      }
+      if (q === "'" && c === "'" && s[i + 1] === "'") {
+        out += "'";
+        i += 2;
+        continue;
+      }
+      if (c === q) {
+        closed = true;
+        i += 1;
+        break;
+      }
+      out += c;
+      i += 1;
+    }
+    if (!closed) {
       return bad("Malformed quoted scalar: unterminated quote.", s.slice(0, 60));
     }
-    if (q === '"') {
-      return s
-        .slice(1, -1)
-        .replace(/\\n/g, "\n")
-        .replace(/\\t/g, "\t")
-        .replace(/\\r/g, "\r")
-        .replace(/\\"/g, '"')
-        .replace(/\\\\/g, "\\");
+    if (i < s.length) {
+      return bad("Malformed quoted scalar: trailing tokens after the closing quote.", s.slice(0, 60));
     }
-    return s.slice(1, -1).replace(/''/g, "'");
+    return out;
   }
   if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s)) return Number(s);
   const opensFlow = s.startsWith("[");
@@ -194,9 +244,10 @@ function parseScalar(raw, diags, flowDepth = 0) {
   if (opensFlow !== closesFlow) {
     return bad("Malformed flow sequence: unbalanced brackets.", s.slice(0, 60));
   }
-  // Flow sequence: ["a", "b"] — bounded by MAX_DEPTH on every syntax path.
+  // Flow sequence: ["a", "b"] — the single MAX_DEPTH budget covers the
+  // enclosing structural depth plus flow nesting.
   if (opensFlow && closesFlow) {
-    if (flowDepth + 1 > MAX_DEPTH) {
+    if (containerDepth + flowDepth + 1 > MAX_DEPTH) {
       diags.push(
         makeDiag("DEEP_STRUCTURE", "error", "SKILL.md:frontmatter", `Nesting exceeds the bounded depth of ${MAX_DEPTH}.`, "")
       );
@@ -209,7 +260,7 @@ function parseScalar(raw, diags, flowDepth = 0) {
     let inS = false;
     let inD = false;
     const flush = () => {
-      const v = parseScalar(cur, diags, flowDepth + 1);
+      const v = parseScalar(cur, diags, flowDepth + 1, containerDepth);
       items.push(v === PARSE_FAILED ? null : v);
       cur = "";
     };
@@ -341,14 +392,14 @@ function parseFrontmatter(text, diags) {
               k
             );
           } else {
-            const v = parseScalar(kv[2], diags, 0);
+            const v = parseScalar(kv[2], diags, 0, depth);
             if (v !== PARSE_FAILED) child[k] = v;
           }
         }
         parent.container.push(child);
         stack.push({ indent, container: child, depth });
       } else {
-        const v = parseScalar(val, diags, 0);
+        const v = parseScalar(val, diags, 0, parent.depth);
         parent.container.push(v === PARSE_FAILED ? null : v);
       }
       i++;
@@ -384,7 +435,7 @@ function parseFrontmatter(text, diags) {
       } else if (/^[|>][+-]?$/.test(rest)) {
         i = consumeBlockScalar(i, indent);
       } else {
-        parseScalar(rest, diags, 0); // parse for diagnostics, discard value
+        parseScalar(rest, diags, 0, parent.depth); // parse for diagnostics, discard value
         i++;
       }
       continue;
@@ -440,7 +491,7 @@ function parseFrontmatter(text, diags) {
       continue;
     }
 
-    const v = parseScalar(rest, diags, 0);
+    const v = parseScalar(rest, diags, 0, parent.depth);
     if (v !== PARSE_FAILED) parent.container[key] = v;
     i++;
   }
@@ -564,6 +615,69 @@ function extractLinks(mdText) {
 // ---------------------------------------------------------------------------
 // Main lint
 // ---------------------------------------------------------------------------
+
+/**
+ * Bounded UTF-8 read: never materializes more than maxBytes + 1 bytes from
+ * the file, so an oversized attachment is refused on its bounded prefix
+ * without ever loading the full input into memory. Returns
+ * {ok:true, text, truncated} or {ok:false, error}.
+ */
+export function readBoundedUtf8(path, maxBytes) {
+  let fd = -1;
+  try {
+    fd = openSync(path, "r");
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+  try {
+    const buf = Buffer.alloc(maxBytes + 1);
+    let total = 0;
+    for (;;) {
+      const n = readSync(fd, buf, total, maxBytes + 1 - total, null);
+      if (n === 0) break;
+      total += n;
+      if (total > maxBytes) break;
+    }
+    return { ok: true, text: buf.subarray(0, total).toString("utf8"), truncated: total > maxBytes };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+/**
+ * Structural depth of a parsed JSON value, measured iteratively (no
+ * recursion, so adversarial nesting cannot overflow the stack). The root
+ * counts as depth 1. Exits early past MAX_SPECTRE_DEPTH.
+ */
+function structuralDepth(value) {
+  let max = 0;
+  const stack = [[value, 1]];
+  while (stack.length > 0) {
+    const [v, d] = stack.pop();
+    if (d > max) {
+      max = d;
+      if (max > MAX_SPECTRE_DEPTH) return max;
+    }
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        const e = v[i];
+        if (e !== null && typeof e === "object") stack.push([e, d + 1]);
+      }
+    } else if (v !== null && typeof v === "object") {
+      for (const k of Object.keys(v)) {
+        const e = v[k];
+        if (e !== null && typeof e === "object") stack.push([e, d + 1]);
+      }
+    }
+  }
+  return max;
+}
 
 export function lintSkill(skillRoot, options = {}) {
   const diags = [];
@@ -791,47 +905,16 @@ export function lintSkill(skillRoot, options = {}) {
   //    honest unavailable outcome instead of a conformant result with a
   //    hidden error. Findings are copied verbatim within a size bound;
   //    packaging conformance and Spectre security disposition stay separate.
+  //    Admission is bounded before materialization: the raw read never
+  //    exceeds MAX_SPECTRE_BYTES + 1 bytes, and parsed structure deeper
+  //    than MAX_SPECTRE_DEPTH is refused before attachment, so a hostile
+  //    input can never exhaust input memory or the serializer's stack.
   let spectre = null;
   let attachmentStatus = "not_requested";
   if (options.spectreFindingsPath) {
     const sp = options.spectreFindingsPath;
-    try {
-      const raw = readFileSync(sp, "utf8");
-      if (Buffer.byteLength(raw, "utf8") > MAX_SPECTRE_BYTES) {
-        attachmentStatus = "rejected_oversize";
-        diags.push(
-          makeDiag(
-            "SPECTRE_INPUT_TOO_LARGE",
-            "error",
-            sp,
-            `Spectre findings exceed the ${MAX_SPECTRE_BYTES}-byte attachment bound; not attached.`,
-            ""
-          )
-        );
-      } else {
-        let parsed;
-        try {
-          parsed = JSON.parse(raw);
-        } catch (e) {
-          parsed = PARSE_FAILED;
-        }
-        if (parsed === PARSE_FAILED || parsed === null || typeof parsed !== "object") {
-          attachmentStatus = "malformed";
-          diags.push(
-            makeDiag(
-              "SPECTRE_INPUT_MALFORMED",
-              "error",
-              sp,
-              "Spectre findings file is not valid JSON object data; not attached.",
-              ""
-            )
-          );
-        } else {
-          attachmentStatus = "attached";
-          spectre = parsed;
-        }
-      }
-    } catch (e) {
+    const read = readBoundedUtf8(sp, MAX_SPECTRE_BYTES);
+    if (!read.ok) {
       attachmentStatus = "unavailable";
       diags.push(
         makeDiag(
@@ -839,9 +922,53 @@ export function lintSkill(skillRoot, options = {}) {
           "error",
           sp,
           "Could not read the Skill Spectre findings file; it is not attached.",
-          e.message
+          read.error
         )
       );
+    } else if (read.truncated) {
+      attachmentStatus = "rejected_oversize";
+      diags.push(
+        makeDiag(
+          "SPECTRE_INPUT_TOO_LARGE",
+          "error",
+          sp,
+          `Spectre findings exceed the ${MAX_SPECTRE_BYTES}-byte attachment bound; not attached.`,
+          ""
+        )
+      );
+    } else {
+      let parsed;
+      try {
+        parsed = JSON.parse(read.text);
+      } catch (e) {
+        parsed = PARSE_FAILED;
+      }
+      if (parsed === PARSE_FAILED || parsed === null || typeof parsed !== "object") {
+        attachmentStatus = "malformed";
+        diags.push(
+          makeDiag(
+            "SPECTRE_INPUT_MALFORMED",
+            "error",
+            sp,
+            "Spectre findings file is not valid JSON object data; not attached.",
+            ""
+          )
+        );
+      } else if (structuralDepth(parsed) > MAX_SPECTRE_DEPTH) {
+        attachmentStatus = "rejected_overdeep";
+        diags.push(
+          makeDiag(
+            "SPECTRE_INPUT_TOO_DEEP",
+            "error",
+            sp,
+            `Spectre findings exceed the ${MAX_SPECTRE_DEPTH}-level structural depth bound; not attached.`,
+            ""
+          )
+        );
+      } else {
+        attachmentStatus = "attached";
+        spectre = parsed;
+      }
     }
   }
 
@@ -856,15 +983,7 @@ export function lintSkill(skillRoot, options = {}) {
   const hasReview = diags.some((d) => d.severity === "review");
   const conformance = hasError ? "nonconformant" : hasReview ? "review_required" : "conformant";
 
-  const truncatedDiags = diags.length > MAX_DIAGNOSTICS;
-  const finalDiags = diags.slice(0, MAX_DIAGNOSTICS);
-  const omitted = diags.slice(MAX_DIAGNOSTICS);
-  const omittedBySeverity = { error: 0, review: 0, note: 0 };
-  const omittedByCode = {};
-  for (const d of omitted) {
-    if (omittedBySeverity[d.severity] !== undefined) omittedBySeverity[d.severity]++;
-    omittedByCode[d.code] = (omittedByCode[d.code] || 0) + 1;
-  }
+  const capped = finalizeDiagnostics(diags);
 
   return {
     tool: "skill-manifest-linter",
@@ -872,13 +991,9 @@ export function lintSkill(skillRoot, options = {}) {
     spec: { source: SPEC_SOURCE, retrieved: SPEC_RETRIEVED, sha256: SPEC_SHA256 },
     skill: { name: dirName, root },
     conformance,
-    diagnostics: finalDiags,
-    diagnostics_truncated: truncatedDiags,
-    diagnostics_omitted: {
-      total: omitted.length,
-      by_severity: omittedBySeverity,
-      by_code: omittedByCode,
-    },
+    diagnostics: capped.diagnostics,
+    diagnostics_truncated: capped.truncated,
+    diagnostics_omitted: capped.omitted,
     files: {
       admitted: admitted.length,
       admitted_bytes: admittedBytes,
@@ -891,6 +1006,83 @@ export function lintSkill(skillRoot, options = {}) {
       spectre_findings: spectre,
     },
   };
+}
+
+/**
+ * Apply the diagnostic presentation cap: at most MAX_DIAGNOSTICS entries
+ * are presented; the omitted summary keeps severity/count totals so
+ * nothing is silently lost. Shared by the linter and the serialized-output
+ * fallback so both stay within the same bound.
+ */
+function finalizeDiagnostics(diags) {
+  const truncated = diags.length > MAX_DIAGNOSTICS;
+  const finalDiags = diags.slice(0, MAX_DIAGNOSTICS);
+  const omitted = diags.slice(MAX_DIAGNOSTICS);
+  const omittedBySeverity = { error: 0, review: 0, note: 0 };
+  const omittedByCode = {};
+  for (const d of omitted) {
+    if (omittedBySeverity[d.severity] !== undefined) omittedBySeverity[d.severity]++;
+    omittedByCode[d.code] = (omittedByCode[d.code] || 0) + 1;
+  }
+  return {
+    diagnostics: finalDiags,
+    truncated,
+    omitted: {
+      total: omitted.length,
+      by_severity: omittedBySeverity,
+      by_code: omittedByCode,
+    },
+  };
+}
+
+/**
+ * Serialize a report within the exact MAX_REPORT_BYTES output bound. When
+ * the full pretty-printed report exceeds the bound (or cannot be
+ * serialized), emit a bounded nonconformant report whose attachment slot
+ * is replaced by the named "rejected_output_bound" status — the accepted
+ * findings are preserved verbatim whenever the bound holds, and an
+ * over-bound/unserializable report never escapes as an uncaught
+ * exception or a stack trace.
+ */
+function serializeReportBounded(report) {
+  let text = null;
+  try {
+    text = JSON.stringify(report, null, 2);
+  } catch {
+    text = null;
+  }
+  if (text !== null && Buffer.byteLength(text, "utf8") <= MAX_REPORT_BYTES) {
+    return { report, text };
+  }
+  const capped = finalizeDiagnostics([
+    ...report.diagnostics,
+    makeDiag(
+      "REPORT_OUTPUT_TOO_LARGE",
+      "error",
+      ".",
+      `Serialized report exceeds the ${MAX_REPORT_BYTES}-byte output bound; the attachment was omitted from the emitted report.`,
+      ""
+    ),
+  ]);
+  const fallback = {
+    tool: report.tool,
+    tool_version: report.tool_version,
+    spec: report.spec,
+    skill: report.skill,
+    conformance: "nonconformant",
+    diagnostics: capped.diagnostics,
+    diagnostics_truncated: capped.truncated,
+    diagnostics_omitted: capped.omitted,
+    files: report.files,
+    security_composition: {
+      ...(report.security_composition || {}),
+      attachment_status: "rejected_output_bound",
+      spectre_findings: null,
+    },
+  };
+  // Bounded by construction: diagnostics capped at 200 with 200-char
+  // evidence, findings omitted.
+  return { report: fallback, text: JSON.stringify(fallback, null, 2) };
 }
 
 function fatalResult(root, dirName, message) {
@@ -1205,9 +1397,10 @@ function main() {
     process.exit(2);
   }
   const report = lintSkill(positional[0], { spectreFindingsPath });
-  console.log(JSON.stringify(report, null, 2));
-  if (report.conformance === "conformant") process.exit(0);
-  if (report.diagnostics.some((d) => d.code === "OPERATIONAL_ERROR")) process.exit(2);
+  const { report: emitted, text } = serializeReportBounded(report);
+  console.log(text);
+  if (emitted.conformance === "conformant") process.exit(0);
+  if (emitted.diagnostics.some((d) => d.code === "OPERATIONAL_ERROR")) process.exit(2);
   process.exit(1);
 }
 

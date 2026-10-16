@@ -20,9 +20,9 @@ Severity determines conformance: any `error` → `nonconformant`; otherwise any
 | MALFORMED_FRONTMATTER | Unparseable line in the bounded subset |
 | UNSUPPORTED_YAML_TAG | Explicit `!tag` or anchor/alias present (never evaluated) |
 | DANGEROUS_MAPPING_KEY | `__proto__` / `constructor` / `prototype` key refused (parsed into a discarded container) |
-| MALFORMED_SCALAR | Unterminated quoted scalar or unbalanced flow brackets (never reinterpreted as a valid value) |
+| MALFORMED_SCALAR | Quoted scalar with unterminated quote, unescaped interior quote, trailing tokens after the closing quote, or unbalanced flow brackets (never reinterpreted as a valid value) |
 | DUPLICATE_KEY | Duplicate mapping key |
-| DEEP_STRUCTURE | Nesting deeper than 8 on any accepted syntax path (indentation or flow) |
+| DEEP_STRUCTURE | Nesting deeper than 8 on the single shared budget: indentation depth plus flow nesting (mixed block/flow paths included) |
 | FRONTMATTER_TOO_LARGE | Frontmatter over 64 KiB |
 | MISSING_NAME / INVALID_NAME | `name` missing or violating the upstream pattern |
 | NAME_DIR_MISMATCH | `name` differs from the parent directory name |
@@ -42,7 +42,9 @@ Severity determines conformance: any `error` → `nonconformant`; otherwise any
 | FILE_BUDGET_EXCEEDED | Admission stopped before the first excess file (64 files / 256 KiB) |
 | SPECTRE_INPUT_UNREADABLE | `--spectre-findings` file unreadable (explicit request → honest nonconformant, never conformant) |
 | SPECTRE_INPUT_MALFORMED | `--spectre-findings` file not valid JSON object data |
-| SPECTRE_INPUT_TOO_LARGE | `--spectre-findings` file over the 256 KiB attachment bound; not attached |
+| SPECTRE_INPUT_TOO_LARGE | `--spectre-findings` file over the 256 KiB attachment bound; the raw read never exceeds bound+1 bytes, not attached |
+| SPECTRE_INPUT_TOO_DEEP | `--spectre-findings` JSON deeper than 100 structural levels; refused before attachment so serialization can never overflow |
+| REPORT_OUTPUT_TOO_LARGE | Serialized report over the 4 MiB output bound (or unserializable); bounded nonconformant report emitted with the attachment slot set to `rejected_output_bound` |
 | OPERATIONAL_ERROR | Unreadable root, symlinked root, or enumeration failure |
 
 ## Review (review_required)

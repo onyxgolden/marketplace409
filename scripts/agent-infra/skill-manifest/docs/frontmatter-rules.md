@@ -62,13 +62,18 @@ Key policies:
 
 The parser supports: indentation-nested mappings, `- ` sequences, plain /
 single-quoted / double-quoted scalars, `|` and `>` block scalars, `#`
-comments, `true/false/null/~`, numbers, and flow sequences (`[a, b]`) bounded
-by the same depth limit. All mappings are null-prototype objects. It rejects:
+comments, `true/false/null/~`, numbers, and flow sequences (`[a, b]`) sharing
+the same depth limit with indentation nesting (one explicit convention: the
+enclosing container depth plus flow nesting). Quoted scalars are consumed
+completely — the closing quote must terminate the scalar, so trailing
+tokens and unescaped interior quotes are malformed. All mappings are
+null-prototype objects. It rejects:
 explicit tags (`!foo`), anchors/aliases, dangerous mapping keys
 (`__proto__`, `constructor`, `prototype` — parsed into a discarded container
 so they can never satisfy required fields through prototype inheritance),
-malformed quoted scalars (unterminated quotes) and malformed flow sequences
+malformed quoted scalars (unterminated quotes, interior quotes, trailing
+tokens) and malformed flow sequences
 (unbalanced brackets — never reinterpreted as valid scalars), nesting deeper
-than 8 on ANY accepted syntax path (indentation or flow), duplicate keys, and
+than 8 on the shared structural budget (indentation or flow), duplicate keys, and
 frontmatter larger than 64 KiB. No YAML tag is ever evaluated and no code is
 ever executed.

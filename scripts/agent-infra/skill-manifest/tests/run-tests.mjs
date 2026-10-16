@@ -23,7 +23,7 @@ import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { lintSkill } from "../src/linter.mjs";
+import { lintSkill, readBoundedUtf8, MAX_SPECTRE_BYTES } from "../src/linter.mjs";
 import { inventoryOne } from "../src/inventory.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -386,6 +386,189 @@ function runCli(args) {
   const apiRep = lintSkill(root, { spectreFindingsPath: join(work, "nope.json") });
   check("sm005-api-unreadable", apiRep.conformance === "nonconformant" && apiRep.diagnostics.some((d) => d.code === "SPECTRE_INPUT_UNREADABLE"), "API unreadable attachment not nonconformant");
   rmSync(work, { recursive: true, force: true });
+}
+
+// --- 10. SM-002: parser hardening — quoted scalars + mixed depth (API + CLI)
+function makeParserRoot(dirName, frontmatter) {
+  const dir = join(tmpdir(), dirName);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), `---\n${frontmatter}---\n\nBody.\n`);
+  return dir;
+}
+{
+  // trailing tokens after the closing quote are malformed (API + CLI)
+  const dir = makeParserRoot(
+    "skill-manifest-quote-test",
+    `name: skill-manifest-quote-test\ndescription: "safe" "trailing"\nlicense: MIT\n`
+  );
+  const rep = lintSkill(dir);
+  check(
+    "sm002-api-trailing-quote",
+    rep.conformance === "nonconformant" &&
+      rep.diagnostics.some((d) => d.code === "MALFORMED_SCALAR") &&
+      rep.diagnostics.some((d) => d.code === "MISSING_DESCRIPTION"),
+    `trailing-quote not refused: ${JSON.stringify(codesOf(rep))}`
+  );
+  const cli = runCli([dir]);
+  check(
+    "sm002-cli-trailing-quote",
+    cli.code === 1 && JSON.parse(cli.stdout).diagnostics.some((d) => d.code === "MALFORMED_SCALAR"),
+    `CLI trailing-quote exit was ${cli.code}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  // unescaped interior quotes are malformed
+  const dir = makeParserRoot(
+    "skill-manifest-quote-test",
+    `name: skill-manifest-quote-test\ndescription: "sa"fe"\nlicense: MIT\n`
+  );
+  const rep = lintSkill(dir);
+  check(
+    "sm002-api-interior-quote",
+    rep.conformance === "nonconformant" && rep.diagnostics.some((d) => d.code === "MALFORMED_SCALAR"),
+    `interior-quote not refused: ${JSON.stringify(codesOf(rep))}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  // positives: escaped quotes and single-quote doubling stay accepted
+  const dir = makeParserRoot(
+    "skill-manifest-quote-test",
+    `name: skill-manifest-quote-test\ndescription: "say \\"hi\\""\nlicense: MIT\n`
+  );
+  const rep = lintSkill(dir);
+  check(
+    "sm002-api-escaped-quote-positive",
+    !rep.diagnostics.some((d) => d.code === "MALFORMED_SCALAR"),
+    `escaped quotes wrongly refused: ${JSON.stringify(codesOf(rep))}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+  const dir2 = makeParserRoot(
+    "skill-manifest-quote-test",
+    `name: skill-manifest-quote-test\ndescription: 'it''s ok'\nlicense: MIT\n`
+  );
+  const rep2 = lintSkill(dir2);
+  check(
+    "sm002-api-single-quote-positive",
+    !rep2.diagnostics.some((d) => d.code === "MALFORMED_SCALAR"),
+    `single-quote doubling wrongly refused: ${JSON.stringify(codesOf(rep2))}`
+  );
+  rmSync(dir2, { recursive: true, force: true });
+}
+{
+  // mixed block/flow nesting shares the single MAX_DEPTH budget (verdict probe)
+  const flow8 = `[`.repeat(8) + "x" + `]`.repeat(8);
+  const dir = makeParserRoot(
+    "skill-manifest-mixed-test",
+    `name: skill-manifest-mixed-test\ndescription: Mixed probe.\nlicense: MIT\nk0:\n  k1:\n    k2:\n      k3:\n        k4:\n          k5:\n            k6:\n              k7: ${flow8}\n`
+  );
+  const rep = lintSkill(dir);
+  check(
+    "sm002-api-mixed-depth-negative",
+    rep.conformance === "nonconformant" && rep.diagnostics.some((d) => d.code === "DEEP_STRUCTURE"),
+    `mixed block/flow depth not refused: ${JSON.stringify(codesOf(rep))}`
+  );
+  const cli = runCli([dir]);
+  check(
+    "sm002-cli-mixed-depth-negative",
+    cli.code === 1 && JSON.parse(cli.stdout).diagnostics.some((d) => d.code === "DEEP_STRUCTURE"),
+    `CLI mixed-depth exit was ${cli.code}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+}
+{
+  // positive: standalone 8-deep flow at top level stays within budget
+  const flow8 = `[`.repeat(8) + "x" + `]`.repeat(8);
+  const dir = makeParserRoot(
+    "skill-manifest-mixed-test",
+    `name: skill-manifest-mixed-test\ndescription: Mixed probe.\nlicense: MIT\nextra: ${flow8}\n`
+  );
+  const rep = lintSkill(dir);
+  check(
+    "sm002-api-flow8-positive",
+    !rep.diagnostics.some((d) => d.code === "DEEP_STRUCTURE"),
+    `top-level 8-flow wrongly refused: ${JSON.stringify(codesOf(rep))}`
+  );
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// --- 11. SM-005: bounded attachment admission (API + CLI) ----------------------
+{
+  const dir = makeParserRoot(
+    "skill-manifest-attach-test",
+    `name: skill-manifest-attach-test\ndescription: Attachment probe.\nlicense: MIT\n`
+  );
+  // exact nested-JSON probe from the review: 20,014 bytes, within the byte cap
+  const nestedPath = join(dir, "nested.json");
+  writeFileSync(nestedPath, `{"findings":` + `[`.repeat(10000) + "0" + `]`.repeat(10000) + `}`);
+  const rep = lintSkill(dir, { spectreFindingsPath: nestedPath });
+  check(
+    "sm005-api-nested-overdeep",
+    rep.conformance === "nonconformant" &&
+      rep.security_composition.attachment_status === "rejected_overdeep" &&
+      rep.diagnostics.some((d) => d.code === "SPECTRE_INPUT_TOO_DEEP") &&
+      rep.security_composition.spectre_findings === null,
+    `nested attachment not refused: status=${rep.security_composition.attachment_status}`
+  );
+  // CLI: structured bounded report, never an uncaught RangeError/stack trace
+  const cli = runCli([dir, "--spectre-findings", nestedPath]);
+  const cliRep = JSON.parse(cli.stdout);
+  check(
+    "sm005-cli-nested-structured",
+    cli.code === 1 &&
+      cliRep.conformance === "nonconformant" &&
+      cliRep.security_composition.attachment_status === "rejected_overdeep",
+    `CLI nested probe exit was ${cli.code}`
+  );
+  check(
+    "sm005-cli-nested-no-trace",
+    !/RangeError|Maximum call stack/.test(cli.stdout + cli.stderr),
+    "CLI leaked a stack trace for the nested attachment"
+  );
+  // >cap read-bound sentinel: a 3,000,000-byte file is admitted on at most cap+1 bytes
+  const bigPath = join(dir, "big.json");
+  writeFileSync(bigPath, JSON.stringify({ pad: "x".repeat(3 * 1024 * 1024) }));
+  const bounded = readBoundedUtf8(bigPath, MAX_SPECTRE_BYTES);
+  check(
+    "sm005-read-bound-sentinel",
+    bounded.ok && bounded.truncated && Buffer.byteLength(bounded.text, "utf8") === MAX_SPECTRE_BYTES + 1,
+    `bounded read returned ${bounded.ok ? Buffer.byteLength(bounded.text, "utf8") : "error"} bytes`
+  );
+  const bigRep = lintSkill(dir, { spectreFindingsPath: bigPath });
+  check(
+    "sm005-api-oversize-bounded",
+    bigRep.conformance === "nonconformant" &&
+      bigRep.security_composition.attachment_status === "rejected_oversize" &&
+      bigRep.diagnostics.some((d) => d.code === "SPECTRE_INPUT_TOO_LARGE") &&
+      bigRep.security_composition.spectre_findings === null,
+    `oversize attachment status was ${bigRep.security_composition.attachment_status}`
+  );
+  // in-budget passthrough controls: exactly cap bytes attaches; cap+1 refuses
+  const mkExact = (totalBytes) => {
+    const prefix = `{"pad":"`;
+    const suffix = `"}`;
+    return prefix + "x".repeat(totalBytes - Buffer.byteLength(prefix + suffix, "utf8")) + suffix;
+  };
+  const exactPath = join(dir, "exact.json");
+  writeFileSync(exactPath, mkExact(MAX_SPECTRE_BYTES));
+  const exactRep = lintSkill(dir, { spectreFindingsPath: exactPath });
+  check(
+    "sm005-exact-cap-attached",
+    exactRep.security_composition.attachment_status === "attached" &&
+      exactRep.security_composition.spectre_findings !== null,
+    `exactly-cap attachment status was ${exactRep.security_composition.attachment_status}`
+  );
+  const overPath = join(dir, "over.json");
+  writeFileSync(overPath, mkExact(MAX_SPECTRE_BYTES + 1));
+  const overRep = lintSkill(dir, { spectreFindingsPath: overPath });
+  check(
+    "sm005-cap-plus-one-refused",
+    overRep.security_composition.attachment_status === "rejected_oversize",
+    `cap+1 attachment status was ${overRep.security_composition.attachment_status}`
+  );
+  rmSync(dir, { recursive: true, force: true });
 }
 
 // --- Report ------------------------------------------------------------------

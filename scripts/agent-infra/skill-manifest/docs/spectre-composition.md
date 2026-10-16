@@ -16,10 +16,18 @@ Rules:
    one value). It is attached verbatim under
    `report.security_composition.spectre_findings` within a 256 KiB attachment
    bound; it is never reinterpreted, re-scored, or rewritten by this linter.
+   Admission is bounded before materialization: the raw read never exceeds
+   bound+1 bytes, and parsed structure deeper than 100 levels is refused
+   before attachment (`SPECTRE_INPUT_TOO_DEEP`), so a hostile input can
+   never exhaust input memory or the serializer's stack. The emitted
+   report itself is bounded at 4 MiB of serialized JSON; over-bound output
+   falls back to a bounded nonconformant report with
+   `attachment_status: "rejected_output_bound"`.
    `report.security_composition.attachment_status` records the outcome
    (`not_requested` / `attached` / `unavailable` / `malformed` /
-   `rejected_oversize`) so packaging conformance and Spectre security
-   disposition stay separate named results.
+   `rejected_oversize` / `rejected_overdeep` / `rejected_output_bound`) so
+   packaging conformance and Spectre security disposition stay separate
+   named results.
 2. This linter adds **no new high/critical security block categories**.
    `INSTRUCTION_OVERRIDE_NOTE` is a packaging observation at `note` severity;
    it must be composed with Skill Spectre `PROMPT_INJECTION` findings before
