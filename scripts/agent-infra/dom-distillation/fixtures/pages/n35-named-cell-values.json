@@ -1,0 +1,609 @@
+{
+  "schema_version": "dom-distill/1",
+  "fixture_id": "n35-named-cell-values",
+  "build_id": "dom-distill-fixtures/1",
+  "snapshot_digest": "7e49137e1bb65a86f0d772bbdc3c63785f561477868585ba8277f30b4eaa0358",
+  "document": {
+    "url": "https://example.test/invoices-named",
+    "title": "Example — Named invoices"
+  },
+  "frames": [
+    {
+      "frame_id": "main",
+      "root_refs": [
+        "e1"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "ref": "e1",
+      "frame_id": "main",
+      "role": "main",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 40,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e2",
+        "e3",
+        "e4"
+      ]
+    },
+    {
+      "ref": "e2",
+      "frame_id": "main",
+      "role": "text",
+      "name": "",
+      "value": null,
+      "text": "background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background background ",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 70,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e3",
+      "frame_id": "main",
+      "role": "heading",
+      "name": "Open invoices",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 100,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e4",
+      "frame_id": "main",
+      "role": "table",
+      "name": "Invoices",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 130,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e5",
+        "e9",
+        "e13",
+        "e17"
+      ]
+    },
+    {
+      "ref": "e5",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 160,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e6",
+        "e7",
+        "e8"
+      ]
+    },
+    {
+      "ref": "e6",
+      "frame_id": "main",
+      "role": "rowheader",
+      "name": "Invoice INV-001",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 190,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e7",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "Amount",
+      "value": null,
+      "text": "Amount $500",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 220,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e8",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Pay",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 250,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e9",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 280,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e10",
+        "e11",
+        "e12"
+      ]
+    },
+    {
+      "ref": "e10",
+      "frame_id": "main",
+      "role": "rowheader",
+      "name": "Invoice INV-002",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 310,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e11",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "Amount",
+      "value": null,
+      "text": "Amount $750",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 340,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e12",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Pay",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 370,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e13",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 400,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e14",
+        "e15",
+        "e16"
+      ]
+    },
+    {
+      "ref": "e14",
+      "frame_id": "main",
+      "role": "rowheader",
+      "name": "Invoice INV-003",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 430,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e15",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "Status",
+      "value": "paid",
+      "text": "Paid in full",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 460,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e16",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Pay",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 490,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e17",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 520,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e18",
+        "e19",
+        "e20"
+      ]
+    },
+    {
+      "ref": "e18",
+      "frame_id": "main",
+      "role": "rowheader",
+      "name": "Invoice INV-004",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 550,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e19",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "Reference",
+      "value": null,
+      "text": "INV-2026-Q4-ENTERPRISE-ACME-CORP-000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000-$1,200",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 580,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e20",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Pay",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 610,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    }
+  ],
+  "task": {
+    "id": "task-pay-invoice-named",
+    "goal": "Pay the first invoice"
+  }
+}
