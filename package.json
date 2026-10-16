@@ -27,7 +27,8 @@
     "forge:docs:drift:nightly": "node scripts/engineering-brain/docs/runNightlyDocDriftCli.mjs",
     "forge:brain:validate-manifest": "node scripts/engineering-brain/validateProductionManifest.mjs",
     "forge:brain:acceptance-report": "node scripts/engineering-brain/renderAcceptanceReport.mjs",
-    "forge:team-brain:fixture": "node scripts/team-brain/runFixtureReport.mjs"
+    "forge:team-brain:fixture": "node scripts/team-brain/runFixtureReport.mjs",
+    "forge:team-brain:eng-memory": "node scripts/team-brain/eng-memory/runBattery.mjs"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.7",
