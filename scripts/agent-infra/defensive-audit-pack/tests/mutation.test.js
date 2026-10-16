@@ -82,8 +82,8 @@ test("mutation: permissive unknown handling (stale -> PASS) breaks the battery e
   // Mutate the freshness check in-memory to return PASS for stale exports,
   // then assert the frozen battery expectation catches it.
   const mutatedChecks = await loadMutated("checks.js", [
-    ['return finding("BRG-005", "bridge", UNVERIFIED, ptr, ctx.collectedAtMs, "Stale export:',
-     'return finding("BRG-005", "bridge", PASS, ptr, ctx.collectedAtMs, "Stale export:'],
+    [`if (ageMs > FRESHNESS_LIMIT_MS) {\n          return finding(ctx, "BRG-005", "bridge", UNVERIFIED,`,
+     `if (ageMs > FRESHNESS_LIMIT_MS) {\n          return finding(ctx, "BRG-005", "bridge", PASS,`],
   ]);
   const lane = mutatedChecks.LANE_CHECKS.bridge;
   const staleCheck = lane.find((ch) => ch.id === "BRG-005");
@@ -92,9 +92,11 @@ test("mutation: permissive unknown handling (stale -> PASS) breaks the battery e
   const ctx = {
     config: {},
     machineId: "machine-bridge-01",
+    collectedAt: new Date(A - 10 * 24 * 3600 * 1000).toISOString(),
     collectedAtMs: A - 10 * 24 * 3600 * 1000,
     asOfMs: A,
     pins: P,
+    pinsDigest: "0".repeat(64),
     budget: new CandidateBudget(),
     watchdog: new Watchdog(5000, () => A),
     coverage: [],

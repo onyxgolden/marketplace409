@@ -33,6 +33,88 @@ export class WatchdogExceeded extends Error {
   }
 }
 
+/** Closed-schema / admission violation. `code` selects the refusal reason. */
+export class SchemaError extends Error {
+  constructor(code, detail) {
+    super(`SCHEMA:${code}:${detail}`);
+    this.name = "SchemaError";
+    this.code = code;
+  }
+}
+
+function accessorError(where) {
+  return new SchemaError("accessor", `accessor property at ${where} rejected without invocation`);
+}
+
+/**
+ * Unified bounded admission: deep-copies a programmatic value through own
+ * data descriptors only. This is the ONE admission contract shared by the
+ * string entrypoint (after JSON.parse) and the object entrypoint.
+ *
+ * - the budget is charged BEFORE each key/index candidate is inspected;
+ *   the first candidate over the limit refuses without touching it
+ * - nesting depth is capped at MAX_DEPTH (root counts as 1, matching the
+ *   byte-level scanJsonDepth used on the string path)
+ * - admitted bytes are estimated (keys + string leaves + fixed per-value
+ *   cost) and capped at MAX_ADMIT_BYTES
+ * - accessors are rejected WITHOUT invocation (getOwnPropertyDescriptor
+ *   never fires a getter); array indices are read only via their own data
+ *   descriptor, never by indexed access or iteration first
+ * - cyclic graphs are rejected
+ *
+ * Throws BudgetExceeded or SchemaError. Returns a plain-data deep copy.
+ */
+export function admitDocument(value, budget, opts = {}) {
+  const label = opts.label || "admission";
+  const seen = new Set();
+  let bytes = 0;
+  const chargeBytes = (n, path) => {
+    bytes += n;
+    if (bytes > MAX_ADMIT_BYTES) {
+      throw new BudgetExceeded("bytes", `${label}: ${path} pushes admitted bytes over ${MAX_ADMIT_BYTES}`);
+    }
+  };
+  function walk(v, depth, path) {
+    if (v === null || typeof v !== "object") {
+      if (typeof v === "string") chargeBytes(Buffer.byteLength(v, "utf8"), path);
+      else if (typeof v === "number") chargeBytes(8, path);
+      else chargeBytes(4, path);
+      return v;
+    }
+    if (depth > MAX_DEPTH) {
+      throw new BudgetExceeded("depth", `${label}: ${path} depth ${depth} exceeds ${MAX_DEPTH}`);
+    }
+    if (seen.has(v)) {
+      throw new SchemaError("cycle", `${label}: ${path} object graph must be acyclic`);
+    }
+    seen.add(v);
+    chargeBytes(2, path);
+    let out;
+    if (Array.isArray(v)) {
+      out = new Array(v.length);
+      for (let i = 0; i < v.length; i++) {
+        budget.charge(`${label}:${path}[${i}]`);
+        const d = Object.getOwnPropertyDescriptor(v, String(i));
+        if (d && !("value" in d)) throw accessorError(`${path}[${i}]`);
+        out[i] = walk(d ? d.value : undefined, depth + 1, `${path}[${i}]`);
+      }
+    } else {
+      out = {};
+      for (const k of Object.keys(v)) {
+        chargeBytes(Buffer.byteLength(k, "utf8"), `${path}.${k}`);
+        budget.charge(`${label}:${path}.${k}`);
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if (!d) continue;
+        if (!("value" in d)) throw accessorError(`${path}.${k}`);
+        out[k] = walk(d.value, depth + 1, `${path}.${k}`);
+      }
+    }
+    seen.delete(v);
+    return out;
+  }
+  return walk(value, 1, "$");
+}
+
 /**
  * Byte-level JSON nesting-depth scanner. Walks raw UTF-8 text and tracks
  * container depth from structural characters only ({ } [ ]), skipping

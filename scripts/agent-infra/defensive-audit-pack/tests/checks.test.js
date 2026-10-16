@@ -41,9 +41,16 @@ test("zero unsupported PASS: every PASS finding binds to verified input bytes", 
   for (const c of CASES) {
     const r = runCase(c);
     for (const f of r.findings) {
-      assert(f.evidence && f.evidence.pointer && /^[0-9a-f]{64}$/.test(f.evidence.digest), `${c.name}/${f.check_id}: evidence binding`);
+      assert(f.evidence && f.evidence.pointer && /^[0-9a-f]{64}$/.test(f.evidence.value_digest), `${c.name}/${f.check_id}: evidence binding`);
+      assert(/^[0-9a-f]{64}$/.test(f.evidence.pins_digest), `${c.name}/${f.check_id}: pin binding`);
       assert(["PASS", "FAIL", "UNVERIFIED"].includes(f.verdict), `${c.name}/${f.check_id}: verdict domain`);
       assert(typeof f.remediation === "string" && f.remediation.length > 0, `${c.name}/${f.check_id}: remediation`);
+      assert(f.applicability === "configuration", `${c.name}/${f.check_id}: applicability`);
+    }
+    if (r.status !== "REFUSED") {
+      assert(r.applicability === "configuration", `${c.name}: top-level applicability`);
+      assert(r.synthetic === true && r.advisory_only === true, `${c.name}: synthetic/advisory limitation`);
+      assert(r.export_identity && typeof r.export_identity.pins_digest === "string", `${c.name}: export identity`);
     }
   }
 });
@@ -80,14 +87,27 @@ test("cross-machine evidence never satisfies a check (cf-unknown-cross-machine)"
   assertEqual(f.verdict, "UNVERIFIED", "CF-002 unverified on cross-machine evidence");
 });
 
-test("stale exports are UNVERIFIED, never PASS", () => {
+test("stale exports downgrade config claims to historical UNVERIFIED, never PASS", () => {
   for (const name of ["bridge-unknown-stale", "cf-unknown-stale", "ssh-unknown-stale"]) {
     const c = CASES.find((x) => x.name === name);
     const r = runCase(c);
     const stale = r.findings.find((x) => x.check_id.endsWith("-005"));
     assertEqual(stale.verdict, "UNVERIFIED", `${name}: freshness unverified`);
+    for (const f of r.findings) {
+      assert(f.verdict !== "PASS" || !f.freshness_sensitive, `${name}/${f.check_id}: no current PASS on stale export`);
+      if (f.historical) assertEqual(f.verdict, "UNVERIFIED", `${name}/${f.check_id}: historical is UNVERIFIED`);
+    }
     assertEqual(r.complete, false, `${name}: complete false`);
   }
+});
+
+test("stale export retains explicitly observed FAIL (wrong signer stays FAIL)", () => {
+  const base = CASES.find((x) => x.name === "bridge-fail-wrong-signer");
+  const staleEnv = JSON.parse(JSON.stringify(base.envelope));
+  staleEnv.collected_at = new Date(AS_OF_MS - 10 * 24 * 3600 * 1000).toISOString();
+  const r = auditExport(staleEnv, OPTS);
+  assertEqual(r.findings.find((x) => x.check_id === "BRG-001").verdict, "FAIL", "explicit FAIL is not erased by age");
+  assertEqual(r.findings.find((x) => x.check_id === "BRG-002").verdict, "UNVERIFIED", "stale PASS becomes historical UNVERIFIED");
 });
 
 test("wrong signer identity fails BRG-001", () => {
@@ -100,9 +120,9 @@ test("missing STOP evidence fails BRG-003", () => {
   assertEqual(r.findings.find((x) => x.check_id === "BRG-003").verdict, "FAIL", "missing stop");
 });
 
-test("missing audit coverage fails BRG-004", () => {
+test("missing audit coverage is UNVERIFIED, not FAIL (absent evidence)", () => {
   const r = runCase(CASES.find((x) => x.name === "bridge-fail-missing-audit"));
-  assertEqual(r.findings.find((x) => x.check_id === "BRG-004").verdict, "FAIL", "missing audit");
+  assertEqual(r.findings.find((x) => x.check_id === "BRG-004").verdict, "UNVERIFIED", "missing audit coverage");
 });
 
 test("origin bypass fails CF-003 (and permissive policy fails CF-001)", () => {

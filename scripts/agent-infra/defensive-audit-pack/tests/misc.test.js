@@ -21,7 +21,7 @@ test("three full battery runs are byte-identical", () => {
   for (let i = 0; i < 3; i++) {
     const rows = CASES.map((c) => {
       const r = auditExport(c.envelope, OPTS);
-      return { name: c.name, status: r.status, complete: r.complete, verdicts: r.findings.map((f) => [f.check_id, f.verdict, f.evidence.digest]) };
+      return { name: c.name, status: r.status, complete: r.complete, verdicts: r.findings.map((f) => [f.check_id, f.verdict, f.evidence.value_digest]) };
     });
     outputs.push(canonicalJson(rows));
   }

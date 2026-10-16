@@ -32,11 +32,12 @@ export function detectInstructionText(value) {
 }
 
 /**
- * Walk own string leaves of a config object (bounded by budget) and
- * return the first {pointer, pattern} injection hit, or null.
- * Uses ownRead only — never invokes accessors.
+ * Walk own string leaves of a config object (bounded by an independent
+ * budget) and return the first {pointer, pattern} injection hit, or null.
+ * The budget is charged BEFORE each child candidate is inspected; the
+ * admitted copy carries no accessors, so descriptor reads are safe.
  */
-export function findInjection(config, charge, maxLeaves = 64) {
+export function findInjection(config, budget, maxLeaves = 64) {
   const stack = [{ value: config, pointer: "$.config" }];
   let leaves = 0;
   while (stack.length) {
@@ -52,9 +53,9 @@ export function findInjection(config, charge, maxLeaves = 64) {
       const keys = Object.keys(value);
       for (let i = keys.length - 1; i >= 0; i--) {
         const k = keys[i];
+        budget.charge(`injection-scan:${pointer}.${k}`);
         const d = Object.getOwnPropertyDescriptor(value, k);
         if (!d || !("value" in d)) continue;
-        charge(`injection-scan:${pointer}.${k}`);
         stack.push({ value: d.value, pointer: `${pointer}.${k}` });
       }
     }

@@ -44,10 +44,17 @@ for (const c of CASES) {
   }
 }
 
-// Determinism digest: canonical rendering of all verdicts.
+// Determinism digest: canonical rendering of verdicts AND evidence bindings.
+// Evidence digests are part of the comparison, not just verdict projections.
 const digestRows = CASES.map((c) => {
   const r = auditExport(c.envelope, OPTS);
-  return { name: c.name, status: r.status, complete: r.complete, verdicts: r.findings.map((f) => [f.check_id, f.verdict]) };
+  return {
+    name: c.name,
+    status: r.status,
+    complete: r.complete,
+    export_identity: r.export_identity,
+    verdicts: r.findings.map((f) => [f.check_id, f.verdict, f.evidence.pointer, f.evidence.value_digest, f.evidence.pins_digest]),
+  };
 });
 const digest = sha256HexUtf8(canonicalJson(digestRows));
 
