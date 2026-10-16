@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n09-contact-form",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "99c3b428be6ac3536544abb787d490604830799498ba7ee5398843d81296f724",
+  "snapshot_digest": "ca0fa4428a4019ee778e15bc53440017f733a60a8f26f4d56a68c4a4633b918b",
   "document": {
     "url": "https://example.test/contact",
     "title": "Example — Contact"

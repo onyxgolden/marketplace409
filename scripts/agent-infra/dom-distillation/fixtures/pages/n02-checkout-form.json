@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n02-checkout-form",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "bb52ab692ce187636292e9b3a50ee02f3c67c307e7d6629426f87ea482cb4e26",
+  "snapshot_digest": "80ebfc39ed4815c8ac146d4761ddf8060ae6f633bb94a0276f4fa1c03d209c32",
   "document": {
     "url": "https://example.test/checkout",
     "title": "Example — Checkout"

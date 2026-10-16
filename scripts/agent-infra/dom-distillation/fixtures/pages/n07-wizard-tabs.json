@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n07-wizard-tabs",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "674d57a571a23355ee462a91d88c2380f5c0402a7b5eb94186ca1404ecd47aac",
+  "snapshot_digest": "be6ce4ff773fecf9064acbde1e7775797f82a91a2fdf93dab012e66ce377af39",
   "document": {
     "url": "https://example.test/setup",
     "title": "Example — Setup"

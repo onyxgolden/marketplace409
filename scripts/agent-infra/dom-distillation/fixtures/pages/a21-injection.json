@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a21-injection",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "d52111df8bc7c8d9d3df7c86bef84088877d4a3a25176586f29a8b3aed835326",
+  "snapshot_digest": "e5303302e0b06f3d0aee850c719fac81f056da2e5d0983e363aab76cf14216a9",
   "document": {
     "url": "https://example.test/newsletter",
     "title": "Example — Newsletter"

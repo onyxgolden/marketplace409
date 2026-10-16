@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n10-dashboard",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "1bf72c8c2c89e2ac4914c40a472b9ffc0316c41df6b62ac60749635c841e6aed",
+  "snapshot_digest": "dc703d9e97e09262280aeb7bee5ff682d0f2087d1c9e7fa09684623df2fa397e",
   "document": {
     "url": "https://example.test/dashboard",
     "title": "Example — Dashboard"

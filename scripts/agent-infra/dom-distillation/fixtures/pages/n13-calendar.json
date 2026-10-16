@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n13-calendar",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "4d08c45094f19a49eaf1cde99f520d84d9492db74ed6ff83df40736635668cab",
+  "snapshot_digest": "2c17f871fe2cbb8d806aaa5d4d1a96df0481602a443217494e7d8a9258bbc778",
   "document": {
     "url": "https://example.test/schedule",
     "title": "Example — Schedule"

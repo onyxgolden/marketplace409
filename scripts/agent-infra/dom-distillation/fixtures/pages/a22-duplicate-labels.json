@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a22-duplicate-labels",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "9aeb2b9f04f59898bac3e5888c52244fe8ca1abc452a846d6ce2a59ee8518882",
+  "snapshot_digest": "2ea25097ccd35cfb170610925545f7359a08b2b396df907839fe4dd9e562c582",
   "document": {
     "url": "https://example.test/multi",
     "title": "Example — Multi"

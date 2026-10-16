@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a26-huge-table",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "e03bf2eae992a4aca01ea379c9e46bb76784faeeaa96b911ca41c4e94e1b5ef3",
+  "snapshot_digest": "e9bbd7166f1478fb01f946daf794e8534d1cfc4caf094db9faceef66bd879774",
   "document": {
     "url": "https://example.test/big",
     "title": "Example — Big table"

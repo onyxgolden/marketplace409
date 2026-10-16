@@ -1,9 +1,11 @@
 /**
- * make-fixtures.js — deterministic generator for the 30 frozen synthetic pages.
+ * make-fixtures.js — deterministic generator for the 34 frozen synthetic pages.
  *
  * Writes fixtures/pages/<id>.json (snapshot input) and fixtures/gold.json
  * (task-specific gold labels). Run once to freeze; afterwards the files are
- * pinned by fixtures/manifest.json + corpus_digest.txt and must not change.
+ * pinned by corpus/manifest.json + corpus_digest.txt and must not change.
+ * Freezing is an explicit authoring step (node corpus/freeze-corpus.js) —
+ * the battery and benchmark VERIFY the freeze before evaluating.
  *
  * Pure Node 24 ESM. Deterministic: fixed build order, no randomness, no time.
  * All pages are synthetic — no live data, no real sites, no credentials.
@@ -12,7 +14,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { canonicalJson, sha256HexUtf8 } from "../src/canonical.js";
+import { snapshotPin } from "../src/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGES = join(HERE, "pages");
@@ -69,18 +71,21 @@ class Page {
     return n;
   }
   finalize() {
-    const nodesSorted = [...this.nodes].sort((a, b) => (a.ref < b.ref ? -1 : 1));
-    const digest = sha256HexUtf8(nodesSorted);
-    return {
+    // DOM-004: the snapshot digest is the canonical snapshot IDENTITY —
+    // schema, fixture/build identity, document, task, frame topology and
+    // full node content. Changing any of them changes the pin.
+    const snap = {
       schema_version: "dom-distill/1",
       fixture_id: this.fixtureId,
       build_id: BUILD_ID,
-      snapshot_digest: digest,
+      snapshot_digest: null,
       document: this.document,
       frames: this.frames,
       nodes: this.nodes,
       task: this.task,
     };
+    snap.snapshot_digest = snapshotPin(snap);
+    return snap;
   }
 }
 
@@ -639,6 +644,87 @@ function writePage(page, goldEntry) {
   writePage(p, okGold([
     { ref: btn.ref, role: "button", name: "Confirm nested action" },
   ], { expect_truncation: true }));
+}
+
+// ================================================================ DOM-001 gold cases
+// ---------------------------------------------------------------- normal: 31 long shared-prefix labels — full labels must survive
+{
+  const p = new Page("n31-long-shared-prefix", "task-prefix", "Choose the correct plan option",
+    "https://example.test/plans", "Example — Plans");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const h = p.node("main", "heading", { name: "Choose your plan" });
+  p.child(main, h);
+  const prefix = "Plan details: unlimited projects, priority support, 99.9% uptime SLA, ".repeat(3);
+  const b1 = p.node("main", "button", { name: prefix + "[Option Alpha — billed annually]" });
+  const b2 = p.node("main", "button", { name: prefix + "[Option Beta — billed monthly]" });
+  p.child(main, b1); p.child(main, b2);
+  writePage(p, okGold([
+    { ref: b1.ref, role: "button", name: b1.name },
+    { ref: b2.ref, role: "button", name: b2.name },
+  ]));
+}
+
+// ---------------------------------------------------------------- normal: 32 warning tail — critical tail must survive
+{
+  const p = new Page("n32-warning-tail", "task-wire2", "Confirm the large transfer",
+    "https://example.test/wire2", "Example — Wire");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const dlg = p.node("main", "alertdialog", {
+    name: "Send international wire?",
+    warning: "x".repeat(170) + " NONREFUNDABLE PAYMENT",
+  });
+  const send = p.node("main", "button", { name: "Send wire" });
+  p.child(main, dlg); p.child(dlg, send);
+  writePage(p, okGold([
+    { ref: dlg.ref, role: "alertdialog", name: "Send international wire?", warning_contains: "NONREFUNDABLE PAYMENT" },
+    { ref: send.ref, role: "button", name: "Send wire" },
+  ]));
+}
+
+// ---------------------------------------------------------------- normal: 33 long validation error — full error must survive
+{
+  const p = new Page("n33-long-validation-error", "task-taxid", "Enter the tax ID",
+    "https://example.test/taxid", "Example — Tax ID");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const tid = p.node("main", "textbox", {
+    name: "Tax ID",
+    state: { invalid: true },
+    validation_error: "The value entered does not match the expected format. " + "y".repeat(200) + " This field is required.",
+  });
+  const save = p.node("main", "button", { name: "Save" });
+  p.child(main, tid); p.child(main, save);
+  writePage(p, okGold([
+    { ref: tid.ref, role: "textbox", name: "Tax ID", state_contains: ["invalid"], error_contains: "This field is required." },
+    { ref: save.ref, role: "button", name: "Save" },
+  ]));
+}
+
+// ---------------------------------------------------------------- normal: 34 two invoice rows — same-label controls keep row context
+{
+  const p = new Page("n34-invoice-rows", "task-pay-invoice", "Pay the first invoice",
+    "https://example.test/invoices", "Example — Invoices");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const h = p.node("main", "heading", { name: "Open invoices" });
+  const table = p.node("main", "table", { name: "Invoices" });
+  p.child(main, h); p.child(main, table);
+  const mkRow = (inv, amt) => {
+    const row = p.node("main", "row", {});
+    const rh = p.node("main", "rowheader", { name: `Invoice ${inv}` });
+    const cell = p.node("main", "cell", { text: `Amount ${amt}` });
+    const pay = p.node("main", "button", { name: "Pay" });
+    p.child(table, row); p.child(row, rh); p.child(row, cell); p.child(row, pay);
+    return pay;
+  };
+  const pay1 = mkRow("INV-001", "$500");
+  const pay2 = mkRow("INV-002", "$750");
+  writePage(p, okGold([
+    { ref: pay1.ref, role: "button", name: "Pay", rowctx_contains: ["Invoice INV-001", "Amount $500"] },
+    { ref: pay2.ref, role: "button", name: "Pay", rowctx_contains: ["Invoice INV-002", "Amount $750"] },
+  ]));
 }
 
 writeFileSync(join(HERE, "gold.json"), JSON.stringify(gold, null, 2) + "\n");

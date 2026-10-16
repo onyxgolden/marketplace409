@@ -17,23 +17,32 @@ function sha256File(p) {
   return createHash("sha256").update(readFileSync(p)).digest("hex");
 }
 
-const files = [];
-for (const f of readdirSync(join(ROOT, "fixtures", "pages")).filter(f => f.endsWith(".json")).sort()) {
-  files.push("fixtures/pages/" + f);
+export function freezeCorpus(rootDir) {
+  const files = [];
+  for (const f of readdirSync(join(rootDir, "fixtures", "pages")).filter(f => f.endsWith(".json")).sort()) {
+    files.push("fixtures/pages/" + f);
+  }
+  files.push("fixtures/gold.json");
+  files.push("fixtures/make-fixtures.js");
+  files.push("tokenizer/vocab.bpe");
+  files.push("tokenizer/PIN.md");
+  files.push("PAYLOAD.md");
+
+  const manifest = {
+    corpus: "dom-distillation-fixtures/1",
+    files: files.map(f => ({ path: f, sha256: sha256File(join(rootDir, f)) })),
+  };
+  const digest = createHash("sha256")
+    .update(manifest.files.map(e => e.sha256).join("\n"), "utf8")
+    .digest("hex");
+
+  writeFileSync(join(rootDir, "corpus", "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+  writeFileSync(join(rootDir, "corpus", "corpus_digest.txt"), digest + "\n");
+  return { files: files.length, digest };
 }
-files.push("fixtures/gold.json");
-files.push("fixtures/make-fixtures.js");
-files.push("tokenizer/vocab.bpe");
-files.push("tokenizer/PIN.md");
 
-const manifest = {
-  corpus: "dom-distillation-fixtures/1",
-  files: files.map(f => ({ path: f, sha256: sha256File(join(ROOT, f)) })),
-};
-const digest = createHash("sha256")
-  .update(manifest.files.map(e => e.sha256).join("\n"), "utf8")
-  .digest("hex");
-
-writeFileSync(join(HERE, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
-writeFileSync(join(HERE, "corpus_digest.txt"), digest + "\n");
-console.log(`frozen ${files.length} files, corpus digest ${digest}`);
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  const r = freezeCorpus(ROOT);
+  console.log(`frozen ${r.files} files, corpus digest ${r.digest}`);
+}

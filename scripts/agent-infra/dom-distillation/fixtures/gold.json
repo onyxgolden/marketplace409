@@ -520,5 +520,82 @@
     ],
     "forbidden": [],
     "expect_truncation": true
+  },
+  "n31-long-shared-prefix": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Plan details: unlimited projects, priority support, 99.9% uptime SLA, Plan details: unlimited projects, priority support, 99.9% uptime SLA, Plan details: unlimited projects, priority support, 99.9% uptime SLA, [Option Alpha — billed annually]"
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Plan details: unlimited projects, priority support, 99.9% uptime SLA, Plan details: unlimited projects, priority support, 99.9% uptime SLA, Plan details: unlimited projects, priority support, 99.9% uptime SLA, [Option Beta — billed monthly]"
+      }
+    ],
+    "forbidden": []
+  },
+  "n32-warning-tail": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "alertdialog",
+        "name": "Send international wire?",
+        "warning_contains": "NONREFUNDABLE PAYMENT"
+      },
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Send wire"
+      }
+    ],
+    "forbidden": []
+  },
+  "n33-long-validation-error": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "textbox",
+        "name": "Tax ID",
+        "state_contains": [
+          "invalid"
+        ],
+        "error_contains": "This field is required."
+      },
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Save"
+      }
+    ],
+    "forbidden": []
+  },
+  "n34-invoice-rows": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e7",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-001",
+          "Amount $500"
+        ]
+      },
+      {
+        "ref": "e11",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-002",
+          "Amount $750"
+        ]
+      }
+    ],
+    "forbidden": []
   }
 }

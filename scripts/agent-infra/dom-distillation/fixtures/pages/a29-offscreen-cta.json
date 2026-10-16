@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a29-offscreen-cta",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "8b306c93cabbdbd15d92560889746d8bc95f7b420d534e6aab5821d239b41ecb",
+  "snapshot_digest": "35ec44364d3d34fd6ee9d882f6dee4c79369605740931c4fe695c19d52bd61b3",
   "document": {
     "url": "https://example.test/long",
     "title": "Example — Long page"

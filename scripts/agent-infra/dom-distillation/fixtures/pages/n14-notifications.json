@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n14-notifications",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "e147cbafac07f57e576c43521d61d7713ed6ab036ed80303cd64e2bba16e5e68",
+  "snapshot_digest": "807db8983513ee918be78ac143503eb87c7e7ca444e034bfdd367cc552c5be3c",
   "document": {
     "url": "https://example.test/alerts",
     "title": "Example — Alerts"

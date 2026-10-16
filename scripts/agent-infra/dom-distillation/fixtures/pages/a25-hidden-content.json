@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a25-hidden-content",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "042a987232a2b2f6f91e6c391627538720edcbc61007b12e74678b84df1082dc",
+  "snapshot_digest": "1e65957d8ae7bac2eebaf06d55c11a6bca4311f203748307c1cdefc7b31d711d",
   "document": {
     "url": "https://example.test/editor",
     "title": "Example — Article"

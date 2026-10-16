@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n06-search-results",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "201712589d50058696b39a1194815ac03292acb712ac8dd54bd55da7dcc0777c",
+  "snapshot_digest": "05365f5afa84bb3d164f183c9fd815b64502a76b96b1d2b1195037c6fb67575c",
   "document": {
     "url": "https://example.test/search",
     "title": "Example — Search"

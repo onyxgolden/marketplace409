@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n11-profile-edit",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "8774fb89c5636f3f821c9dfdb2978943ebbdd77724b7a4452b20600c40bc29b5",
+  "snapshot_digest": "2a05786d96a825ae052b456fed6f333bbcae30f7e72088009e09f1ad03b0cba6",
   "document": {
     "url": "https://example.test/profile",
     "title": "Example — Profile"

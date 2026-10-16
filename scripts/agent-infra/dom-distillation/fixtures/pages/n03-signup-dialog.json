@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n03-signup-dialog",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "748cd9976a127da7c9ec304823e1b3d7134352afcfb14db71568402b93528594",
+  "snapshot_digest": "26132d3f6b02ac63202c5f31a113ee5ff5bcb4955beec6c9f365d3b46ffc7d57",
   "document": {
     "url": "https://example.test/signup",
     "title": "Example — Sign up"

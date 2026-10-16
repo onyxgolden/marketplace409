@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a27-renumbered",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "8926caa51e43a22420c12d2239a1ab76721e58be5f4d198d3a1bd7705b1e81f6",
+  "snapshot_digest": "632ca22509dd5b55e50d8c3a5ef1d2cf979df5c8ec350aa0d68e1674ba3bacfa",
   "document": {
     "url": "https://example.test/shop",
     "title": "Example — Shop"

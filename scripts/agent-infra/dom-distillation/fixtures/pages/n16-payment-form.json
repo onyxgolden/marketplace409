@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n16-payment-form",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "5b1aaf15a40c1e98c413168283aefb106e3eb433f03e386707886b5c51b8144a",
+  "snapshot_digest": "a3fe786c61d92efef3b5f1ec091cd3c3fba453a9f8352374d1ee9484843b6d2f",
   "document": {
     "url": "https://example.test/pay",
     "title": "Example — Pay"

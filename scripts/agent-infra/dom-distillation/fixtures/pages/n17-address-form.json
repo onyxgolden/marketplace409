@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n17-address-form",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "6e8f886a6dfadf4d90c5207e38f13d050c2837e3fc1a17c550a44c2a81258d26",
+  "snapshot_digest": "20b012c1dfa18a0ebedb053c08c2a5e3c38d8cb08090b902801f18b46bb08f2d",
   "document": {
     "url": "https://example.test/address",
     "title": "Example — Address"

@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n20-nested-frames",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "12dc702b78807a5e9aad07c4cde0f08e2580f23d6fe107acb3f7caa631bfd894",
+  "snapshot_digest": "c0fa5e22ea477c57b54b0572b6a25a0e24a27999d3cea2ecc138f1d17388944c",
   "document": {
     "url": "https://example.test/embed",
     "title": "Example — Embedded"

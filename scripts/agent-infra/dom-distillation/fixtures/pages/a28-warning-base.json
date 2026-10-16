@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a28-warning-base",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "284124c0ceab3e70bbc8373c545d24c9ad9974b3386ee633e984660984793b54",
+  "snapshot_digest": "825995f88350ab912580dc3072f1791d22a2ee9e091845f0e4745fdd5d030c71",
   "document": {
     "url": "https://example.test/wire",
     "title": "Example — Wire"

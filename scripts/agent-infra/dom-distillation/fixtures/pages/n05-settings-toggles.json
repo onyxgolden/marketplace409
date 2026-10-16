@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n05-settings-toggles",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "7c111edf0ba2b413085348f1cfdaa20d4068220824bb81bbe4f6cbaf95334c03",
+  "snapshot_digest": "3d00ce20670e407b206121edbd6114cb02aba3ee9e4b0ed6de92d629f1c928c5",
   "document": {
     "url": "https://example.test/settings",
     "title": "Example — Settings"

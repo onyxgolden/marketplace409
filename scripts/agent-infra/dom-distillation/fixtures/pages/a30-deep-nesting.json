@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a30-deep-nesting",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "c5d266cba795f855ff725bb1bd5b57103e2dea615503baf1d5afcc5ddcec196b",
+  "snapshot_digest": "b2befb30043bfc24c707ebb91c959c352e769e510dd5ebdcb5cb253fdd537e41",
   "document": {
     "url": "https://example.test/deep",
     "title": "Example — Deep"

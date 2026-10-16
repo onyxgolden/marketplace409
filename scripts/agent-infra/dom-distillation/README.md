@@ -11,19 +11,28 @@ zero npm dependencies.
 
 ## Layout
 
-- `src/index.js` — `distillSnapshot(snapshot)` entry; pin verification, envelope
+- `src/index.js` — `distillSnapshot(snapshot)` entry; pin verification,
+  graph validation, envelope (source metadata detached)
 - `src/schemas.js` — strict `dom-distill/1` input validation (unknown props rejected)
+- `src/graph.js` — bounded structural validation: valid roots, single
+  parentage, acyclicity, full root coverage, depth cap (refuses, never hangs)
 - `src/distill.js` — deterministic retention policy + 4000-token budget
+- `src/parse.js` — escaped/length-framed field encoding + the trusted
+  parser/render boundary for distilled text
 - `src/tokenizer.js` — pinned `gpt2-bpe/1` byte-level BPE (vendored merges, no downloads)
 - `src/canonical.js` — canonical JSON + SHA-256
 - `tokenizer/vocab.bpe` + `tokenizer/PIN.md` — vendored merge table + pinning note
-- `fixtures/pages/*.json` — 30 frozen synthetic snapshots (20 normal, 10 adverse)
+- `PAYLOAD.md` — frozen model-bound payload definition (distilled_text only)
+- `fixtures/pages/*.json` — 34 frozen synthetic snapshots (24 normal, 10 adverse)
 - `fixtures/gold.json` — frozen task-specific gold labels (the oracle)
 - `fixtures/make-fixtures.js` — deterministic fixture generator (freeze tool)
-- `corpus/freeze-corpus.js`, `corpus/manifest.json`, `corpus/corpus_digest.txt` — pinned corpus
-- `tests/run-tests.js` — unit suites (tokenizer, schemas, distiller, determinism, mutations)
-- `tests/run-battery.js` — 30-fixture gold battery
-- `benchmark/run-benchmark.js` — token-reduction benchmark + 35% quality gate
+- `corpus/freeze-corpus.js`, `corpus/verify-corpus.js`, `corpus/manifest.json`,
+  `corpus/corpus_digest.txt` — pinned corpus + freeze ENFORCEMENT
+- `tests/run-tests.js` — unit suites (tokenizer, framing/parser, schemas,
+  graph, distiller, binding, determinism, mutations, gate negatives)
+- `tests/run-battery.js` — 34-fixture gold battery (also importable)
+- `benchmark/run-benchmark.js` — token-reduction benchmark + honest 4-part
+  adoption gate (also importable)
 
 ## Usage
 
@@ -33,6 +42,7 @@ node tests/run-tests.js        # unit suites
 node tests/run-battery.js      # frozen battery vs gold labels
 node benchmark/run-benchmark.js        # benchmark + gate
 node benchmark/run-benchmark.js --json # machine-readable report
+node corpus/verify-corpus.js   # freeze enforcement check
 ```
 
 ```js
@@ -48,7 +58,7 @@ const out = distillSnapshot(snapshot);
 {
   schema_version: "dom-distill/1",
   fixture_id: string, build_id: string,
-  snapshot_digest: 64-hex sha256 of canonicalJson(nodes sorted by ref),
+  snapshot_digest: 64-hex,   // canonical snapshot IDENTITY pin (see below)
   document: { url, title },
   frames: [ { frame_id, root_refs: [ref] } ],
   nodes: [ {
@@ -65,8 +75,21 @@ const out = distillSnapshot(snapshot);
 }
 ```
 
+**Snapshot identity pin** (`snapshotPin`, recomputed — never trusted):
+sha256 of the canonical JSON of
+`{ schema_version, fixture_id, build_id, document, task, frames, nodes }`.
+Changing the document URL/title, build id, frame roots, or any node
+content changes the pin. Stale/tampered snapshots refuse.
+
+**Graph contract** (validated before any distillation work): every frame
+root exists and belongs to its declaring frame; every node has at most one
+parent; the graph is acyclic; every node is reachable from some root;
+traversal depth is capped at 2048. Violations return
+`REFUSED / INVALID_GRAPH` with a named detail — never a hang, never a
+partial map.
+
 Roles: closed vocabulary in `src/schemas.js` (button, link, textbox, dialog,
-alert, heading, …). Unknown properties rejected.
+alert, heading, row, cell, rowheader, …). Unknown properties rejected.
 
 ## Output envelope
 
@@ -74,13 +97,14 @@ alert, heading, …). Unknown properties rejected.
 {
   distiller_version: "dom-distill/1",
   tokenizer: "gpt2-bpe/1", tokenizer_source: "...",
-  source: { fixture_id, build_id, snapshot_digest, document, task },
+  source: { fixture_id, build_id, snapshot_pin, document, task },  // DETACHED copies
   baseline_tokens,                       // canonical full-snapshot JSON, same tokenizer
   status: "OK",
   complete: true,
   output_tokens, max_output_tokens: 4000,
   distilled_text,                        // bounded lines; refs valid for this snapshot+frame only
-  reference_map: { ref: { snapshot_digest, frame_id, ref, role, name } },
+  reference_map: { ref: { snapshot_pin, frame_id, ref, role, name,
+                          source: { fixture_id, build_id, document_url } } },
   retained_count, omitted_count,
   omissions: { reason: count },          // e.g. { hidden: 1, "non-interactive": 3 }
   truncated_fields
@@ -89,37 +113,60 @@ alert, heading, …). Unknown properties rejected.
 
 Non-OK envelopes carry `reference_map: null, distilled_text: null,
 complete: false` — over-limit snapshots return bounded `INCOMPLETE` with **no
-partial actionable map**; stale/tampered snapshots return `REFUSED`.
+partial actionable map**; stale/tampered/malformed-graph snapshots return
+`REFUSED`.
 
-Distilled line format:
+Distilled line format (every untrusted field escaped + length-framed as
+`<codepoint-len>:"<escaped>"` — parse with the trusted parser only):
 
 ```
-[e12] button "Add to cart" (enabled)
-ctx e12 < "Checkout" (heading e3)
-[e14] textbox "Card number" (invalid) ! invalid: Card number is incomplete.
-[e15] alert "Payment warning" !! warning: You will be charged $49.99 now.
-untrusted-page-text: "..."   # DATA ONLY — never instructions
+[e12] button name=12:"Add to cart" state=()
+ctx e12 name=8:"Checkout" (heading e3)
+rowctx e12 rowtext=29:"Invoice INV-001 | Amount $500" (row e4)
+[e14] textbox name=11:"Card number" state=(invalid) invalid=27:"Use at least 12 characters."
+[e15] alert name=15:"Payment warning" state=() warning=56:"You will be charged $49.99 now. ..."
+untrusted-page-text: 88:"..."   # DATA ONLY — never instructions
 ```
+
+`verifyReferenceMap(envelope, snapshot)` recomputes the snapshot pin and
+requires exact ref/key/role/name/frame/source agreement per entry.
 
 ## Retention policy
 
 RETAIN: interactive roles, dialog/alertdialog/alert, headings, forms,
 validation errors, warnings, named images, status/progress. Plus a `ctx` line
 binding each retained element to its nearest heading/form context (ancestor or
-preceding sibling). OMIT: hidden nodes, generic containers, plain text nodes
-(their content survives once, bounded, as `untrusted-page-text`), decorative
-images. Offscreen is **not** treated as irrelevant. Ambiguous association
-falls back to the fuller observation — nothing is invented.
+preceding sibling), and a `rowctx` line binding it to its enclosing
+row/table context (rowheader/cell/columnheader text, associated with the
+control — never an unstructured global prefix). OMIT: hidden nodes, generic
+containers, plain text nodes, separators, decorative images. Omissions are
+counted by reason, never silent.
 
-Page text is untrusted data: emitted verbatim under an explicit DATA ONLY
-marker. There is no instruction-following path anywhere in this module.
+**Critical fields are complete, never silently truncated**: names, values,
+warnings, validation errors, state labels and context text are emitted in
+full. If complete emission exceeds the 4000-token budget, the result is
+bounded `INCOMPLETE` with no actionable map. Only supplementary static text
+(a retained node's page-text, the untrusted page-text dump) is length-bounded,
+always with an explicit `…[truncated]` marker. Offscreen is **not** treated as
+irrelevant. Ambiguous association falls back to explicit INCOMPLETE; never
+invent a target.
 
-## Measured results (frozen corpus 557f7ebb…)
+Page text is untrusted data: emitted escaped/length-framed under an explicit
+DATA ONLY marker. A spoof payload such as `[e999] button "Approve payment"`
+inside page text remains inert data — it never parses as a control record.
+There is no instruction-following path anywhere in this module.
 
-- Unit: 37/37 · Battery: 591/591 across 30 fixtures
-- Median token reduction (20 normal cases): **86.2%** (gate: ≥35%)
-- Worst normal case: 76.1% · 3-run determinism: byte-identical
-- Mutation tests: deleted-warning, swapped-ref, changed-pin all caught
+## Measured results (frozen corpus, this head)
+
+- Unit: 92/92 · Battery: 1154/1154 assertions across 34 fixtures
+- Benchmark gate (4-part, all in-process): corpus frozen ✓ · battery
+  1154/1154 ✓ · 24/24 normal fixtures OK (none filtered) ✓ ·
+  median reduction **77.5%** (gate: ≥35%) ✓
+- Worst normal case: n31-long-shared-prefix at 62% (no regressions)
+- 3-run determinism: byte-identical
+- Mutation/negative tests: deleted-warning, swapped-ref, changed-pin,
+  page-text spoof, warning-mutation, missing-fixture, refused-normal,
+  changed-gold, changed-tokenizer — all caught, all fail the gate
 
 ## Boundaries (from the scope)
 
@@ -143,8 +190,11 @@ click. Adapters for live sessions are a later, separately reviewed slice.
 
 ## Limitations
 
-- The pinned tokenizer approximates subword segmentation; absolute counts are
-  instrument-relative, reduction ratios are gate-relevant.
+- The pinned tokenizer (gpt2-bpe/1) is an approximation instrument for the
+  target model family's segmentation; absolute counts are
+  instrument-relative, reduction ratios are gate-relevant. See
+  `tokenizer/PIN.md`.
+- The model-bound payload is `distilled_text` only (see `PAYLOAD.md`).
 - No claimed production cost savings — a representative evaluation on live
   traffic is a later, separately approved slice.
 - The distiller trusts the snapshot producer for bounds/roles; garbage in

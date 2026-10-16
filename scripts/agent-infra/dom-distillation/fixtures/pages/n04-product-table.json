@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n04-product-table",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "ffea9d03617162ba455129c3af0bc6777be84045a65b086c896938a3d14f00a6",
+  "snapshot_digest": "dd72d0b0038aa4bdd64c096a1e25c9045687c9d4ff9c28c57f0cefaf485f8b17",
   "document": {
     "url": "https://example.test/products",
     "title": "Example — Products"

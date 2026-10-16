@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n01-login-form",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "9ad5ada471cf16828fce21347cae40d90aab117e3a294d7d2742cdc126df36cc",
+  "snapshot_digest": "5276ba712a74ed91642a38874169d863b4ff30b40310d258f24f306069545505",
   "document": {
     "url": "https://example.test/login",
     "title": "Example — Sign in"

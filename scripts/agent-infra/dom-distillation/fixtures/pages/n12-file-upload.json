@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n12-file-upload",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "36286ebc488e60bce92a29845aed922f9ea79d4add3053c023bfff98ef933b75",
+  "snapshot_digest": "0d6084563bedee84d6c931cf2c10c133a34d9d87f3b3f31634c727f3135eb4f4",
   "document": {
     "url": "https://example.test/upload",
     "title": "Example — Upload"

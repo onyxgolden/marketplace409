@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "a24-cross-frame",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "2e5f587bf66c8ab40a0b10750631d735d84149aa547826346a2148f48a61ef74",
+  "snapshot_digest": "856f67b5758cd30adbfbd80820dadef9b833e57e2c3daa0097db8913415cb9a0",
   "document": {
     "url": "https://example.test/embed",
     "title": "Example — Embedded"

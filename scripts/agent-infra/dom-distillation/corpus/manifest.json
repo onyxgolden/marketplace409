@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "fixtures/pages/a21-injection.json",
-      "sha256": "8e838172df6419fac0aa80f2c6a741b0a889f27cbbbed8d9869b94029203507d"
+      "sha256": "1a43f9753a4acaaa5714af22763572edd0c9603801766cf9609b0640452f9021"
     },
     {
       "path": "fixtures/pages/a22-duplicate-labels.json",
-      "sha256": "f759083cf5b946975ec0eaae2c399fac5718b99fa9d86425355caf13704e4fb9"
+      "sha256": "d313acb7e25f7cca034d4dd2eba7bdae8737e23d13c7ea938803099358f11e01"
     },
     {
       "path": "fixtures/pages/a23-stale-digest.json",
@@ -15,119 +15,135 @@
     },
     {
       "path": "fixtures/pages/a24-cross-frame.json",
-      "sha256": "14e2eb8a39c9d04738b682ff39831609ff36ddfd8b71e1767a4e2cabbf007492"
+      "sha256": "972ff2ecfe8b14ea2998cb039285a4bd01d46e6bae2f42e5fa7e6fd08fc14aa0"
     },
     {
       "path": "fixtures/pages/a25-hidden-content.json",
-      "sha256": "d27daa07837b9ca783e285aaf99834636de77d4fa088d20a90438ad27168e422"
+      "sha256": "577e1c3f89e91bfd25ca59a8c4580cbb7c324adda95a308640d6c31e7d250689"
     },
     {
       "path": "fixtures/pages/a26-huge-table.json",
-      "sha256": "3f577f64d9afbfceed057823fe59b638be8731a546eb3d92fd2051a7b5a54c65"
+      "sha256": "d9bd6aefe6f5d7f421e2b6fca9c6d1bd2a06a01d4ed770d8a8ce76cdd2683ed5"
     },
     {
       "path": "fixtures/pages/a27-renumbered.json",
-      "sha256": "c35c9d87cb0213300bb6a983cf1c49c1bcd53b225bb37effb1992ea988c82e8a"
+      "sha256": "ab70f55dced327977508a840c6a1d46261cf73ca783d3371bc8f3abfdf61f3f3"
     },
     {
       "path": "fixtures/pages/a28-warning-base.json",
-      "sha256": "b2ffc3552a036e92744fb144551aaae9d6f8cc620bb8bd465eba75b6b97d33fc"
+      "sha256": "d776b9c4130024ec0ce63a17ecfa590dcfc12c74336821a82323642226ba7db7"
     },
     {
       "path": "fixtures/pages/a29-offscreen-cta.json",
-      "sha256": "65029f1dde142182c0e0a283c1f24f3df86063c5a2a11738f0da1ee147f14f0c"
+      "sha256": "2474ae167eb361cfa6936a6c9a5c472e7697712869e087e10f1a5fa087695e75"
     },
     {
       "path": "fixtures/pages/a30-deep-nesting.json",
-      "sha256": "d4da683333a611e22598bb73ff446afd8ad67714871f9b56a3a936038cc0edbf"
+      "sha256": "33f8360c936d7e84d2b00162102814835a2d19d7e60ce2693c530c69d866c0eb"
     },
     {
       "path": "fixtures/pages/n01-login-form.json",
-      "sha256": "c61707eb6a860fe8fee9aaf0b19d94505fb5f93ab6b266bf96f71163397b29b2"
+      "sha256": "91210f3b794e796a53a11cafaafcbdc96cab3501470792d82515a9d33050873d"
     },
     {
       "path": "fixtures/pages/n02-checkout-form.json",
-      "sha256": "fa33e7c8e0fbba039722e1a28dc06468a2421ce91d3bd3c05a3b336f9eb91657"
+      "sha256": "3241009eaadc1e0a95b5388e2ba738ab7d668f5c3ea20d8d38c5cc7afc99739b"
     },
     {
       "path": "fixtures/pages/n03-signup-dialog.json",
-      "sha256": "f49f2b6bc02d0569cf67ab8ddaa3b13adf88b879dc8fe2299066596873a2b06d"
+      "sha256": "46e4752fec44ef988fa20cdcbcf3790fe70a0acf7f29fbb550e09bda5a456791"
     },
     {
       "path": "fixtures/pages/n04-product-table.json",
-      "sha256": "0985954b798c6388f9f02abf42bb123b01f0d2cfebf194e4d9b66a743e8e6f59"
+      "sha256": "12ad9823a4c1f159902da88793b7a65e31614848d1d9ae979422c71fa5ec4bf9"
     },
     {
       "path": "fixtures/pages/n05-settings-toggles.json",
-      "sha256": "03e1d8dae50bce80ccfeb4ba1ce490d6806fb1335af7ff2e125ca9f75c4f8330"
+      "sha256": "0d9e47647dc087b64d5800e2ff5ef9510ff2ab05d074952e7518c59bb042f407"
     },
     {
       "path": "fixtures/pages/n06-search-results.json",
-      "sha256": "241b268822a94a5ea7a118cb1917091a638f431dd6809cd6d7c3f9d9f3c12f7e"
+      "sha256": "3b21f76e260e348296db071a5c84a91f909c4638e7b36d3c8acbf774447b60dc"
     },
     {
       "path": "fixtures/pages/n07-wizard-tabs.json",
-      "sha256": "d8152ef31a503a12425533190ef8a91ecd3990cea7ac14f881f2c34338aea212"
+      "sha256": "ae8f926f7e9bc7a4d501b3fa491668346db3de24cf80b6413d13504b3551803d"
     },
     {
       "path": "fixtures/pages/n08-nav-menu.json",
-      "sha256": "3220575c112b12b72b0b3834bf25f97ab1e78929dfb4d918277e92d4133cebb3"
+      "sha256": "95fa00603e899e211b04a2a29826a90d9d61c3ea1e30769cee9a66f7c5b87492"
     },
     {
       "path": "fixtures/pages/n09-contact-form.json",
-      "sha256": "91fc023c7bf4e33123d46bb8d0f1608e40ed4e557a6fb3043b161c845dec7580"
+      "sha256": "9ae59038c20916177d4c481cfad79ba3f4a897c209a5c249036757ed4b1e3b66"
     },
     {
       "path": "fixtures/pages/n10-dashboard.json",
-      "sha256": "e19a9f981ea73bb55773359ba7b651ba4689941bbc243ac2eee60a72a4ca9b24"
+      "sha256": "7c900305f1bdf9c9e35f90be2fbf3c14e6460434b2c5afe15de8dc35c88a0840"
     },
     {
       "path": "fixtures/pages/n11-profile-edit.json",
-      "sha256": "0f7c9670326e65f0156b36ada32642c50b32fef00632b4f64806e778eb2ea549"
+      "sha256": "d56a8bfdb47b63413eae8fd8075c6d8b5f61b8de772334ac4e256ecd32d58a08"
     },
     {
       "path": "fixtures/pages/n12-file-upload.json",
-      "sha256": "93865dbb453cf26d30f798b09186fb5192b1ea8d8a3d150defe2b3a136654250"
+      "sha256": "459ecc76fe0fb9e595ef34375c780ee2a57ebbdba05b5543c97f29955ed99b39"
     },
     {
       "path": "fixtures/pages/n13-calendar.json",
-      "sha256": "ed2449965c6f18f2b0c52afc603da29a22fec81d381461def05b0ebdd0cf1d84"
+      "sha256": "9abcf267c28bd6a4a5e5f60a7526f42c45e10dc1c9bcb62350a0c81eeb4c916e"
     },
     {
       "path": "fixtures/pages/n14-notifications.json",
-      "sha256": "0980092c64ad40e10699292b2dd86e3f801b72caa713505a2705c4ab2ebfdba4"
+      "sha256": "17a27c2d79b280ff474d2f8b4402454b6fbd1c815c643d44d96284184d07858d"
     },
     {
       "path": "fixtures/pages/n15-checkout-confirm.json",
-      "sha256": "1e34669c366e2fb6f6eff105db4d4c13aef20f206e879b33e3ae84c82cce9e86"
+      "sha256": "5afef8fd5873e2a71f65c5b894c02fcb2d811f3b701abaf372782655d7624c90"
     },
     {
       "path": "fixtures/pages/n16-payment-form.json",
-      "sha256": "f7ac4d8e3342608721bf05aade2baadd24cb57a7e4c7f9ab15510fb98785ea92"
+      "sha256": "8c88d57ff444363e4a9f5d7c0c836a7b97f3371a0288a05cc0280bb2787676c4"
     },
     {
       "path": "fixtures/pages/n17-address-form.json",
-      "sha256": "72e81fd869ae85f8044005943e7b5be894a140bf904a259ae42cb8705844fabb"
+      "sha256": "9f81938c5f9dfcca9c3a98260ef84f809406b362de4567e812c7d2f2bdf5f5df"
     },
     {
       "path": "fixtures/pages/n18-help-dialog.json",
-      "sha256": "e1d7014ed8189be501d8561f144f0b8972b0369751438459fb484dec06fc4690"
+      "sha256": "1099df34e0d84ff0f2ef520debb772cbd3084d35e397f53c2567302dbec91925"
     },
     {
       "path": "fixtures/pages/n19-editor-toolbar.json",
-      "sha256": "981bf41a4e67369ca1ec7b2281b247f501e91f4851371b1c05a7ec289636502b"
+      "sha256": "c9cb8b733b0bc440d9c4dfdddc77a540ce3b24ea9d31705943e8d0d4e59e23bb"
     },
     {
       "path": "fixtures/pages/n20-nested-frames.json",
-      "sha256": "e45fb2e0965929d6c511d8e2f01ef07803cdb38f7eb68cad2fb881723560a831"
+      "sha256": "c20906564616e645037c337ba4387e78b0edc79b13bbcc162f11698794d6dd10"
+    },
+    {
+      "path": "fixtures/pages/n31-long-shared-prefix.json",
+      "sha256": "04430b14fa1a26edc4556d3e3bad873726b0936e7d73aaa4feff9db82a15c292"
+    },
+    {
+      "path": "fixtures/pages/n32-warning-tail.json",
+      "sha256": "c082c18fe9e6d2aeeecd09febf8b7592e6e59ea1e89d419c7a357f95b5118919"
+    },
+    {
+      "path": "fixtures/pages/n33-long-validation-error.json",
+      "sha256": "430bc785903c4e85701e320fa39b83d6769ef1dda0135a58703f206d6df5526a"
+    },
+    {
+      "path": "fixtures/pages/n34-invoice-rows.json",
+      "sha256": "08b0ad5133a2df4f84219774b59f6477a67235613226a97345728f55feb0c288"
     },
     {
       "path": "fixtures/gold.json",
-      "sha256": "dfcac97e7124f365f6a8d4076fe185617ac02814a219a95d681ceb2a3ee9fc35"
+      "sha256": "4b6956d62f71bd286ce6a091f4f24667ba9309697ce879fd2ea4e6133e4c94e3"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "315bd3e55597c98119e9e854e3d38586b1a809829dd96c708b9174c47d5f5acf"
+      "sha256": "b8849f93fc41b8033c70244dd5d220e85001796455212cea1dc126dd5977c384"
     },
     {
       "path": "tokenizer/vocab.bpe",
@@ -135,7 +151,11 @@
     },
     {
       "path": "tokenizer/PIN.md",
-      "sha256": "70ede6910b573af8d95a1e273a45b24c10c1d8e0da4a8f81873abf1b45e9c91b"
+      "sha256": "3e74ad40b85499c9d56c9bc88fb377f7fa8c478479a892bafee3cf7950056c5d"
+    },
+    {
+      "path": "PAYLOAD.md",
+      "sha256": "8ff4b3bf5c5898e0d4fea5fdbe6a61da4e40f6993aa54a693dc2470f58a73650"
     }
   ]
 }

@@ -38,7 +38,7 @@ import { HEX64 } from "./canonical.js";
 
 export const SCHEMA_VERSION = "dom-distill/1";
 
-const ROLES = new Set([
+export const ROLES = new Set([
   "button", "link", "textbox", "searchbox", "combobox", "listbox", "option",
   "checkbox", "radio", "switch", "slider", "spinbutton", "tab", "tablist",
   "tabpanel", "menu", "menubar", "menuitem", "menuitemcheckbox", "menuitemradio",

@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n19-editor-toolbar",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "a1b9408537d15f1735deb20143fb5b0070855a173db5bf5f3c1b26b83f4bdf37",
+  "snapshot_digest": "6341fecbe30e4e32d55c6f79b4bd311e975fbbdb75e91e3c7f6b3254e4818b96",
   "document": {
     "url": "https://example.test/editor",
     "title": "Example — Editor"

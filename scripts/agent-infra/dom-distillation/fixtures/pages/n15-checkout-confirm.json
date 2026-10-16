@@ -2,7 +2,7 @@
   "schema_version": "dom-distill/1",
   "fixture_id": "n15-checkout-confirm",
   "build_id": "dom-distill-fixtures/1",
-  "snapshot_digest": "b0af72e7a5c17b122553bc85ea713887e083c3af4e99484f853d24667ebd6bfe",
+  "snapshot_digest": "d89485c67bf8efb623a024ce20d9515416eaadc506e375e6f81966ca554e59b4",
   "document": {
     "url": "https://example.test/billing",
     "title": "Example — Billing"
