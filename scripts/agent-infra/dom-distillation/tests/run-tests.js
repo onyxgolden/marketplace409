@@ -306,6 +306,50 @@ t(countTokens("1234567890") >= 2, "tok known-vector-digits", `got ${countTokens(
   const r2 = parsed10.rowctx.find(r => r.ref === pays[1].ref);
   t(!!r1 && r1.rowtext.includes("INV-001") && r1.rowtext.includes("$500"), "distill rowctx-1");
   t(!!r2 && r2.rowtext.includes("INV-002") && r2.rowtext.includes("$750"), "distill rowctx-2");
+
+  // DOM-001 residual: named cells keep EVERY distinct value — the
+  // re-review probe verbatim (name="Amount" + text="Amount $500").
+  const nc = load("n35-named-cell-values");
+  const o11 = distillSnapshot(nc);
+  t(o11.status === "OK" && o11.complete === true, "distill named-cells-ok");
+  const parsed11 = parseDistilledText(o11.distilled_text);
+  t(parsed11.errors.length === 0, "distill named-cells-parse-clean");
+  const npays = parsed11.controls.filter(c => c.name === "Pay");
+  t(npays.length === 4, "distill named-cells-four-pays");
+  const nr = (ref) => parsed11.rowctx.find(r => r.ref === ref);
+  t(!!nr(npays[0].ref) && nr(npays[0].ref).rowtext.includes("$500"), "distill named-cell-500");
+  t(!!nr(npays[1].ref) && nr(npays[1].ref).rowtext.includes("$750"), "distill named-cell-750");
+  const rC = nr(npays[2].ref);
+  t(!!rC && rC.rowtext.includes("Status") && rC.rowtext.includes("Paid in full") && rC.rowtext.includes("paid"),
+    "distill named-cell-name-text-value");
+  const rD = nr(npays[3].ref);
+  t(!!rD && rD.rowtext.includes("Reference") && rD.rowtext.includes("$1,200"),
+    "distill named-cell-long-prefix");
+  // Values arrive through the rowctx association alone, never the filler
+  // page-text dump: each Pay's rowtext carries its cell's role+ref.
+  t(npays.every(p => (nr(p.ref).rowtext.match(/\[cell e\d+/g) || []).length >= 1),
+    "distill named-cells-role-ref");
+  // Each row's amounts are disambiguated: no cross-row leakage.
+  t(!nr(npays[0].ref).rowtext.includes("$750") && !nr(npays[1].ref).rowtext.includes("$500"),
+    "distill named-cells-disambiguated");
+
+  // DOM-001 residual: equivalent components (text === name) emit once.
+  const dd = load("n36-dedup-rowtext");
+  const o12 = distillSnapshot(dd);
+  t(o12.status === "OK", "distill dedup-ok");
+  const parsed12 = parseDistilledText(o12.distilled_text);
+  const dpay = parsed12.controls.find(c => c.name === "Pay");
+  const dr = parsed12.rowctx.find(r => r.ref === dpay.ref);
+  t(!!dr && dr.rowtext.split("Amount").length - 1 === 1, "distill dedup-single-amount");
+  t(!!dr && dr.rowtext.includes("Due") && dr.rowtext.includes("2026-11-01"),
+    "distill dedup-other-components");
+
+  // DOM-001 residual: row context alone over budget → INCOMPLETE, no map.
+  const rl = load("a31-rowctx-over-limit");
+  const o13 = distillSnapshot(rl);
+  t(o13.status === "INCOMPLETE" && o13.reason === "OVER_LIMIT", "distill rowctx-over-limit-status");
+  t(o13.complete === false && o13.reference_map === null && o13.distilled_text === null,
+    "distill rowctx-over-limit-no-partial");
 }
 
 // ---------------- snapshot binding (DOM-004) ----------------

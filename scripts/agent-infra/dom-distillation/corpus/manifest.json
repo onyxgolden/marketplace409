@@ -42,6 +42,10 @@
       "sha256": "33f8360c936d7e84d2b00162102814835a2d19d7e60ce2693c530c69d866c0eb"
     },
     {
+      "path": "fixtures/pages/a31-rowctx-over-limit.json",
+      "sha256": "e6272c03894e483c0e41a37fb3f24c5e4a20698b39eec473a68e2017069a1bb9"
+    },
+    {
       "path": "fixtures/pages/n01-login-form.json",
       "sha256": "91210f3b794e796a53a11cafaafcbdc96cab3501470792d82515a9d33050873d"
     },
@@ -138,12 +142,20 @@
       "sha256": "08b0ad5133a2df4f84219774b59f6477a67235613226a97345728f55feb0c288"
     },
     {
+      "path": "fixtures/pages/n35-named-cell-values.json",
+      "sha256": "9eb58b5d62bf27dd5cbcd29f149b4a8337131fe62d147c058ba197e94b819e56"
+    },
+    {
+      "path": "fixtures/pages/n36-dedup-rowtext.json",
+      "sha256": "3e5f89ec113a93f7d39829b748e7dd6f7c9dfc6f6294c6bd2ec21a7035e355cf"
+    },
+    {
       "path": "fixtures/gold.json",
-      "sha256": "4b6956d62f71bd286ce6a091f4f24667ba9309697ce879fd2ea4e6133e4c94e3"
+      "sha256": "0a86feabe31d06123180aa7700bf55bba627a4baa4fb2cec366128b2ca43b273"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "b8849f93fc41b8033c70244dd5d220e85001796455212cea1dc126dd5977c384"
+      "sha256": "bc91713c1b845b12e5753c6b0cb94dc1e315417a335821e05de904deb0153a96"
     },
     {
       "path": "tokenizer/vocab.bpe",

@@ -727,5 +727,82 @@ function writePage(page, goldEntry) {
   ]));
 }
 
+// ---------------------------------------------------------------- normal: 35 named cells keep every distinct value (DOM-001 residual gold)
+// The re-review probe verbatim: cells carry BOTH an accessible name and
+// distinct text/value content; the row context must associate ALL of it
+// with the control. A long "background" filler text node ensures the
+// values cannot leak in via the truncated global page-text dump — they
+// must arrive through the rowctx association alone.
+{
+  const p = new Page("n35-named-cell-values", "task-pay-invoice-named", "Pay the first invoice",
+    "https://example.test/invoices-named", "Example — Named invoices");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const filler = p.node("main", "text", { text: "background ".repeat(100) });
+  const h = p.node("main", "heading", { name: "Open invoices" });
+  const table = p.node("main", "table", { name: "Invoices" });
+  p.child(main, filler); p.child(main, h); p.child(main, table);
+  const mkNamedRow = (inv, cellProps) => {
+    const row = p.node("main", "row", {});
+    const rh = p.node("main", "rowheader", { name: `Invoice ${inv}` });
+    const cell = p.node("main", "cell", cellProps);
+    const pay = p.node("main", "button", { name: "Pay" });
+    p.child(table, row); p.child(row, rh); p.child(row, cell); p.child(row, pay);
+    return pay;
+  };
+  const longRef = "INV-2026-Q4-ENTERPRISE-ACME-CORP-" + "0".repeat(120) + "-$1,200";
+  const payA = mkNamedRow("INV-001", { name: "Amount", text: "Amount $500" });
+  const payB = mkNamedRow("INV-002", { name: "Amount", text: "Amount $750" });
+  const payC = mkNamedRow("INV-003", { name: "Status", text: "Paid in full", value: "paid" });
+  const payD = mkNamedRow("INV-004", { name: "Reference", text: longRef });
+  writePage(p, okGold([
+    { ref: payA.ref, role: "button", name: "Pay", rowctx_contains: ["Invoice INV-001", "Amount $500"] },
+    { ref: payB.ref, role: "button", name: "Pay", rowctx_contains: ["Invoice INV-002", "Amount $750"] },
+    { ref: payC.ref, role: "button", name: "Pay", rowctx_contains: ["Invoice INV-003", "Status", "Paid in full", "paid"] },
+    { ref: payD.ref, role: "button", name: "Pay", rowctx_contains: ["Invoice INV-004", "Reference", longRef.slice(-30)] },
+  ]));
+}
+
+// ---------------------------------------------------------------- normal: 36 equivalent name/text dedupes to one emission
+{
+  const p = new Page("n36-dedup-rowtext", "task-pay-invoice-dedup", "Pay the invoice",
+    "https://example.test/invoices-dedup", "Example — Dedup invoice");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const table = p.node("main", "table", { name: "Invoices" });
+  p.child(main, table);
+  const row = p.node("main", "row", {});
+  const rh = p.node("main", "rowheader", { name: "Invoice INV-009" });
+  const amt = p.node("main", "cell", { name: "Amount", text: "Amount" });
+  const due = p.node("main", "cell", { name: "Due", text: "Due", value: "2026-11-01" });
+  const pay = p.node("main", "button", { name: "Pay" });
+  p.child(table, row); p.child(row, rh); p.child(row, amt); p.child(row, due); p.child(row, pay);
+  writePage(p, okGold([
+    {
+      ref: pay.ref, role: "button", name: "Pay",
+      rowctx_contains: ["Invoice INV-009", "Amount", "Due", "2026-11-01"],
+      rowctx_singleton: ["Amount"],
+    },
+  ]));
+}
+
+// ---------------------------------------------------------------- adverse: 31 row context alone over budget → INCOMPLETE, no map
+{
+  const p = new Page("a31-rowctx-over-limit", "task-rowctx-limit", "Pay the first invoice",
+    "https://example.test/invoices-huge", "Example — Huge row context");
+  const main = p.node("main", "main", {});
+  p.root("main", main);
+  const table = p.node("main", "table", { name: "Invoices" });
+  p.child(main, table);
+  const row = p.node("main", "row", {});
+  const rh = p.node("main", "rowheader", { name: "Invoice INV-001" });
+  const cell = p.node("main", "cell", { name: "Amount", text: ("Amount $500, ").repeat(5000) });
+  const pay = p.node("main", "button", { name: "Pay" });
+  p.child(table, row); p.child(row, rh); p.child(row, cell); p.child(row, pay);
+  writePage(p, { expect_status: "INCOMPLETE", expect_reason: "OVER_LIMIT", critical: [], forbidden: [] });
+}
+
+writeFileSync(join(HERE, "gold.json"), JSON.stringify(gold, null, 2) + "\n");
+
 writeFileSync(join(HERE, "gold.json"), JSON.stringify(gold, null, 2) + "\n");
 console.log(`wrote ${Object.keys(gold).length} fixtures + gold labels`);

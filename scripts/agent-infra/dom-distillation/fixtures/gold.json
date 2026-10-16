@@ -597,5 +597,76 @@
       }
     ],
     "forbidden": []
+  },
+  "n35-named-cell-values": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e8",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-001",
+          "Amount $500"
+        ]
+      },
+      {
+        "ref": "e12",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-002",
+          "Amount $750"
+        ]
+      },
+      {
+        "ref": "e16",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-003",
+          "Status",
+          "Paid in full",
+          "paid"
+        ]
+      },
+      {
+        "ref": "e20",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-004",
+          "Reference",
+          "00000000000000000000000-$1,200"
+        ]
+      }
+    ],
+    "forbidden": []
+  },
+  "n36-dedup-rowtext": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e7",
+        "role": "button",
+        "name": "Pay",
+        "rowctx_contains": [
+          "Invoice INV-009",
+          "Amount",
+          "Due",
+          "2026-11-01"
+        ],
+        "rowctx_singleton": [
+          "Amount"
+        ]
+      }
+    ],
+    "forbidden": []
+  },
+  "a31-rowctx-over-limit": {
+    "expect_status": "INCOMPLETE",
+    "expect_reason": "OVER_LIMIT",
+    "critical": [],
+    "forbidden": []
   }
 }

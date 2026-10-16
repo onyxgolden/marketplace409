@@ -146,6 +146,20 @@ export function runBattery(rootDir = DEFAULT_ROOT, opts = {}) {
             }
           }
         }
+        if (c.rowctx_singleton) {
+          // DOM-001 residual: equivalent components (text === name) must be
+          // emitted exactly once, not duplicated.
+          const rl = parsed.rowctx.find(r => r.ref === c.ref);
+          check(!!rl, `${label} critical ${c.ref} rowctx`, "no rowctx association line");
+          if (rl) {
+            for (const want of c.rowctx_singleton) {
+              const occurrences = rl.rowtext.split(want).length - 1;
+              check(occurrences === 1,
+                `${label} critical ${c.ref} rowctx-singleton`,
+                `expected exactly 1 occurrence of ${JSON.stringify(want)}, got ${occurrences}`);
+            }
+          }
+        }
       }
 
       for (const fr of g.forbidden || []) {

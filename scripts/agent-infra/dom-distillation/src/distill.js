@@ -15,6 +15,10 @@
  *     retained node, emitted as a `ctx` line; plus the enclosing row/table
  *     context (rowheader/cell/columnheader text) emitted as a `rowctx` line
  *     ASSOCIATED WITH the control — never an unstructured global prefix.
+ *     Every row-context cell contributes ALL of its distinct critical
+ *     components (name, text, value, warning, validation_error) as an
+ *     explicit `[role ref label=...]` segment — never name-or-text
+ *     first-wins.
  *   OMIT — generic containers, plain text nodes, separators, decorative
  *     images (empty name), hidden nodes. Omissions are counted by reason;
  *     never silent in aggregate (omission counts are in the output).
@@ -113,9 +117,36 @@ function omissionReason(n) {
   return "non-interactive";
 }
 
-function rowTextOf(n) {
-  const t = (n.name || n.text || "").trim();
-  return t;
+/**
+ * DOM-001 residual: a row-context node carries MULTIPLE critical
+ * components (name, text, value, warning, validation_error). ALL distinct
+ * nonempty components are emitted — never name-or-text first-wins. A
+ * nonempty accessible label must not suppress task-critical value text
+ * (e.g. name="Amount" hiding text="Amount $500").
+ *
+ * Each cell segment preserves explicit role/ref association so multiple
+ * fields stay unambiguous: `[role ref label=framed ...]`. Equivalent
+ * components (exact trimmed equality, e.g. text === name) are emitted
+ * once. Components are untrusted page data: each is escaped +
+ * codepoint-length-framed (DOM-002), and the whole rowtext string is
+ * framed again at emission — segments are DATA, never parsed.
+ */
+function rowCellSegment(n) {
+  const comps = [];
+  const seen = new Set();
+  const push = (label, v) => {
+    const t = (v || "").trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    comps.push(`${label}=${frameField(t)}`);
+  };
+  push("name", n.name);
+  push("text", n.text);
+  push("value", n.value);
+  push("warning", n.warning);
+  push("invalid", n.validation_error);
+  if (comps.length === 0) return null;
+  return `[${n.role} ${n.ref} ${comps.join(" ")}]`;
 }
 
 /**
@@ -193,8 +224,8 @@ export function distill(validated, snapshotPin, parentOf, sourceBinding) {
           const nn = nodes.get(r);
           if (!nn || nn.state.hidden) continue;
           if (ROW_CONTEXT_ROLES.has(nn.role)) {
-            const t = rowTextOf(nn);
-            if (t) parts.push(t);
+            const seg = rowCellSegment(nn);
+            if (seg) parts.push(seg);
           }
           for (let i = nn.children.length - 1; i >= 0; i--) stack.push(nn.children[i]);
         }
