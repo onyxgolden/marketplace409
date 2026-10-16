@@ -269,6 +269,88 @@ ok, findings = check_text('<svg xmlns="http://www.w3.org/2000/svg" '
                           'style="width:8001px;height:20px"></svg>', ".svg")
 check("bounds:css-dimension-8001:refused",
       (not ok) and "F_OVERSIZED" in {f["code"] for f in findings})
+# --- 2d. D641-001 round 5: escape-decode-before-tokenization bypass ---
+# Decoding \2f\2a to /* BEFORE comment stripping created fake comments
+# that hid fetch-bearing references. Escapes are now decoded per token
+# after raw tokenization; the verdict's exact probe must refuse.
+_BYPASS5_CSS = "rect { fill:url(\\2f\\2a https://example.test/\\2a\\2f \\23local); }"
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    f"<style>{_BYPASS5_CSS}</style>"
+    '<rect width="20" height="20"/></svg>', ".svg")
+check("css:escape-fake-comment-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Same probe through the HTML route (head/style + inline SVG).
+ok, findings = check_text(
+    "<html><head>"
+    f"<style>{_BYPASS5_CSS}</style>"
+    "</head><body>"
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="20" height="20"/></svg></body></html>', ".html")
+check("css:escape-fake-comment-url-html:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Same probe in a style attribute and a presentation attribute.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="10" height="10" '
+    'style="fill:url(\\2f\\2a https://example.test/\\2a\\2f \\23local)"/>'
+    "</svg>", ".svg")
+check("css:escape-fake-comment-url-styleattr:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="10" height="10" '
+    'fill="url(\\2f\\2a https://example.test/\\2a\\2f \\23local)"/>'
+    "</svg>", ".svg")
+check("css:escape-fake-comment-url-fillattr:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Quoted escaped-delimiter variant also refuses.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url("\\2f\\2a https://example.test/\\2a\\2f '
+    '\\23local")}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escape-fake-comment-url-quoted:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Escaped property spelling must not skip classification: f\69ll with a
+# remote url() is a declaration and refuses.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{f\\69ll:url(https://example.test/x)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-prop-remote-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Sanitizer refuses the escaped probe too (serialized output rechecked).
+probe_svg = _tmp(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    f"<style>{_BYPASS5_CSS}</style>"
+    '<rect width="20" height="20"/></svg>', ".svg")
+ok_s, _, rep_s = sanitize(probe_svg)
+check("sanitize:escape-fake-comment-url:refused",
+      (not ok_s) and "F_REMOTE_CSS" in rep_s.get("finding_codes", []))
+probe_svg.unlink(missing_ok=True)
+# Safe positives: escaped local fragments and escaped identifier
+# spellings still pass.
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{fill:url(\\23local)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-local-fragment:passes", ok)
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url("#\\6c ocal")}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-quoted-local-fragment:passes", ok)
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{fill:u\\72l(#g)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-url-spelling-local:passes", ok)
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{f\\69ll:url(#g)}</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-prop-spelling-local:passes", ok)
 # --- 3. Dimension / structural bounds (D641-004) ---
 ok, findings = check_text('<svg xmlns="http://www.w3.org/2000/svg" '
                           'style="width:50%"></svg>', ".svg")

@@ -43,7 +43,6 @@ from check_offline import (
     _check_css_decls,
     _check_processing_instructions,
     _css_strip_comments_safe,
-    _css_unescape,
     _FindingSink,
     _is_xmlns_decl,
     _local,
@@ -304,12 +303,18 @@ class _StyleAwareSanitizer(_Sanitizer):
 def _clean_style_block(css: str, s: _Sanitizer) -> tuple[str, bool]:
     """Remove remote @imports; refuse on remote url() or other violations."""
     from check_offline import _css_strip_comments_safe
-    stripped, ok = _css_strip_comments_safe(_css_unescape(css))
+    # Comment-strip on RAW css (D641-001 round 5): escapes are decoded per
+    # token during classification, never before lexing, so \2f\2a cannot
+    # become a fake comment that hides a fetch-bearing reference.
+    stripped, ok = _css_strip_comments_safe(css)
     if not ok:
         s.sink.add("F_MALFORMED_CSS",
                    "style block has unterminated comment or string")
         return "", False
     unescaped = stripped
+    # The @import strip below runs on the comment-stripped raw text; the
+    # remote probe above and the re-probe below both classify per-token
+    # decoded URLs, so any import the regex misses still refuses.
     probe = _FindingSink()
     _check_css_decls(css, probe, "")
     codes = {f["code"] for f in probe.findings}

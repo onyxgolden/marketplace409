@@ -93,11 +93,15 @@ ENTITY_RE = re.compile(r"<!ENTITY\b", re.IGNORECASE)
 DOCTYPE_INTERNAL_RE = re.compile(r"<!DOCTYPE[^>\[]*\[", re.IGNORECASE | re.DOTALL)
 DOCTYPE_RE = re.compile(r"<!DOCTYPE\b", re.IGNORECASE)
 
-# CSS: detection runs on CSS-UNESCAPED text processed by a quote/escape/
-# comment-aware tokenizer (_css_strip_comments_safe): a /* sequence inside
-# a quoted string is string content, never a comment, so quoted URLs
-# survive comment stripping and reach the classifier whole. url()/@import
-# extraction is string/paren/brace aware (_css_extract_urls,
+# CSS: detection runs on RAW CSS tokenized by a quote/escape/comment-aware
+# scanner (_css_strip_comments_safe): a /* sequence inside a quoted string
+# is string content, never a comment, so quoted URLs survive comment
+# stripping and reach the classifier whole. Escapes are decoded PER TOKEN
+# (_css_decode_ident_at for identifiers, _css_unescape on url() arguments,
+# import strings, and property names) -- never globally before lexing --
+# because decoding \2f\2a to /* before comment stripping creates fake
+# comments that hide fetch-bearing references (D641-001 round 5).
+# url()/@import extraction is string/paren/brace aware (_css_extract_urls,
 # _css_scan_rules); unterminated strings, comments, parens or braces fail
 # closed with F_MALFORMED_CSS instead of silently skipping.
 # (url/@import/declaration matching is done by the string-aware scanners
@@ -148,9 +152,12 @@ def _is_xmlns_decl(raw_name: str) -> bool:
 def _css_unescape(css: str) -> str:
     """Unescape CSS escape sequences per CSS Syntax Module Level 3.
 
-    Handles \\<1-6 hex digits>[whitespace] and \\<char>. This is what the
-    browser interprets, so url()/@import detection must run on the
-    unescaped form (u\\72l(...) === url(...)).
+    Handles \\<1-6 hex digits>[whitespace] and \\<char>. This decodes the
+    browser-interpreted content of ONE token (a quoted string, a url()
+    argument, an identifier, a property name) -- it must never be applied
+    to whole CSS before tokenization (D641-001 round 5): decoding escapes
+    first would turn \\2f\\2a into a fake /* comment delimiter that the
+    comment stripper then removes, hiding fetch-bearing references.
     """
     out: list[str] = []
     i, n = 0, len(css)
@@ -371,11 +378,44 @@ def _css_strip_comments_safe(text: str) -> tuple[str, bool]:
     return "".join(out), True
 
 
-def _css_extract_urls(value: str) -> tuple[list[str], bool]:
-    """Extract url(...) arguments with string awareness.
+def _css_ident_end(text: str, i: int) -> int:
+    """Raw end index of the identifier starting at i.
 
-    Returns (urls, ok); ok=False on unterminated string/paren (fail
-    closed). Arguments keep their quotes; _url_codes strips them.
+    Identifier characters are consumed raw (backslash escapes are kept as
+    source pairs here); the caller decodes with _css_unescape. This keeps
+    escape sequences from splitting identifiers during tokenization.
+    """
+    j, n = i, len(text)
+    while j < n:
+        d = text[j]
+        if d == "\\" and j + 1 < n:
+            j += 2
+        elif d.isalnum() or d in "-_":
+            j += 1
+        else:
+            break
+    return j
+
+
+def _css_decode_ident_at(text: str, i: int) -> tuple[str, int]:
+    """Decode the identifier starting at i. Returns (decoded_lower, raw_end).
+
+    Escapes are decoded per token (CSS Syntax L3), so u\\72l(...) spells
+    url(...) and f\\69ll spells fill. The raw end index lets the scanner
+    continue on the original text.
+    """
+    j = _css_ident_end(text, i)
+    return _css_unescape(text[i:j]).lower(), j
+
+
+def _css_extract_urls(value: str) -> tuple[list[str], bool]:
+    """Extract url(...) arguments with string and escape awareness.
+
+    Operates on RAW CSS: identifiers (including escaped spellings like
+    u\\72l) are decoded per token, and each url() argument is decoded
+    per token before classification. Returns (decoded_urls, ok);
+    ok=False on unterminated string/paren (fail closed). Arguments keep
+    their quotes; _url_codes strips them.
     """
     urls: list[str] = []
     i, n = 0, len(value)
@@ -386,23 +426,23 @@ def _css_extract_urls(value: str) -> tuple[list[str], bool]:
             if end < 0:
                 return urls, False
             i = end
+        elif (c.isalpha() or c in "-_" or c == "\\") and not (
+                i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_")):
+            name, j = _css_decode_ident_at(value, i)
+            if name == "url":
+                k = j
+                while k < n and value[k] in _CSS_WS:
+                    k += 1
+                if k < n and value[k] == "(":
+                    arg, k2, ok = _css_url_arg(value, k + 1)
+                    if not ok:
+                        return urls, False
+                    urls.append(_css_unescape(arg))
+                    i = k2
+                    continue
+            i = j
         elif c == "\\" and i + 1 < n:
             i += 2
-        elif (c == "u" or c == "U") and value[i:i + 3].lower() == "url":
-            if i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_"):
-                i += 1
-                continue
-            j = i + 3
-            while j < n and value[j] in _CSS_WS:
-                j += 1
-            if j >= n or value[j] != "(":
-                i = j
-                continue
-            arg, k, ok = _css_url_arg(value, j + 1)
-            if not ok:
-                return urls, False
-            urls.append(arg)
-            i = k
         else:
             i += 1
     return urls, True
@@ -443,7 +483,9 @@ def _css_url_arg(value: str, j: int) -> tuple[str, int, bool]:
 def _css_extract_functions(value: str) -> tuple[list[str], bool]:
     """Function names invoked in a value; strings are skipped.
 
-    Returns (names, ok); ok=False on unterminated string (fail closed).
+    Identifier escapes are decoded per token (image\\2d set() spells
+    image-set()). Returns (decoded_lower_names, ok); ok=False on
+    unterminated string (fail closed).
     """
     names: list[str] = []
     i, n = 0, len(value)
@@ -454,20 +496,17 @@ def _css_extract_functions(value: str) -> tuple[list[str], bool]:
             if end < 0:
                 return names, False
             i = end
-        elif c == "\\" and i + 1 < n:
-            i += 2
-        elif (c.isalpha() or c in "-_") and not (
+        elif (c.isalpha() or c in "-_" or c == "\\") and not (
                 i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_")):
-            j = i
-            while j < n and (value[j].isalnum() or value[j] in "-_"):
-                j += 1
-            name = value[i:j]
+            name, j = _css_decode_ident_at(value, i)
             k = j
             while k < n and value[k] in _CSS_WS:
                 k += 1
             if k < n and value[k] == "(":
-                names.append(name.lower())
+                names.append(name)
             i = j
+        elif c == "\\" and i + 1 < n:
+            i += 2
         else:
             i += 1
     return names, True
@@ -487,6 +526,8 @@ def _css_decl_colon(stmt: str) -> int:
             if end < 0:
                 return -1
             i = end
+        elif c == "\\" and i + 1 < n:
+            i += 2  # escaped colon (\3a) is not the declaration separator
         elif c == "(":
             depth += 1
             i += 1
@@ -530,10 +571,16 @@ def _css_scan_rules(text: str) -> tuple[list, list, bool]:
         ci = _css_decl_colon(stmt)
         if ci < 0:
             return True  # selector text or junk: no resource surface
-        prop = stmt[:ci].strip()
-        if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9-]*", prop):
-            return True  # not a declaration (e.g. pseudo-class selector)
-        decls.append((prop, stmt[ci + 1:].strip()))
+        # Decode identifier escapes in the property name before judging it:
+        # f\69ll spells fill to the browser, and its url() must be
+        # classified. A name that is not a clean ident after decoding is
+        # not a declaration (e.g. pseudo-class selector).
+        prop_raw = stmt[:ci].strip()
+        decoded, rend = _css_decode_ident_at(prop_raw, 0)
+        if rend != len(prop_raw) or \
+                not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9-]*", decoded):
+            return True
+        decls.append((decoded, stmt[ci + 1:].strip()))
         return True
 
     while i < n:
@@ -579,7 +626,7 @@ def _css_scan_rules(text: str) -> tuple[list, list, bool]:
 
 def _css_import_urls(prelude: str) -> tuple[list[str], bool]:
     """URLs referenced by an @import prelude: url(...) args and quoted
-    strings, string-aware. Returns (urls, ok)."""
+    strings, string-aware. Returns (decoded_urls, ok)."""
     urls, ok = _css_extract_urls(prelude)
     if not ok:
         return urls, False
@@ -590,7 +637,7 @@ def _css_import_urls(prelude: str) -> tuple[list[str], bool]:
             end = _css_string_end(prelude, i)
             if end < 0:
                 return urls, False
-            s = prelude[i:end]
+            s = _css_unescape(prelude[i:end])
             if s not in urls:
                 urls.append(s)
             i = end
@@ -604,14 +651,19 @@ def _css_import_urls(prelude: str) -> tuple[list[str], bool]:
 def _check_css_decls(css: str, sink: _FindingSink, loc: str) -> None:
     """Check CSS under a CLOSED grammar with real tokenization.
 
-    The CSS is unescaped (CSS Syntax L3), then comments are stripped by a
-    quote/escape-aware scanner (a /* inside a quoted URL is string content,
-    never a comment), then every at-rule and declaration is consumed by a
-    string/paren/brace-aware scanner. Anything outside the admitted subset
-    -- unadmitted properties/functions/at-rules, remote url() -- fails
-    closed, as do unterminated strings, comments, parens or braces.
+    Comments are stripped on RAW CSS by a quote/escape-aware scanner (a /*
+    inside a quoted URL is string content, never a comment; escape
+    sequences like \\2f\\2a are consumed as source pairs and never become
+    comment delimiters at this stage), then every at-rule and declaration
+    is consumed by a string/paren/brace-aware scanner. Escapes are decoded
+    per token -- identifiers, url() arguments, property names -- before
+    classification (D641-001 round 5: global unescape-then-lex created fake
+    comments that hid fetch-bearing references). Anything outside the
+    admitted subset -- unadmitted properties/functions/at-rules, remote
+    url() -- fails closed, as do unterminated strings, comments, parens
+    or braces.
     """
-    stripped, ok = _css_strip_comments_safe(_css_unescape(css))
+    stripped, ok = _css_strip_comments_safe(css)
     if not ok:
         sink.add("F_MALFORMED_CSS",
                  "unterminated CSS comment or string", loc)
@@ -646,7 +698,7 @@ def _check_css_decls(css: str, sink: _FindingSink, loc: str) -> None:
 def _check_css_decl(prop: str, value: str, sink: _FindingSink,
                     loc: str) -> None:
     """Judge one declaration against the admitted property/function sets."""
-    p = prop.strip().lower()
+    p = _css_unescape(prop).strip().lower()  # decode identifier escapes
     urls, ok = _css_extract_urls(value)
     if not ok:
         sink.add("F_MALFORMED_CSS", "malformed url() in CSS", loc)
@@ -672,7 +724,7 @@ def _check_css_decl(prop: str, value: str, sink: _FindingSink,
             sink.add("F_UNADMITTED_CSS",
                      "CSS function not admitted by the offline profile", loc)
     if p in ("width", "height"):
-        code = _check_dimension_value(value.split("!")[0])
+        code = _check_dimension_value(_css_unescape(value.split("!")[0]))
         if code:
             sink.add(code, "CSS dimension out of profile bounds", loc)
 
@@ -688,9 +740,10 @@ def _check_attr_value(element: str, attr: str, value: str,
     elif attr in ("fill", "stroke"):
         # Resource-bearing presentation attributes: plain colors and local
         # #fragment / data:image: paints are admitted; remote url() is not.
-        # URL extraction is string-aware (same semantics as style blocks):
-        # a quoted /* inside the URL is string content, never a comment.
-        urls, uok = _css_extract_urls(_css_unescape(value))
+        # URL extraction is string-aware and decodes escapes per token on
+        # the RAW value (same semantics as style blocks): a \2f\2a inside
+        # the URL is decoded inside the token, never lexed as a comment.
+        urls, uok = _css_extract_urls(value)
         if not uok:
             sink.add("F_MALFORMED_CSS",
                      "malformed url() in presentation attribute", loc)
