@@ -1,0 +1,111 @@
+{
+  "schema_version": "dom-distill/1",
+  "fixture_id": "a27-renumbered",
+  "build_id": "dom-distill-fixtures/1",
+  "snapshot_digest": "8926caa51e43a22420c12d2239a1ab76721e58be5f4d198d3a1bd7705b1e81f6",
+  "document": {
+    "url": "https://example.test/shop",
+    "title": "Example — Shop"
+  },
+  "frames": [
+    {
+      "frame_id": "main",
+      "root_refs": [
+        "e1"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "ref": "e1",
+      "frame_id": "main",
+      "role": "main",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 40,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e2",
+        "e3"
+      ]
+    },
+    {
+      "ref": "e3",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 70,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e2",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Checkout",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 100,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    }
+  ],
+  "task": {
+    "id": "task-renumber",
+    "goal": "Click the checkout button"
+  }
+}

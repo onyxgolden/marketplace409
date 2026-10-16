@@ -1,0 +1,141 @@
+{
+  "corpus": "dom-distillation-fixtures/1",
+  "files": [
+    {
+      "path": "fixtures/pages/a21-injection.json",
+      "sha256": "8e838172df6419fac0aa80f2c6a741b0a889f27cbbbed8d9869b94029203507d"
+    },
+    {
+      "path": "fixtures/pages/a22-duplicate-labels.json",
+      "sha256": "f759083cf5b946975ec0eaae2c399fac5718b99fa9d86425355caf13704e4fb9"
+    },
+    {
+      "path": "fixtures/pages/a23-stale-digest.json",
+      "sha256": "1e76622d6fbd60051ce47a6ebc08c87a58b88ed09a54235d36b36ac8631f3c8c"
+    },
+    {
+      "path": "fixtures/pages/a24-cross-frame.json",
+      "sha256": "14e2eb8a39c9d04738b682ff39831609ff36ddfd8b71e1767a4e2cabbf007492"
+    },
+    {
+      "path": "fixtures/pages/a25-hidden-content.json",
+      "sha256": "d27daa07837b9ca783e285aaf99834636de77d4fa088d20a90438ad27168e422"
+    },
+    {
+      "path": "fixtures/pages/a26-huge-table.json",
+      "sha256": "3f577f64d9afbfceed057823fe59b638be8731a546eb3d92fd2051a7b5a54c65"
+    },
+    {
+      "path": "fixtures/pages/a27-renumbered.json",
+      "sha256": "c35c9d87cb0213300bb6a983cf1c49c1bcd53b225bb37effb1992ea988c82e8a"
+    },
+    {
+      "path": "fixtures/pages/a28-warning-base.json",
+      "sha256": "b2ffc3552a036e92744fb144551aaae9d6f8cc620bb8bd465eba75b6b97d33fc"
+    },
+    {
+      "path": "fixtures/pages/a29-offscreen-cta.json",
+      "sha256": "65029f1dde142182c0e0a283c1f24f3df86063c5a2a11738f0da1ee147f14f0c"
+    },
+    {
+      "path": "fixtures/pages/a30-deep-nesting.json",
+      "sha256": "d4da683333a611e22598bb73ff446afd8ad67714871f9b56a3a936038cc0edbf"
+    },
+    {
+      "path": "fixtures/pages/n01-login-form.json",
+      "sha256": "c61707eb6a860fe8fee9aaf0b19d94505fb5f93ab6b266bf96f71163397b29b2"
+    },
+    {
+      "path": "fixtures/pages/n02-checkout-form.json",
+      "sha256": "fa33e7c8e0fbba039722e1a28dc06468a2421ce91d3bd3c05a3b336f9eb91657"
+    },
+    {
+      "path": "fixtures/pages/n03-signup-dialog.json",
+      "sha256": "f49f2b6bc02d0569cf67ab8ddaa3b13adf88b879dc8fe2299066596873a2b06d"
+    },
+    {
+      "path": "fixtures/pages/n04-product-table.json",
+      "sha256": "0985954b798c6388f9f02abf42bb123b01f0d2cfebf194e4d9b66a743e8e6f59"
+    },
+    {
+      "path": "fixtures/pages/n05-settings-toggles.json",
+      "sha256": "03e1d8dae50bce80ccfeb4ba1ce490d6806fb1335af7ff2e125ca9f75c4f8330"
+    },
+    {
+      "path": "fixtures/pages/n06-search-results.json",
+      "sha256": "241b268822a94a5ea7a118cb1917091a638f431dd6809cd6d7c3f9d9f3c12f7e"
+    },
+    {
+      "path": "fixtures/pages/n07-wizard-tabs.json",
+      "sha256": "d8152ef31a503a12425533190ef8a91ecd3990cea7ac14f881f2c34338aea212"
+    },
+    {
+      "path": "fixtures/pages/n08-nav-menu.json",
+      "sha256": "3220575c112b12b72b0b3834bf25f97ab1e78929dfb4d918277e92d4133cebb3"
+    },
+    {
+      "path": "fixtures/pages/n09-contact-form.json",
+      "sha256": "91fc023c7bf4e33123d46bb8d0f1608e40ed4e557a6fb3043b161c845dec7580"
+    },
+    {
+      "path": "fixtures/pages/n10-dashboard.json",
+      "sha256": "e19a9f981ea73bb55773359ba7b651ba4689941bbc243ac2eee60a72a4ca9b24"
+    },
+    {
+      "path": "fixtures/pages/n11-profile-edit.json",
+      "sha256": "0f7c9670326e65f0156b36ada32642c50b32fef00632b4f64806e778eb2ea549"
+    },
+    {
+      "path": "fixtures/pages/n12-file-upload.json",
+      "sha256": "93865dbb453cf26d30f798b09186fb5192b1ea8d8a3d150defe2b3a136654250"
+    },
+    {
+      "path": "fixtures/pages/n13-calendar.json",
+      "sha256": "ed2449965c6f18f2b0c52afc603da29a22fec81d381461def05b0ebdd0cf1d84"
+    },
+    {
+      "path": "fixtures/pages/n14-notifications.json",
+      "sha256": "0980092c64ad40e10699292b2dd86e3f801b72caa713505a2705c4ab2ebfdba4"
+    },
+    {
+      "path": "fixtures/pages/n15-checkout-confirm.json",
+      "sha256": "1e34669c366e2fb6f6eff105db4d4c13aef20f206e879b33e3ae84c82cce9e86"
+    },
+    {
+      "path": "fixtures/pages/n16-payment-form.json",
+      "sha256": "f7ac4d8e3342608721bf05aade2baadd24cb57a7e4c7f9ab15510fb98785ea92"
+    },
+    {
+      "path": "fixtures/pages/n17-address-form.json",
+      "sha256": "72e81fd869ae85f8044005943e7b5be894a140bf904a259ae42cb8705844fabb"
+    },
+    {
+      "path": "fixtures/pages/n18-help-dialog.json",
+      "sha256": "e1d7014ed8189be501d8561f144f0b8972b0369751438459fb484dec06fc4690"
+    },
+    {
+      "path": "fixtures/pages/n19-editor-toolbar.json",
+      "sha256": "981bf41a4e67369ca1ec7b2281b247f501e91f4851371b1c05a7ec289636502b"
+    },
+    {
+      "path": "fixtures/pages/n20-nested-frames.json",
+      "sha256": "e45fb2e0965929d6c511d8e2f01ef07803cdb38f7eb68cad2fb881723560a831"
+    },
+    {
+      "path": "fixtures/gold.json",
+      "sha256": "dfcac97e7124f365f6a8d4076fe185617ac02814a219a95d681ceb2a3ee9fc35"
+    },
+    {
+      "path": "fixtures/make-fixtures.js",
+      "sha256": "315bd3e55597c98119e9e854e3d38586b1a809829dd96c708b9174c47d5f5acf"
+    },
+    {
+      "path": "tokenizer/vocab.bpe",
+      "sha256": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5"
+    },
+    {
+      "path": "tokenizer/PIN.md",
+      "sha256": "70ede6910b573af8d95a1e273a45b24c10c1d8e0da4a8f81873abf1b45e9c91b"
+    }
+  ]
+}

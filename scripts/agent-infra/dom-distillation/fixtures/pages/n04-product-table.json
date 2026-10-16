@@ -1,0 +1,2312 @@
+{
+  "schema_version": "dom-distill/1",
+  "fixture_id": "n04-product-table",
+  "build_id": "dom-distill-fixtures/1",
+  "snapshot_digest": "ffea9d03617162ba455129c3af0bc6777be84045a65b086c896938a3d14f00a6",
+  "document": {
+    "url": "https://example.test/products",
+    "title": "Example — Products"
+  },
+  "frames": [
+    {
+      "frame_id": "main",
+      "root_refs": [
+        "e1"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "ref": "e1",
+      "frame_id": "main",
+      "role": "main",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 40,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e2",
+        "e3"
+      ]
+    },
+    {
+      "ref": "e2",
+      "frame_id": "main",
+      "role": "heading",
+      "name": "Products",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 70,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e3",
+      "frame_id": "main",
+      "role": "table",
+      "name": "Product list",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 100,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e4",
+        "e7",
+        "e10",
+        "e13",
+        "e16",
+        "e19",
+        "e22",
+        "e25",
+        "e28",
+        "e31",
+        "e34",
+        "e37",
+        "e40",
+        "e43",
+        "e46",
+        "e49",
+        "e52",
+        "e55",
+        "e58",
+        "e61",
+        "e64",
+        "e67",
+        "e70",
+        "e73",
+        "e76"
+      ]
+    },
+    {
+      "ref": "e4",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 130,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e5",
+        "e6"
+      ]
+    },
+    {
+      "ref": "e5",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 1 — $1.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 160,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e6",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 1 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 190,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e7",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 220,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e8",
+        "e9"
+      ]
+    },
+    {
+      "ref": "e8",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 2 — $2.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 250,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e9",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 2 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 280,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e10",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 310,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e11",
+        "e12"
+      ]
+    },
+    {
+      "ref": "e11",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 3 — $3.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 340,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e12",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 3 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 370,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e13",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 400,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e14",
+        "e15"
+      ]
+    },
+    {
+      "ref": "e14",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 4 — $4.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 430,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e15",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 4 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 460,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e16",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 490,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e17",
+        "e18"
+      ]
+    },
+    {
+      "ref": "e17",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 5 — $5.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 520,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e18",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 5 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 550,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e19",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 580,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e20",
+        "e21"
+      ]
+    },
+    {
+      "ref": "e20",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 6 — $6.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 610,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e21",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 6 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 640,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e22",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 670,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e23",
+        "e24"
+      ]
+    },
+    {
+      "ref": "e23",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 7 — $7.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 700,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e24",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 7 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 730,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e25",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 760,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e26",
+        "e27"
+      ]
+    },
+    {
+      "ref": "e26",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 8 — $8.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 790,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e27",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 8 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 820,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e28",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 850,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e29",
+        "e30"
+      ]
+    },
+    {
+      "ref": "e29",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 9 — $9.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 880,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e30",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 9 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 910,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e31",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 940,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e32",
+        "e33"
+      ]
+    },
+    {
+      "ref": "e32",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 10 — $10.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 970,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e33",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 10 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1000,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e34",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1030,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e35",
+        "e36"
+      ]
+    },
+    {
+      "ref": "e35",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 11 — $11.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1060,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e36",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 11 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1090,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e37",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1120,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e38",
+        "e39"
+      ]
+    },
+    {
+      "ref": "e38",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 12 — $12.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1150,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e39",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 12 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1180,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e40",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1210,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e41",
+        "e42"
+      ]
+    },
+    {
+      "ref": "e41",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 13 — $13.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1240,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e42",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 13 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1270,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e43",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1300,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e44",
+        "e45"
+      ]
+    },
+    {
+      "ref": "e44",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 14 — $14.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1330,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e45",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 14 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1360,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e46",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1390,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e47",
+        "e48"
+      ]
+    },
+    {
+      "ref": "e47",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 15 — $15.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1420,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e48",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 15 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1450,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e49",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1480,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e50",
+        "e51"
+      ]
+    },
+    {
+      "ref": "e50",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 16 — $16.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1510,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e51",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 16 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1540,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e52",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1570,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e53",
+        "e54"
+      ]
+    },
+    {
+      "ref": "e53",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 17 — $17.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1600,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e54",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 17 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1630,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e55",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1660,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e56",
+        "e57"
+      ]
+    },
+    {
+      "ref": "e56",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 18 — $18.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1690,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e57",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 18 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1720,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e58",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1750,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e59",
+        "e60"
+      ]
+    },
+    {
+      "ref": "e59",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 19 — $19.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1780,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e60",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 19 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1810,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e61",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1840,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e62",
+        "e63"
+      ]
+    },
+    {
+      "ref": "e62",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 20 — $20.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1870,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e63",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 20 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1900,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e64",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1930,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e65",
+        "e66"
+      ]
+    },
+    {
+      "ref": "e65",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 21 — $21.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1960,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e66",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 21 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 1990,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e67",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2020,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e68",
+        "e69"
+      ]
+    },
+    {
+      "ref": "e68",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 22 — $22.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2050,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e69",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 22 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2080,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e70",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2110,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e71",
+        "e72"
+      ]
+    },
+    {
+      "ref": "e71",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 23 — $23.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2140,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e72",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 23 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2170,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e73",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2200,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e74",
+        "e75"
+      ]
+    },
+    {
+      "ref": "e74",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 24 — $24.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2230,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e75",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 24 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2260,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e76",
+      "frame_id": "main",
+      "role": "row",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2290,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e77",
+        "e78"
+      ]
+    },
+    {
+      "ref": "e77",
+      "frame_id": "main",
+      "role": "cell",
+      "name": "",
+      "value": null,
+      "text": "Widget 25 — $25.00",
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2320,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    },
+    {
+      "ref": "e78",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Add Widget 25 to cart",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 2350,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    }
+  ],
+  "task": {
+    "id": "task-pick-product",
+    "goal": "Choose a product and add it to the cart"
+  }
+}

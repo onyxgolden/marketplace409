@@ -1,0 +1,82 @@
+{
+  "schema_version": "dom-distill/1",
+  "fixture_id": "a23-stale-digest",
+  "build_id": "dom-distill-fixtures/1",
+  "snapshot_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "document": {
+    "url": "https://example.test/login",
+    "title": "Example — Sign in"
+  },
+  "frames": [
+    {
+      "frame_id": "main",
+      "root_refs": [
+        "e1"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "ref": "e1",
+      "frame_id": "main",
+      "role": "main",
+      "name": "",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 40,
+        "w": 120,
+        "h": 28
+      },
+      "children": [
+        "e2"
+      ]
+    },
+    {
+      "ref": "e2",
+      "frame_id": "main",
+      "role": "button",
+      "name": "Sign in",
+      "value": null,
+      "text": null,
+      "state": {
+        "disabled": false,
+        "checked": false,
+        "expanded": false,
+        "hidden": false,
+        "invalid": false,
+        "readonly": false,
+        "selected": false,
+        "pressed": false,
+        "offscreen": false
+      },
+      "validation_error": null,
+      "warning": null,
+      "bounds": {
+        "x": 10,
+        "y": 70,
+        "w": 120,
+        "h": 28
+      },
+      "children": []
+    }
+  ],
+  "task": {
+    "id": "task-stale",
+    "goal": "Log in"
+  }
+}

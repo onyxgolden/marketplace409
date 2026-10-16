@@ -1,0 +1,524 @@
+{
+  "n01-login-form": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e4",
+        "role": "textbox",
+        "name": "Email address"
+      },
+      {
+        "ref": "e5",
+        "role": "textbox",
+        "name": "Password"
+      },
+      {
+        "ref": "e6",
+        "role": "button",
+        "name": "Sign in"
+      },
+      {
+        "ref": "e7",
+        "role": "link",
+        "name": "Forgot password?"
+      }
+    ],
+    "forbidden": [
+      "e8",
+      "e9"
+    ]
+  },
+  "n02-checkout-form": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e5",
+        "role": "button",
+        "name": "Pay $49.99"
+      },
+      {
+        "ref": "e4",
+        "role": "textbox",
+        "name": "Card number"
+      },
+      {
+        "ref": "e3",
+        "role": "alert",
+        "name": "Payment warning",
+        "warning_contains": "charged $49.99"
+      }
+    ],
+    "forbidden": []
+  },
+  "n03-signup-dialog": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "textbox",
+        "name": "Email",
+        "state_contains": [
+          "invalid"
+        ]
+      },
+      {
+        "ref": "e4",
+        "role": "textbox",
+        "name": "Password",
+        "state_contains": [
+          "invalid"
+        ]
+      },
+      {
+        "ref": "e5",
+        "role": "button",
+        "name": "Create account"
+      },
+      {
+        "ref": "e2",
+        "role": "dialog",
+        "name": "Create account"
+      }
+    ],
+    "forbidden": []
+  },
+  "n04-product-table": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e24",
+        "role": "button",
+        "name": "Add Widget 7 to cart"
+      }
+    ],
+    "forbidden": [
+      "e3"
+    ]
+  },
+  "n05-settings-toggles": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "switch",
+        "name": "Email notifications",
+        "state_contains": []
+      },
+      {
+        "ref": "e4",
+        "role": "switch",
+        "name": "SMS notifications",
+        "state_contains": [
+          "checked"
+        ]
+      },
+      {
+        "ref": "e5",
+        "role": "button",
+        "name": "Save changes",
+        "state_contains": [
+          "disabled"
+        ]
+      }
+    ],
+    "forbidden": []
+  },
+  "n06-search-results": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "searchbox",
+        "name": "Search"
+      },
+      {
+        "ref": "e4",
+        "role": "link",
+        "name": "Invoice #1001 — March"
+      }
+    ],
+    "forbidden": []
+  },
+  "n07-wizard-tabs": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e4",
+        "role": "tab",
+        "name": "2. Billing"
+      },
+      {
+        "ref": "e6",
+        "role": "button",
+        "name": "Continue"
+      }
+    ],
+    "forbidden": []
+  },
+  "n08-nav-menu": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e4",
+        "role": "menuitem",
+        "name": "Products"
+      },
+      {
+        "ref": "e5",
+        "role": "menuitem",
+        "name": "Pricing"
+      }
+    ],
+    "forbidden": []
+  },
+  "n09-contact-form": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "combobox",
+        "name": "Topic"
+      },
+      {
+        "ref": "e4",
+        "role": "textbox",
+        "name": "Message"
+      },
+      {
+        "ref": "e5",
+        "role": "button",
+        "name": "Send message"
+      }
+    ],
+    "forbidden": []
+  },
+  "n10-dashboard": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Export report"
+      }
+    ],
+    "forbidden": [
+      "e3"
+    ]
+  },
+  "n11-profile-edit": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "textbox",
+        "name": "Display name"
+      },
+      {
+        "ref": "e2",
+        "role": "textbox",
+        "name": "User ID",
+        "state_contains": [
+          "readonly",
+          "disabled"
+        ]
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Save profile"
+      }
+    ],
+    "forbidden": []
+  },
+  "n12-file-upload": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "button",
+        "name": "Choose file"
+      },
+      {
+        "ref": "e3",
+        "role": "progressbar",
+        "name": "Upload progress"
+      }
+    ],
+    "forbidden": []
+  },
+  "n13-calendar": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e18",
+        "role": "button",
+        "name": "March 15"
+      }
+    ],
+    "forbidden": [
+      "e3"
+    ]
+  },
+  "n14-notifications": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "alert",
+        "name": "Payment failed",
+        "warning_contains": "card was declined"
+      },
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Dismiss"
+      }
+    ],
+    "forbidden": []
+  },
+  "n15-checkout-confirm": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "alertdialog",
+        "name": "Cancel subscription?",
+        "warning_contains": "No prorated refund"
+      },
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Yes, cancel"
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Keep subscription"
+      }
+    ],
+    "forbidden": []
+  },
+  "n16-payment-form": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "textbox",
+        "name": "Card number",
+        "state_contains": [
+          "invalid"
+        ]
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Pay now"
+      },
+      {
+        "ref": "e3",
+        "role": "alert",
+        "name": "Billing notice",
+        "warning_contains": "authorization hold"
+      }
+    ],
+    "forbidden": []
+  },
+  "n17-address-form": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "combobox",
+        "name": "Country"
+      },
+      {
+        "ref": "e4",
+        "role": "textbox",
+        "name": "ZIP code",
+        "state_contains": [
+          "invalid"
+        ]
+      },
+      {
+        "ref": "e5",
+        "role": "button",
+        "name": "Save address"
+      }
+    ],
+    "forbidden": []
+  },
+  "n18-help-dialog": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "dialog",
+        "name": "Keyboard shortcuts"
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Close"
+      }
+    ],
+    "forbidden": []
+  },
+  "n19-editor-toolbar": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "slider",
+        "name": "Brush size"
+      },
+      {
+        "ref": "e3",
+        "role": "spinbutton",
+        "name": "Opacity"
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Apply"
+      }
+    ],
+    "forbidden": []
+  },
+  "n20-nested-frames": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "button",
+        "name": "Open chat"
+      },
+      {
+        "ref": "e5",
+        "role": "button",
+        "name": "Send feedback"
+      }
+    ],
+    "forbidden": []
+  },
+  "a21-injection": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "link",
+        "name": "Unsubscribe"
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Claim prize"
+      }
+    ],
+    "forbidden": [
+      "e99"
+    ],
+    "injection_text_must_be_data": true
+  },
+  "a22-duplicate-labels": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "button",
+        "name": "Submit"
+      },
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Submit"
+      },
+      {
+        "ref": "e4",
+        "role": "button",
+        "name": "Submit"
+      }
+    ],
+    "forbidden": [],
+    "require_distinct_refs": 3
+  },
+  "a23-stale-digest": {
+    "expect_status": "REFUSED",
+    "expect_reason": "STALE_SNAPSHOT",
+    "critical": [],
+    "forbidden": []
+  },
+  "a24-cross-frame": {
+    "expect_status": "REFUSED",
+    "expect_reason": "SCHEMA",
+    "critical": [],
+    "forbidden": []
+  },
+  "a25-hidden-content": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "button",
+        "name": "Publish"
+      }
+    ],
+    "forbidden": [
+      "e3"
+    ]
+  },
+  "a26-huge-table": {
+    "expect_status": "INCOMPLETE",
+    "expect_reason": "OVER_LIMIT",
+    "critical": [],
+    "forbidden": []
+  },
+  "a27-renumbered": {
+    "expect_status": "REFUSED",
+    "expect_reason": "STALE_SNAPSHOT",
+    "critical": [],
+    "forbidden": []
+  },
+  "a28-warning-base": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e2",
+        "role": "alertdialog",
+        "name": "Send wire transfer?",
+        "warning_contains": "cannot be reversed"
+      },
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Send $5,000 wire"
+      }
+    ],
+    "forbidden": []
+  },
+  "a29-offscreen-cta": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e3",
+        "role": "button",
+        "name": "Sign up for updates",
+        "state_contains": [
+          "offscreen"
+        ]
+      }
+    ],
+    "forbidden": []
+  },
+  "a30-deep-nesting": {
+    "expect_status": "OK",
+    "critical": [
+      {
+        "ref": "e14",
+        "role": "button",
+        "name": "Confirm nested action"
+      }
+    ],
+    "forbidden": [],
+    "expect_truncation": true
+  }
+}
