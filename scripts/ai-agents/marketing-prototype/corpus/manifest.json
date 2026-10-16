@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "475462fcb74d495e21b67125ce845e333e9049c26e034b3a168666626b8ee7bc",
+  "corpus_digest": "54f672220b497eeb89114a93a4d3ec4efb8d28fb4c041110691d81ff21b638f1",
   "files": [
     {
       "path": "README.md",
@@ -79,7 +79,7 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "020f46c5f1e297fe644e6937f225b4fb79787dc61975c6f393d9b78b66519ed7"
+      "sha256": "c83d5a4aa9958fb93e25d4647465c4fe572011149ea8c6c1f52255b19a6872ab"
     },
     {
       "path": "src/schemas.js",
@@ -115,7 +115,11 @@
     },
     {
       "path": "tests/fixround4.test.js",
-      "sha256": "1c70a99b5c309f46ecbcb77f112f469c9ed954a97fffd6fa6c26ee843c7da884"
+      "sha256": "e32608769e4cc13f228f279d4814138930ec398892b03918b68c611a67105fa4"
+    },
+    {
+      "path": "tests/fixround5.test.js",
+      "sha256": "94c8bfef0a6e5cede5106e064030268ca87fe81dd658b910bc5058013c0ac268"
     },
     {
       "path": "tests/harness.js",

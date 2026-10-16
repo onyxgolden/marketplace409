@@ -19,29 +19,27 @@ import { BudgetError, StructuralError, presplitRows } from "./budget.js";
 import { validateSourceRef, ROW_VALIDATORS } from "./schemas.js";
 
 /**
- * getDataDescriptor(obj, key) — descriptor-based stable admission.
+ * getDataDescriptor(obj, key) — OWN-data-descriptor-only stable admission.
  *
- * Returns the data descriptor for `key` (own property first, then the
- * prototype chain), or null when the property is accessor-backed anywhere
- * on the chain, or undefined when the property is absent entirely.
- * NEVER invokes a getter/setter: Object.getOwnPropertyDescriptor does not
- * call user code.
+ * Returns the OWN data descriptor for `key`, or null when `key` is an own
+ * accessor property (rejected without invocation — Object.getOwnPropertyDescriptor
+ * never calls user code), or undefined when the property is absent as an own
+ * property (missing OR inherited-only).
  *
- * M640-001 (round 4): the input-byte pre-scan (measureCanonicalBytes)
- * deliberately skips accessors without invoking them, so an
- * accessor-backed fixture field would admit an unmeasured, unlimited
- * payload past the input cap. Fixture bytes and source identity metadata
- * are admitted ONLY through data descriptors; accessor-backed fields
- * refuse ACCESSOR_REJECTED without invocation.
+ * M640-001 (round 5): the earlier version walked the prototype chain and
+ * accepted inherited data properties. The input-byte pre-scan
+ * (measureCanonicalBytes) only measures OWN properties, so an inherited data
+ * property admitted an unmeasured, unlimited payload past the input cap
+ * (307486-byte inherited `bytes` => REPORT_READY). Admission now describes
+ * exactly the same data accounting measured: own data only.
+ * Missing/inherited-only fields refuse structurally (not registered) —
+ * the resolver never walks a prototype to recover values the pre-scan
+ * never charged.
  */
 function getDataDescriptor(obj, key) {
-  let o = obj;
-  while (o !== null) {
-    const d = Object.getOwnPropertyDescriptor(o, key);
-    if (d) return "value" in d ? d : null;
-    o = Object.getPrototypeOf(o);
-  }
-  return undefined;
+  const d = Object.getOwnPropertyDescriptor(obj, key);
+  if (!d) return undefined;
+  return "value" in d ? d : null;
 }
 
 /** Source identity fields compared against the host-registered tuple. */
@@ -92,10 +90,17 @@ export function resolveFixtures(task, context, sx) {
     }
     // M640-001 (round 4): the same stable-admission rule for source
     // identity metadata, not just the body string. Every compared field
-    // must be a data descriptor before validateSourceRef reads it.
+    // must be an OWN data descriptor before validateSourceRef reads it.
+    // M640-001 (round 5): validateSourceRef reads via normal property
+    // access (which walks prototypes), so an inherited-only identity
+    // field must ALSO refuse here — the pre-scan never measured it.
     for (const f of SOURCE_IDENTITY_FIELDS) {
-      if (getDataDescriptor(sourceRef, f) === null) {
+      const fd = getDataDescriptor(sourceRef, f);
+      if (fd === null) {
         throw sx.refused("ACCESSOR_REJECTED", `fixture ${JSON.stringify(ref.fixture_id)}: source_ref.${f} is accessor-backed (rejected without invocation)`);
+      }
+      if (fd === undefined) {
+        throw sx.refused("READ_DENIED", `fixture ${JSON.stringify(ref.fixture_id)}: source_ref.${f} is missing or inherited-only (not registered as own data)`);
       }
     }
     const vsr = validateSourceRef(sourceRef);

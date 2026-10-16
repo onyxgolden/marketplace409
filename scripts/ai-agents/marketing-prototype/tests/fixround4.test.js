@@ -195,7 +195,7 @@ describe("M640-001 round 4: fixture-payload accessor bypass", () => {
     assert.equal(calls, 0, `expected ZERO repo getter invocations, got ${calls}`);
   });
 
-  it("prototype-chain accessor on bytes is also rejected without invocation", () => {
+  it("prototype-chain accessor on bytes is rejected structurally without invocation", () => {
     let calls = 0;
     const fixtures = baseFixtures();
     const original = fixtures["agg-01"];
@@ -209,7 +209,11 @@ describe("M640-001 round 4: fixture-payload accessor bypass", () => {
     fixtures["agg-01"] = evilEntry;
     const context = baseContext(fixtures);
     const result = run(baseTask(ALL_REFS), context);
-    assertRefusal(result, "ACCESSOR_REJECTED");
+    // M640-001 (round 5): inherited-only fields are not admitted at all —
+    // they refuse structurally (READ_DENIED) rather than ACCESSOR_REJECTED,
+    // which is reserved for OWN accessor-backed fields. Zero invocations
+    // either way.
+    assertRefusal(result, "READ_DENIED");
     assert.equal(calls, 0, `expected ZERO bytes getter invocations, got ${calls}`);
   });
 });
