@@ -8,7 +8,8 @@
 // could happen — there is no body read at all.
 //
 // Flow:
-//   1. Host-config validation under its own consultation budget.
+//   1. Host-config validation under the task-level config budget
+//      (charge-before-inspect, descriptor-safe; failures are REFUSED).
 //   2. Descriptor-based admission (own data only, zero accessor invocation,
 //      unknown fields refused before their values are read; scalars must be
 //      primitive — getter-bearing objects/arrays/cycles at scalar positions
@@ -54,13 +55,16 @@ import { stableStringify } from "../report/stableStringify.mjs";
 export const MAX_ADMITTED_BYTES = 262144; // 256KiB
 export const EPISODE_ID_PREFIX = "em-";
 
-/** Canonical identity components (status excluded by design). */
+/** Canonical identity components (status excluded by design). The supplied
+ * source revision (commit) is part of the identity: distinct revision
+ * identities are never silently collapsed into one episode. */
 function identityComponents(ev) {
   return [
     ev.source.repo,
     ev.source.path,
     ev.source.pin.algo,
     ev.source.pin.id,
+    ev.source.commit ?? null,
     ev.taskId,
     ev.kind,
     ev.principal,
@@ -99,8 +103,16 @@ function reviewIdFor(trigger, repo, path) {
  * result: "CAPTURED" | "DUPLICATE_REPLAY" | "CONFLICT" | "REFUSED"
  */
 export function captureEvent(store, host, input, opts = {}) {
-  const hostBudget = new ConsultationBudget();
-  assertHostConfig(host, hostBudget);
+  // Task-level accounting: one config budget for host validation and one
+  // operation budget for the capture operation itself. No phase resets.
+  const configBudget = new ConsultationBudget();
+  try {
+    assertHostConfig(host, configBudget);
+  } catch (err) {
+    // Host-validation failures (including BUDGET_EXHAUSTED on a hostile
+    // host config) are bounded REFUSED envelopes, never throws.
+    return refused(err);
+  }
   const budget = new ConsultationBudget();
   let snap;
   try {
@@ -285,8 +297,12 @@ export function denySource(store, host, input, opts = {}) {
   if (opts.caller === undefined) {
     return { result: "REFUSED", code: ENG_CODES.MISSING_CALLER };
   }
-  const hostBudget = new ConsultationBudget();
-  assertHostConfig(host, hostBudget);
+  const configBudget = new ConsultationBudget();
+  try {
+    assertHostConfig(host, configBudget);
+  } catch (err) {
+    return refused(err);
+  }
   const budget = new ConsultationBudget();
   let snap;
   try {
@@ -347,8 +363,12 @@ export function revokeSource(store, host, input, opts = {}) {
   if (opts.caller === undefined) {
     return { result: "REFUSED", code: ENG_CODES.MISSING_CALLER };
   }
-  const hostBudget = new ConsultationBudget();
-  assertHostConfig(host, hostBudget);
+  const configBudget = new ConsultationBudget();
+  try {
+    assertHostConfig(host, configBudget);
+  } catch (err) {
+    return refused(err);
+  }
   const budget = new ConsultationBudget();
   let snap;
   try {

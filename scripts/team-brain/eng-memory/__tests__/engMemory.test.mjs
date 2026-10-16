@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import { admitObject, keySpecs } from "../admission.mjs";
 import { ENG_CODES } from "../errors.mjs";
-import { EVENT_KEY_SPECS, assertHostConfig, assertPin } from "../schemas.mjs";
+import { EVENT_KEY_SPECS, assertHostConfig, assertPin, sourceIdentityString } from "../schemas.mjs";
 import { createFakeStore } from "../store.mjs";
 import { captureEvent, denySource, revokeSource, episodeIdentity, episodeIdFor, MAX_ADMITTED_BYTES } from "../capture.mjs";
 import { recall, recallAsync, matchAndProject, MAX_CONSULTED_CANDIDATES, RECALL_RESULT_CAP } from "../recall.mjs";
@@ -329,17 +329,21 @@ describe("recall", () => {
   function seededStore(n, host) {
     const store = createFakeStore();
     for (let i = 1; i <= n; i++) {
+      // Tasks cycle the 10 registered eng-task-* ids; the pin is the
+      // registered seed identity; event times are distinct per seed so
+      // every seed is a distinct episode identity.
+      const totalMinutes = i - 1;
       const r = captureEvent(
         store,
         host,
         validInput({
           eventId: `evt-seed-${i}-synthetic`,
-          taskId: `eng-task-${String(i).padStart(3, "0")}`,
-          eventAt: `2026-10-${String(1 + (i % 15)).padStart(2, "0")}T08:00:00Z`,
+          taskId: `eng-task-${String(((i - 1) % 10) + 1).padStart(3, "0")}`,
+          eventAt: `2026-10-01T${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}:00Z`,
           source: {
             repo: "onyxgolden/marketplace409",
             path: "scripts/team-brain/README.md",
-            pin: { algo: "git-blob-sha1", id: createHash("sha256").update(`seed${i}`).digest("hex").slice(0, 40) },
+            pin: { algo: "git-blob-sha1", id: "f".repeat(40) },
           },
         }),
         { caller: "principal:muse" },
@@ -722,6 +726,100 @@ describe("EMEM-001: scalar admission, budgets, async watchdog", () => {
     expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.RESULT_PAYLOAD_EXCEEDED });
     expect(r.results).toBeUndefined();
   });
+
+  it("recall host validation is budgeted: hostile 65th registration never read", () => {
+    // EMEM-001 verdict probe: 65 registrations with a counting getter on
+    // the 65th repo. Recall must refuse BUDGET_EXHAUSTED with zero
+    // invocations (charge-before-inspect, descriptor-safe reads).
+    const host = syntheticHost();
+    const regs = [];
+    for (let i = 0; i < 64; i += 1) regs.push({ repo: "onyxgolden/marketplace409", path: "scripts/team-brain/README.md" });
+    let invocations = 0;
+    const hostile = { path: "scripts/team-brain/README.md" };
+    Object.defineProperty(hostile, "repo", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        invocations += 1;
+        return "onyxgolden/marketplace409";
+      },
+    });
+    regs.push(hostile);
+    host.sourceRegistrations = regs;
+    const r = recall(createFakeStore(), host, { taskId: "eng-task-001" });
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.BUDGET_EXHAUSTED });
+    expect(r.results).toBeUndefined();
+    expect(invocations).toBe(0);
+  });
+
+  it("capture host validation refuses (not throws) on a hostile 64th registration", () => {
+    // EMEM-001 verdict probe: an accessor on array index 63 must never be
+    // invoked — the charge that would exceed the budget fires first — and
+    // the BUDGET_EXHAUSTED surfaces as a bounded REFUSED envelope.
+    const host = syntheticHost();
+    const regs = [];
+    for (let i = 0; i < 63; i += 1) regs.push({ repo: "onyxgolden/marketplace409", path: "scripts/team-brain/README.md" });
+    let invocations = 0;
+    const hostile = { path: "scripts/team-brain/README.md" };
+    Object.defineProperty(hostile, "repo", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        invocations += 1;
+        return "onyxgolden/marketplace409";
+      },
+    });
+    regs.push(hostile);
+    regs.push({ repo: "onyxgolden/marketplace409", path: "scripts/team-brain/README.md" });
+    host.sourceRegistrations = regs;
+    const r = captureEvent(createFakeStore(), host, validInput(), CALLER_MUSE);
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.BUDGET_EXHAUSTED });
+    expect(invocations).toBe(0);
+  });
+
+  it("nested authority collections are charged per candidate", () => {
+    // EMEM-001: a 65-element hostile actions array dies on the charge.
+    const host = syntheticHost();
+    const actions = [];
+    for (let i = 0; i < 64; i += 1) actions.push("CAPTURE");
+    let invocations = 0;
+    Object.defineProperty(actions, "64", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        invocations += 1;
+        return "CAPTURE";
+      },
+    });
+    host.authorityRegistrations = [
+      {
+        authorityRef: "auth:jason:eng-memory:1",
+        principal: "principal:muse",
+        actor: "Muse",
+        actions,
+        tasks: "any",
+        sources: "any",
+      },
+    ];
+    const r = captureEvent(createFakeStore(), host, validInput(), CALLER_MUSE);
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.BUDGET_EXHAUSTED });
+    expect(invocations).toBe(0);
+  });
+
+  it("child-process-contained synchronous hang probe returns WATCHDOG_EXHAUSTED", async () => {
+    // EMEM-001: the hang probe runs in a child process so a regression
+    // here could never hang the suite itself.
+    const { execFile } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const out = await new Promise((resolve, reject) => {
+      execFile("node", [join(here, "hangProbe.child.mjs")], { timeout: 25000 }, (err, stdout, stderr) =>
+        err ? reject(new Error(`hang probe failed: ${stderr || err.message}`)) : resolve(stdout),
+      );
+    });
+    expect(out).toMatch(/HANG_PROBE_PASS/);
+  }, 30000);
 });
 
 describe("EMEM-002: caller binding and authority registrations", () => {
@@ -780,9 +878,9 @@ describe("EMEM-002: caller binding and authority registrations", () => {
 
   it("fabricated pin against a pin-bound registration is refused", () => {
     const host = syntheticHost();
-    host.sourceRegistrations = [
-      { repo: "onyxgolden/marketplace409", path: "scripts/team-brain/README.md", pinId: "a".repeat(40) },
-    ];
+    host.registeredSourceIds = new Set([
+      sourceIdentityString("onyxgolden/marketplace409", "scripts/team-brain/README.md", "git-blob-sha1", "a".repeat(40)),
+    ]);
     const store = createFakeStore();
     const r = captureEvent(
       store,
@@ -791,6 +889,31 @@ describe("EMEM-002: caller binding and authority registrations", () => {
       CALLER_MUSE,
     );
     expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.SOURCE_PIN_MISMATCH });
+    expect(store.episodeCount()).toBe(0);
+  });
+
+  it("random syntactically valid pin without a host identity is refused", () => {
+    // EMEM-002: the synthetic host registers only repo/path pairs plus an
+    // explicit pin-identity set. A random valid pin the host never vouched
+    // for is caller-invented integrity metadata and fails closed.
+    const host = syntheticHost();
+    const store = createFakeStore();
+    const r = captureEvent(
+      store,
+      host,
+      validInput({
+        source: { ...validInput().source, pin: { algo: "git-blob-sha1", id: "f".repeat(40).replace(/f/g, "e") } },
+      }),
+      CALLER_MUSE,
+    );
+    expect(r).toMatchObject({ result: "REFUSED", code: ENG_CODES.SOURCE_PIN_MISMATCH });
+    expect(store.episodeCount()).toBe(0);
+  });
+
+  it("host without registered pin identities fails closed", () => {
+    const host = syntheticHost();
+    delete host.registeredSourceIds;
+    expect(() => assertHostConfig(host)).toThrowError(/registeredSourceIds/);
   });
 
   it("wrong commit against a commit-bound registration is refused", () => {
@@ -811,14 +934,11 @@ describe("EMEM-002: caller binding and authority registrations", () => {
   it("correct commit+pin against a bound registration captures", () => {
     const host = syntheticHost();
     host.sourceRegistrations = [
-      {
-        repo: "onyxgolden/marketplace409",
-        path: "scripts/team-brain/README.md",
-        commit: "c".repeat(40),
-        pinAlgo: "git-blob-sha1",
-        pinId: "d".repeat(40),
-      },
+      { repo: "onyxgolden/marketplace409", path: "scripts/team-brain/README.md", commit: "c".repeat(40) },
     ];
+    host.registeredSourceIds = new Set([
+      sourceIdentityString("onyxgolden/marketplace409", "scripts/team-brain/README.md", "git-blob-sha1", "d".repeat(40)),
+    ]);
     const store = createFakeStore();
     const r = captureEvent(
       store,
@@ -834,6 +954,24 @@ describe("EMEM-002: caller binding and authority registrations", () => {
       CALLER_MUSE,
     );
     expect(r).toMatchObject({ result: "CAPTURED", code: ENG_CODES.EPISODE_CAPTURED });
+  });
+
+  it("replaced pin identity suppresses already-captured episodes at recall", () => {
+    // EMEM-002: capture under pin A, then the host replaces the registered
+    // pin identity with pin B. Recall must not keep serving the disallowed
+    // pin-A episode.
+    const host = syntheticHost();
+    const store = createFakeStore();
+    const r1 = captureEvent(store, host, validInput(), CALLER_MUSE);
+    expect(r1.result).toBe("CAPTURED");
+    host.registeredSourceIds = new Set([
+      sourceIdentityString("onyxgolden/marketplace409", "scripts/team-brain/README.md", "git-blob-sha1", "b".repeat(40)),
+    ]);
+    const r = recall(store, host, { taskId: "eng-task-001" });
+    expect(r.result).toBe("RECALLED");
+    expect(r.results).toEqual([]);
+    expect(r.suppressed).toBe(1);
+    expect(r.uncertainty).toBe("NO_MATCH");
   });
 
   it("expired authority registration is refused", () => {
@@ -1067,6 +1205,91 @@ describe("EMEM-004: replay identity vs content conflicts", () => {
     expect(retry.episodeId).toBe(conflict.episodeId);
     expect(store.episodeCount()).toBe(2);
   });
+
+  it("changed commit is a distinct revision identity, never a silent duplicate", () => {
+    // EMEM-004: the supplied source revision (commit) is part of the
+    // canonical identity. Changing only the commit captures a separate
+    // episode; recall preserves both commits.
+    const host = syntheticHost();
+    const store = createFakeStore();
+    const first = captureEvent(
+      store,
+      host,
+      validInput({ source: { ...validInput().source, commit: "1".repeat(40) } }),
+      CALLER_MUSE,
+    );
+    expect(first.result).toBe("CAPTURED");
+    const second = captureEvent(
+      store,
+      host,
+      validInput({
+        eventId: "evt-commit-2-synthetic",
+        source: { ...validInput().source, commit: "2".repeat(40) },
+      }),
+      CALLER_MUSE,
+    );
+    expect(second).toMatchObject({ result: "CAPTURED", code: ENG_CODES.EPISODE_CAPTURED });
+    expect(second.episodeId).not.toBe(first.episodeId);
+    expect(store.episodeCount()).toBe(2);
+    const r = recall(store, host, { taskId: "eng-task-001" });
+    expect(r.results).toHaveLength(2);
+    const commits = r.results.map((x) => x.source.commit).sort();
+    expect(commits).toEqual(["1".repeat(40), "2".repeat(40)]);
+  });
+
+  it("persisted OPEN/COMPLETE conflict survives recall with terminal status", () => {
+    // EMEM-004: capture OPEN, then the same identity/time as COMPLETE.
+    // Capture stores a CONFLICT with conflictsWith; recall must carry the
+    // persisted material conflict even though COMPLETE is terminal.
+    const host = syntheticHost();
+    const store = createFakeStore();
+    const first = captureEvent(store, host, validInput({ taskId: "eng-task-002" }), CALLER_MUSE);
+    expect(first.result).toBe("CAPTURED");
+    const conflict = captureEvent(
+      store,
+      host,
+      validInput({ eventId: "evt-oc-2-synthetic", taskId: "eng-task-002", status: "COMPLETE" }),
+      CALLER_MUSE,
+    );
+    expect(conflict).toMatchObject({ result: "CONFLICT", code: ENG_CODES.EPISODE_CONTENT_CONFLICT });
+    expect(conflict.conflictsWith).toBe(first.episodeId);
+    const r = recall(store, host, { taskId: "eng-task-002" });
+    expect(r.results).toHaveLength(2);
+    for (const ep of r.results) {
+      expect(ep.conflict).toBe(true);
+      expect(ep.conflictWith).toHaveLength(1);
+    }
+    const ids = r.results.map((x) => x.episodeId);
+    for (const ep of r.results) {
+      expect(ids).toContain(ep.conflictWith[0]);
+    }
+  });
+
+  it("ordinary chronological completion is not a conflict", () => {
+    // Distinct identities completing over time: no conflictsWith link, no
+    // status disagreement among nonterminal episodes -> no conflict flags.
+    const host = syntheticHost();
+    const store = createFakeStore();
+    captureEvent(store, host, validInput({ taskId: "eng-task-003" }), CALLER_MUSE);
+    captureEvent(
+      store,
+      host,
+      validInput({
+        eventId: "evt-occ-2-synthetic",
+        taskId: "eng-task-003",
+        status: "COMPLETE",
+        kind: "COMPLETED",
+        eventAt: "2026-10-16T11:00:00Z",
+      }),
+      CALLER_MUSE,
+    );
+    const r = recall(store, host, { taskId: "eng-task-003" });
+    expect(r.results).toHaveLength(2);
+    for (const ep of r.results) {
+      expect(ep.conflict).toBe(false);
+      expect(ep.conflictWith).toEqual([]);
+    }
+  });
 });
 
 describe("EMEM-005: detached store boundaries", () => {
@@ -1170,17 +1393,18 @@ describe("EMEM-006: epoch-ms timestamps and uncertainty", () => {
     const host = syntheticHost();
     const store = createFakeStore();
     for (let i = 1; i <= 25; i += 1) {
+      const totalMinutes = i - 1;
       const r = captureEvent(
         store,
         host,
         validInput({
           eventId: `evt-trunc-${i}-synthetic`,
-          taskId: `eng-task-${String(i).padStart(3, "0")}`,
-          eventAt: `2026-10-${String(1 + (i % 15)).padStart(2, "0")}T08:00:00Z`,
+          taskId: `eng-task-${String(((i - 1) % 10) + 1).padStart(3, "0")}`,
+          eventAt: `2026-10-01T${String(Math.floor(totalMinutes / 60)).padStart(2, "0")}:${String(totalMinutes % 60).padStart(2, "0")}:00Z`,
           source: {
             repo: "onyxgolden/marketplace409",
             path: "scripts/team-brain/README.md",
-            pin: { algo: "git-blob-sha1", id: createHash("sha256").update(`trunc${i}`, "utf8").digest("hex").slice(0, 40) },
+            pin: { algo: "git-blob-sha1", id: "f".repeat(40) },
           },
         }),
         CALLER_MUSE,
@@ -1324,7 +1548,7 @@ describe("EMEM-007: retention reviews on denial/revocation", () => {
         host,
         validInput({
           eventId: "evt-deny-hist-synthetic",
-          source: { ...validInput().source, pin: { algo: "git-blob-sha1", id: "c".repeat(40) } },
+          source: { ...validInput().source, pin: { algo: "git-blob-sha1", id: "b".repeat(40) } },
         }),
         CALLER_MUSE,
       ).result,

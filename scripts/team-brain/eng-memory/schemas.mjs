@@ -10,12 +10,14 @@
 //
 // Identity-bearing fields are REGISTRY-BOUND, not free text: taskId must
 // be a host-registered engineering task, source must match a host source
-// registration (exact repo/path tuple, optional commit and pin binding),
-// principal must be host-registered, and the attribution's
-// (authorityRef, principal, actor) triple must match a bounded host
-// authority registration tying the principal/actor to permitted actions,
-// task/source scope, and a validity window. Retention reasons are
-// normalized safe codes, never arbitrary text.
+// registration (exact repo/path tuple, optional commit binding) AND a
+// host-registered complete source identity (repo/path/pin algorithm/pin
+// identity — a syntactically valid but unregistered pin is caller-invented
+// integrity metadata and fails closed), principal must be host-registered,
+// and the attribution's (authorityRef, principal, actor) triple must match
+// a bounded host authority registration tying the principal/actor to
+// permitted actions, task/source scope, and a validity window. Retention
+// reasons are normalized safe codes, never arbitrary text.
 //
 // Diagnostics carry reason codes and safe IDs only — never rejected values.
 
@@ -34,6 +36,70 @@ export const PIN_ALGOS = {
 const COMMIT_SHA_RE = /^[0-9a-f]{40}$/;
 const REASON_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const EVENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+// Registered source identity format: repo, path, pin algorithm, pin
+// identity, joined by NUL (NUL cannot appear in any validated component).
+const SOURCE_IDENTITY_PARTS = 4;
+
+/**
+ * Canonical string for a complete registered source identity: the exact
+ * (repo, path, pin algorithm, pin identity) tuple the host vouches for.
+ * The pin is part of the identity — authorization and recall permission
+ * require the event's/episode's full identity to be host-registered.
+ */
+export function sourceIdentityString(repo, path, pinAlgo, pinId) {
+  return `${repo}\u0000${path}\u0000${pinAlgo}\u0000${pinId}`;
+}
+
+/** Validate a registered source-identity string's shape (fail closed). */
+function assertSourceIdentityString(value, field) {
+  if (typeof value !== "string") {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `${field} must be a string`, { field });
+  }
+  const parts = value.split("\u0000");
+  if (parts.length !== SOURCE_IDENTITY_PARTS || parts.some((p) => p === "")) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `${field} must be repo\\0path\\0pinAlgo\\0pinId`, { field });
+  }
+  const [repo, path, pinAlgo, pinId] = parts;
+  assertIdString(repo, `${field}.repo`);
+  assertExactPath(path, `${field}.path`);
+  const re = PIN_ALGOS[pinAlgo];
+  if (!re) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Unknown pinAlgo in ${field}`, { field: `${field}.pinAlgo` });
+  }
+  if (!re.test(pinId)) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `pinId does not match pinAlgo in ${field}`, { field: `${field}.pinId` });
+  }
+  return value;
+}
+
+/**
+ * Descriptor-safe indexed read of a host array, charged BEFORE the read.
+ * Array index access via arr[i] would invoke a hostile accessor before any
+ * charge; reading through the own descriptor (after proving it is data)
+ * never invokes caller code. A throwing/counting getter at an over-budget
+ * index therefore dies on the charge with zero invocations.
+ */
+function readArrayIndexChecked(arr, i, where, budget) {
+  if (budget) budget.charge(1, `${where}[${i}]`);
+  const desc = Object.getOwnPropertyDescriptor(arr, String(i));
+  if (!desc) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Missing entry at ${where}[${i}]`, { field: where });
+  }
+  if (typeof desc.get === "function" || typeof desc.set === "function") {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Accessor entry refused at ${where}[${i}]`, { field: `${where}[${i}]` });
+  }
+  return desc.value;
+}
+
+/** Length of a host array, read without invoking accessors. */
+function arrayLengthChecked(arr, where) {
+  const desc = Object.getOwnPropertyDescriptor(arr, "length");
+  const len = desc && typeof desc.get !== "function" ? desc.value : arr.length;
+  if (!Number.isInteger(len) || len < 0) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Invalid array length at ${where}`, { field: where });
+  }
+  return len;
+}
 
 // Closed key schemas for descriptor-based admission.
 export const EVENT_KEY_SPECS = keySpecs({
@@ -179,27 +245,41 @@ function validateSourceRegistration(reg, i, budget) {
   if (!reg || typeof reg !== "object") {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `Source registration must be an object at ${where}`, { field: where });
   }
-  assertIdString(reg.repo, `${where}.repo`);
-  assertExactPath(reg.path, `${where}.path`);
-  if (reg.commit !== undefined) assertCommitSha(reg.commit, `${where}.commit`);
-  if (reg.pinAlgo !== undefined && !PIN_ALGOS[reg.pinAlgo]) {
-    fail(ENG_CODES.INVALID_HOST_CONFIG, `Unknown pinAlgo at ${where}`, { field: `${where}.pinAlgo` });
-  }
-  if (reg.pinId !== undefined) {
-    if (reg.pinAlgo !== undefined) {
-      if (typeof reg.pinId !== "string" || !PIN_ALGOS[reg.pinAlgo].test(reg.pinId)) {
-        fail(ENG_CODES.INVALID_HOST_CONFIG, `pinId does not match pinAlgo at ${where}`, {
-          field: `${where}.pinId`,
-        });
-      }
-    } else {
-      assertIdString(reg.pinId, `${where}.pinId`);
-    }
+  // Descriptor-safe field reads: the registration object itself was read
+  // as data, but its fields could still be accessors on a hostile host.
+  const repo = readDataField(reg, "repo", where);
+  const path = readDataField(reg, "path", where);
+  const commitRaw = readDataField(reg, "commit", where, true);
+  assertIdString(repo, `${where}.repo`);
+  assertExactPath(path, `${where}.path`);
+  if (commitRaw !== undefined) assertCommitSha(commitRaw, `${where}.commit`);
+  // Pin bindings are NOT optional fields here: every captured pin must
+  // match a complete identity in host.registeredSourceIds (fail closed).
+  // Keeping a partial pinAlgo/pinId here would silently widen capture.
+  if (readDataField(reg, "pinAlgo", where, true) !== undefined || readDataField(reg, "pinId", where, true) !== undefined) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Pin bindings belong in registeredSourceIds, not at ${where}`, {
+      field: where,
+    });
   }
   return reg;
 }
 
-function validateAuthorityRegistration(reg, i) {
+/** Read an own data field descriptor-safely (never invokes accessors). */
+function readDataField(obj, field, where, optional = false) {
+  const desc = Object.getOwnPropertyDescriptor(obj, field);
+  if (!desc) {
+    if (optional) return undefined;
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Missing field ${where}.${field}`, { field: `${where}.${field}` });
+  }
+  if (typeof desc.get === "function" || typeof desc.set === "function") {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `Accessor field refused at ${where}.${field}`, {
+      field: `${where}.${field}`,
+    });
+  }
+  return desc.value;
+}
+
+function validateAuthorityRegistration(reg, i, budget) {
   const where = `authorityRegistrations[${i}]`;
   if (!reg || typeof reg !== "object") {
     fail(ENG_CODES.INVALID_HOST_CONFIG, `Authority registration must be an object at ${where}`, { field: where });
@@ -207,26 +287,12 @@ function validateAuthorityRegistration(reg, i) {
   assertIdString(reg.authorityRef, `${where}.authorityRef`);
   assertIdString(reg.principal, `${where}.principal`);
   assertIdString(reg.actor, `${where}.actor`);
-  if (!Array.isArray(reg.actions) || reg.actions.length === 0 || !reg.actions.every((a) => typeof a === "string")) {
-    fail(ENG_CODES.INVALID_HOST_CONFIG, `actions must be a non-empty string array at ${where}`, {
-      field: `${where}.actions`,
-    });
-  }
-  const tasksOk = reg.tasks === "any" || (Array.isArray(reg.tasks) && reg.tasks.every((t) => typeof t === "string"));
-  if (!tasksOk) {
-    fail(ENG_CODES.INVALID_HOST_CONFIG, `tasks must be "any" or a string array at ${where}`, {
-      field: `${where}.tasks`,
-    });
-  }
-  const sourcesOk =
-    reg.sources === "any" ||
-    (Array.isArray(reg.sources) &&
-      reg.sources.every((s) => s && typeof s.repo === "string" && typeof s.path === "string"));
-  if (!sourcesOk) {
-    fail(ENG_CODES.INVALID_HOST_CONFIG, `sources must be "any" or a {repo,path} array at ${where}`, {
-      field: `${where}.sources`,
-    });
-  }
+  // Nested collections are consulted per candidate (charge-before-inspect,
+  // descriptor-safe): a hostile 65-element actions array dies on the
+  // charge with zero accessor invocations, exactly like top-level arrays.
+  assertStringArray(reg.actions, `${where}.actions`, budget, false);
+  if (reg.tasks !== "any") assertStringArray(reg.tasks, `${where}.tasks`, budget, true);
+  if (reg.sources !== "any") assertSourceArray(reg.sources, `${where}.sources`, budget);
   for (const f of ["notBeforeMs", "notAfterMs"]) {
     if (reg[f] !== undefined && !Number.isFinite(reg[f])) {
       fail(ENG_CODES.INVALID_HOST_CONFIG, `${f} must be a finite epoch-ms number at ${where}`, { field: `${where}.${f}` });
@@ -238,18 +304,68 @@ function validateAuthorityRegistration(reg, i) {
   return reg;
 }
 
+/** Validate a nested string array with per-element charge-before-inspect. */
+function assertStringArray(value, where, budget, allowEmpty) {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0)) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `${where} must be a ${allowEmpty ? "" : "non-empty "}string array`, {
+      field: where,
+    });
+  }
+  const len = arrayLengthChecked(value, where);
+  for (let i = 0; i < len; i += 1) {
+    const el = readArrayIndexChecked(value, i, where, budget);
+    if (typeof el !== "string" || (!allowEmpty && el === "")) {
+      fail(ENG_CODES.INVALID_HOST_CONFIG, `${where}[${i}] must be a string`, { field: `${where}[${i}]` });
+    }
+  }
+  return value;
+}
+
+/** Validate a nested {repo,path} array with per-element charge-before-inspect. */
+function assertSourceArray(value, where, budget) {
+  if (!Array.isArray(value)) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `${where} must be "any" or a {repo,path} array`, { field: where });
+  }
+  const len = arrayLengthChecked(value, where);
+  for (let i = 0; i < len; i += 1) {
+    const el = readArrayIndexChecked(value, i, where, budget);
+    const elWhere = `${where}[${i}]`;
+    if (!el || typeof el !== "object") {
+      fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere} must be a {repo,path} object`, { field: elWhere });
+    }
+    for (const f of ["repo", "path"]) {
+      const desc = Object.getOwnPropertyDescriptor(el, f);
+      if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
+        fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere}.${f} must be data`, { field: `${elWhere}.${f}` });
+      }
+      if (typeof desc.value !== "string") {
+        fail(ENG_CODES.INVALID_HOST_CONFIG, `${elWhere} must be a {repo,path} object`, { field: elWhere });
+      }
+    }
+  }
+  return value;
+}
+
 /**
  * Validate the host configuration. The host is the trust root: approved
  * repos, approved engineering paths, registered principals, registered
  * authorities, registered engineering tasks, exact source registrations,
- * bounded authority registrations, denied sources, and prohibited value
- * canaries. Path allowlisting alone is insufficient — typed provenance
- * (attribution) is also required — but the allowlist itself must be exact:
- * wildcards and globs are rejected so a "broadened allowlist" mutation
- * cannot silently widen capture.
+ * registered complete source identities (repo/path/pin), bounded authority
+ * registrations, denied sources, and prohibited value canaries. Path
+ * allowlisting alone is insufficient - typed provenance (attribution) is
+ * also required - but the allowlist itself must be exact: wildcards and
+ * globs are rejected so a "broadened allowlist" mutation cannot silently
+ * widen capture.
  *
- * Registration collections are consulted under the given budget
- * (charge-before-inspect); pass no budget to skip charging.
+ * Consultation is bounded and descriptor-safe: every array index and every
+ * nested candidate is charged BEFORE it is read, and reads go through own
+ * data descriptors so a hostile accessor at an over-budget index dies on
+ * the charge with zero invocations (no forEach, whose internal element
+ * access precedes the callback's charge). Registered-task entries are
+ * charged per entry; other sets are charged per collection with a
+ * cardinality bound so the validation walk itself cannot run unbounded.
+ * Pass no budget to skip charging (tests only - entrypoints always pass
+ * the task-level config budget).
  */
 export function assertHostConfig(host, budget) {
   if (!host || typeof host !== "object") {
@@ -262,42 +378,71 @@ export function assertHostConfig(host, budget) {
   for (const p of host.approvedPaths) {
     assertExactPath(p, "approvedPaths");
   }
+  if (budget) budget.charge(4, "host.sets");
   // Registered engineering tasks: taskId is registry-bound, never free text.
-  // One charge for the set as a whole; entries are host-owned strings and
-  // lookups are O(1).
+  // Per-entry charging: each consulted task string is a candidate.
   assertNonEmptyStringSet(host.registeredTasks, "registeredTasks");
+  assertSetCardinality(host.registeredTasks, "registeredTasks");
   for (const t of host.registeredTasks) {
+    if (budget) budget.charge(1, "host.registeredTasks[]");
     if (typeof t !== "string" || t.trim() === "") {
       fail(ENG_CODES.INVALID_HOST_CONFIG, "registeredTasks must contain non-empty strings", {
         field: "registeredTasks",
       });
     }
   }
-  if (budget) budget.charge(1, "host.registeredTasks");
   // Exact source registrations: approved (repo,path) tuples with optional
-  // commit and pin bindings. A Cartesian product of independent repo/path
-  // sets is NOT accepted — only registered tuples.
-  if (!Array.isArray(host.sourceRegistrations) || host.sourceRegistrations.length === 0) {
+  // commit bindings. A Cartesian product of independent repo/path sets is
+  // NOT accepted - only registered tuples. Indexed reads are charged
+  // before the descriptor-safe read (see readArrayIndexChecked).
+  if (!Array.isArray(host.sourceRegistrations)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: sourceRegistrations", {
       field: "sourceRegistrations",
     });
   }
-  host.sourceRegistrations.forEach((reg, i) => {
-    if (budget) budget.charge(1, `host.sourceRegistrations[${i}]`);
-    validateSourceRegistration(reg, i, budget);
-  });
+  const srcLen = arrayLengthChecked(host.sourceRegistrations, "sourceRegistrations");
+  if (srcLen === 0) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: sourceRegistrations", {
+      field: "sourceRegistrations",
+    });
+  }
+  for (let i = 0; i < srcLen; i += 1) {
+    validateSourceRegistration(
+      readArrayIndexChecked(host.sourceRegistrations, i, "host.sourceRegistrations", budget),
+      i,
+      budget,
+    );
+  }
+  // Complete registered source identities (repo/path/pin algorithm/pin
+  // identity). The pin is part of the vouched identity: capture and recall
+  // both require the full identity to be registered. Missing or
+  // inconsistent bindings fail closed - there is no "any pin" fallback.
+  assertNonEmptyStringSet(host.registeredSourceIds, "registeredSourceIds");
+  assertSetCardinality(host.registeredSourceIds, "registeredSourceIds");
+  for (const sid of host.registeredSourceIds) {
+    assertSourceIdentityString(sid, "registeredSourceIds[]");
+  }
   // Bounded authority registrations: principal/actor bound to permitted
   // actions, task/source scope, validity window, and revocation state.
-  if (!Array.isArray(host.authorityRegistrations) || host.authorityRegistrations.length === 0) {
+  if (!Array.isArray(host.authorityRegistrations)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: authorityRegistrations", {
       field: "authorityRegistrations",
     });
   }
-  host.authorityRegistrations.forEach((reg, i) => {
-    if (budget) budget.charge(1, `host.authorityRegistrations[${i}]`);
-    validateAuthorityRegistration(reg, i);
-  });
-  if (host.deniedSources !== undefined && !(host.deniedSources instanceof Set)) {
+  const authLen = arrayLengthChecked(host.authorityRegistrations, "authorityRegistrations");
+  if (authLen === 0) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, "Host config needs a non-empty array: authorityRegistrations", {
+      field: "authorityRegistrations",
+    });
+  }
+  for (let i = 0; i < authLen; i += 1) {
+    validateAuthorityRegistration(
+      readArrayIndexChecked(host.authorityRegistrations, i, "host.authorityRegistrations", budget),
+      i,
+      budget,
+    );
+  }
+if (host.deniedSources !== undefined && !(host.deniedSources instanceof Set)) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "deniedSources must be a Set", { field: "deniedSources" });
   }
   if (host.revokedSources !== undefined && !(host.revokedSources instanceof Set)) {
@@ -307,6 +452,18 @@ export function assertHostConfig(host, budget) {
     fail(ENG_CODES.INVALID_HOST_CONFIG, "prohibitedValues must be an array", { field: "prohibitedValues" });
   }
   return host;
+}
+
+/**
+ * Cardinality bound for host sets: the validation walk over a set is
+ * linear, so an unbounded hostile set would be an unbounded consultation.
+ * Fail closed past the bound (generous: far above any legitimate host).
+ */
+const MAX_HOST_SET_ENTRIES = 1024;
+function assertSetCardinality(set, field) {
+  if (set.size > MAX_HOST_SET_ENTRIES) {
+    fail(ENG_CODES.INVALID_HOST_CONFIG, `${field} exceeds ${MAX_HOST_SET_ENTRIES} entries`, { field });
+  }
 }
 
 /**
@@ -493,23 +650,20 @@ export function authorizeEvent(ev, host, ctx = {}) {
   }
 
   // Exact source tuple: repo AND path must be registered TOGETHER, with
-  // optional commit/pin bindings. Independent repo/path sets never combine.
+  // an optional commit binding. Independent repo/path sets never combine.
+  // The tuple scan re-consults already-validated registrations; one charge
+  // covers the scan (per-index charges were taken during host validation).
+  if (budget) budget.charge(1, "authorizeEvent.sourceTuple");
   let repoHit = false;
   let pairHit = false;
   let pairReg = null;
-  let fullMatch = null;
   for (const reg of host.sourceRegistrations) {
-    if (budget) budget.charge(1, "authorizeEvent.sourceRegistrations");
     if (reg.repo !== ev.source.repo) continue;
     repoHit = true;
     if (reg.path !== ev.source.path) continue;
     pairHit = true;
     if (!pairReg) pairReg = reg;
-    if (reg.commit !== undefined && ev.source.commit !== reg.commit) continue;
-    if (reg.pinAlgo !== undefined && ev.source.pin.algo !== reg.pinAlgo) continue;
-    if (reg.pinId !== undefined && ev.source.pin.id !== reg.pinId) continue;
-    fullMatch = reg;
-    break;
+    if (reg.commit === undefined || ev.source.commit === reg.commit) break;
   }
   if (!repoHit) {
     fail(ENG_CODES.UNAPPROVED_REPO, "Repository is not host-approved", { field: "$.source.repo" });
@@ -517,14 +671,19 @@ export function authorizeEvent(ev, host, ctx = {}) {
   if (!pairHit) {
     fail(ENG_CODES.UNAPPROVED_PATH, "Path is not host-approved for this repository", { field: "$.source.path" });
   }
-  if (!fullMatch) {
-    // The (repo,path) tuple is registered but a commit/pin binding failed.
-    if (pairReg.commit !== undefined && ev.source.commit !== pairReg.commit) {
-      fail(ENG_CODES.SOURCE_COMMIT_MISMATCH, "Source commit does not match the registered binding", {
-        field: "$.source.commit",
-      });
-    }
-    fail(ENG_CODES.SOURCE_PIN_MISMATCH, "Source pin does not match the registered binding", {
+  if (pairReg.commit !== undefined && ev.source.commit !== pairReg.commit) {
+    fail(ENG_CODES.SOURCE_COMMIT_MISMATCH, "Source commit does not match the registered binding", {
+      field: "$.source.commit",
+    });
+  }
+  // Complete source identity: the (repo, path, pin algorithm, pin identity)
+  // tuple must be host-registered. A syntactically valid pin the host never
+  // vouched for is caller-invented integrity metadata and fails closed -
+  // there is no "any pin" fallback.
+  if (budget) budget.charge(1, "authorizeEvent.sourceIdentity");
+  const sid = sourceIdentityString(ev.source.repo, ev.source.path, ev.source.pin.algo, ev.source.pin.id);
+  if (!host.registeredSourceIds.has(sid)) {
+    fail(ENG_CODES.SOURCE_PIN_MISMATCH, "Source pin identity is not host-registered", {
       field: "$.source.pin",
     });
   }
