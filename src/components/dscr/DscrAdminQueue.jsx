@@ -9,10 +9,13 @@ const btnRed = btn + " bg-red-700 hover:bg-red-600";
 const btnGray = btn + " bg-gray-700 hover:bg-gray-600";
 const btnAmber = btn + " bg-amber-600 hover:bg-amber-500";
 
-function ActionButtons({ lenderId, status, versionId, onDone }) {
+function ActionButtons({ lenderId, status, versionId, requestType, onDone }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  // DSCR-R1-002: a removal request is a different operation than a term edit —
+  // approving it soft-removes the listing WITHOUT applying the payload.
+  const isRemoval = requestType === "removal_request";
 
   async function act(action) {
     setBusy(true);
@@ -58,10 +61,10 @@ function ActionButtons({ lenderId, status, versionId, onDone }) {
         {versionId && (
           <>
             <button disabled={busy} onClick={() => act("approve_version")} className={btnGreen}>
-              Approve version
+              {isRemoval ? "Approve removal" : "Approve version"}
             </button>
             <button disabled={busy} onClick={() => act("reject_version")} className={btnRed}>
-              Reject version
+              {isRemoval ? "Reject removal" : "Reject version"}
             </button>
           </>
         )}
@@ -184,11 +187,20 @@ export default function DscrAdminQueue({ initialQueue }) {
                   {new Date(v.created_at).toLocaleString()}
                 </span>
               </p>
-              <PayloadView payload={v.payload} />
+              {v.request_type === "removal_request" ? (
+                <p className="mt-2 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2" role="alert">
+                  REMOVAL REQUEST — the provider asked to be removed from the
+                  directory. Approving unpublishes this listing WITHOUT
+                  changing its terms. Rejecting leaves it live.
+                </p>
+              ) : (
+                <PayloadView payload={v.payload} />
+              )}
               <ActionButtons
                 lenderId={v.lender_id}
                 status="published"
                 versionId={v.id}
+                requestType={v.request_type}
                 onDone={refresh}
               />
             </div>

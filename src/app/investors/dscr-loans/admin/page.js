@@ -40,7 +40,7 @@ export default async function DscrAdminPage() {
           svc
             .from("dscr_lender_versions")
             .select(
-              "id, lender_id, version_number, payload, submitted_by, created_at, dscr_lenders(company_name)"
+              "id, lender_id, version_number, request_type, payload, submitted_by, created_at, dscr_lenders(company_name)"
             )
             .eq("review_status", "pending")
             .order("created_at", { ascending: true }),

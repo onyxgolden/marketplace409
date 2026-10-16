@@ -72,6 +72,91 @@ export const MODERATION_TRANSITIONS = Object.freeze({
 
 export const MODERATION_ACTIONS = Object.freeze(Object.keys(MODERATION_TRANSITIONS));
 
+/** Staged-version request types (DSCR-R1-002). */
+export const VERSION_REQUEST_TYPES = Object.freeze({
+  term_edit: "term_edit",
+  removal_request: "removal_request",
+});
+
+/**
+ * Freshness-timestamp effects of each moderation transition (DSCR-R1-001).
+ *
+ * Authoritative semantics:
+ * - last_provider_confirmed_at: the provider last asserted their terms are
+ *   current. The public directory (filterListings) hides listings whose
+ *   provider confirmation is absent or older than STALENESS_THRESHOLD_DAYS.
+ * - last_directory_reviewed_at: the directory admin last reviewed the listing.
+ * - applies_terms_as_of: which payload supplies the live terms_as_of_date
+ *   ("payload" = the submission row, "version" = the staged version row).
+ *
+ * Transitions that put (or keep) a listing in front of the public must
+ * establish provider-confirmed freshness; otherwise the listing would be
+ * published yet invisible in the default directory view. This table mirrors
+ * the dscr_review_transition RPC's timestamp behavior.
+ */
+export const TRANSITION_FRESHNESS = Object.freeze({
+  approve_submission: Object.freeze({
+    provider_confirmed: true,
+    directory_reviewed: true,
+    applies_terms_as_of: "payload",
+  }),
+  approve_version: Object.freeze({
+    provider_confirmed: true,
+    directory_reviewed: true,
+    applies_terms_as_of: "version",
+  }),
+  publish: Object.freeze({
+    provider_confirmed: true,
+    directory_reviewed: true,
+    applies_terms_as_of: null,
+  }),
+  reconfirm: Object.freeze({
+    provider_confirmed: true,
+    directory_reviewed: true,
+    applies_terms_as_of: null,
+  }),
+  reject_submission: Object.freeze({
+    provider_confirmed: false,
+    directory_reviewed: false,
+    applies_terms_as_of: null,
+  }),
+  reject_version: Object.freeze({
+    provider_confirmed: false,
+    directory_reviewed: false,
+    applies_terms_as_of: null,
+  }),
+  unpublish: Object.freeze({
+    provider_confirmed: false,
+    directory_reviewed: false,
+    applies_terms_as_of: null,
+  }),
+  remove: Object.freeze({
+    provider_confirmed: false,
+    directory_reviewed: false,
+    applies_terms_as_of: null,
+  }),
+});
+
+/**
+ * Simulate the freshness-timestamp effects of a moderation transition on a
+ * listing object, per TRANSITION_FRESHNESS. Mirrors the dscr_review_transition
+ * RPC for transition-to-public-query tests (DSCR-R1-001).
+ * @param {object} listing
+ * @param {string} action
+ * @param {Date} [now]
+ * @returns {object} a new listing object with the transition's timestamps applied
+ */
+export function applyTransitionFreshness(listing, action, now = new Date()) {
+  const fx = TRANSITION_FRESHNESS[action];
+  const next = { ...listing };
+  if (!fx) return next;
+  if (fx.provider_confirmed)
+    next.last_provider_confirmed_at = now.toISOString();
+  if (fx.directory_reviewed)
+    next.last_directory_reviewed_at = now.toISOString();
+  return next;
+}
+
 /**
  * Whether an admin action is allowed from a given listing status.
  * Version approve/reject act on the staged version row, so any listing

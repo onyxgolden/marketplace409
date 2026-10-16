@@ -42,7 +42,7 @@ export async function GET() {
       .order("created_at", { ascending: true }),
     svc
       .from("dscr_lender_versions")
-      .select("id, lender_id, version_number, payload, submitted_by, created_at, dscr_lenders(company_name)")
+      .select("id, lender_id, version_number, request_type, payload, submitted_by, created_at, dscr_lenders(company_name)")
       .eq("review_status", "pending")
       .order("created_at", { ascending: true }),
     svc
