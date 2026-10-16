@@ -169,11 +169,21 @@ export function project(result) {
 function contextFor(c) {
   // M640-007: the harness is the host. It injects the synthetic
   // registered source-membership table from the fixture store's own
-  // source_refs (the host's separate registration record).
+  // source_refs (the host's separate registration record). The registry
+  // carries the COMPLETE source identity tuple
+  // (repo,path,commit,blob,algorithm,revision) — never a subset.
   const source_registry = {};
   for (const [fid, entry] of Object.entries(c.fixture.fixtures || {})) {
     if (entry?.source_ref) {
-      source_registry[fid] = { path: entry.source_ref.path, blob: entry.source_ref.blob };
+      const sr = entry.source_ref;
+      source_registry[fid] = {
+        repo: sr.repo,
+        path: sr.path,
+        commit: sr.commit,
+        blob: sr.blob,
+        algorithm: sr.algorithm,
+        revision: sr.revision,
+      };
     }
   }
   return {

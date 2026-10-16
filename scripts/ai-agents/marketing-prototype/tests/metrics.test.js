@@ -77,7 +77,7 @@ function runCase({ campaigns, events = [], bindings = [], claims = [], complete 
     grants: Object.keys(fixtures),
     fixtures,
     source_registry: Object.fromEntries(
-      Object.entries(fixtures).map(([fid, e]) => [fid, { path: e.source_ref.path, blob: e.source_ref.blob }])
+      Object.entries(fixtures).map(([fid, e]) => [fid, { ...e.source_ref }])
     ),
   };
   return run(task, context);

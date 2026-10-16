@@ -53,20 +53,28 @@ export function resolveFixtures(task, context, sx) {
         `fixture ${JSON.stringify(ref.fixture_id)}: recomputed git blob ${recomputed} != pinned ${entry.source_ref.blob}`
       );
     }
-    // M640-007: source membership — the exact (fixture_id, path, blob)
-    // tuple must be in the host-registered membership table. Byte
-    // integrity (hash match) does NOT establish source identity. Fail
-    // closed on a mismatched tuple: no verified citations from an
-    // unregistered source.
+    // M640-007: source membership — the COMPLETE registered source
+    // identity (repo, path, commit, blob, algorithm, revision) must match
+    // the host-registered tuple for this fixture_id. Byte integrity (hash
+    // match) and a correct path do NOT establish the repository tree or
+    // commit in which those bytes were registered. Fail closed on ANY
+    // field mismatch: no verified citations from an unregistered source.
+    // The registry is host-injected separately — never rebuilt by
+    // candidate code from the entry being authenticated.
     const registered = sx.sourceRegistry?.get(ref.fixture_id);
+    const sr = entry.source_ref;
     if (
       !registered ||
-      registered.path !== entry.source_ref.path ||
-      registered.blob !== entry.source_ref.blob
+      registered.repo !== sr.repo ||
+      registered.path !== sr.path ||
+      registered.commit !== sr.commit ||
+      registered.blob !== sr.blob ||
+      registered.algorithm !== sr.algorithm ||
+      registered.revision !== sr.revision
     ) {
       throw sx.refused(
         "SOURCE_NOT_REGISTERED",
-        `fixture ${JSON.stringify(ref.fixture_id)}: source (path, blob) not in host-registered membership table; fail closed, no verified citations`
+        `fixture ${JSON.stringify(ref.fixture_id)}: source identity (repo,path,commit,blob,algorithm,revision) not in host-registered membership table; fail closed, no verified citations`
       );
     }
     let split;

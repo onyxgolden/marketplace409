@@ -39,7 +39,7 @@ function fx(fixture_id, kind, rows) {
 
 function registryFor(fixtures) {
   return Object.fromEntries(
-    Object.entries(fixtures).map(([fid, e]) => [fid, { path: e.source_ref.path, blob: e.source_ref.blob }])
+    Object.entries(fixtures).map(([fid, e]) => [fid, { ...e.source_ref }])
   );
 }
 
@@ -160,11 +160,11 @@ describe("M640-007: source membership", () => {
       relays: [],
       grants: Object.keys(fixtures),
       fixtures,
-      // Host registry has the ORIGINAL (path, blob) — tampered tuple not a member.
+      // Host registry has the ORIGINAL full identity tuple — tampered tuple not a member.
       source_registry: {
-        "taxonomy-v1": { path: "m/taxonomy-v1.json", blob: fixtures["taxonomy-v1"].source_ref.blob },
-        "campaigns-01": { path: "m/campaigns-01.json", blob: orig.source_ref.blob },
-        "complete-01": { path: "m/complete-01.json", blob: fixtures["complete-01"].source_ref.blob },
+        "taxonomy-v1": { ...fixtures["taxonomy-v1"].source_ref },
+        "campaigns-01": { ...orig.source_ref },
+        "complete-01": { ...fixtures["complete-01"].source_ref },
       },
     };
     const result = run(task, context);

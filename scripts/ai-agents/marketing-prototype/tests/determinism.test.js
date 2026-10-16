@@ -56,7 +56,7 @@ function contextFor(c) {
   const source_registry = {};
   for (const [fid, entry] of Object.entries(c.fixture.fixtures || {})) {
     if (entry?.source_ref) {
-      source_registry[fid] = { path: entry.source_ref.path, blob: entry.source_ref.blob };
+      source_registry[fid] = { ...entry.source_ref };
     }
   }
   return {
@@ -107,8 +107,9 @@ describe("determinism", () => {
 
   it("permutations of independent row declarations yield the same report", () => {
     const battery = JSON.parse(readFileSync(join(ROOT, "corpus", "battery.json"), "utf8"));
-    // nom-01: shuffle the events fixture row order; the report must not move.
-    const c = battery.find((x) => x.case_id === "nom-01");
+    // nom-04: shuffle the events fixture row order; the report must not move.
+    // (nom-01 now correctly refuses under per-candidate budget charging.)
+    const c = battery.find((x) => x.case_id === "nom-04");
     const base = harness.project(run(c.task, contextFor(c)));
     for (let s = 1; s <= 3; s++) {
       const fixtures2 = JSON.parse(JSON.stringify(c.fixture.fixtures));
@@ -125,17 +126,18 @@ describe("determinism", () => {
       // M640-007: the host registry must reflect the re-pinned blob.
       ctx2.source_registry = {
         ...ctx2.source_registry,
-        "events-01": { path: entry.source_ref.path, blob: entry.source_ref.blob },
+        "events-01": { ...entry.source_ref },
       };
       const r2 = run(c.task, ctx2);
-      assert.equal(r2.status, "REPORT_READY", `nom-01 permutation ${s} did not stay REPORT_READY`);
-      assert.deepEqual(harness.project(r2), base, `nom-01 permutation ${s} changed the report`);
+      assert.equal(r2.status, "REPORT_READY", `nom-04 permutation ${s} did not stay REPORT_READY`);
+      assert.deepEqual(harness.project(r2), base, `nom-04 permutation ${s} changed the report`);
     }
   });
 
   it("caller mutation of a returned report cannot affect later runs (detached snapshots)", () => {
     const battery = JSON.parse(readFileSync(join(ROOT, "corpus", "battery.json"), "utf8"));
-    const c = battery.find((x) => x.case_id === "nom-01");
+    // nom-04 (nom-01 now correctly refuses under per-candidate budget charging).
+    const c = battery.find((x) => x.case_id === "nom-04");
     const ctx = contextFor(c);
     const before = canonicalJson(run(c.task, ctx));
     const r = run(c.task, ctx);

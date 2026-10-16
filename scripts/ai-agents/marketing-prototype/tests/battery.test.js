@@ -168,10 +168,17 @@ describe("acceptance (120/120 structural match)", () => {
     assert.deepEqual(byId("bud-01").structural.diag_codes, ["BUDGET_EXCEEDED"]);
     assert.deepEqual(byId("bud-03").structural.diag_codes, ["BUDGET_EXCEEDED"]);
     assert.deepEqual(byId("bud-05").structural.diag_codes, ["INPUT_LIMIT"]);
-    assert.equal(byId("bud-02").result.status, "REPORT_READY");
+    // M640-001 fix round 3: bud-02's 39 events + per-candidate registry/
+    // grant charging now correctly exceeds the 64-object budget.
+    assert.equal(byId("bud-02").result.status, "REFUSED");
+    assert.deepEqual(byId("bud-02").structural.diag_codes, ["BUDGET_EXCEEDED"]);
     // M640-001: bud-04's 400 nested evidence_spans are consulted objects;
     // the 64-object budget refuses before the span budget is reached.
     assert.equal(byId("bud-04").result.status, "REFUSED");
     assert.deepEqual(byId("bud-04").structural.diag_codes, ["BUDGET_EXCEEDED"]);
+    // M640-001 fix round 3: bud-06's 43 briefs + per-candidate charging
+    // now correctly exceeds the 64-object budget.
+    assert.equal(byId("bud-06").result.status, "REFUSED");
+    assert.deepEqual(byId("bud-06").structural.diag_codes, ["BUDGET_EXCEEDED"]);
   });
 });

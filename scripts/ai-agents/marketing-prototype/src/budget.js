@@ -422,3 +422,119 @@ export function measureCanonicalBytes(value) {
   const bytes = go(value, 0);
   return { bytes, nodes };
 }
+
+/**
+ * snapshotData(value) — descriptor-validated bounded data snapshot.
+ *
+ * Deep-copies plain data via Object.getOwnPropertyDescriptor exclusively.
+ * Any accessor property (getter/setter, no "value" in descriptor) on the
+ * traversed input throws StructuralError("ACCESSOR_REJECTED") WITHOUT
+ * invoking it. This is the "reject accessors on control data at admission
+ * without invoking them" path required by M640-001: the descriptor
+ * pre-scan (measureCanonicalBytes) deliberately skips accessors during
+ * measurement, but later canonicalJson()/validation would invoke them —
+ * an accessor value is not bounded by the measured input size. The
+ * snapshot runs at the public entry, after byte charging and before any
+ * canonicalization, validation, hashing, or property read; all downstream
+ * processing operates on the snapshot, so a getter can never fire.
+ *
+ * Array holes become null (matching JSON.stringify semantics). undefined,
+ * function, and symbol values are dropped from objects and become null in
+ * arrays (matching canonicalize). Depth > 32, cycles, and node counts
+ * above the pre-scan cap throw StructuralError.
+ *
+ * NOTE: this snapshots the control plane (task; context clock/principal/
+ * relays/grants/source_registry). context.fixtures is NOT snapshotted
+ * here — fixture store entries are third-party data governed by the
+ * resolver's charge-before-inspect path (grant check precedes any byte
+ * read), and a denied fixture's bytes getter must reach READ_DENIED
+ * rather than being rejected at snapshot time.
+ */
+export function snapshotData(value) {
+  const seen = new Set();
+  let nodes = 0;
+  function go(v, depth) {
+    if (++nodes > PRESCAN_NODE_CAP) {
+      throw new StructuralError("INVALID_INPUT", "input: snapshot node count exceeds pre-scan cap");
+    }
+    if (depth > BUDGET_LIMITS.maxDepth) {
+      throw new StructuralError("INPUT_TOO_DEEP", `input: snapshot nesting depth exceeds ${BUDGET_LIMITS.maxDepth}`);
+    }
+    if (v === null) return null;
+    const t = typeof v;
+    if (t === "string" || t === "number" || t === "boolean") return v;
+    if (t === "undefined" || t === "function" || t === "symbol" || t === "bigint") return undefined;
+    if (seen.has(v)) {
+      throw new StructuralError("INVALID_INPUT", "input: snapshot found cyclic structure");
+    }
+    seen.add(v);
+    let out;
+    if (Array.isArray(v)) {
+      out = [];
+      for (let i = 0; i < v.length; i++) {
+        const desc = Object.getOwnPropertyDescriptor(v, i);
+        if (!desc) {
+          out[i] = null; // hole -> null, like JSON.stringify
+          continue;
+        }
+        if (!("value" in desc)) {
+          throw new StructuralError("ACCESSOR_REJECTED", "input: accessor property rejected on control data (not invoked)");
+        }
+        const ev = go(desc.value, depth + 1);
+        out[i] = ev === undefined ? null : ev;
+      }
+    } else {
+      out = {};
+      for (const k of Object.getOwnPropertyNames(v)) {
+        const desc = Object.getOwnPropertyDescriptor(v, k);
+        if (!desc) continue;
+        if (!("value" in desc)) {
+          throw new StructuralError("ACCESSOR_REJECTED", "input: accessor property rejected on control data (not invoked)");
+        }
+        const ev = go(desc.value, depth + 1);
+        if (ev !== undefined) out[k] = ev;
+      }
+    }
+    seen.delete(v);
+    return out;
+  }
+  return go(value, 0);
+}
+
+/**
+ * snapshotContextControlPlane(context) — snapshot the host-injected
+ * control plane (clock, principal, relays, grants, source_registry)
+ * while leaving context.fixtures aliased for the resolver.
+ *
+ * Fixture store entries are intentionally NOT deep-copied here: they are
+ * third-party payload data governed by the resolver's charge-before-
+ * inspect sequence (scoped grant check precedes any byte read). A bytes
+ * getter on a denied fixture must reach the grant check and refuse
+ * READ_DENIED with zero byte reads — snapshotting it would either invoke
+ * the getter or reject it before the permission check runs.
+ *
+ * The returned object is a fresh plain object; `fixtures` is the original
+ * reference. Accessors anywhere in the control plane throw
+ * StructuralError("ACCESSOR_REJECTED") without invocation.
+ */
+export function snapshotContextControlPlane(context) {
+  if (context === null || typeof context !== "object" || Array.isArray(context)) {
+    throw new StructuralError("INVALID_INPUT", "context: must be an object");
+  }
+  const out = {};
+  for (const k of Object.getOwnPropertyNames(context)) {
+    if (k === "fixtures") continue;
+    const desc = Object.getOwnPropertyDescriptor(context, k);
+    if (!desc) continue;
+    if (!("value" in desc)) {
+      throw new StructuralError("ACCESSOR_REJECTED", "input: accessor property rejected on control data (not invoked)");
+    }
+    out[k] = snapshotData(desc.value);
+  }
+  // Fixtures stay aliased; the resolver meters each entry before reading.
+  const fdesc = Object.getOwnPropertyDescriptor(context, "fixtures");
+  if (fdesc && "value" in fdesc) {
+    out.fixtures = fdesc.value;
+  }
+  return out;
+}

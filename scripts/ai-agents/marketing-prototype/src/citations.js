@@ -23,6 +23,29 @@ export const VERIFIED = "VERIFIED";
 export const UNAVAILABLE = "UNAVAILABLE";
 
 /**
+ * copySourceRef(ref) — detached copy of a source identity object.
+ *
+ * M640-010: makeCitation previously returned `source_ref: sourceRef`
+ * directly, so mutating a returned citation's source_ref poisoned the
+ * host context (or a previous result). Every source_ref embedded in a
+ * citation, diagnostic, or quarantine record is now a detached copy:
+ * no mutation of a result object can reach trusted context, and no
+ * mutation of context after return can alter an already-returned result.
+ * Only own enumerable data-descriptor values are copied (post-snapshot
+ * inputs have no accessors); nested values are strings by schema.
+ */
+export function copySourceRef(ref) {
+  if (ref === null || ref === undefined) return null;
+  if (typeof ref !== "object") return null;
+  const out = {};
+  for (const k of Object.keys(ref)) {
+    const d = Object.getOwnPropertyDescriptor(ref, k);
+    if (d && "value" in d) out[k] = d.value;
+  }
+  return out;
+}
+
+/**
  * Construct a verified citation from retained fixture bytes.
  * Returns a Citation with verification VERIFIED. Throws if the byte
  * range is invalid.
@@ -40,7 +63,7 @@ export function makeCitation(bytes, startByte, endByte, sourceRef) {
     quoted_span: quoted,
     span: { start_byte: startByte, end_byte: endByte, quoted_text: quoted },
     verification: VERIFIED,
-    source_ref: sourceRef ?? null,
+    source_ref: copySourceRef(sourceRef),
   };
 }
 
@@ -55,7 +78,7 @@ export function unavailableCitation(reason, sourceRef) {
     span: null,
     verification: UNAVAILABLE,
     unavailable_reason: reason,
-    source_ref: sourceRef ?? null,
+    source_ref: copySourceRef(sourceRef),
   };
 }
 
@@ -70,4 +93,28 @@ export function verifySpan(bytes, startByte, endByte, quotedText) {
     return false;
   }
   return bytes.toString("utf8", startByte, endByte) === quotedText;
+}
+
+/**
+ * citeWrappedRow(w, sx) — build a verified citation for a resolver-wrapped
+ * row ({row, fixture_id, source_ref, byte_span}).
+ *
+ * M640-002: excluded/duplicate/invalid records must carry their actual row
+ * citations so derived counts reference the evidence they count. The span
+ * is charged (chargeSpan) because the byte range is actually checked by
+ * makeCitation. When bytes or spans are unavailable, returns an explicit
+ * UNAVAILABLE citation — never silent, never skipped.
+ */
+export function citeWrappedRow(w, sx) {
+  const bytes = sx?.fixtureBytes?.get(w?.fixture_id);
+  const span = w?.byte_span;
+  if (bytes && Array.isArray(span)) {
+    sx.budget.chargeSpan(1);
+    try {
+      return makeCitation(bytes, span[0], span[1], w.source_ref);
+    } catch {
+      return unavailableCitation("row bytes not verifiable", w.source_ref);
+    }
+  }
+  return unavailableCitation("row bytes not retained", w?.source_ref ?? null);
 }

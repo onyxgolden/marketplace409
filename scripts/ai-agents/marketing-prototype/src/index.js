@@ -18,13 +18,15 @@
  * and never an exception for malformed requests.
  */
 
-import { Budget, BudgetError, BUDGET_LIMITS, measureCanonicalBytes, StructuralError } from "./budget.js";
+import { Budget, BudgetError, BUDGET_LIMITS, measureCanonicalBytes, snapshotData, snapshotContextControlPlane, StructuralError } from "./budget.js";
 import { canonicalJson, sha256HexUtf8, utf8ByteLength } from "./canonical.js";
 import { resolveFixtures } from "./resolver.js";
+import { copySourceRef } from "./citations.js";
 import {
   validateTask,
   validatePrincipal,
   validateClock,
+  validateSourceRef,
   PROHIBITED_OPERATIONS,
   parseTimestamp,
 } from "./schemas.js";
@@ -168,21 +170,27 @@ function makeSession(task, context, budget) {
     },
     _usedFixtureIds: usedFixtureIds,
     diag(code, severity, sourceRef, recordId, reason) {
-      diagnostics.push({ code, severity, source_ref: sourceRef ?? null, record_id: recordId ?? null, reason });
+      // M640-010: detach the source identity — the diagnostic must not
+      // alias host input or a previous result.
+      diagnostics.push({ code, severity, source_ref: copySourceRef(sourceRef), record_id: recordId ?? null, reason });
     },
     quarantine(fixtureId, recordId, family, reason, sourceRef) {
       quarantinedFixtureIds.add(fixtureId);
-      quarantined.push({ fixture_id: fixtureId, record_id: recordId ?? null, family, reason, source_ref: sourceRef ?? null });
+      // M640-010: detach the source identity.
+      quarantined.push({ fixture_id: fixtureId, record_id: recordId ?? null, family, reason, source_ref: copySourceRef(sourceRef) });
     },
-    exclude(reason, count, kinds, campaignId) {
+    exclude(reason, count, kinds, campaignId, evidence) {
       const key = `${reason}\0${campaignId ?? ""}`;
       let e = exclusionMap.get(key);
       if (!e) {
-        e = { reason, count: 0, kinds: {}, campaign_id: campaignId ?? null };
+        e = { reason, count: 0, kinds: {}, campaign_id: campaignId ?? null, evidence: [] };
         exclusionMap.set(key, e);
       }
       e.count += count;
       for (const [k, v] of Object.entries(kinds ?? {})) e.kinds[k] = (e.kinds[k] ?? 0) + v;
+      // M640-002: each excluded record carries its identity and verified
+      // row citation so derived counts reference the evidence they count.
+      if (evidence !== undefined) e.evidence.push(evidence);
     },
     invalid(reason, sourceRef = null, recordId = null) {
       throw new InputSignal(reason, sourceRef, recordId);
@@ -273,7 +281,19 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
   }
   budget.chargeObject(1); // context.clock candidate
   budget.chargeObject(1); // context.principal candidate
-  budget.chargeObject(1); // context.grants list candidate (membership check)
+  if (!Array.isArray(context.grants)) {
+    throw new InputSignal("context.grants: must be an array of fixture id strings");
+  }
+  // M640-001: meter EACH grant candidate BEFORE reading its value. Grant
+  // entries are traversed by schema/membership checks; an uncharged grant
+  // list lets over-cap candidates bypass the 64-object consultation
+  // budget. The 65th charge refuses before that candidate is inspected.
+  for (const g of context.grants) {
+    budget.chargeObject(1);
+    if (typeof g !== "string") {
+      throw new InputSignal("context.grants: must be an array of fixture id strings");
+    }
+  }
   if (Array.isArray(context.relays)) {
     for (const r of context.relays) budget.chargeObject(1); // each relay candidate
   }
@@ -284,28 +304,41 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
   if (typeof context.fixtures !== "object" || context.fixtures === null || Array.isArray(context.fixtures)) {
     throw new InputSignal("context.fixtures: must be an object map");
   }
-  if (!Array.isArray(context.grants) || context.grants.some((g) => typeof g !== "string")) {
-    throw new InputSignal("context.grants: must be an array of fixture id strings");
-  }
   if (context.relays !== undefined && !Array.isArray(context.relays)) {
     throw new InputSignal("context.relays: must be an array");
   }
   // M640-007: host-injected source membership registry. The host (not the
-  // fixture store) declares which (fixture_id, path, blob) tuples are
-  // registered members. The resolver validates the exact tuple before
-  // declaring verified citations; fail closed on mismatch.
-  // Format: { [fixture_id]: { path: string, blob: 40-hex } }
+  // fixture store) declares the COMPLETE registered source identity per
+  // fixture: (repo, path, commit, blob, algorithm, revision). The resolver
+  // validates the exact tuple before declaring verified citations; fail
+  // closed on any mismatch. Blob integrity and correct path do NOT
+  // establish the repository tree/commit in which the bytes were
+  // registered.
+  // Format: { [fixture_id]: { repo, path, commit, blob, algorithm, revision } }
   const registry = context.source_registry;
   if (registry === null || typeof registry !== "object" || Array.isArray(registry)) {
     throw new InputSignal("context.source_registry: must be an object map (host-injected source membership table)");
   }
+  budget.chargeObject(1); // the registry map candidate, before key enumeration
   const sourceRegistry = new Map();
   for (const fid of Object.keys(registry)) {
+    // M640-001: meter EACH registry candidate BEFORE reading its fields.
+    // The 65th charge refuses before that candidate — or anything after
+    // it — is inspected.
+    budget.chargeObject(1);
     const e = registry[fid];
-    if (!e || typeof e.path !== "string" || typeof e.blob !== "string" || !/^[0-9a-f]{40}$/.test(e.blob)) {
-      throw new InputSignal(`context.source_registry[${JSON.stringify(fid)}]: must have path string and 40-hex blob`);
+    const vsr = validateSourceRef(e);
+    if (!vsr.ok) {
+      throw new InputSignal(`context.source_registry[${JSON.stringify(fid)}]: invalid source identity: ${vsr.errors.join("; ")}`);
     }
-    sourceRegistry.set(fid, { path: e.path, blob: e.blob });
+    sourceRegistry.set(fid, {
+      repo: e.repo,
+      path: e.path,
+      commit: e.commit,
+      blob: e.blob,
+      algorithm: e.algorithm,
+      revision: e.revision,
+    });
   }
 
   const sx = makeSession(task, context, budget);
@@ -571,9 +604,15 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
  * single value is read. Fixture payloads stay opaque (counted as strings)
  * until scoped grant admission in the resolver.
  *
- * The task_id is derived from canonicalJson(task) AFTER the pre-scan and
- * charging: the task envelope's bytes are fully accounted, and the task
- * is the caller's own input (not third-party fixture data).
+ * After charging, snapshotData()/snapshotContextControlPlane() build a
+ * descriptor-validated data snapshot: accessors on control data are
+ * rejected at admission without invocation, and every later stage
+ * (task_id derivation, validation, canonicalization) operates on the
+ * snapshot — never on the caller's live objects.
+ *
+ * The task_id is derived from canonicalJson(snapTask) AFTER the pre-scan,
+ * charging, and snapshot: the task envelope's bytes are fully accounted,
+ * and the task is the caller's own input (not third-party fixture data).
  */
 export function run(task, context) {
   const budget = new Budget();
@@ -598,9 +637,26 @@ export function run(task, context) {
     }
     throw e;
   }
-  const taskId = deriveTaskId(task);
+  // M640-001: descriptor-validated snapshot at the public entry, AFTER
+  // byte charging and BEFORE any canonicalization, validation, hashing,
+  // or property read. Accessors on control data are rejected here without
+  // invocation; all downstream processing operates on the snapshot, so a
+  // getter (e.g. on task.task_id) can never fire later. context.fixtures
+  // stays aliased for the resolver's charge-before-inspect path (a denied
+  // fixture's bytes getter must reach the grant check, not the snapshot).
+  let snapTask, snapContext;
   try {
-    return runInner(task, context, taskId, budget, taskBytes, contextBytes);
+    snapTask = snapshotData(task);
+    snapContext = snapshotContextControlPlane(context);
+  } catch (e) {
+    if (e instanceof StructuralError) {
+      return denialEnvelope("mkt-invalid-task", e.code, "error", `input snapshot refused: ${e.message}`, null, null);
+    }
+    return denialEnvelope("mkt-invalid-task", "INVALID_INPUT", "error", "task/context: not snapshottable", null, null);
+  }
+  const taskId = deriveTaskId(snapTask);
+  try {
+    return runInner(snapTask, snapContext, taskId, budget, taskBytes, contextBytes);
   } catch (e) {
     if (e instanceof RefusalSignal || e instanceof InputSignal || e instanceof BudgetError) {
       return denialEnvelope(taskId, e.code, e.severity ?? "error", e.message, e.sourceRef ?? null, e.recordId ?? null);

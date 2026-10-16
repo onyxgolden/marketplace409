@@ -1,5 +1,5 @@
 {
-  "corpus_digest": "f75ff86a65cd1f59f67b272d6db233a943662c241de8c506ab50918a3410fee5",
+  "corpus_digest": "533022c7941bec896f85e120d66abeda219ef441a6d099cb829e33df7f74e0ce",
   "files": [
     {
       "path": "README.md",
@@ -7,7 +7,7 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "daf998cf02a58e7d24faab0df6af82941f910097fc73cb3ef1c2ac3b0b0ffd8c"
+      "sha256": "d0693ff677c94ca1f5c1bc834e54a2cbe1474122b894e889cb7b2c1742f472cf"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -43,7 +43,7 @@
     },
     {
       "path": "src/budget.js",
-      "sha256": "ec91961992058048416f178cdbc62e6700b2c6aec677a0c6ad2620fc348ad153"
+      "sha256": "948ab7def5df0e97e363a256a88a5e3e4ac03194dab88cd1e5ef9709bb7d4881"
     },
     {
       "path": "src/canonical.js",
@@ -51,7 +51,7 @@
     },
     {
       "path": "src/citations.js",
-      "sha256": "eb31f5635eb5f17d90764131a054f464bec7be7700a3f7955c5533c2f6cb629b"
+      "sha256": "36dbe1d52c6c06fcf9845d2e0a08db1aa815f8803f77e0a175c2be4ce3ffe906"
     },
     {
       "path": "src/drafts.js",
@@ -59,7 +59,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "1cf5511dd8c2cfc94312201552b46e988562f60fe008322936a7eabf9d843403"
+      "sha256": "788bdbc001fda6ec713a5c1dff2339d2b4b779ae2eec220176a5dc3d1bda393f"
     },
     {
       "path": "src/injection.js",
@@ -71,7 +71,7 @@
     },
     {
       "path": "src/metrics.js",
-      "sha256": "9d14980a3fc073c599c962de5e97d11f2f79625d123903b98ed38a5315c7e4d9"
+      "sha256": "88a062a1696d1b72d3de91098668559cf6c9f2ec5d530db23a0e427498549b51"
     },
     {
       "path": "src/rational.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "a2b5fa9273050dca81128f51974af75a5523d06a1c1841a8957f89eb26f11ab4"
+      "sha256": "7e9748483a09a460c1f6a429a7d0a02ce0db67b3a1cbea22684ced0d0eaa8325"
     },
     {
       "path": "src/schemas.js",
@@ -87,11 +87,11 @@
     },
     {
       "path": "tests/battery.test.js",
-      "sha256": "a0bfcbe350a4867733e9eb3bf63d12bf36db7e676420aaf1dc529f86e540f015"
+      "sha256": "9fe9c3c7d24c83130aa16bd93edb7c7ddd0a77fcc8493b6fc2a14594679a430b"
     },
     {
       "path": "tests/budget.test.js",
-      "sha256": "2ae2812edf28d5cc26d6c1534b498fbd36edb53b5542a71f91ae6bbec6b05960"
+      "sha256": "6d5d271562e6d8db6ba6a7e75b7ca72f57d5458683d009d4bf2e3258012ef4b7"
     },
     {
       "path": "tests/case-worker.js",
@@ -99,15 +99,23 @@
     },
     {
       "path": "tests/determinism.test.js",
-      "sha256": "4fed4ddf6e870c357394f3de616abab7b816ad77966edec48fde359e14f504c4"
+      "sha256": "b294c58f535819cbd9bb9e0d29eac1b5fdad976b31d9db2b71ad4a0f2ab1f1e1"
     },
     {
       "path": "tests/drafts.test.js",
-      "sha256": "2a194f6ed59d032a254a24535f7e9b5618cb3bbba2350763da51a0df68ee29d2"
+      "sha256": "03b8c2ffd8a463024e1716bfc1bbb66a9984120dbd40519eb2e37da6afa40431"
+    },
+    {
+      "path": "tests/fixround2.test.js",
+      "sha256": "62648f623830f21c30bf02bfeea1c3bcefa1ebe5085766db26c566c9176823cc"
+    },
+    {
+      "path": "tests/fixround3.test.js",
+      "sha256": "31607efed4929b5eae0f0b9129f3b1fcff15960160a1eede162376a936633481"
     },
     {
       "path": "tests/harness.js",
-      "sha256": "d38e8e4fcb67ff3f01f798a606c3cc69b217151ce1bd11b41d69324d34fccc95"
+      "sha256": "f5c238d5a9b06693436c349c19e7ac0d4d1fa48b46f392cfb9ac75b5be26319c"
     },
     {
       "path": "tests/injection.test.js",
@@ -115,7 +123,7 @@
     },
     {
       "path": "tests/metrics.test.js",
-      "sha256": "07181983fd6048fb69efe2ef4cd625134850473c445c14b3405951a53b2a74b9"
+      "sha256": "c5267231d5ae26598880f9838f74b01cb45f184b23aee26a81808da5fb9e1f8b"
     },
     {
       "path": "tests/mutation.test.js",
@@ -148,10 +156,6 @@
     {
       "path": "tests/zerotools.test.js",
       "sha256": "3a4efc6650235c816176f494a9b38f8b4e28406b179d52abd54c4e196d703317"
-    },
-    {
-      "path": "tests/fixround2.test.js",
-      "sha256": "f5ad05d25f35e7e8d12ee1e239869a01af584c7114d9c635eccd16d52bf64180"
     }
   ]
 }

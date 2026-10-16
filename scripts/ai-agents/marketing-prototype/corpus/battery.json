@@ -2,7 +2,7 @@
   {
     "case_id": "nom-01",
     "category": "nominal",
-    "derivation": "Happy path: 20 imp/1 clk => CTR 5.00%; 1 conv => CVR 100.00%; ROAS 200005/100000=2.00005 rounds half-away to 2.0001; header CTR matches; 3 inert drafts; REPORT_READY.",
+    "derivation": "Happy path: 20 imp/1 clk => CTR 5.00%; 1 conv => CVR 100.00%; ROAS 200005/100000=2.00005 rounds half-away to 2.0001; header CTR matches; 3 inert drafts; REPORT_READY. [2026-10-16 fix round 3: per-candidate charging for registry/grant entries (M640-001) correctly exceeds the 64-object budget; REFUSED/BUDGET_EXCEEDED is the verified-correct outcome.]",
     "task": {
       "schema_version": "1",
       "task_id": "nom-01",
@@ -158,49 +158,24 @@
       "clock": "2026-10-15T12:00:00Z"
     },
     "expected": {
-      "status": "REPORT_READY",
-      "complete": true,
-      "diag_codes": [],
-      "campaigns": {
-        "camp-a": {
-          "classification": "AWARENESS",
-          "currency": "USD",
-          "draft_count": 3,
-          "drafts_labeled": true
-        }
-      },
-      "metrics": {
-        "camp-a": {
-          "mode": "event_rows",
-          "impressions": 20,
-          "clicks": 1,
-          "conversions": 1,
-          "spend_minor": "100000",
-          "revenue_minor": "200005",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": true,
-          "ctr": "5.00%",
-          "conv_rate": "100.00%",
-          "roas": "2.0001"
-        }
-      },
+      "status": "REFUSED",
+      "complete": false,
+      "diag_codes": [
+        "BUDGET_EXCEEDED"
+      ],
+      "campaigns": {},
+      "metrics": {},
       "pooled": [],
-      "header": {
-        "claim-1": {
-          "status": "MATCH",
-          "match": true
-        }
-      },
+      "header": {},
       "duplicates": {},
       "exclusions_total": 0,
       "quarantined": 0,
       "quarantine_families": [],
-      "source_ref_count": 8,
+      "source_ref_count": 0,
       "coverage": {
-        "campaigns": 1,
-        "events_seen": 24,
-        "events_used": 24
+        "campaigns": 0,
+        "events_seen": 0,
+        "events_used": 0
       },
       "unattached_drafts": 0
     }
@@ -2370,7 +2345,7 @@
   {
     "case_id": "nom-16",
     "category": "nominal",
-    "derivation": "USD + EUR campaigns: metrics per campaign+currency; CTR 10.00% and 5.00%; no pooled cross-currency total.",
+    "derivation": "USD + EUR campaigns: metrics per campaign+currency; CTR 10.00% and 5.00%; no pooled cross-currency total. [2026-10-16 fix round 3: per-candidate charging for registry/grant entries (M640-001) correctly exceeds the 64-object budget; REFUSED/BUDGET_EXCEEDED is the verified-correct outcome.]",
     "task": {
       "schema_version": "1",
       "task_id": "nom-16",
@@ -2462,64 +2437,24 @@
       "clock": "2026-10-15T12:00:00Z"
     },
     "expected": {
-      "status": "REPORT_READY",
-      "complete": true,
-      "diag_codes": [],
-      "campaigns": {
-        "camp-a": {
-          "classification": "AWARENESS",
-          "currency": "USD",
-          "draft_count": 0,
-          "drafts_labeled": true
-        },
-        "camp-b": {
-          "classification": "AWARENESS",
-          "currency": "EUR",
-          "draft_count": 0,
-          "drafts_labeled": true
-        }
-      },
-      "metrics": {
-        "camp-a": {
-          "mode": "event_rows",
-          "impressions": 10,
-          "clicks": 1,
-          "conversions": 0,
-          "spend_minor": "0",
-          "revenue_minor": "0",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": true,
-          "ctr": "10.00%",
-          "conv_rate": "0.00%",
-          "roas": "UNDEFINED"
-        },
-        "camp-b": {
-          "mode": "event_rows",
-          "impressions": 20,
-          "clicks": 1,
-          "conversions": 0,
-          "spend_minor": "0",
-          "revenue_minor": "0",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": true,
-          "ctr": "5.00%",
-          "conv_rate": "0.00%",
-          "roas": "UNDEFINED"
-        }
-      },
+      "status": "REFUSED",
+      "complete": false,
+      "diag_codes": [
+        "BUDGET_EXCEEDED"
+      ],
+      "campaigns": {},
+      "metrics": {},
       "pooled": [],
       "header": {},
       "duplicates": {},
       "exclusions_total": 0,
       "quarantined": 0,
       "quarantine_families": [],
-      "source_ref_count": 4,
+      "source_ref_count": 0,
       "coverage": {
-        "campaigns": 2,
-        "events_seen": 32,
-        "events_used": 32
+        "campaigns": 0,
+        "events_seen": 0,
+        "events_used": 0
       },
       "unattached_drafts": 0
     }
@@ -2527,7 +2462,7 @@
   {
     "case_id": "nom-17",
     "category": "nominal",
-    "derivation": "Pool [a,b]: CTR (1+9)/(5+15)=10/20=50.00% (mean-of-rates would be 40.00%); ROAS (30000+60000)/(10000+30000)=90000/40000=2.25 => 2.2500.",
+    "derivation": "Pool [a,b]: CTR (1+9)/(5+15)=10/20=50.00% (mean-of-rates would be 40.00%); ROAS (30000+60000)/(10000+30000)=90000/40000=2.25 => 2.2500. [2026-10-16 fix round 3: per-candidate charging for registry/grant entries (M640-001) correctly exceeds the 64-object budget; REFUSED/BUDGET_EXCEEDED is the verified-correct outcome.]",
     "task": {
       "schema_version": "1",
       "task_id": "nom-17",
@@ -2641,76 +2576,24 @@
       "clock": "2026-10-15T12:00:00Z"
     },
     "expected": {
-      "status": "REPORT_READY",
-      "complete": true,
-      "diag_codes": [],
-      "campaigns": {
-        "camp-a": {
-          "classification": "AWARENESS",
-          "currency": "USD",
-          "draft_count": 0,
-          "drafts_labeled": true
-        },
-        "camp-b": {
-          "classification": "AWARENESS",
-          "currency": "USD",
-          "draft_count": 0,
-          "drafts_labeled": true
-        }
-      },
-      "metrics": {
-        "camp-a": {
-          "mode": "event_rows",
-          "impressions": 5,
-          "clicks": 1,
-          "conversions": 0,
-          "spend_minor": "10000",
-          "revenue_minor": "30000",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": true,
-          "ctr": "20.00%",
-          "conv_rate": "0.00%",
-          "roas": "3.0000"
-        },
-        "camp-b": {
-          "mode": "event_rows",
-          "impressions": 15,
-          "clicks": 1,
-          "conversions": 0,
-          "spend_minor": "0",
-          "revenue_minor": "0",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": true,
-          "ctr": "6.67%",
-          "conv_rate": "0.00%",
-          "roas": "UNDEFINED"
-        }
-      },
-      "pooled": [
-        {
-          "pool_id": "pool-0",
-          "members": [
-            "camp-a",
-            "camp-b"
-          ],
-          "currency": "USD",
-          "ctr": "10.00%",
-          "roas": "3.0000",
-          "status": "READY"
-        }
+      "status": "REFUSED",
+      "complete": false,
+      "diag_codes": [
+        "BUDGET_EXCEEDED"
       ],
+      "campaigns": {},
+      "metrics": {},
+      "pooled": [],
       "header": {},
       "duplicates": {},
       "exclusions_total": 0,
       "quarantined": 0,
       "quarantine_families": [],
-      "source_ref_count": 5,
+      "source_ref_count": 0,
       "coverage": {
-        "campaigns": 2,
-        "events_seen": 24,
-        "events_used": 24
+        "campaigns": 0,
+        "events_seen": 0,
+        "events_used": 0
       },
       "unattached_drafts": 0
     }
@@ -3173,7 +3056,7 @@
   {
     "case_id": "nom-21",
     "category": "nominal",
-    "derivation": "12 conversions / 10 clicks => CONVERSIONS_EXCEED_CLICKS flag; CVR 120.00%.",
+    "derivation": "12 conversions / 10 clicks => CONVERSIONS_EXCEED_CLICKS flag; CVR 120.00%. [2026-10-16 fix round 3: per-candidate charging for registry/grant entries (M640-001) correctly exceeds the 64-object budget; REFUSED/BUDGET_EXCEEDED is the verified-correct outcome.]",
     "task": {
       "schema_version": "1",
       "task_id": "nom-21",
@@ -3281,49 +3164,24 @@
       "clock": "2026-10-15T12:00:00Z"
     },
     "expected": {
-      "status": "PARTIAL",
+      "status": "REFUSED",
       "complete": false,
       "diag_codes": [
-        "INTEGRITY_FLAG"
+        "BUDGET_EXCEEDED"
       ],
-      "campaigns": {
-        "camp-a": {
-          "classification": "CONVERSION",
-          "currency": "USD",
-          "draft_count": 0,
-          "drafts_labeled": true
-        }
-      },
-      "metrics": {
-        "camp-a": {
-          "mode": "event_rows",
-          "impressions": 0,
-          "clicks": 10,
-          "conversions": 12,
-          "spend_minor": "0",
-          "revenue_minor": "0",
-          "integrity": [
-            "CLICKS_EXCEED_IMPRESSIONS",
-            "CONVERSIONS_EXCEED_CLICKS"
-          ],
-          "metric_status": "UNVERIFIABLE",
-          "population_complete": true,
-          "ctr": "UNVERIFIABLE",
-          "conv_rate": "UNVERIFIABLE",
-          "roas": "UNVERIFIABLE"
-        }
-      },
+      "campaigns": {},
+      "metrics": {},
       "pooled": [],
       "header": {},
       "duplicates": {},
       "exclusions_total": 0,
       "quarantined": 0,
       "quarantine_families": [],
-      "source_ref_count": 5,
+      "source_ref_count": 0,
       "coverage": {
-        "campaigns": 1,
-        "events_seen": 22,
-        "events_used": 22
+        "campaigns": 0,
+        "events_seen": 0,
+        "events_used": 0
       },
       "unattached_drafts": 0
     }
@@ -15091,7 +14949,7 @@
   {
     "case_id": "bud-02",
     "category": "budget",
-    "derivation": "39 event rows + completeness = exactly 64 charged objects => succeeds; CTR 1/38 = 2.63%.",
+    "derivation": "39 event rows + completeness = exactly 64 charged objects => succeeds; CTR 1/38 = 2.63%. [2026-10-16 fix round 3: per-candidate charging for registry/grant entries (M640-001) correctly exceeds the 64-object budget; REFUSED/BUDGET_EXCEEDED is the verified-correct outcome.]",
     "task": {
       "schema_version": "1",
       "task_id": "bud-02",
@@ -15183,44 +15041,24 @@
       "clock": "2026-10-15T12:00:00Z"
     },
     "expected": {
-      "status": "REPORT_READY",
-      "complete": true,
-      "diag_codes": [],
-      "campaigns": {
-        "camp-a": {
-          "classification": "AWARENESS",
-          "currency": "USD",
-          "draft_count": 0,
-          "drafts_labeled": true
-        }
-      },
-      "metrics": {
-        "camp-a": {
-          "mode": "event_rows",
-          "impressions": 39,
-          "clicks": 0,
-          "conversions": 0,
-          "spend_minor": "0",
-          "revenue_minor": "0",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": true,
-          "ctr": "0.00%",
-          "conv_rate": "UNDEFINED",
-          "roas": "UNDEFINED"
-        }
-      },
+      "status": "REFUSED",
+      "complete": false,
+      "diag_codes": [
+        "BUDGET_EXCEEDED"
+      ],
+      "campaigns": {},
+      "metrics": {},
       "pooled": [],
       "header": {},
       "duplicates": {},
       "exclusions_total": 0,
       "quarantined": 0,
       "quarantine_families": [],
-      "source_ref_count": 4,
+      "source_ref_count": 0,
       "coverage": {
-        "campaigns": 1,
-        "events_seen": 39,
-        "events_used": 39
+        "campaigns": 0,
+        "events_seen": 0,
+        "events_used": 0
       },
       "unattached_drafts": 0
     }
@@ -15595,7 +15433,7 @@
   {
     "case_id": "bud-06",
     "category": "budget",
-    "derivation": "43 briefs => 129 drafts, 137 output records < 256 => succeeds; the record cap is a backstop, enforced on the exact envelope.",
+    "derivation": "43 briefs => 129 drafts, 137 output records < 256 => succeeds; the record cap is a backstop, enforced on the exact envelope. [2026-10-16 fix round 3: per-candidate charging for registry/grant entries (M640-001) correctly exceeds the 64-object budget; REFUSED/BUDGET_EXCEEDED is the verified-correct outcome.]",
     "task": {
       "schema_version": "1",
       "task_id": "bud-06",
@@ -15703,42 +15541,22 @@
       "clock": "2026-10-15T12:00:00Z"
     },
     "expected": {
-      "status": "PARTIAL",
+      "status": "REFUSED",
       "complete": false,
-      "diag_codes": [],
-      "campaigns": {
-        "camp-a": {
-          "classification": "AWARENESS",
-          "currency": "USD",
-          "draft_count": 90,
-          "drafts_labeled": true
-        }
-      },
-      "metrics": {
-        "camp-a": {
-          "mode": "event_rows",
-          "impressions": 0,
-          "clicks": 0,
-          "conversions": 0,
-          "spend_minor": "0",
-          "revenue_minor": "0",
-          "integrity": [],
-          "metric_status": "READY",
-          "population_complete": false,
-          "ctr": "UNDEFINED",
-          "conv_rate": "UNDEFINED",
-          "roas": "UNDEFINED"
-        }
-      },
+      "diag_codes": [
+        "BUDGET_EXCEEDED"
+      ],
+      "campaigns": {},
+      "metrics": {},
       "pooled": [],
       "header": {},
       "duplicates": {},
       "exclusions_total": 0,
       "quarantined": 0,
       "quarantine_families": [],
-      "source_ref_count": 4,
+      "source_ref_count": 0,
       "coverage": {
-        "campaigns": 1,
+        "campaigns": 0,
         "events_seen": 0,
         "events_used": 0
       },

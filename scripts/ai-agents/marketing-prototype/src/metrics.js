@@ -9,7 +9,7 @@ import { canonicalJson } from "./canonical.js";
 import { rat, ratEq, parseDecimal, formatPercent, formatRoas, exactString } from "./rational.js";
 import { parseTimestamp, CONVERSION_KINDS, MONEY_KINDS } from "./schemas.js";
 import { scanRow } from "./injection.js";
-import { makeCitation, unavailableCitation } from "./citations.js";
+import { makeCitation, unavailableCitation, citeWrappedRow } from "./citations.js";
 
 export const UNKNOWN_TAG = "UNKNOWN_TAG";
 
@@ -110,7 +110,12 @@ export function processEventRows(wrappedRows, sx) {
     if (prev !== undefined) {
       if (prev === canon) {
         sx.diag("DUPLICATE_EVENT_IGNORED", "info", w.source_ref, row.event_id, "identical event_id repeated; counted once");
-        sx.exclude("DUPLICATE_EVENT", 1, { [row.kind]: 1 }, row.campaign_id);
+        // M640-002: the excluded record carries its identity and verified
+        // row citation so the derived count references its evidence.
+        sx.exclude("DUPLICATE_EVENT", 1, { [row.kind]: 1 }, row.campaign_id, {
+          record_id: row.event_id,
+          citation: citeWrappedRow(w, sx),
+        });
         continue;
       }
       throw sx.refused(
@@ -123,12 +128,20 @@ export function processEventRows(wrappedRows, sx) {
     const ts = parseTimestamp(row.timestamp);
     const inWindow = ts !== null && ts >= sx.periodStart && ts < sx.periodEnd;
     if (!inWindow) {
-      sx.exclude("OUT_OF_WINDOW", 1, { [row.kind]: 1 }, row.campaign_id);
+      // M640-002: exclusion carries the event identity and its verified
+      // row citation (the evidence the count derives from).
+      sx.exclude("OUT_OF_WINDOW", 1, { [row.kind]: 1 }, row.campaign_id, {
+        record_id: row.event_id,
+        citation: citeWrappedRow(w, sx),
+      });
       sx.diag("EVENT_OUT_OF_WINDOW", "info", w.source_ref, row.event_id, "event outside reporting period; excluded with count");
       continue;
     }
     if (!sx.campaigns.has(row.campaign_id)) {
-      sx.exclude("UNREGISTERED_CAMPAIGN", 1, { [row.kind]: 1 }, row.campaign_id);
+      sx.exclude("UNREGISTERED_CAMPAIGN", 1, { [row.kind]: 1 }, row.campaign_id, {
+        record_id: row.event_id,
+        citation: citeWrappedRow(w, sx),
+      });
       sx.diag("EVENT_UNREGISTERED_CAMPAIGN", "warning", w.source_ref, row.event_id, `campaign ${JSON.stringify(row.campaign_id)} not registered; event excluded`);
       continue;
     }
@@ -418,18 +431,29 @@ export function computeAggregateMetrics(wrappedRows, sx) {
     }
     seen.add(row.campaign_id);
     if (!sx.campaigns.has(row.campaign_id)) {
-      sx.exclude("UNREGISTERED_CAMPAIGN", 1, {}, row.campaign_id);
+      // M640-002: exclusion carries the aggregate row identity and its
+      // verified row citation.
+      sx.exclude("UNREGISTERED_CAMPAIGN", 1, {}, row.campaign_id, {
+        record_id: row.campaign_id,
+        citation: citeWrappedRow(w, sx),
+      });
       sx.diag("AGGREGATE_UNREGISTERED_CAMPAIGN", "warning", w.source_ref, row.campaign_id, "aggregate row for unregistered campaign; excluded");
       continue;
     }
     const camp = sx.campaigns.get(row.campaign_id);
     if (row.period_start !== sx.periodIsoStart || row.period_end !== sx.periodIsoEnd) {
-      sx.exclude("PERIOD_MISMATCH", 1, {}, row.campaign_id);
+      sx.exclude("PERIOD_MISMATCH", 1, {}, row.campaign_id, {
+        record_id: row.campaign_id,
+        citation: citeWrappedRow(w, sx),
+      });
       sx.diag("AGGREGATE_PERIOD_MISMATCH", "warning", w.source_ref, row.campaign_id, "aggregate row period differs from task period; excluded");
       continue;
     }
     if (row.currency !== camp.currency) {
-      sx.exclude("CURRENCY_MISMATCH", 1, {}, row.campaign_id);
+      sx.exclude("CURRENCY_MISMATCH", 1, {}, row.campaign_id, {
+        record_id: row.campaign_id,
+        citation: citeWrappedRow(w, sx),
+      });
       sx.diag("AGGREGATE_CURRENCY_MISMATCH", "warning", w.source_ref, row.campaign_id, "aggregate row currency differs from campaign currency; excluded");
       continue;
     }
