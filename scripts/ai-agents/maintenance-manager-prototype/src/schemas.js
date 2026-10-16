@@ -25,6 +25,12 @@ const REPO_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const PATH_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*\.(md|txt|json)$/;
 const RECORD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const PERCENT_RE = /^\d{1,3}\.\d{2}$/;
+
+/** Closed set of header metrics this slice can compare a claim against.
+ *  Extending to more metrics is a separate, reviewable schema change. */
+export const CLAIM_METRICS = ["pm_compliance_percent"];
+export const MAX_CLAIMS = 16;
 
 export const REQUESTED_OPERATION_ALLOWED = "analyze";
 export const STATUS_VALUES = ["OPEN", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
@@ -179,6 +185,38 @@ export function validateCriteria(value, where) {
   return { criteria_version: v };
 }
 
+/**
+ * claimed_summary (MM-S1-003): an optional set of header claims the
+ * caller asserts, each comparing a claimed value against a metric this
+ * agent independently computes. `null` (or the key omitted entirely)
+ * means no claims — header_comparisons stays empty, exactly today's
+ * behavior. Per the common contract, a header value is a CLAIM, never an
+ * input to its own verification: this schema only accepts the claim
+ * itself, never a precomputed "match" flag.
+ */
+export function validateClaimedSummary(value, where) {
+  if (value === null) return null;
+  if (!isPlainObject(value)) fail(where, "must be null or an object");
+  exactKeys(value, ["claims"], where);
+  if (!Array.isArray(value.claims) || value.claims.length > MAX_CLAIMS) fail(where, `claims must be an array of at most ${MAX_CLAIMS} entries`);
+  const seen = new Set();
+  const claims = [];
+  for (let i = 0; i < value.claims.length; i++) {
+    const c = value.claims[i];
+    const w2 = `${where}.claims[${i}]`;
+    if (!isPlainObject(c)) fail(w2, "must be an object");
+    exactKeys(c, ["claim_id", "metric", "claimed_value"], w2);
+    const claim_id = validateRecordId(c.claim_id, w2);
+    if (seen.has(claim_id)) fail(w2, `duplicate claim_id '${claim_id}'`);
+    seen.add(claim_id);
+    if (!CLAIM_METRICS.includes(c.metric)) fail(w2, `metric must be one of ${CLAIM_METRICS.join(", ")}`);
+    const claimed_value = reqStr(c, "claimed_value", w2);
+    if (!PERCENT_RE.test(claimed_value)) fail(w2, "claimed_value must be a 2-decimal percent string, e.g. '98.00'");
+    claims.push({ claim_id, metric: c.metric, claimed_value });
+  }
+  return { claims };
+}
+
 /** Task input schema. kind: "analyze" | "prohibited". */
 export function validateTask(task) {
   if (!isPlainObject(task)) fail("task", "must be an object");
@@ -192,7 +230,7 @@ export function validateTask(task) {
   const register_ref = validateSourceRef(task.fixture_refs.register, "task.fixture_refs.register");
 
   if (!isPlainObject(task.options)) fail("task", "options must be an object");
-  exactKeys(task.options, ["as_of_date", "window", "population"], "task.options");
+  exactKeys(task.options, ["as_of_date", "window", "population", "claimed_summary"], "task.options");
 
   const as_of_ms = validateIsoDate(task.options.as_of_date, "task.options.as_of_date");
 
@@ -209,6 +247,9 @@ export function validateTask(task) {
   if (!Number.isInteger(pop.declared_total) || pop.declared_total < 0) fail("task.options.population", "declared_total must be a nonnegative integer");
   if (typeof pop.complete !== "boolean") fail("task.options.population", "complete must be a boolean");
 
+  const claimedSummaryRaw = task.options.claimed_summary === undefined ? null : task.options.claimed_summary;
+  const claimed_summary = validateClaimedSummary(claimedSummaryRaw, "task.options.claimed_summary");
+
   return {
     task_id,
     operation,
@@ -217,6 +258,7 @@ export function validateTask(task) {
     as_of_ms,
     window: { start_date: win.start_date, end_date: win.end_date, start_ms: win_start_ms, end_ms: win_end_ms },
     population: { declared_total: pop.declared_total, complete: pop.complete },
+    claimed_summary,
     kind: operation === REQUESTED_OPERATION_ALLOWED ? "analyze" : "prohibited",
   };
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyWorkOrder, aggregateWorkOrders, computePmCompliance, ageBinOf } from "../src/audit.js";
+import { classifyWorkOrder, aggregateWorkOrders, computePmCompliance, computeHeaderComparisons, ageBinOf } from "../src/audit.js";
 import { dayIndexOfMs } from "../src/canonical.js";
 
 const AS_OF = "2026-06-01T00:00:00Z";
@@ -154,6 +154,80 @@ test("computePmCompliance: a link to an integrity-invalid work order poisons the
   const r = computePmCompliance([occ()], { asOfMs, windowStartMs, windowEndMs, registeredAssets, workOrderById: woMap, workOrderIntegrityIds: new Set(["WO-1"]) }, true);
   assert.equal(r.section.basis_state, "UNVERIFIABLE");
   assert.equal(r.additionalFindings.some((f) => f.code === "PM_LINK_TO_INVALID_WORK_ORDER"), true);
+});
+
+// ---------------------------------------------------------------------
+// MM-S1-002: an unverifiable citation (span out of bounds) is its own
+// integrity finding — never silently kept as a clean backlog/completed
+// record, and never silently excluded from poisoning the PM measure.
+// ---------------------------------------------------------------------
+const VERIFIED_CITATION = { verification: "VERIFIED" };
+const UNVERIFIED_CITATION = { verification: "UNVERIFIED" };
+
+test("classifyWorkOrder: an unverified citation is its own integrity finding, checked after structural asset/date checks but before status classification", () => {
+  const c = classifyWorkOrder(wo({}), { asOfMs, asOfDay, registeredAssets, citation: UNVERIFIED_CITATION });
+  assert.equal(c.kind, "integrity");
+  assert.equal(c.reason, "UNVERIFIABLE_CITATION");
+  assert.equal(c.citation.verification, "UNVERIFIED");
+});
+
+test("classifyWorkOrder: orphan asset still wins over a bad citation (structural checks run first)", () => {
+  const c = classifyWorkOrder(wo({ asset_id: "AST-UNKNOWN" }), { asOfMs, asOfDay, registeredAssets, citation: UNVERIFIED_CITATION });
+  assert.equal(c.reason, "ORPHAN_ASSET");
+});
+
+test("classifyWorkOrder: an otherwise-clean backlog record carries its VERIFIED citation", () => {
+  const c = classifyWorkOrder(wo({}), { asOfMs, asOfDay, registeredAssets, citation: VERIFIED_CITATION });
+  assert.equal(c.kind, "backlog");
+  assert.equal(c.citation.verification, "VERIFIED");
+});
+
+test("computePmCompliance: an unverifiable citation on a due occurrence poisons the whole measure and is recorded once, not duplicated", () => {
+  const woMap = new Map([["WO-1", { kind: "completed", completed_ms: Date.parse("2026-05-10T00:00:00Z") }]]);
+  const occA = occ({ occurrence_id: "PM-BADCITE" });
+  const citations = new Map([["PM-BADCITE", UNVERIFIED_CITATION]]);
+  const r = computePmCompliance([occA], { asOfMs, windowStartMs, windowEndMs, registeredAssets, workOrderById: woMap, workOrderIntegrityIds: new Set(), citations }, true);
+  assert.equal(r.section.basis_state, "UNVERIFIABLE");
+  assert.deepEqual(r.section.poisoning_occurrence_ids, ["PM-BADCITE"]);
+  const citeFindings = r.additionalFindings.filter((f) => f.code === "UNVERIFIABLE_CITATION");
+  assert.equal(citeFindings.length, 1, "exactly one UNVERIFIABLE_CITATION finding, not duplicated by the due-member poisoning pass");
+  assert.equal(citeFindings[0].citation.verification, "UNVERIFIED");
+});
+
+test("computePmCompliance: an unverifiable citation on a NON-due occurrence is still its own finding, independent of PM-window relevance", () => {
+  const outOfWindow = occ({ occurrence_id: "PM-BADCITE-NODUE", due_ms: Date.parse("2030-01-01T00:00:00Z") });
+  const citations = new Map([["PM-BADCITE-NODUE", UNVERIFIED_CITATION]]);
+  const r = computePmCompliance([outOfWindow], { asOfMs, windowStartMs, windowEndMs, registeredAssets, workOrderById: new Map(), workOrderIntegrityIds: new Set(), citations }, true);
+  assert.equal(r.additionalFindings.some((f) => f.code === "UNVERIFIABLE_CITATION" && f.record_id === "PM-BADCITE-NODUE"), true);
+});
+
+// ---------------------------------------------------------------------
+// MM-S1-003: claimed_summary header comparisons — a claim never seeds
+// or overwrites the computed value; an unverified basis is UNKNOWN,
+// never silently a MATCH.
+// ---------------------------------------------------------------------
+test("computeHeaderComparisons: returns [] when there's no claimed summary", () => {
+  assert.deepEqual(computeHeaderComparisons(null, { basis_state: "VERIFIED", display_percent: "75.00%" }), []);
+});
+
+test("computeHeaderComparisons: exact match between claim and computed value", () => {
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H1", metric: "pm_compliance_percent", claimed_value: "75.00" }] }, { basis_state: "VERIFIED", display_percent: "75.00%" });
+  assert.equal(out[0].evidence_state, "MATCH");
+  assert.equal(out[0].computed_value, "75.00");
+  assert.equal(out[0].claimed_value, "75.00", "the claimed value is preserved, not overwritten by the computed one");
+});
+
+test("computeHeaderComparisons: the brief's named 98%-vs-computed case is a MISMATCH with both values retained", () => {
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H2", metric: "pm_compliance_percent", claimed_value: "98.00" }] }, { basis_state: "VERIFIED", display_percent: "100.00%" });
+  assert.equal(out[0].evidence_state, "MISMATCH");
+  assert.equal(out[0].claimed_value, "98.00");
+  assert.equal(out[0].computed_value, "100.00");
+});
+
+test("computeHeaderComparisons: an unverified computed basis is UNKNOWN, never silently a MATCH", () => {
+  const out = computeHeaderComparisons({ claims: [{ claim_id: "H3", metric: "pm_compliance_percent", claimed_value: "50.00" }] }, { basis_state: "UNVERIFIABLE", display_percent: null });
+  assert.equal(out[0].evidence_state, "UNKNOWN");
+  assert.equal(out[0].computed_value, null);
 });
 
 test("computePmCompliance: zero due occurrences is a typed NO_DUE_OCCURRENCES when the population is complete, UNVERIFIABLE otherwise", () => {

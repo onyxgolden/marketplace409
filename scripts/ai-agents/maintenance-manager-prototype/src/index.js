@@ -24,12 +24,12 @@
  *    candidate is touched.
  */
 
-import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
+import { canonicalJson, sha256HexUtf8, canonicalByteLength, maxContainerDepth, MAX_CONTAINER_DEPTH } from "./canonical.js";
 import { validateTask, validateRegisterShape, validateWorkOrder, validatePmOccurrence, SchemaError } from "./schemas.js";
-import { resolveSourceRef, verifySpanBounds, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
+import { resolveSourceRef, verifySpanBounds, hasReadGrant, makeBudget, buildVerifiedCitation, buildUnverifiedCitation, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { chargeContext } from "./contextGuard.js";
 import { scanAnyDocText } from "./injection.js";
-import { classifyWorkOrder, aggregateWorkOrders, computePmCompliance } from "./audit.js";
+import { classifyWorkOrder, aggregateWorkOrders, computePmCompliance, computeHeaderComparisons } from "./audit.js";
 import { dayIndexOfMs } from "./canonical.js";
 
 export const AGENT_ID = "maintenance-manager-agent";
@@ -44,7 +44,7 @@ function emptyReport() {
     pm_compliance: { basis_state: "UNVERIFIABLE", denominator: null, numerator: null, ratio: null, display_percent: null, early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0, poisoning_occurrence_ids: [] },
     header_comparisons: [],
     integrity_findings: [],
-    excluded_ids: { future_created: [], orphan_asset_work_orders: [], invalid_completion: [], orphan_asset_pm_occurrences: [] },
+    excluded_ids: { future_created: [], orphan_asset_work_orders: [], invalid_completion: [], orphan_asset_pm_occurrences: [], unverifiable_citation_work_orders: [], unverifiable_citation_pm_occurrences: [] },
     coverage: { state: "UNKNOWN", admitted_count: 0, excluded_count: 0 },
   };
 }
@@ -91,6 +91,14 @@ function refKey(r) {
 export function run(task, context) {
   const clockRaw = context && typeof context === "object" ? context.clock : undefined;
   if (!Number.isFinite(clockRaw)) return refused(task, "INVALID_INPUT", "error", "context.clock must be a finite number");
+
+  // MM-S1-001: a pre-inspection depth guard on admitted JSON, before any
+  // shape/field validation walks it — bounded schema traversal rejects
+  // depth >32 per the brief, applied to the task itself here and to the
+  // parsed register below (both are "admitted JSON" structures).
+  if (maxContainerDepth(task) > MAX_CONTAINER_DEPTH) {
+    return refused(task, "INPUT_LIMIT", "error", `task exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
+  }
 
   let validatedTask;
   try {
@@ -151,20 +159,42 @@ export function run(task, context) {
   }
 
   let rawRegister;
+  let parsed;
   try {
-    const parsed = JSON.parse(registerResolved.text);
+    parsed = JSON.parse(registerResolved.text);
+  } catch {
+    return refused(task, "INVALID_INPUT", "error", "register is not valid JSON");
+  }
+  if (maxContainerDepth(parsed) > MAX_CONTAINER_DEPTH) {
+    return refused(task, "INPUT_LIMIT", "error", `register exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
+  }
+  try {
     rawRegister = validateRegisterShape(parsed, "register");
   } catch (e) {
     if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
-    return refused(task, "INVALID_INPUT", "error", "register is not valid JSON");
+    throw e;
   }
 
-  // Duplicate IDs refuse the whole task — never silently dedup.
+  // ---- Charged pass over assets[] (MM-S1-001): one countObject() per
+  // asset, strictly before that asset's own value is read (type check +
+  // duplicate check both count as "reading" it). Previously this walked
+  // up to 128 assets completely outside the budget. ----
   const assetSeen = new Set();
-  for (const a of rawRegister.assets) {
+  let budgetExceeded = false;
+  for (let i = 0; i < rawRegister.assets.length; i++) {
+    try {
+      budget.countObject(`assets[${i}]`);
+    } catch (e) {
+      if (e instanceof BudgetError) { budgetExceeded = true; break; }
+      throw e;
+    }
+    const a = rawRegister.assets[i];
     if (typeof a !== "string") return refused(task, "INVALID_INPUT", "error", "every registered asset id must be a string");
     if (assetSeen.has(a)) return refused(task, "INVALID_INPUT", "error", `duplicate registered asset id '${a}'`);
     assetSeen.add(a);
+  }
+  if (budgetExceeded) {
+    return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining assets`);
   }
   const registeredAssets = assetSeen;
 
@@ -172,7 +202,6 @@ export function run(task, context) {
   // order, strictly before any field of that work order is read. ----
   const workOrders = [];
   const seenWoIds = new Set();
-  let budgetExceeded = false;
   for (let i = 0; i < rawRegister.work_orders.length; i++) {
     try {
       budget.countObject(`work_orders[${i}]`);
@@ -259,21 +288,30 @@ export function run(task, context) {
     const injection = scanAnyDocText([wo.notes]);
     if (injection.injected) {
       quarantined_sources.push({ work_order_id: wo.work_order_id, reason: "INSTRUCTION_INJECTION_SEEDED_FAMILY" });
-    } else {
-      usedContentRefs.push(wo.content_ref);
     }
+    // MM-S1-002: never fail open. A verified span becomes a VERIFIED
+    // citation attached to this record's eventual finding/classification;
+    // anything else (SPAN_MISMATCH) becomes an explicit UNVERIFIED
+    // citation, which classifyWorkOrder turns into its own integrity
+    // finding rather than silently keeping the record "clean".
+    let citation;
     try {
-      verifySpanBounds(resolved.bytes, wo.span, budget, `work_orders[${wo.work_order_id}].span`);
+      const spanResult = verifySpanBounds(resolved.bytes, wo.span, budget, `work_orders[${wo.work_order_id}].span`);
+      citation = buildVerifiedCitation(wo.content_ref, spanResult);
     } catch (e) {
       if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-      // out-of-bounds span: citation unavailable, structured fields still used.
+      citation = buildUnverifiedCitation(wo.content_ref, wo.span);
     }
-    const c = classifyWorkOrder(wo, { asOfMs, asOfDay, registeredAssets });
+    if (!injection.injected && citation.verification === "VERIFIED") {
+      usedContentRefs.push(wo.content_ref);
+    }
+    const c = classifyWorkOrder(wo, { asOfMs, asOfDay, registeredAssets, citation });
     classified.push(c);
     workOrderById.set(wo.work_order_id, { ...c, completed_ms: wo.completed_ms });
     if (c.kind === "integrity") workOrderIntegrityIds.add(wo.work_order_id);
   }
 
+  const occCitations = new Map();
   for (const occ of pmOccurrences) {
     let resolved;
     try {
@@ -283,12 +321,16 @@ export function run(task, context) {
       if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
       throw e;
     }
-    usedContentRefs.push(occ.content_ref);
+    let citation;
     try {
-      verifySpanBounds(resolved.bytes, occ.span, budget, `pm_occurrences[${occ.occurrence_id}].span`);
+      const spanResult = verifySpanBounds(resolved.bytes, occ.span, budget, `pm_occurrences[${occ.occurrence_id}].span`);
+      citation = buildVerifiedCitation(occ.content_ref, spanResult);
     } catch (e) {
       if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+      citation = buildUnverifiedCitation(occ.content_ref, occ.span);
     }
+    occCitations.set(occ.occurrence_id, citation);
+    if (citation.verification === "VERIFIED") usedContentRefs.push(occ.content_ref);
   }
 
   const { backlog, overdue, cancelled_count, integrityFindings } = aggregateWorkOrders(classified);
@@ -312,12 +354,19 @@ export function run(task, context) {
       registeredAssets,
       workOrderById,
       workOrderIntegrityIds,
+      citations: occCitations,
     },
     populationComplete
   );
   const allFindings = [...integrityFindings, ...additionalFindings];
 
-  const fullyComplete = population.evidence_state === "verified" && !hasIntegrityFindings && additionalFindings.length === 0;
+  // MM-S1-003: header claims are compared, never allowed to overwrite the
+  // computed value; an unmatched or unknown-evidence comparison keeps the
+  // whole rollup out of REPORT_READY, same as any other incompleteness.
+  const header_comparisons = computeHeaderComparisons(validatedTask.claimed_summary, pmSection);
+  const headerAllMatch = header_comparisons.every((h) => h.evidence_state === "MATCH");
+
+  const fullyComplete = population.evidence_state === "verified" && !hasIntegrityFindings && additionalFindings.length === 0 && headerAllMatch;
   let coverageState;
   const admittedCount = workOrders.length + pmOccurrences.length - allFindings.length;
   if (admittedCount === 0 && workOrders.length === 0 && pmOccurrences.length === 0) coverageState = population.evidence_state === "verified" ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY";
@@ -330,13 +379,15 @@ export function run(task, context) {
     overdue,
     cancelled_count,
     pm_compliance: pmSection,
-    header_comparisons: [],
+    header_comparisons,
     integrity_findings: allFindings.sort((a, b) => (a.record_id < b.record_id ? -1 : a.record_id > b.record_id ? 1 : 0)),
     excluded_ids: {
       future_created: allFindings.filter((f) => f.code === "FUTURE_CREATED").map((f) => f.record_id).sort(),
       orphan_asset_work_orders: allFindings.filter((f) => f.code === "ORPHAN_ASSET" && f.record_type === "work_order").map((f) => f.record_id).sort(),
       invalid_completion: allFindings.filter((f) => f.code === "INVALID_COMPLETION").map((f) => f.record_id).sort(),
       orphan_asset_pm_occurrences: allFindings.filter((f) => f.code === "ORPHAN_ASSET" && f.record_type === "pm_occurrence").map((f) => f.record_id).sort(),
+      unverifiable_citation_work_orders: allFindings.filter((f) => f.code === "UNVERIFIABLE_CITATION" && f.record_type === "work_order").map((f) => f.record_id).sort(),
+      unverifiable_citation_pm_occurrences: allFindings.filter((f) => f.code === "UNVERIFIABLE_CITATION" && f.record_type === "pm_occurrence").map((f) => f.record_id).sort(),
     },
     coverage: { state: coverageState, admitted_count: Math.max(admittedCount, 0), excluded_count: allFindings.length },
   };
@@ -370,6 +421,7 @@ function outputRecordsOf(result) {
   const r = result.report;
   return (
     r.integrity_findings.length +
+    r.header_comparisons.length +
     result.diagnostics.length +
     result.quarantined_sources.length +
     result.routing_flags.length +

@@ -31,7 +31,7 @@ function registerOf(setName, sourcesKey) {
   return JSON.parse(bag[key].revisions[ref.commit].text);
 }
 
-function task(setName, { as_of_date = store.asOf, window, declared_total, complete = true, operation = "analyze", taskIdSuffix = "", registerOverride } = {}) {
+function task(setName, { as_of_date = store.asOf, window, declared_total, complete = true, operation = "analyze", taskIdSuffix = "", registerOverride, claimed_summary = null } = {}) {
   const reg = registerOf(setName);
   const win = window ?? { start_date: "2026-01-01", end_date: "2026-12-31" };
   const dt = declared_total ?? reg.assets.length;
@@ -41,7 +41,7 @@ function task(setName, { as_of_date = store.asOf, window, declared_total, comple
     task_id: `mm-battery-${setName}${taskIdSuffix}`,
     operation,
     fixture_refs: { register: ref },
-    options: { as_of_date, window: win, population: { declared_total: dt, complete } },
+    options: { as_of_date, window: win, population: { declared_total: dt, complete }, claimed_summary },
   };
 }
 
@@ -60,7 +60,8 @@ function addOracleCase(category, set, { taskOpts = {}, ctx = {} } = {}) {
   const sourcesKey = ctx.sourcesKey ?? set;
   const t = task(set, taskOpts);
   const reg = registerOf(set, sourcesKey);
-  const expected = computeExpected(reg, t);
+  const sourcesBag = store.sourcesBySet[sourcesKey];
+  const expected = computeExpected(reg, t, sourcesBag);
   cases.push({ case_id: `c${seq.toString().padStart(3, "0")}-${set}${taskOpts.taskIdSuffix ?? ""}`, category, task: t, clock: clockFor(t), expected, set, sourcesKey: ctx.sourcesKey ?? set, grantsKey: ctx.grantsKey ?? set, principal: ctx.principal, criteria: ctx.criteria, contextOverrides: ctx.contextOverrides });
 }
 
@@ -116,6 +117,9 @@ addOracleCase("nominal-boundary", "same-day-order", { taskOpts: { as_of_date: "2
 addOracleCase("nominal-boundary", "nominal-small", { taskOpts: { window: { start_date: "2020-01-01", end_date: "2020-12-31" }, taskIdSuffix: "-irrelevant-window" } });
 addOracleCase("nominal-boundary", "pm-unlinked", { taskOpts: { window: { start_date: "2026-06-01", end_date: "2026-12-31" }, taskIdSuffix: "-window-excludes" } });
 addOracleCase("nominal-boundary", "pm-cancelled-link", { taskOpts: { window: { start_date: "2026-06-01", end_date: "2026-12-31" }, taskIdSuffix: "-window-excludes" } });
+// MM-S1-003: claimed_summary header comparison, exact match — pm-on-window
+// computes pm_compliance_percent = 100.00 (1/1); claim matches exactly.
+addOracleCase("nominal-boundary", "pm-on-window", { taskOpts: { taskIdSuffix: "-header-match", claimed_summary: { claims: [{ claim_id: "HDR-1", metric: "pm_compliance_percent", claimed_value: "100.00" }] } } });
 
 // =====================================================================
 // 30 contradiction/incomplete/duplicate cases
@@ -150,6 +154,14 @@ addOracleCase("contradiction-incomplete-duplicate", "pm-denominator-poison-dangl
 addOracleCase("contradiction-incomplete-duplicate", "future-completion", { taskOpts: { declared_total: 1, complete: false, taskIdSuffix: "-pop-incomplete" } });
 addOracleCase("contradiction-incomplete-duplicate", "nominal-small", { taskOpts: { declared_total: 3, complete: false, taskIdSuffix: "-complete-flag-false" } });
 addOracleCase("contradiction-incomplete-duplicate", "mixed-clean-and-integrity", { taskOpts: { declared_total: 2, complete: true, taskIdSuffix: "-declared-mismatch2" } });
+// MM-S1-003: claimed_summary header comparison, MISMATCH — the brief's
+// named "98% vs computed" case (computed is 100.00, claim is 98.00; both
+// values preserved, never overwritten).
+addOracleCase("contradiction-incomplete-duplicate", "pm-on-window", { taskOpts: { taskIdSuffix: "-header-mismatch", claimed_summary: { claims: [{ claim_id: "HDR-2", metric: "pm_compliance_percent", claimed_value: "98.00" }] } } });
+// MM-S1-003: claimed_summary header comparison, UNKNOWN-evidence — the
+// computed basis isn't VERIFIED (NO_DUE_OCCURRENCES), so the comparison
+// can't resolve either way; never silently a MATCH.
+addOracleCase("contradiction-incomplete-duplicate", "pm-no-due-basis", { taskOpts: { declared_total: 1, complete: true, taskIdSuffix: "-header-unknown", claimed_summary: { claims: [{ claim_id: "HDR-3", metric: "pm_compliance_percent", claimed_value: "50.00" }] } } });
 
 // =====================================================================
 // 20 injection/prohibited-operation cases
@@ -172,6 +184,8 @@ addRefusalCase("schema-provenance-permission", "nominal-small", "ACTION_DENIED",
 addRefusalCase("schema-provenance-permission", "nominal-small", "ACTION_DENIED", { taskOpts: { taskIdSuffix: "-notyetvalid" }, ctx: { principal: "notYetValid" } });
 addRefusalCase("schema-provenance-permission", "nominal-small", "READ_DENIED", { taskOpts: { taskIdSuffix: "-missinggrant" }, ctx: { contextOverrides: { removeGrants: GRANTS_BY_SET_KEY("nominal-small") } } });
 addOracleCase("schema-provenance-permission", "span-out-of-bounds");
+addOracleCase("schema-provenance-permission", "pm-span-out-of-bounds");
+addRefusalCase("schema-provenance-permission", "register-too-deep", "INPUT_LIMIT");
 addRefusalCase("schema-provenance-permission", "malformed-status", "INVALID_INPUT");
 addRefusalCase("schema-provenance-permission", "malformed-priority", "INVALID_INPUT");
 addRefusalCase("schema-provenance-permission", "malformed-date", "INVALID_INPUT");

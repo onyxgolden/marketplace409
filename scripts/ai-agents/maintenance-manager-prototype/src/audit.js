@@ -47,26 +47,34 @@ function emptyBinMap() {
  * a fixed order (orphan asset first, then future-created, then invalid
  * completion) so classification is deterministic.
  */
-export function classifyWorkOrder(wo, { asOfMs, asOfDay, registeredAssets }) {
+export function classifyWorkOrder(wo, { asOfMs, asOfDay, registeredAssets, citation = { verification: "VERIFIED" } }) {
   if (!registeredAssets.has(wo.asset_id)) {
-    return { kind: "integrity", reason: "ORPHAN_ASSET", work_order_id: wo.work_order_id };
+    return { kind: "integrity", reason: "ORPHAN_ASSET", work_order_id: wo.work_order_id, citation };
   }
   if (wo.created_ms > asOfMs) {
-    return { kind: "integrity", reason: "FUTURE_CREATED", work_order_id: wo.work_order_id };
+    return { kind: "integrity", reason: "FUTURE_CREATED", work_order_id: wo.work_order_id, citation };
+  }
+  // MM-S1-002: an unverifiable citation is itself an integrity finding —
+  // never silently let an out-of-bounds span support a complete-looking
+  // backlog/completed/cancelled classification. Checked after the
+  // structural asset/date checks above (which don't depend on the
+  // content span at all) and before status-based classification.
+  if (citation.verification !== "VERIFIED") {
+    return { kind: "integrity", reason: "UNVERIFIABLE_CITATION", work_order_id: wo.work_order_id, citation };
   }
   if (wo.status === "COMPLETED") {
     if (wo.completed_ms === null || wo.completed_ms < wo.created_ms || wo.completed_ms > asOfMs) {
-      return { kind: "integrity", reason: "INVALID_COMPLETION", work_order_id: wo.work_order_id };
+      return { kind: "integrity", reason: "INVALID_COMPLETION", work_order_id: wo.work_order_id, citation };
     }
-    return { kind: "completed", work_order_id: wo.work_order_id };
+    return { kind: "completed", work_order_id: wo.work_order_id, citation };
   }
   if (wo.status === "CANCELLED") {
-    return { kind: "cancelled", work_order_id: wo.work_order_id };
+    return { kind: "cancelled", work_order_id: wo.work_order_id, citation };
   }
   // OPEN / IN_PROGRESS
   const ageDays = asOfDay - dayIndexOfMs(wo.created_ms);
   const overdue = wo.due_ms === null ? "unknown" : wo.due_ms < asOfMs ? "overdue" : "not_overdue";
-  return { kind: "backlog", work_order_id: wo.work_order_id, ageDays, bin: ageBinOf(ageDays), priority: wo.priority, overdue };
+  return { kind: "backlog", work_order_id: wo.work_order_id, ageDays, bin: ageBinOf(ageDays), priority: wo.priority, overdue, citation };
 }
 
 /** Aggregate classified work orders into the backlog/overdue/cancelled
@@ -80,7 +88,7 @@ export function aggregateWorkOrders(classified) {
 
   for (const c of classified) {
     if (c.kind === "integrity") {
-      integrityFindings.push({ code: c.reason, record_type: "work_order", record_id: c.work_order_id });
+      integrityFindings.push({ code: c.reason, record_type: "work_order", record_id: c.work_order_id, citation: c.citation });
       continue;
     }
     if (c.kind === "cancelled") { cancelled_count += 1; continue; }
@@ -107,8 +115,23 @@ export function aggregateWorkOrders(classified) {
  * linkage (dangling / poisoned links not otherwise visible from the
  * work-order pass alone).
  */
-export function computePmCompliance(occurrences, { asOfMs, windowStartMs, windowEndMs, registeredAssets, workOrderById, workOrderIntegrityIds }, populationComplete) {
+export function computePmCompliance(occurrences, { asOfMs, windowStartMs, windowEndMs, registeredAssets, workOrderById, workOrderIntegrityIds, citations = new Map() }, populationComplete) {
   const additionalFindings = [];
+
+  // MM-S1-002: a citation-unavailable occurrence is a whole-register
+  // integrity finding regardless of PM-window relevance — never let an
+  // out-of-bounds span silently support a clean-looking record. One
+  // finding per occurrence here; the due-member loop below poisons the
+  // ratio for the subset that's also due, without pushing a duplicate.
+  const citationUnavailableIds = new Set();
+  for (const occ of occurrences) {
+    const citation = citations.get(occ.occurrence_id) ?? { verification: "VERIFIED" };
+    if (citation.verification !== "VERIFIED") {
+      citationUnavailableIds.add(occ.occurrence_id);
+      additionalFindings.push({ code: "UNVERIFIABLE_CITATION", record_type: "pm_occurrence", record_id: occ.occurrence_id, citation });
+    }
+  }
+
   const dueMembers = occurrences.filter((o) => o.due_ms >= windowStartMs && o.due_ms <= windowEndMs && o.due_ms <= asOfMs);
 
   if (dueMembers.length === 0) {
@@ -130,9 +153,16 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
   const poisoningIds = [];
 
   for (const occ of dueMembers) {
+    const occCitation = citations.get(occ.occurrence_id) ?? { verification: "VERIFIED" };
     if (!registeredAssets.has(occ.asset_id)) {
       poisoningIds.push(occ.occurrence_id);
-      additionalFindings.push({ code: "ORPHAN_ASSET", record_type: "pm_occurrence", record_id: occ.occurrence_id });
+      additionalFindings.push({ code: "ORPHAN_ASSET", record_type: "pm_occurrence", record_id: occ.occurrence_id, citation: occCitation });
+      continue;
+    }
+    if (citationUnavailableIds.has(occ.occurrence_id)) {
+      // Already recorded as its own UNVERIFIABLE_CITATION finding above;
+      // here it only needs to poison the ratio, not duplicate the finding.
+      poisoningIds.push(occ.occurrence_id);
       continue;
     }
     if (occ.linked_work_order_id === null) {
@@ -142,12 +172,12 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
     const linked = workOrderById.get(occ.linked_work_order_id);
     if (!linked) {
       poisoningIds.push(occ.occurrence_id);
-      additionalFindings.push({ code: "DANGLING_PM_LINK", record_type: "pm_occurrence", record_id: occ.occurrence_id });
+      additionalFindings.push({ code: "DANGLING_PM_LINK", record_type: "pm_occurrence", record_id: occ.occurrence_id, citation: occCitation });
       continue;
     }
     if (workOrderIntegrityIds.has(occ.linked_work_order_id)) {
       poisoningIds.push(occ.occurrence_id);
-      additionalFindings.push({ code: "PM_LINK_TO_INVALID_WORK_ORDER", record_type: "pm_occurrence", record_id: occ.occurrence_id });
+      additionalFindings.push({ code: "PM_LINK_TO_INVALID_WORK_ORDER", record_type: "pm_occurrence", record_id: occ.occurrence_id, citation: occCitation });
       continue;
     }
     if (linked.kind === "cancelled") {
@@ -206,6 +236,33 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
     },
     additionalFindings,
   };
+}
+
+/**
+ * computeHeaderComparisons (MM-S1-003): compare each claimed header
+ * value against the independently computed metric it names. A header
+ * value is a CLAIM, never an input to its own verification (common
+ * contract) — the claimed value never overwrites or seeds the computed
+ * one. When the computed basis itself isn't VERIFIED (e.g. UNVERIFIABLE,
+ * NO_DUE_OCCURRENCES), the comparison is UNKNOWN, never silently a MATCH.
+ */
+export function computeHeaderComparisons(claimedSummary, pmSection) {
+  if (!claimedSummary) return [];
+  const out = [];
+  for (const claim of claimedSummary.claims) {
+    if (claim.metric === "pm_compliance_percent") {
+      let computed_value = null;
+      let evidence_state;
+      if (pmSection.basis_state === "VERIFIED") {
+        computed_value = pmSection.display_percent.replace("%", "");
+        evidence_state = computed_value === claim.claimed_value ? "MATCH" : "MISMATCH";
+      } else {
+        evidence_state = "UNKNOWN";
+      }
+      out.push({ claim_id: claim.claim_id, metric: claim.metric, claimed_value: claim.claimed_value, computed_value, evidence_state });
+    }
+  }
+  return out;
 }
 
 export { dayIndexOfMs };

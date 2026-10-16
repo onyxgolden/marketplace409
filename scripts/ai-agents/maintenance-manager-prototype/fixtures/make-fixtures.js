@@ -455,12 +455,39 @@ addSet("duplicate-asset-id", { assets: ["AST-1", "AST-1"] });
   });
 }
 
-// Span out of bounds -> citation unverifiable, structured fields still used.
+// Span out of bounds -> MM-S1-002: this is now its own UNVERIFIABLE_CITATION
+// integrity finding (excluded from backlog), never a silently-clean record.
 {
   const txt = "Work order WO-SPANOOB: asset AST-1, created 2026-05-01, status OPEN, priority P2, short content.\n";
   const wo = workOrder({ work_order_id: "WO-SPANOOB", asset_id: "AST-1", created_date: "2026-05-01", status: "OPEN", priority: "P2", content: txt, needle: "Work order WO-SPANOOB: asset AST-1, created 2026-05-01, status OPEN, priority P2, short content." });
   wo.span = { start_byte: 0, end_byte: 999999 };
   addSet("span-out-of-bounds", { assets: ["AST-1"], work_orders: [wo] });
+}
+
+// Same, for a PM occurrence: a bad span is its own UNVERIFIABLE_CITATION
+// finding and poisons the PM compliance measure when the occurrence is due.
+{
+  const txt = "Work order WO-PMSPANOOB-CLEAN: asset AST-1, created 2026-05-01, status COMPLETED, priority P2, completed 2026-05-10.\n" +
+    "PM occurrence PM-SPANOOB: asset AST-1, due 2026-05-10, window 2026-05-05..2026-05-15, bad span.\n";
+  const shared = contentRef(txt, "pmspanoob");
+  const wo = workOrder({ work_order_id: "WO-PMSPANOOB-CLEAN", asset_id: "AST-1", created_date: "2026-05-01", status: "COMPLETED", priority: "P2", completed_date: "2026-05-10", content: txt, needle: "Work order WO-PMSPANOOB-CLEAN: asset AST-1, created 2026-05-01, status COMPLETED, priority P2, completed 2026-05-10.", sharedContentRef: shared });
+  const occ = pmOccurrence({ occurrence_id: "PM-SPANOOB", asset_id: "AST-1", due_date: "2026-05-10", window_start: "2026-05-05", window_end: "2026-05-15", content: txt, needle: "PM occurrence PM-SPANOOB: asset AST-1, due 2026-05-10, window 2026-05-05..2026-05-15, bad span.", sharedContentRef: shared });
+  occ.span = { start_byte: 0, end_byte: 999999 };
+  addSet("pm-span-out-of-bounds", { assets: ["AST-1"], work_orders: [wo], pm_occurrences: [occ] });
+}
+
+// Deeply nested register JSON (34 levels, well past the >32 cap) -> the
+// MM-S1-001 pre-inspection depth guard must refuse INPUT_LIMIT before any
+// shape validation even looks at it. The nested shape is deliberately not
+// a valid work order — the depth guard must fire before schema rejection
+// would, proving it really runs first.
+{
+  function deepValue(n) {
+    let v = "leaf";
+    for (let i = 0; i < n; i++) v = { nested: v };
+    return v;
+  }
+  addSet("register-too-deep", { assets: [], work_orders: [deepValue(34)], pm_occurrences: [] });
 }
 
 // Incomplete asset register declaration (declared_total mismatch /
@@ -474,8 +501,10 @@ addSet("duplicate-asset-id", { assets: ["AST-1", "AST-1"] });
 // content key, 1 commit each, 2 read grants, principal, criteria) is 8
 // object charges from chargeContext + 1 for resolving the register
 // itself + 1 for resolving the shared content on the FIRST work order =
-// 10 fixed charges before any work order is its own charge. N clean
-// work orders -> 10+N total. Exactly 64 at N=54; 65 (exceeded) at N=55.
+// 10 fixed charges, PLUS 1 per registered asset (MM-S1-001: assets are
+// now charged too) before any work order is its own charge. These sets
+// use exactly 1 asset -> 11 fixed charges. N clean work orders -> 11+N
+// total. Exactly 64 at N=53; 65 (exceeded) at N=54.
 // ---------------------------------------------------------------------
 function manyWorkOrdersSet(name, n, { poisonCount = 0 } = {}) {
   const sharedTxt = "Bulk work order: asset AST-1, created 2026-05-01, status OPEN, priority P2, bulk entry.\n";
@@ -492,8 +521,8 @@ function manyWorkOrdersSet(name, n, { poisonCount = 0 } = {}) {
   }
   addSet(name, { assets: ["AST-1"], work_orders });
 }
-manyWorkOrdersSet("budget-exact-64", 54);
-manyWorkOrdersSet("budget-65-exceeded", 54, { poisonCount: 2 }); // 56 total, well under the 64-entry schema array cap — the OBJECT budget (not the schema cap) is what must cut this off, at the first poison entry (index 54)
+manyWorkOrdersSet("budget-exact-64", 53);
+manyWorkOrdersSet("budget-65-exceeded", 53, { poisonCount: 2 }); // 55 total, well under the 64-entry schema array cap — the OBJECT budget (not the schema cap) is what must cut this off, at the first poison entry (index 53)
 
 function manyPmOccurrencesSet(name, n, { poisonCount = 0 } = {}) {
   const sharedTxt = "Bulk PM occurrence: asset AST-1, due 2026-05-10, window 2026-05-05..2026-05-15, bulk entry.\n";
@@ -507,8 +536,8 @@ function manyPmOccurrencesSet(name, n, { poisonCount = 0 } = {}) {
   }
   addSet(name, { assets: ["AST-1"], pm_occurrences });
 }
-manyPmOccurrencesSet("pm-budget-exact-64", 54);
-manyPmOccurrencesSet("pm-budget-65-exceeded", 54, { poisonCount: 2 });
+manyPmOccurrencesSet("pm-budget-exact-64", 53);
+manyPmOccurrencesSet("pm-budget-65-exceeded", 53, { poisonCount: 2 });
 
 // ---------------------------------------------------------------------
 // Context registry padding (CS-001 / DOC-002 regression): an extra

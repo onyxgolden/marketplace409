@@ -117,6 +117,31 @@ export function resolveSourceRef(ref, sources, budget, what) {
   return { bytes, text: rev.text };
 }
 
+/**
+ * Citation builders (MM-S1-002). A citation is a SourceRef plus the
+ * verified quoted span, or an explicit UNVERIFIED marker when the span
+ * could not be verified. Carrying this into every integrity finding
+ * closes the fail-open gap: an out-of-bounds span is never silently
+ * treated as if it were verified evidence for a finding.
+ */
+export function buildVerifiedCitation(ref, spanResult) {
+  return {
+    repo: ref.repo, path: ref.path, commit: ref.commit, blob: ref.blob, algorithm: ref.algorithm, revision: ref.revision,
+    quoted_span: spanResult.quoted_text,
+    span: { start_byte: spanResult.start_byte, end_byte: spanResult.end_byte, quoted_text: spanResult.quoted_text },
+    verification: "VERIFIED",
+  };
+}
+
+export function buildUnverifiedCitation(ref, span) {
+  return {
+    repo: ref.repo, path: ref.path, commit: ref.commit, blob: ref.blob, algorithm: ref.algorithm, revision: ref.revision,
+    quoted_span: null,
+    span: { start_byte: span.start_byte, end_byte: span.end_byte, quoted_text: null },
+    verification: "UNVERIFIED",
+  };
+}
+
 /** Exact read-grant check: grants are exact repo+path, never prefixes. */
 export function hasReadGrant(ref, readGrants) {
   return readGrants.some((g) => g.repo === ref.repo && g.path === ref.path);

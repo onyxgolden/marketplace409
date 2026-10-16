@@ -98,7 +98,8 @@ export function structuralOf(result) {
     overdue: r.overdue ?? {},
     cancelled_count: r.cancelled_count ?? 0,
     pm_compliance: r.pm_compliance ?? {},
-    integrity_findings: [...(r.integrity_findings ?? [])].map((f) => ({ code: f.code, record_type: f.record_type, record_id: f.record_id })).sort((a, b) => (a.record_id < b.record_id ? -1 : 1)),
+    integrity_findings: [...(r.integrity_findings ?? [])].map((f) => ({ code: f.code, record_type: f.record_type, record_id: f.record_id, citation_verification: f.citation?.verification ?? null })).sort((a, b) => (a.record_id < b.record_id ? -1 : 1)),
+    header_comparisons: [...(r.header_comparisons ?? [])].map((h) => ({ claim_id: h.claim_id, metric: h.metric, claimed_value: h.claimed_value, computed_value: h.computed_value, evidence_state: h.evidence_state })).sort((a, b) => (a.claim_id < b.claim_id ? -1 : 1)),
     excluded_ids: r.excluded_ids ?? {},
     coverage: r.coverage ?? {},
   };

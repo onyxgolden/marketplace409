@@ -50,6 +50,31 @@ export const HEX40 = /^[0-9a-f]{40}$/;
 export const HEX64 = /^[0-9a-f]{64}$/;
 
 /**
+ * Maximum container-nesting depth of a parsed JSON value, where the
+ * outermost object/array itself counts as depth 1. Iterative (explicit
+ * stack), not recursive, so a pathologically deep/wide input cannot blow
+ * the native call stack before the depth check itself has a chance to
+ * refuse it. Used as a pre-inspection guard (MM-S1-001): admitted JSON
+ * (the task and the parsed register) is checked for depth >32 BEFORE any
+ * shape/field validation walks it.
+ */
+export function maxContainerDepth(value) {
+  let max = 0;
+  const stack = [[value, 1]];
+  while (stack.length) {
+    const [v, d] = stack.pop();
+    if (v !== null && typeof v === "object") {
+      if (d > max) max = d;
+      const children = Array.isArray(v) ? v : Object.values(v);
+      for (const c of children) stack.push([c, d + 1]);
+    }
+  }
+  return max;
+}
+
+export const MAX_CONTAINER_DEPTH = 32;
+
+/**
  * Exact rational number as {num, den} BigInts, always reduced, den > 0.
  * Used for the PM-compliance rate (exact n/d, never a lossy float) and
  * for day-count arithmetic that must stay exact across the whole audit.
