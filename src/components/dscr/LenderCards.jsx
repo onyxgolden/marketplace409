@@ -15,6 +15,8 @@ export function LenderCard({ lender }) {
   const [showReport, setShowReport] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reportDone, setReportDone] = useState(false);
+  const [reportError, setReportError] = useState(null);
+  const [reportSending, setReportSending] = useState(false);
   const stale = isTermsStale(lender.last_provider_confirmed_at);
 
   const asOf = lender.terms_as_of_date
@@ -23,13 +25,29 @@ export function LenderCard({ lender }) {
 
   async function submitReport(e) {
     e.preventDefault();
-    if (!reportReason.trim()) return;
-    await fetch("/api/dscr-lenders/report", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lender_id: lender.id, reason: reportReason }),
-    });
-    setReportDone(true);
+    if (!reportReason.trim() || reportSending) return;
+    setReportSending(true);
+    setReportError(null);
+    try {
+      const res = await fetch("/api/dscr-lenders/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lender_id: lender.id, reason: reportReason }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Fail closed: never display "recorded" on a failed request.
+        setReportError(
+          body.error || "Could not send the report. Please try again."
+        );
+        return;
+      }
+      setReportDone(true);
+    } catch {
+      setReportError("Could not send the report. Please try again.");
+    } finally {
+      setReportSending(false);
+    }
   }
 
   return (
@@ -160,6 +178,12 @@ export function LenderCard({ lender }) {
         >
           Report a problem
         </button>
+        <a
+          href={`/investors/dscr-loans/edit/${lender.id}`}
+          className="text-xs text-gray-500 underline"
+        >
+          Propose edit
+        </a>
       </div>
 
       {showReport && !reportDone && (
@@ -172,14 +196,25 @@ export function LenderCard({ lender }) {
               className="mt-1 w-full border border-gray-300 rounded-lg px-2 py-1"
               rows={2}
               required
+              minLength={10}
+              maxLength={2000}
             />
           </label>
+          {reportError && (
+            <p className="mt-2 text-xs text-red-700" role="alert">
+              {reportError}
+            </p>
+          )}
           <button
             type="submit"
-            className="mt-2 bg-gray-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+            disabled={reportSending}
+            className="mt-2 bg-gray-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
           >
-            Send report
+            {reportSending ? "Sending…" : "Send report"}
           </button>
+          <p className="mt-1 text-xs text-gray-500">
+            Reporting requires signing in. One report per listing per day.
+          </p>
         </form>
       )}
       {reportDone && (

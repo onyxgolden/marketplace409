@@ -51,7 +51,9 @@ INSERT INTO public.dscr_lenders (
   'CoreVest Finance', '1627183',
   'https://www.nmlsconsumeraccess.org/EntityDetails.aspx/COMPANY/1627183',
   'identity-confirmed', 'published',
-  ARRAY['CA','TX','FL','NY','NJ','AZ','CO','WA','OR','NV','UT','GA','NC','SC','TN','VA','MD','PA','OH','IL','MI','MN','WI','MO','KS','OK','AR','LA','MS','AL','KY','IN','IA','NE','NM','ID','MT','WY','ND','SD','NE','ME','NH','VT','MA','CT','RI','DE','DC','HI'],
+  -- States per https://www.corevestfinance.com/contact (retrieved 2026-10-15):
+  -- "we don't currently lend in Nevada, Idaho, North Dakota, or South Dakota"
+  ARRAY['CA','TX','FL','NY','NJ','AZ','CO','WA','OR','UT','GA','NC','SC','TN','VA','MD','PA','OH','IL','MI','MN','WI','MO','KS','OK','AR','LA','MS','AL','KY','IN','IA','NE','NM','MT','WY','ME','NH','VT','MA','CT','RI','DE','DC','HI'],
   75000, 2000000,
   ARRAY['SFR','2-4 unit'],
   ARRAY['purchase','rate-term refinance','cash-out refinance'],
@@ -59,6 +61,7 @@ INSERT INTO public.dscr_lenders (
   80, 1.00,
   '844.223.7496', 'info@corevestfinance.com', 'https://www.corevestfinance.com/',
   '2026-10-15', '2026-10-15', '2026-10-15',
-  'https://www.corevestfinance.com/markets/new-york-dscr-loans', '2026-10-15',
-  'Seed v1: company name, NMLS 1627183, phone 844.223.7496 from corevestfinance.com (retrieved 2026-10-15). 30-year DSCR, SFR 1-4 unit, $75k-$2M+, up to 80% LTV per site. Subsidiary of Redwood Trust. Terms marked provider-claimed.'
-);
+  'https://www.corevestfinance.com/contact', '2026-10-15',
+  'Seed v2 (2026-10-15, IMPL-004): NMLS 1627183 and phone 844.223.7496 from corevestfinance.com/contact. States served = all states EXCEPT Nevada, Idaho, North Dakota, South Dakota, which corevestfinance.com/contact states it does "not currently lend in" (retrieved 2026-10-15). Duplicate Nebraska entry removed. Loan range $75k-$2M+, up to 80% LTV, SFR 1-4 unit, 30-year DSCR terms per corevestfinance.com DSCR pages (provider-claimed). Subsidiary of Redwood Trust per site.'
+)
+ON CONFLICT (nmls_number) DO NOTHING;

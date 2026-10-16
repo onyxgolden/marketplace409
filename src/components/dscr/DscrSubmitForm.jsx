@@ -45,7 +45,18 @@ function MultiCheck({ options, values, onChange, label }) {
   );
 }
 
-export default function DscrSubmitForm() {
+export default function DscrSubmitForm({
+  // Edit mode: prefill values, post to the edit endpoint, hide identity fields
+  // (company name / NMLS are not editable — they require a fresh identity review).
+  initialValues = {},
+  submitUrl = "/api/dscr-lenders/submit",
+  submitLabel = "Submit for directory review",
+  successTitle = "Submitted for review",
+  successBody = "Your listing is queued for directory review. It will not appear publicly until an administrator approves it. We will contact you at the details you provided.",
+  extraPayload = {},
+  identityEditable = true,
+  banner = null,
+} = {}) {
   const [form, setForm] = useState({
     company_name: "",
     nmls_number: "",
@@ -63,6 +74,8 @@ export default function DscrSubmitForm() {
     contact_phone: "",
     contact_email: "",
     application_url: "",
+    removal_requested: false,
+    ...initialValues,
   });
   const [nmlsError, setNmlsError] = useState(null);
   const [submitError, setSubmitError] = useState(null);
@@ -75,16 +88,19 @@ export default function DscrSubmitForm() {
     e.preventDefault();
     setSubmitError(null);
 
-    const nmls = validateNmlsFormat(form.nmls_number);
-    if (!nmls.valid) {
-      setNmlsError(nmls.error);
-      return;
+    let nmls = { valid: true, normalized: null, error: null };
+    if (identityEditable) {
+      nmls = validateNmlsFormat(form.nmls_number);
+      if (!nmls.valid) {
+        setNmlsError(nmls.error);
+        return;
+      }
+      setNmlsError(null);
     }
-    setNmlsError(null);
 
     const payload = {
       ...form,
-      nmls_number: nmls.normalized,
+      nmls_number: identityEditable ? nmls.normalized : undefined,
       min_loan_amount: form.min_loan_amount ? Number(form.min_loan_amount) : null,
       max_loan_amount: form.max_loan_amount ? Number(form.max_loan_amount) : null,
       max_ltv: form.max_ltv ? Number(form.max_ltv) : null,
@@ -94,9 +110,10 @@ export default function DscrSubmitForm() {
       min_dscr_accepted: form.min_dscr_accepted
         ? Number(form.min_dscr_accepted)
         : null,
+      ...extraPayload,
     };
 
-    const res = await fetch("/api/dscr-lenders/submit", {
+    const res = await fetch(submitUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -113,25 +130,23 @@ export default function DscrSubmitForm() {
     return (
       <div className="bg-green-50 border border-green-300 rounded-2xl p-8 text-center">
         <h2 className="text-2xl font-extrabold text-green-900">
-          Submitted for review
+          {successTitle}
         </h2>
-        <p className="text-green-900 mt-2">
-          Your listing is queued for directory review. It will not appear
-          publicly until an administrator approves it. We will contact you at
-          the details you provided.
-        </p>
+        <p className="text-green-900 mt-2">{successBody}</p>
       </div>
     );
   }
 
   return (
     <form onSubmit={onSubmit} className="bg-white rounded-2xl shadow p-6 md:p-8 space-y-5">
+      {banner}
       <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 text-sm text-amber-900">
         A syntactically valid NMLS number does not verify your company or your
         terms. Approval requires directory review — submissions never go live
         automatically.
       </div>
 
+      {identityEditable ? (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <label className={labelClass}>
           Company name *
@@ -153,6 +168,12 @@ export default function DscrSubmitForm() {
           {nmlsError && <span className="text-red-700 text-xs font-normal">{nmlsError}</span>}
         </label>
       </div>
+      ) : (
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm text-gray-700">
+        Company name and NMLS number are not editable here — changing them
+        requires a fresh identity review through the submission flow.
+      </div>
+      )}
 
       <MultiCheck
         label="States served *"
@@ -235,11 +256,30 @@ export default function DscrSubmitForm() {
         <p className="text-red-700 text-sm" role="alert">{submitError}</p>
       )}
 
+      {!identityEditable && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={!!form.removal_requested}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, removal_requested: e.target.checked }))
+            }
+            className="mt-1"
+          />
+          <span>
+            <span className="font-semibold">Request removal</span> — instead of
+            editing, ask the directory team to remove this listing from public
+            views. The request is reviewed; the listing stays live until an
+            admin approves.
+          </span>
+        </label>
+      )}
+
       <button
         type="submit"
         className="bg-green-700 text-white px-6 py-3 rounded-xl font-bold hover:bg-green-600"
       >
-        Submit for directory review
+        {submitLabel}
       </button>
       <p className="text-xs text-gray-500">
         By submitting, you confirm you are authorized to list this company. All

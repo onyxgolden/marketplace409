@@ -51,6 +51,70 @@ export function nmlsConsumerAccessUrl(nmlsNumber) {
 export const STALENESS_THRESHOLD_DAYS = 180;
 
 /**
+ * Moderation lifecycle (DSCR-SCOPE-003 / DSCR-IMPL-001).
+ *
+ * Statuses: draft | pending_review | published | unpublished
+ * Listings are NEVER hard-deleted: removal sets status = 'unpublished'
+ * (soft removal). The audit table is append-only at the DB boundary.
+ *
+ * Admin actions and the source status each requires:
+ */
+export const MODERATION_TRANSITIONS = Object.freeze({
+  approve_submission: Object.freeze({ from: ["pending_review"], to: "published" }),
+  reject_submission: Object.freeze({ from: ["pending_review"], to: "unpublished" }),
+  approve_version: Object.freeze({ from: ["draft", "pending_review", "published", "unpublished"], to: null }), // applies staged payload; status unchanged
+  reject_version: Object.freeze({ from: ["draft", "pending_review", "published", "unpublished"], to: null }), // live listing unchanged
+  publish: Object.freeze({ from: ["unpublished"], to: "published" }),
+  unpublish: Object.freeze({ from: ["published"], to: "unpublished" }),
+  reconfirm: Object.freeze({ from: ["published"], to: "published" }), // refreshes last_directory_reviewed_at
+  remove: Object.freeze({ from: ["published", "unpublished", "pending_review"], to: "unpublished" }), // soft removal
+});
+
+export const MODERATION_ACTIONS = Object.freeze(Object.keys(MODERATION_TRANSITIONS));
+
+/**
+ * Whether an admin action is allowed from a given listing status.
+ * Version approve/reject act on the staged version row, so any listing
+ * status is acceptable (the version row itself must be pending — enforced
+ * in the dscr_review_transition RPC).
+ * @param {string} status
+ * @param {string} action
+ * @returns {boolean}
+ */
+export function canTransition(status, action) {
+  const t = MODERATION_TRANSITIONS[action];
+  if (!t) return false;
+  return t.from.includes(status);
+}
+
+/** Abuse-report validation bounds (DSCR-IMPL-005: fail closed). */
+export const REPORT_REASON_MIN = 10;
+export const REPORT_REASON_MAX = 2000;
+export const REPORT_LIMIT_PER_LENDER_PER_DAY = 1;
+export const REPORT_LIMIT_PER_USER_PER_DAY = 10;
+
+/**
+ * Validate an abuse report reason. Returns {valid, error}.
+ * @param {string} reason
+ */
+export function validateReport(reason) {
+  const r = String(reason ?? "").trim();
+  if (r.length < REPORT_REASON_MIN) {
+    return {
+      valid: false,
+      error: `Please describe the problem (at least ${REPORT_REASON_MIN} characters).`,
+    };
+  }
+  if (r.length > REPORT_REASON_MAX) {
+    return {
+      valid: false,
+      error: `Report is too long (max ${REPORT_REASON_MAX} characters).`,
+    };
+  }
+  return { valid: true, error: null };
+}
+
+/**
  * Determine whether listing terms are stale.
  * @param {string|Date|null} lastConfirmedAt
  * @param {Date} [now]
