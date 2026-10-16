@@ -5,6 +5,7 @@
 // invoke IPC is stable and this keeps the shell dependency-free on the
 // frontend side.) The AI Edit session state machine lives in ai-edit.js.
 import { AiEditSession } from "./ai-edit.js";
+import { createPreviewController } from "./preview-controller.js";
 
 function invoke(cmd, args) {
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
@@ -450,11 +451,86 @@ window.ForgeSaveUI = { saveToForge, probeForgeSaveButtons };
 // Capture preview dialog
 // ---------------------------------------------------------------------------
 // Opens automatically after every successful capture so the scribe workflow
-// (capture → preview → annotate → export) can start immediately. The dialog
-// shows the saved PNG, its metadata, and the same actions as the session
-// library row: Copy, Annotate (AI Edit), Save as… (export), Close.
+// (capture → preview → export) can start immediately. The dialog shows the
+// saved PNG, its metadata, and actions for the same capture: Copy, AI Edit,
+// Save as… (export), Close.
+//
+// The preview state machine lives in preview-controller.js: one
+// capture-bound generation guards every async completion, close invalidates
+// pending loads, and the action buttons stay disabled until the displayed
+// image has actually decoded for the current capture.
+//
+// Scope note (PR #639 fix round): this dialog is preview-only. The "AI Edit"
+// button opens the existing AI Edit dialog; the manual annotation canvas
+// (arrows/boxes/text) is a separate scoped slice, not claimed here.
 
-let previewCaptureId = null;
+let previewController = null;
+
+function defaultImageLoader(img, src, isCurrent) {
+  return new Promise((resolve, reject) => {
+    const onLoad = () => {
+      cleanup();
+      // Decode may still have finished for a stale generation; the
+      // controller re-checks, but abandon early when we already know.
+      if (!isCurrent()) reject(new Error("stale"));
+      else resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("decode failed"));
+    };
+    const cleanup = () => {
+      img.removeEventListener("load", onLoad);
+      img.removeEventListener("error", onError);
+    };
+    img.addEventListener("load", onLoad);
+    img.addEventListener("error", onError);
+    img.src = src;
+  });
+}
+
+function initPreviewController() {
+  const dlg = $("preview-dialog");
+  previewController = createPreviewController({
+    invoke,
+    els: {
+      meta: $("preview-meta"),
+      status: $("preview-status"),
+      warnings: $("preview-warnings"),
+      image: $("preview-image"),
+    },
+    dialog: {
+      show: () => {
+        if (!dlg.open) dlg.showModal();
+      },
+      close: () => dlg.close(),
+      isOpen: () => dlg.open,
+    },
+    loadImage: defaultImageLoader,
+    actions: {
+      buttons: [$("preview-copy"), $("preview-edit"), $("preview-save-as")],
+    },
+  });
+}
+
+function openPreview(ref) {
+  if (previewController) void previewController.open(ref);
+}
+
+function closePreview() {
+  if (previewController) previewController.close();
+}
+
+async function onPreviewCopy() {
+  const id = previewController && previewController.targetId();
+  if (!id) return;
+  try {
+    await invoke("copy_to_clipboard", { id });
+    setPreviewStatus("Copied to clipboard.", "ok");
+  } catch (e) {
+    setPreviewStatus(`Copy failed: ${e}`, "error");
+  }
+}
 
 function setPreviewStatus(text, kind) {
   const el = $("preview-status");
@@ -462,69 +538,21 @@ function setPreviewStatus(text, kind) {
   el.className = "status" + (kind ? " " + kind : "");
 }
 
-async function openPreview(ref) {
-  if (!ref || !ref.id) return;
-  previewCaptureId = ref.id;
-  // Metadata line: dimensions, kind, saved path.
-  $("preview-meta").textContent =
-    `${ref.kind} — ${ref.width}×${ref.height} — ${ref.png_path || ""}`;
-  setPreviewStatus("", "");
-  // Load the PNG bytes through the existing upload-payload command and
-  // render as a data URL. The image is already saved to disk; this is
-  // purely for display.
-  try {
-    const payload = await invoke("get_capture_upload_payload", { id: ref.id });
-    $("preview-image").src = `data:${payload.mime};base64,${payload.bytes_b64}`;
-  } catch (e) {
-    setPreviewStatus(`Could not load preview image: ${e}`, "error");
-    $("preview-image").removeAttribute("src");
-  }
-  // Surface any engine warnings (e.g. solid-color frame) from the sidecar
-  // so a blank capture is diagnosable right in the preview.
-  try {
-    const sidecar = JSON.parse(await invoke("get_sidecar", { id: ref.id }));
-    const warnings = sidecar.warnings || [];
-    if (warnings.length > 0) {
-      setPreviewStatus(`Warning: ${warnings.join("; ")}`, "warning");
-    }
-  } catch {
-    /* sidecar warnings are best-effort; the image preview is what matters */
-  }
-  const dlg = $("preview-dialog");
-  if (!dlg.open) dlg.showModal();
-}
-
-function closePreview() {
-  $("preview-dialog").close();
-  previewCaptureId = null;
-}
-
-async function onPreviewCopy() {
-  if (!previewCaptureId) return;
-  try {
-    await invoke("copy_to_clipboard", { id: previewCaptureId });
-    setPreviewStatus("Copied to clipboard.", "ok");
-  } catch (e) {
-    setPreviewStatus(`Copy failed: ${e}`, "error");
-  }
-}
-
 async function onPreviewSaveAs() {
-  if (!previewCaptureId) return;
+  const id = previewController && previewController.targetId();
+  if (!id) return;
   try {
-    const path = await invoke("export_capture", { id: previewCaptureId });
+    const path = await invoke("export_capture", { id });
     setPreviewStatus(`Exported to ${path}`, "ok");
   } catch (e) {
     setPreviewStatus(`Export failed: ${e}`, "error");
   }
 }
 
-function onPreviewAnnotate() {
-  if (!previewCaptureId) return;
-  // The dedicated manual-annotation canvas is the next scribe step; for now
-  // route through the AI Edit dialog, which is the existing image-edit path.
+function onPreviewAiEdit() {
+  const id = previewController && previewController.targetId();
+  if (!id) return;
   // Close the preview first so the dialogs don't stack.
-  const id = previewCaptureId;
   closePreview();
   // Reuse the session-library ref shape the AI Edit dialog expects.
   openAiEditDialog({ id });
@@ -578,7 +606,7 @@ async function doCapture() {
     captureItem(ref);
     setStatus(`Saved ${ref.width}x${ref.height}.`, "ok");
     // Scribe workflow: show the preview immediately so the user can
-    // verify, annotate, or export without hunting the session list.
+    // verify or export without hunting the session list.
     void openPreview(ref);
   } catch (e) {
     setStatus(`Capture failed: ${e}`, "error");
@@ -683,7 +711,8 @@ async function init() {
   $("preview-close").addEventListener("click", closePreview);
   $("preview-copy").addEventListener("click", () => void onPreviewCopy());
   $("preview-save-as").addEventListener("click", () => void onPreviewSaveAs());
-  $("preview-edit").addEventListener("click", onPreviewAnnotate);
+  $("preview-edit").addEventListener("click", onPreviewAiEdit);
+  initPreviewController();
   onModeChange();
   onScrollTargetChange();
   await listenCaptureSaved();

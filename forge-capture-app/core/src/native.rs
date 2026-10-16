@@ -45,10 +45,16 @@ use crate::result::CaptureError;
 use crate::scroll::{ScrollDriver, ScrollTarget};
 
 /// One captured piece: RGBA bytes (row-major) for `rect`.
+///
+/// `rgba` is the final composited frame (cursor drawn in when requested).
+/// `raw_rgba` is the screen pixels as captured, BEFORE cursor composition —
+/// the blank-frame diagnostic must evaluate the raw source, because cursor
+/// pixels would otherwise defeat the solid-color check on an empty frame.
 #[derive(Debug, Clone)]
 pub struct NativeFrame {
     pub rect: RectI,
     pub rgba: Vec<u8>,
+    pub raw_rgba: Vec<u8>,
     pub cursor: CursorState,
 }
 
@@ -484,6 +490,37 @@ mod win {
                 captured: false,
                 position_physical: None,
             };
+
+            // GetDIBits requires the bitmap to NOT be selected into a DC, so
+            // deselect it before pulling pixels.
+            SelectObject(mem_dc, old);
+
+            // C639-005: pull the RAW screen pixels BEFORE cursor composition.
+            // The blank-frame diagnostic evaluates these; cursor pixels must
+            // not defeat the solid-color check on an otherwise empty frame.
+            let mut raw_rgba = vec![0u8; w as usize * h as usize * 4];
+            let mut bmi = BITMAPINFO::default();
+            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            bmi.bmiHeader.biWidth = w;
+            bmi.bmiHeader.biHeight = -h; // top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB.0;
+            let raw_lines = GetDIBits(
+                mem_dc,
+                bitmap,
+                0,
+                h as u32,
+                Some(raw_rgba.as_mut_ptr() as *mut _),
+                &mut bmi as *mut _,
+                DIB_RGB_COLORS,
+            );
+            // GDI returns BGRA; swizzle to RGBA and force opaque alpha (see
+            // `bgra_to_rgba_force_opaque`).
+            super::bgra_to_rgba_force_opaque(&mut raw_rgba);
+
+            // Re-select the bitmap to draw the cursor for the final frame.
+            let old = SelectObject(mem_dc, HGDIOBJ(bitmap.0));
             if blt_ok && include_cursor {
                 let mut ci = CURSORINFO {
                     cbSize: std::mem::size_of::<CURSORINFO>() as u32,
@@ -522,19 +559,12 @@ mod win {
                 }
             }
 
-            // GetDIBits requires the bitmap to NOT be selected into a DC, so
-            // deselect it before pulling pixels.
+            // Deselect again before pulling the final pixels.
             SelectObject(mem_dc, old);
 
-            // Pull pixels back as top-down 32-bit RGBA.
+            // Pull the final pixels back as top-down 32-bit RGBA (cursor
+            // composited when requested).
             let mut rgba = vec![0u8; w as usize * h as usize * 4];
-            let mut bmi = BITMAPINFO::default();
-            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h; // top-down
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB.0;
             let lines = GetDIBits(
                 mem_dc,
                 bitmap,
@@ -555,10 +585,15 @@ mod win {
             if !blt_ok {
                 return Err(last_error("BitBlt"));
             }
-            if lines == 0 {
+            if raw_lines == 0 || lines == 0 {
                 return Err(last_error("GetDIBits"));
             }
-            Ok(NativeFrame { rect, rgba, cursor })
+            Ok(NativeFrame {
+                rect,
+                rgba,
+                raw_rgba,
+                cursor,
+            })
         }
     }
 
@@ -1409,6 +1444,8 @@ mod linux {
             reply.depth,
             x.byte_order,
         )?;
+        // C639-005: snapshot the raw screen pixels BEFORE cursor composition.
+        let raw_rgba = rgba.clone();
         let mut cursor = CursorState {
             captured: false,
             position_physical: None,
@@ -1422,7 +1459,12 @@ mod linux {
                 };
             }
         }
-        Ok(NativeFrame { rect, rgba, cursor })
+        Ok(NativeFrame {
+            rect,
+            rgba,
+            raw_rgba,
+            cursor,
+        })
     }
 
     pub(super) fn cursor_pos() -> Result<(i32, i32), CaptureError> {
