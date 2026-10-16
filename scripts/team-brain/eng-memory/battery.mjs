@@ -29,7 +29,37 @@ export const CANARIES = [
   "CANARY_SHOULD_NEVER_PERSIST",
 ];
 
+// All (repo,path) tuples exercised by the 30 frozen valid captures, plus
+// the seed paths used by the battery itself. Source authorization requires
+// exact registered tuples — never a repo/path Cartesian product.
+const SOURCE_PAIRS = [
+  ["onyxgolden/forge-ai-drop", "forge-ai-drop/MASTER-TRACKER.md"],
+  ["onyxgolden/forge-ai-drop", "scripts/ai-agents/maintenance-manager-prototype/src/index.js"],
+  ["onyxgolden/forge-ai-drop", "scripts/ai-agents/marketing-prototype/src/resolver.js"],
+  ["onyxgolden/forge-ai-drop", "scripts/team-brain/README.md"],
+  ["onyxgolden/forge-ai-drop", "scripts/team-brain/handoffs/stateMachine.mjs"],
+  ["onyxgolden/forge-ai-drop", "scripts/team-brain/ledger/repository.mjs"],
+  ["onyxgolden/forge-ai-drop", "scripts/team-brain/ledger/validation.mjs"],
+  ["onyxgolden/forge-ai-drop", "scripts/team-brain/queue/projection.mjs"],
+  ["onyxgolden/forge-ai-drop", "scripts/team-brain/report/buildReport.mjs"],
+  ["onyxgolden/marketplace409", "forge-ai-drop/MASTER-TRACKER.md"],
+  ["onyxgolden/marketplace409", "scripts/ai-agents/maintenance-manager-prototype/src/index.js"],
+  ["onyxgolden/marketplace409", "scripts/ai-agents/marketing-prototype/src/resolver.js"],
+  ["onyxgolden/marketplace409", "scripts/team-brain/README.md"],
+  ["onyxgolden/marketplace409", "scripts/team-brain/handoffs/stateMachine.mjs"],
+  ["onyxgolden/marketplace409", "scripts/team-brain/ledger/repository.mjs"],
+  ["onyxgolden/marketplace409", "scripts/team-brain/ledger/validation.mjs"],
+  ["onyxgolden/marketplace409", "scripts/team-brain/queue/projection.mjs"],
+  ["onyxgolden/marketplace409", "scripts/team-brain/report/buildReport.mjs"],
+];
+
 export function syntheticHost() {
+  const registeredTasks = new Set();
+  for (let i = 1; i <= 70; i += 1) registeredTasks.add(`eng-task-${String(i).padStart(3, "0")}`);
+  registeredTasks.add("eng-task-conflict-001");
+  registeredTasks.add("eng-task-gold-003");
+  // M-019 budget seeds.
+  for (let i = 1; i <= 70; i += 1) registeredTasks.add(`budget-task-${String(i).padStart(3, "0")}`);
   const host = {
     approvedRepos: new Set(["onyxgolden/marketplace409", "onyxgolden/forge-ai-drop"]),
     approvedPaths: new Set([
@@ -45,6 +75,45 @@ export function syntheticHost() {
     ]),
     registeredPrincipals: new Set(["principal:muse", "principal:claude"]),
     registeredAuthorities: new Set(["auth:jason:eng-memory:1", "auth:jason:eng-memory:2"]),
+    registeredTasks,
+    sourceRegistrations: SOURCE_PAIRS.map(([repo, path]) => ({ repo, path })),
+    authorityRegistrations: [
+      {
+        authorityRef: "auth:jason:eng-memory:1",
+        principal: "principal:muse",
+        actor: "Muse",
+        actions: ["*"],
+        tasks: "any",
+        sources: "any",
+      },
+      {
+        authorityRef: "auth:jason:eng-memory:2",
+        principal: "principal:claude",
+        actor: "Claude",
+        actions: ["*"],
+        tasks: "any",
+        sources: "any",
+      },
+      // Frozen D-014/D-015/D-016/D-019/D-020 permute principal/actor across
+      // the two authorities (distinct duplicate-test identities). The host
+      // registers those exact triples; any other combination is refused.
+      {
+        authorityRef: "auth:jason:eng-memory:1",
+        principal: "principal:claude",
+        actor: "Muse",
+        actions: ["*"],
+        tasks: "any",
+        sources: "any",
+      },
+      {
+        authorityRef: "auth:jason:eng-memory:2",
+        principal: "principal:muse",
+        actor: "Claude",
+        actions: ["*"],
+        tasks: "any",
+        sources: "any",
+      },
+    ],
     deniedSources: new Set(),
     revokedSources: new Set(),
     prohibitedValues: CANARIES.slice(),
@@ -63,6 +132,13 @@ export function loadBattery() {
     throw new Error(`battery-cases.json digest mismatch: expected ${recorded}, got ${actual}`);
   }
   return JSON.parse(raw);
+}
+
+/** The authenticated caller bound to an authorityRef in the synthetic host. */
+export function callerForAuthority(host, authorityRef) {
+  const reg = host.authorityRegistrations.find((r) => r.authorityRef === authorityRef);
+  if (!reg) throw new Error(`battery: unknown authorityRef ${authorityRef}`);
+  return reg.principal;
 }
 
 // Deterministic bulk seed materialization for the budget case.
@@ -86,6 +162,7 @@ function seedEvents(store, host, count, taskPrefix) {
         status: "OPEN",
         attribution: { actor: "Muse", authorityRef: "auth:jason:eng-memory:1" },
       },
+      { caller: "principal:muse" },
     );
     if (r.result !== "CAPTURED") throw new Error(`seedEvents: unexpected ${r.result}/${r.code} at ${i}`);
   }
@@ -114,11 +191,15 @@ function materializeSentinel(base, sentinel, counters) {
 
 function runSetup(store, host, setup) {
   for (const step of setup || []) {
-    if (step.op === "denySource") denySource(store, host, step.input);
-    else if (step.op === "revokeSource") revokeSource(store, host, step.input);
-    else if (step.op === "captureSeed") captureEvent(store, host, step.input);
-    else if (step.op === "seedEvents") seedEvents(store, host, step.count, step.taskPrefix);
-    else throw new Error(`unknown setup op: ${step.op}`);
+    if (step.op === "denySource") {
+      denySource(store, host, step.input, { caller: callerForAuthority(host, step.input.attribution.authorityRef) });
+    } else if (step.op === "revokeSource") {
+      revokeSource(store, host, step.input, { caller: callerForAuthority(host, step.input.attribution.authorityRef) });
+    } else if (step.op === "captureSeed") {
+      captureEvent(store, host, step.input, { caller: step.input.principal });
+    } else if (step.op === "seedEvents") {
+      seedEvents(store, host, step.count, step.taskPrefix);
+    } else throw new Error(`unknown setup op: ${step.op}`);
   }
 }
 
@@ -169,6 +250,9 @@ export function runOnce(battery) {
   const store = createFakeStore();
   const counters = {};
   const caseResults = [];
+  // Full ACTUAL capture/recall results (not projections) for the leakage
+  // scan: the "all outputs" assertion must cover real result payloads.
+  const fullOutputs = [];
   let passed = 0;
 
   for (const c of battery.cases) {
@@ -177,12 +261,16 @@ export function runOnce(battery) {
     let input = c.input;
     if (c.sentinel) input = materializeSentinel(c.base, c.sentinel, counters);
     try {
-      if (c.op === "capture") actual = captureEvent(store, host, input);
-      else if (c.op === "recall") actual = recall(store, host, c.query, c.clock === "expired" ? { clock: expiredClock() } : {});
-      else throw new Error(`unknown op: ${c.op}`);
+      if (c.op === "capture") {
+        const caller = input && typeof input === "object" ? input.principal : undefined;
+        actual = captureEvent(store, host, input, { caller });
+      } else if (c.op === "recall") {
+        actual = recall(store, host, c.query, c.clock === "expired" ? { clock: expiredClock() } : {});
+      } else throw new Error(`unknown op: ${c.op}`);
     } catch (err) {
       actual = { result: "THREW", code: err && err.code ? err.code : "UNEXPECTED_THROW" };
     }
+    fullOutputs.push({ caseId: c.caseId, op: c.op, actual });
     const failures = checkExpect("case", c.caseId, actual, c.expect);
     if (c.sentinel && c.expect.accessorInvocations !== undefined) {
       const n = counters[c.sentinel.at] || 0;
@@ -211,7 +299,7 @@ export function runOnce(battery) {
   const goldStore = createFakeStore();
   for (const c of battery.cases) {
     if (c.category === "valid" && c.op === "capture") {
-      const r = captureEvent(goldStore, goldHost, c.input);
+      const r = captureEvent(goldStore, goldHost, c.input, { caller: c.input.principal });
       if (r.result !== "CAPTURED") throw new Error(`gold seed failed: ${c.caseId} -> ${r.result}/${r.code}`);
     }
   }
@@ -225,6 +313,7 @@ export function runOnce(battery) {
     } catch (err) {
       actual = { result: "THREW", code: err && err.code ? err.code : "UNEXPECTED_THROW" };
     }
+    fullOutputs.push({ queryId: g.queryId, op: "recall", actual });
     const failures = checkExpect("gold", g.queryId, actual, g.expect);
     // Gold-set contract: every exact task-ID query finds its admitted event
     // within the 20-result cap.
@@ -235,11 +324,12 @@ export function runOnce(battery) {
     if (failures.length === 0) goldPassed += 1;
   }
 
-  // Leakage scan over every output surface: both store dumps +
-  // case/gold results.
+  // Leakage scan over every output surface: both store dumps, the FULL
+  // actual capture/recall results, and the case/gold result summaries.
   const outputs = {
     store: store.dumpForScan(),
     goldStore: goldStore.dumpForScan(),
+    fullOutputs,
     caseResults,
     goldResults,
   };
@@ -261,4 +351,3 @@ export function runOnce(battery) {
     store: { episodes: store.episodeCount(), retentionReviews: store.listRetentionReviews().length },
   };
 }
-

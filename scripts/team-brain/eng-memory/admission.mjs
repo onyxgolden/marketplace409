@@ -35,7 +35,12 @@ const PROTO_KEY = "__proto__";
  *
  * KeySpec: { nested?: Map<string,KeySpec> } for nested objects, or
  * { scalar: true } for leaf values (validated later by schemas.mjs).
- * Admission does not interpret leaf values; it only proves they are data.
+ * Admission proves leaves are PRIMITIVE data: after the accessor check, a
+ * scalar whose value is a non-null object, function, or symbol is refused
+ * with NONPRIMITIVE_SCALAR. Only `typeof desc.value` is consulted — the
+ * value's own properties are never read, so getter-bearing objects, arrays,
+ * and cyclic structures at scalar positions are rejected with zero
+ * invocations, before serialization.
  */
 export function admitObject(value, keySpecs, opts = {}) {
   const depth = opts.depth ?? 0;
@@ -76,6 +81,15 @@ export function admitObject(value, keySpecs, opts = {}) {
     if (spec.nested) {
       snapshot[key] = admitObject(raw, spec.nested, { depth: depth + 1, path: `${path}.${key}` });
     } else {
+      // Scalar position: prove primitive type descriptor-safely. Objects
+      // (including arrays and cycles), functions, and symbols are refused
+      // WITHOUT reading any of their properties — a throwing or counting
+      // getter nested inside such a value can never fire.
+      if (raw !== null && (typeof raw === "object" || typeof raw === "function" || typeof raw === "symbol")) {
+        fail(ENG_CODES.NONPRIMITIVE_SCALAR, `Non-primitive scalar rejected at ${path}.${key}`, {
+          path: `${path}.${key}`,
+        });
+      }
       snapshot[key] = raw;
     }
   }
