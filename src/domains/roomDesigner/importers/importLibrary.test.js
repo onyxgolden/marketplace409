@@ -91,7 +91,10 @@ describe("DXF: forge-test-house.dxf (detailed)", () => {
   });
 
   it("imports the walls and all five named rooms, and reopens clean", () => {
-    expect(design.walls.length).toBeGreaterThanOrEqual(12);
+    // 8 wall runs (exterior + 4 interior partitions, one of them a single
+    // T through the plan) once door/window gaps correctly rejoin into one
+    // wall each, instead of fragmenting into a face-paired piece per span.
+    expect(design.walls.length).toBe(8);
     expect(design.rooms.map((r) => r.label).sort()).toEqual(["BATH", "BEDROOM 1", "BEDROOM 2", "KITCHEN", "LIVING"]);
     expect(reopensClean(design)).toEqual([]);
   });
@@ -101,8 +104,10 @@ describe("DXF: forge-test-house.dxf (detailed)", () => {
     expect(text).toMatch(/HATCH/);
   });
 
-  it.fails("KNOWN GAP: cuts all 11 doors/windows (drawn in wall gaps) into the walls", () => {
+  it("cuts all 11 doors/windows (drawn in wall gaps) into the walls", () => {
     expect(design.openings.length).toBe(11);
+    expect(design.openings.filter((o) => o.type === "door")).toHaveLength(5);
+    expect(design.openings.filter((o) => o.type === "window")).toHaveLength(6);
   });
 });
 

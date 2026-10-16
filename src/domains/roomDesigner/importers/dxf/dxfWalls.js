@@ -198,14 +198,28 @@ export function reconstructWalls(segments, clusters = [], options = {}) {
   const used = new Set();
   const parent = pieces.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  forNearParallel(pieces.map((pc) => pc.s), tolRad, o.collinearTolIn + 1, (i, j) => {
-    const pi = pieces[i].s;
-    const pj = pieces[j].s;
-    if (Math.abs(cross(pi.u, pj.u)) > sinTol) return;
-    const mid = mul(add(pj.a, pj.b), 0.5);
-    if (Math.abs(cross(pi.u, sub(mid, pi.a))) > o.collinearTolIn) return;
-    parent[find(i)] = find(j);
-  });
+  // Exact all-pairs check, not the bucketed forNearParallel approximation
+  // step 1 uses: `pieces` are already-reconstructed wall centerlines (tens
+  // even on a large plan, not the thousands of raw input segments step 1
+  // faces), so O(n²) here is negligible. forNearParallel's bucket-normal
+  // offset is only exact at the bucket's representative angle — for a long
+  // piece whose stored `.a` endpoint sits far from the piece it should
+  // group with, that residual angle error (up to half the bucket width)
+  // scales with the distance and can exceed the pruning slack even though
+  // the two pieces really are collinear, silently dropping the pairing.
+  // That's exactly what starved door/window gap detection down to 3 of 11
+  // openings on the test house (KNOWN GAP G1) — this exact check finds all
+  // of them.
+  for (let i = 0; i < pieces.length; i += 1) {
+    for (let j = i + 1; j < pieces.length; j += 1) {
+      const pi = pieces[i].s;
+      const pj = pieces[j].s;
+      if (Math.abs(cross(pi.u, pj.u)) > sinTol) continue;
+      const mid = mul(add(pj.a, pj.b), 0.5);
+      if (Math.abs(cross(pi.u, sub(mid, pi.a))) > o.collinearTolIn) continue;
+      parent[find(i)] = find(j);
+    }
+  }
   const groupMap = new Map();
   pieces.forEach((_, i) => {
     const r = find(i);
