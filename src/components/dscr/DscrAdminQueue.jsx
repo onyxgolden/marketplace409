@@ -9,13 +9,19 @@ const btnRed = btn + " bg-red-700 hover:bg-red-600";
 const btnGray = btn + " bg-gray-700 hover:bg-gray-600";
 const btnAmber = btn + " bg-amber-600 hover:bg-amber-500";
 
-function ActionButtons({ lenderId, status, versionId, requestType, onDone }) {
+function ActionButtons({ lenderId, status, identityReviewStatus, versionId, requestType, onDone }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   // DSCR-R1-002: a removal request is a different operation than a term edit —
   // approving it soft-removes the listing WITHOUT applying the payload.
   const isRemoval = requestType === "removal_request";
+  // DSCR-R2-001: publish fails closed at the RPC unless identity was confirmed
+  // through approve_submission. A rejected initial submission (identity
+  // 'pending') can never be published — it must go through approval. Only
+  // offer the button when the republish path is actually available.
+  const canRepublish =
+    status === "unpublished" && identityReviewStatus === "identity-confirmed";
 
   async function act(action) {
     setBusy(true);
@@ -83,9 +89,16 @@ function ActionButtons({ lenderId, status, versionId, requestType, onDone }) {
         )}
         {status === "unpublished" && (
           <>
-            <button disabled={busy} onClick={() => act("publish")} className={btnGreen}>
-              Publish
-            </button>
+            {canRepublish ? (
+              <button disabled={busy} onClick={() => act("publish")} className={btnGreen}>
+                Publish
+              </button>
+            ) : (
+              <span className="text-xs text-gray-500 italic px-1 py-1.5">
+                Cannot publish: identity not confirmed. Rejected submissions
+                must go through approval, not publish.
+              </span>
+            )}
             <button disabled={busy} onClick={() => act("remove")} className={btnRed}>
               Remove (soft)
             </button>
@@ -164,7 +177,7 @@ export default function DscrAdminQueue({ initialQueue }) {
               <p className="text-xs text-gray-500">
                 Submitted {new Date(l.created_at).toLocaleString()}
               </p>
-              <ActionButtons lenderId={l.id} status={l.status} onDone={refresh} />
+              <ActionButtons lenderId={l.id} status={l.status} identityReviewStatus={l.identity_review_status} onDone={refresh} />
             </div>
           ))}
         </div>
@@ -229,7 +242,7 @@ export default function DscrAdminQueue({ initialQueue }) {
                   {new Date(l.last_directory_reviewed_at).toLocaleDateString()}
                 </p>
               )}
-              <ActionButtons lenderId={l.id} status={l.status} onDone={refresh} />
+              <ActionButtons lenderId={l.id} status={l.status} identityReviewStatus={l.identity_review_status} onDone={refresh} />
             </div>
           ))}
         </div>

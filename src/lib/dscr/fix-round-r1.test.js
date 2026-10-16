@@ -38,7 +38,17 @@ function branchSql(sql, action) {
 // ---------------------------------------------------------------------------
 
 describe("R1-001 freshness semantics", () => {
-  const freshnessActions = [
+  // DSCR-R2-001: publish no longer establishes provider-confirmed freshness.
+  // Provider freshness comes from a provider assertion (initial submission,
+  // approved staged edit) or explicit reviewable evidence — never manufactured
+  // by an admin publish action. publish refreshes the directory-review
+  // timestamp only.
+  const providerFreshnessActions = [
+    "approve_submission",
+    "approve_version",
+    "reconfirm",
+  ];
+  const directoryReviewedActions = [
     "approve_submission",
     "approve_version",
     "reconfirm",
@@ -57,13 +67,16 @@ describe("R1-001 freshness semantics", () => {
     }
   });
 
-  it("TRANSITION_FRESHNESS marks the four public-facing actions as freshness-establishing", () => {
-    for (const action of freshnessActions) {
+  it("TRANSITION_FRESHNESS marks the provider-asserting actions as freshness-establishing", () => {
+    for (const action of providerFreshnessActions) {
       expect(TRANSITION_FRESHNESS[action].provider_confirmed, action).toBe(true);
       expect(TRANSITION_FRESHNESS[action].directory_reviewed, action).toBe(
         true
       );
     }
+    // DSCR-R2-001: publish refreshes the directory review only.
+    expect(TRANSITION_FRESHNESS.publish.provider_confirmed).toBe(false);
+    expect(TRANSITION_FRESHNESS.publish.directory_reviewed).toBe(true);
     for (const action of [
       "reject_submission",
       "reject_version",
@@ -76,8 +89,8 @@ describe("R1-001 freshness semantics", () => {
     }
   });
 
-  it("the RPC sets last_provider_confirmed_at on all four public-facing transitions", () => {
-    for (const action of freshnessActions) {
+  it("the RPC sets last_provider_confirmed_at on the provider-asserting transitions", () => {
+    for (const action of providerFreshnessActions) {
       const branch = branchSql(r1Sql, action);
       expect(
         branch,
@@ -86,8 +99,8 @@ describe("R1-001 freshness semantics", () => {
     }
   });
 
-  it("the RPC sets last_directory_reviewed_at on all four public-facing transitions", () => {
-    for (const action of freshnessActions) {
+  it("the RPC sets last_directory_reviewed_at on the directory-reviewed transitions", () => {
+    for (const action of directoryReviewedActions) {
       const branch = branchSql(r1Sql, action);
       expect(
         branch,

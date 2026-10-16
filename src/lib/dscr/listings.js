@@ -79,7 +79,8 @@ export const VERSION_REQUEST_TYPES = Object.freeze({
 });
 
 /**
- * Freshness-timestamp effects of each moderation transition (DSCR-R1-001).
+ * Freshness-timestamp effects of each moderation transition (DSCR-R1-001,
+ * DSCR-R2-001).
  *
  * Authoritative semantics:
  * - last_provider_confirmed_at: the provider last asserted their terms are
@@ -93,6 +94,15 @@ export const VERSION_REQUEST_TYPES = Object.freeze({
  * establish provider-confirmed freshness; otherwise the listing would be
  * published yet invisible in the default directory view. This table mirrors
  * the dscr_review_transition RPC's timestamp behavior.
+ *
+ * DSCR-R2-001: `publish` refreshes ONLY the directory-review timestamp.
+ * Provider freshness is never manufactured by an admin publish action — it
+ * comes from a provider assertion (initial submission, approved staged edit)
+ * or explicit reviewable evidence. A republished listing whose provider
+ * confirmation is stale stays hidden from the default directory until the
+ * provider re-asserts. `publish` additionally requires
+ * identity_review_status = 'identity-confirmed' (see canPublish), so a
+ * rejected initial submission can never reach the public view through it.
  */
 export const TRANSITION_FRESHNESS = Object.freeze({
   approve_submission: Object.freeze({
@@ -106,7 +116,9 @@ export const TRANSITION_FRESHNESS = Object.freeze({
     applies_terms_as_of: "version",
   }),
   publish: Object.freeze({
-    provider_confirmed: true,
+    // DSCR-R2-001: publish refreshes the directory-review timestamp only.
+    // Provider freshness is never manufactured by an admin publish action.
+    provider_confirmed: false,
     directory_reviewed: true,
     applies_terms_as_of: null,
   }),
@@ -170,6 +182,25 @@ export function canTransition(status, action) {
   const t = MODERATION_TRANSITIONS[action];
   if (!t) return false;
   return t.from.includes(status);
+}
+
+/**
+ * Whether the `publish` transition is allowed for a listing (DSCR-R2-001).
+ * Mirrors the dscr_review_transition RPC guard: publish fails closed unless
+ * the listing is unpublished AND identity was confirmed through
+ * approve_submission. A rejected initial submission
+ * (identity_review_status = 'pending') can never be published — it must go
+ * through approve_submission. Previously approved + administratively
+ * unpublished listings (identity-confirmed) keep the republish path.
+ * @param {object} listing
+ * @returns {boolean}
+ */
+export function canPublish(listing) {
+  if (!listing) return false;
+  return (
+    listing.status === "unpublished" &&
+    listing.identity_review_status === "identity-confirmed"
+  );
 }
 
 /** Abuse-report validation bounds (DSCR-IMPL-005: fail closed). */
