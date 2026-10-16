@@ -42,7 +42,7 @@ from check_offline import (
     VOID_ELEMENTS,
     _check_css_decls,
     _check_processing_instructions,
-    _css_strip_comments,
+    _css_strip_comments_safe,
     _css_unescape,
     _FindingSink,
     _is_xmlns_decl,
@@ -303,8 +303,13 @@ class _StyleAwareSanitizer(_Sanitizer):
 
 def _clean_style_block(css: str, s: _Sanitizer) -> tuple[str, bool]:
     """Remove remote @imports; refuse on remote url() or other violations."""
-    from check_offline import _css_strip_comments
-    unescaped = _css_strip_comments(_css_unescape(css))
+    from check_offline import _css_strip_comments_safe
+    stripped, ok = _css_strip_comments_safe(_css_unescape(css))
+    if not ok:
+        s.sink.add("F_MALFORMED_CSS",
+                   "style block has unterminated comment or string")
+        return "", False
+    unescaped = stripped
     probe = _FindingSink()
     _check_css_decls(css, probe, "")
     codes = {f["code"] for f in probe.findings}
@@ -346,10 +351,15 @@ def _sanitize_svg(text: str, sink: _FindingSink
         return False, "", {}
     changes: dict[str, int] = {}
 
+    # Sentinel: clean_element returns _REFUSE (not None) when the element
+    # forces whole-document refusal. None means "drop this element and
+    # continue" (salvage); _REFUSE aborts the sanitize as failed.
+    _REFUSE = object()
+
     def bump(code: str) -> None:
         changes[code] = changes.get(code, 0) + 1
 
-    def clean_element(el: ET.Element) -> ET.Element | None:
+    def clean_element(el: ET.Element):
         local = _local(el.tag)
         if local not in SVG_ELEMENTS:
             bump("REMOVED_UNADMITTED_ELEMENT")
@@ -382,14 +392,18 @@ def _sanitize_svg(text: str, sink: _FindingSink
         if local == "style":
             cleaned, ok = _clean_style_block(el.text or "", _style_ctx(sink, changes))
             if not ok:
-                return None
+                # A style block with a non-import remote resource (or other
+                # violation) refuses the whole document -- same as the HTML
+                # path -- instead of silently dropping the block. The sink
+                # already carries the F_REMOTE_CSS / F_MALFORMED_CSS finding.
+                return _REFUSE
             new.text = cleaned
         else:
             new.text = el.text
         return new
 
     cleaned_root = clean_element(root)
-    if cleaned_root is None:
+    if cleaned_root is None or cleaned_root is _REFUSE:
         return False, "", changes
     # Iterative rebuild: (old, new) pairs on an explicit stack.
     stack: list[tuple[ET.Element, ET.Element]] = [(root, cleaned_root)]
@@ -397,6 +411,8 @@ def _sanitize_svg(text: str, sink: _FindingSink
         old, new = stack.pop()
         for child in list(old):
             c = clean_element(child)
+            if c is _REFUSE:
+                return False, "", changes
             if c is not None:
                 new.append(c)
                 c.tail = child.tail

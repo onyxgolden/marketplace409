@@ -93,18 +93,17 @@ ENTITY_RE = re.compile(r"<!ENTITY\b", re.IGNORECASE)
 DOCTYPE_INTERNAL_RE = re.compile(r"<!DOCTYPE[^>\[]*\[", re.IGNORECASE | re.DOTALL)
 DOCTYPE_RE = re.compile(r"<!DOCTYPE\b", re.IGNORECASE)
 
-# CSS: url(...) / @import matchers run on CSS-UNESCAPED, COMMENT-STRIPPED
-# text, so escaped spellings like u\72l(...) and comment-spliced spellings
-# like @import/**/"" are caught.
-CSS_URL_RE = re.compile(r"url\(\s*([^)]*?)\s*\)", re.IGNORECASE)
-CSS_IMPORT_RE = re.compile(
-    r"@import\s*(?:url\(\s*([^)]*?)\s*\)|([\"'][^\"']*[\"']))",
-    re.IGNORECASE,
-)
-CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-CSS_ATRULE_RE = re.compile(r"@([a-zA-Z-]+)", re.IGNORECASE)
-CSS_DECL_RE = re.compile(r"([a-zA-Z][a-zA-Z-]*)\s*:\s*([^;}{]*)")
-CSS_FUNC_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9-]*)\s*\(")
+# CSS: detection runs on CSS-UNESCAPED text processed by a quote/escape/
+# comment-aware tokenizer (_css_strip_comments_safe): a /* sequence inside
+# a quoted string is string content, never a comment, so quoted URLs
+# survive comment stripping and reach the classifier whole. url()/@import
+# extraction is string/paren/brace aware (_css_extract_urls,
+# _css_scan_rules); unterminated strings, comments, parens or braces fail
+# closed with F_MALFORMED_CSS instead of silently skipping.
+# (url/@import/declaration matching is done by the string-aware scanners
+# below, not by regexes, so quoted comment markers and semicolons inside
+# strings cannot create detection gaps.)
+_CSS_WS = " \t\n\r\f"
 
 # Closed CSS property set: the only declarations admitted anywhere (style
 # blocks and style attributes). Anything else fails closed -- no general
@@ -289,65 +288,393 @@ class _FindingSink:
         self.findings.append({"code": code, "message": message, "loc": loc})
 
 
-def _css_strip_comments(text: str) -> str:
-    """Remove CSS /* ... */ comments before policy checks.
+def _css_string_end(text: str, i: int) -> int:
+    """Index just past the closing quote of the string starting at i.
 
-    Comments can splice apart policy-significant spellings
-    (@import/**/"x.css" must read as @import "x.css"), so all detection
-    runs on comment-stripped text.
+    Backslash escapes the next character (CSS Syntax L3). Returns -1 when
+    the string is unterminated.
     """
-    return CSS_COMMENT_RE.sub("", text)
+    q = text[i]
+    j = i + 1
+    n = len(text)
+    while j < n:
+        d = text[j]
+        if d == "\\" and j + 1 < n:
+            j += 2
+            continue
+        if d == q:
+            return j + 1
+        j += 1
+    return -1
+
+
+def _css_paren_end(text: str, i: int) -> int:
+    """Index just past the paren group closing the '(' at i.
+
+    Strings and nested parens are honored. Returns -1 when unterminated.
+    """
+    depth = 0
+    j, n = i, len(text)
+    while j < n:
+        d = text[j]
+        if d == '"' or d == "'":
+            end = _css_string_end(text, j)
+            if end < 0:
+                return -1
+            j = end
+        elif d == "\\" and j + 1 < n:
+            j += 2
+        elif d == "(":
+            depth += 1
+            j += 1
+        elif d == ")":
+            depth -= 1
+            j += 1
+            if depth == 0:
+                return j
+        else:
+            j += 1
+    return -1
+
+
+def _css_strip_comments_safe(text: str) -> tuple[str, bool]:
+    """Strip /* ... */ comments with quote/escape awareness.
+
+    A /* sequence inside a quoted string is string content, never a
+    comment: it survives stripping so the URL classifier sees the complete
+    interpreted URL (the quoted-comment bypass). Unterminated comments or
+    strings fail closed (ok=False); the caller must refuse instead of
+    checking silently-truncated text. Comments are replaced with nothing
+    (CSS preprocessing), which cannot hide spellings from detection.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"' or c == "'":
+            end = _css_string_end(text, i)
+            if end < 0:
+                return "".join(out), False
+            out.append(text[i:end])
+            i = end
+        elif c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            if end < 0:
+                return "".join(out), False
+            i = end + 2
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out), True
+
+
+def _css_extract_urls(value: str) -> tuple[list[str], bool]:
+    """Extract url(...) arguments with string awareness.
+
+    Returns (urls, ok); ok=False on unterminated string/paren (fail
+    closed). Arguments keep their quotes; _url_codes strips them.
+    """
+    urls: list[str] = []
+    i, n = 0, len(value)
+    while i < n:
+        c = value[i]
+        if c == '"' or c == "'":
+            end = _css_string_end(value, i)
+            if end < 0:
+                return urls, False
+            i = end
+        elif c == "\\" and i + 1 < n:
+            i += 2
+        elif (c == "u" or c == "U") and value[i:i + 3].lower() == "url":
+            if i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_"):
+                i += 1
+                continue
+            j = i + 3
+            while j < n and value[j] in _CSS_WS:
+                j += 1
+            if j >= n or value[j] != "(":
+                i = j
+                continue
+            arg, k, ok = _css_url_arg(value, j + 1)
+            if not ok:
+                return urls, False
+            urls.append(arg)
+            i = k
+        else:
+            i += 1
+    return urls, True
+
+
+def _css_url_arg(value: str, j: int) -> tuple[str, int, bool]:
+    """Parse one url( argument starting at j. Returns (arg, next, ok)."""
+    n = len(value)
+    while j < n and value[j] in _CSS_WS:
+        j += 1
+    if j < n and (value[j] == '"' or value[j] == "'"):
+        end = _css_string_end(value, j)
+        if end < 0:
+            return "", j, False
+        k = end
+        while k < n and value[k] in _CSS_WS:
+            k += 1
+        if k >= n or value[k] != ")":
+            return "", k, False
+        return value[j:end], k + 1, True
+    buf: list[str] = []
+    k = j
+    while k < n:
+        d = value[k]
+        if d == "\\" and k + 1 < n:
+            buf.append(value[k:k + 2])
+            k += 2
+            continue
+        if d == ")":
+            return "".join(buf), k + 1, True
+        if d == '"' or d == "'":
+            return "", k, False
+        buf.append(d)
+        k += 1
+    return "", k, False
+
+
+def _css_extract_functions(value: str) -> tuple[list[str], bool]:
+    """Function names invoked in a value; strings are skipped.
+
+    Returns (names, ok); ok=False on unterminated string (fail closed).
+    """
+    names: list[str] = []
+    i, n = 0, len(value)
+    while i < n:
+        c = value[i]
+        if c == '"' or c == "'":
+            end = _css_string_end(value, i)
+            if end < 0:
+                return names, False
+            i = end
+        elif c == "\\" and i + 1 < n:
+            i += 2
+        elif (c.isalpha() or c in "-_") and not (
+                i > 0 and (value[i - 1].isalnum() or value[i - 1] in "-_")):
+            j = i
+            while j < n and (value[j].isalnum() or value[j] in "-_"):
+                j += 1
+            name = value[i:j]
+            k = j
+            while k < n and value[k] in _CSS_WS:
+                k += 1
+            if k < n and value[k] == "(":
+                names.append(name.lower())
+            i = j
+        else:
+            i += 1
+    return names, True
+
+
+def _css_decl_colon(stmt: str) -> int:
+    """Index of the declaration colon: first ':' outside strings/parens.
+
+    Returns -1 when there is none.
+    """
+    depth = 0
+    i, n = 0, len(stmt)
+    while i < n:
+        c = stmt[i]
+        if c == '"' or c == "'":
+            end = _css_string_end(stmt, i)
+            if end < 0:
+                return -1
+            i = end
+        elif c == "(":
+            depth += 1
+            i += 1
+        elif c == ")":
+            depth -= 1
+            i += 1
+        elif c == ":" and depth == 0:
+            return i
+        else:
+            i += 1
+    return -1
+
+
+def _css_scan_rules(text: str) -> tuple[list, list, bool]:
+    """Scan comment-stripped CSS for at-rules and declarations.
+
+    Returns (decls, atrules, ok):
+      decls: [(prop, value)] for every `prop: value` outside strings/parens
+      atrules: [(name, prelude)] for every @-rule outside strings
+      ok: False on unbalanced braces or unterminated strings/parens.
+    Selectors and other non-declaration text carry no resource surface and
+    are ignored; every declaration and at-rule is fully consumed.
+    """
+    decls: list[tuple[str, str]] = []
+    atrules: list[tuple[str, str]] = []
+    buf: list[str] = []
+    depth = 0
+    i, n = 0, len(text)
+
+    def flush() -> bool:
+        stmt = "".join(buf).strip()
+        buf.clear()
+        if not stmt:
+            return True
+        if stmt.startswith("@"):
+            m = re.match(r"@([a-zA-Z-]+)", stmt)
+            if not m:
+                return False
+            atrules.append((m.group(1).lower(), stmt[m.end():].strip()))
+            return True
+        ci = _css_decl_colon(stmt)
+        if ci < 0:
+            return True  # selector text or junk: no resource surface
+        prop = stmt[:ci].strip()
+        if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9-]*", prop):
+            return True  # not a declaration (e.g. pseudo-class selector)
+        decls.append((prop, stmt[ci + 1:].strip()))
+        return True
+
+    while i < n:
+        c = text[i]
+        if c == '"' or c == "'":
+            end = _css_string_end(text, i)
+            if end < 0:
+                return decls, atrules, False
+            buf.append(text[i:end])
+            i = end
+        elif c == "(":
+            end = _css_paren_end(text, i)
+            if end < 0:
+                return decls, atrules, False
+            buf.append(text[i:end])
+            i = end
+        elif c == "\\" and i + 1 < n:
+            buf.append(text[i:i + 2])
+            i += 2
+        elif c == "{":
+            if not flush():
+                return decls, atrules, False
+            depth += 1
+            i += 1
+        elif c == "}":
+            if not flush():
+                return decls, atrules, False
+            depth -= 1
+            if depth < 0:
+                return decls, atrules, False
+            i += 1
+        elif c == ";":
+            if not flush():
+                return decls, atrules, False
+            i += 1
+        else:
+            buf.append(c)
+            i += 1
+    if not flush():
+        return decls, atrules, False
+    return decls, atrules, True
+
+
+def _css_import_urls(prelude: str) -> tuple[list[str], bool]:
+    """URLs referenced by an @import prelude: url(...) args and quoted
+    strings, string-aware. Returns (urls, ok)."""
+    urls, ok = _css_extract_urls(prelude)
+    if not ok:
+        return urls, False
+    i, n = 0, len(prelude)
+    while i < n:
+        c = prelude[i]
+        if c == '"' or c == "'":
+            end = _css_string_end(prelude, i)
+            if end < 0:
+                return urls, False
+            s = prelude[i:end]
+            if s not in urls:
+                urls.append(s)
+            i = end
+        elif c == "\\" and i + 1 < n:
+            i += 2
+        else:
+            i += 1
+    return urls, True
 
 
 def _check_css_decls(css: str, sink: _FindingSink, loc: str) -> None:
-    """Check CSS under a CLOSED grammar.
+    """Check CSS under a CLOSED grammar with real tokenization.
 
-    The CSS is unescaped (CSS Syntax L3), then comments are stripped, then
-    every declaration is judged against the admitted property set and the
-    admitted function set. Anything outside the subset -- unadmitted
-    properties (inline-size, background-image, ...), unadmitted functions
-    (image-set, ...), unadmitted @-rules, remote url() -- fails closed.
+    The CSS is unescaped (CSS Syntax L3), then comments are stripped by a
+    quote/escape-aware scanner (a /* inside a quoted URL is string content,
+    never a comment), then every at-rule and declaration is consumed by a
+    string/paren/brace-aware scanner. Anything outside the admitted subset
+    -- unadmitted properties/functions/at-rules, remote url() -- fails
+    closed, as do unterminated strings, comments, parens or braces.
     """
-    text = _css_strip_comments(_css_unescape(css))
+    stripped, ok = _css_strip_comments_safe(_css_unescape(css))
+    if not ok:
+        sink.add("F_MALFORMED_CSS",
+                 "unterminated CSS comment or string", loc)
+        return
+    decls, atrules, ok = _css_scan_rules(stripped)
+    if not ok:
+        sink.add("F_MALFORMED_CSS",
+                 "malformed CSS structure", loc)
+        return
 
-    # @import is handled as a rule-level construct first.
-    for m in CSS_IMPORT_RE.finditer(text):
-        url = (m.group(1) or m.group(2) or "").strip().strip("'\"")
-        for code in _url_codes(url):
-            if code == "F_EXTERNAL_REFERENCE":
-                code = "F_REMOTE_CSS"
-            sink.add(code, "remote CSS import not allowed offline", loc)
-    # Any other @-rule (media, font-face, charset, ...) is unadmitted.
-    for m in CSS_ATRULE_RE.finditer(text):
-        if m.group(1).lower() != "import":
+    for name, prelude in atrules:
+        if name == "import":
+            urls, uok = _css_import_urls(prelude)
+            if not uok:
+                sink.add("F_MALFORMED_CSS",
+                         "malformed CSS import", loc)
+                continue
+            for url in urls:
+                for code in _url_codes(url):
+                    if code == "F_EXTERNAL_REFERENCE":
+                        code = "F_REMOTE_CSS"
+                    sink.add(code, "remote CSS import not allowed offline",
+                             loc)
+        else:
             sink.add("F_UNADMITTED_CSS",
                      "CSS at-rule not admitted by the offline profile", loc)
 
-    for m in CSS_DECL_RE.finditer(text):
-        prop, value = m.group(1).lower(), m.group(2)
-        # Resource scan runs on every declaration, even unadmitted ones, so
-        # a remote url() is always classified as remote (never masked by a
-        # property refusal).
-        for um in CSS_URL_RE.finditer(value):
-            url = um.group(1).strip().strip("'\"")
-            for code in _url_codes(url):
-                if code == "F_EXTERNAL_REFERENCE":
-                    code = "F_REMOTE_CSS"
-                sink.add(code, "remote url() in CSS not allowed offline", loc)
-        if prop not in ADMITTED_CSS_PROPS:
+    for prop, value in decls:
+        _check_css_decl(prop, value, sink, loc)
+
+
+def _check_css_decl(prop: str, value: str, sink: _FindingSink,
+                    loc: str) -> None:
+    """Judge one declaration against the admitted property/function sets."""
+    p = prop.strip().lower()
+    urls, ok = _css_extract_urls(value)
+    if not ok:
+        sink.add("F_MALFORMED_CSS", "malformed url() in CSS", loc)
+        return
+    # Resource scan runs on every declaration, even unadmitted ones, so a
+    # remote url() is always classified as remote (never masked by a
+    # property refusal).
+    for url in urls:
+        for code in _url_codes(url):
+            if code == "F_EXTERNAL_REFERENCE":
+                code = "F_REMOTE_CSS"
+            sink.add(code, "remote url() in CSS not allowed offline", loc)
+    if p not in ADMITTED_CSS_PROPS:
+        sink.add("F_UNADMITTED_CSS",
+                 "CSS property not admitted by the offline profile", loc)
+        return
+    funcs, ok = _css_extract_functions(value)
+    if not ok:
+        sink.add("F_MALFORMED_CSS", "malformed function call in CSS", loc)
+        return
+    for fname in funcs:
+        if fname not in ADMITTED_CSS_FUNCS:
             sink.add("F_UNADMITTED_CSS",
-                     "CSS property not admitted by the offline profile", loc)
-            continue
-        # Closed function set inside admitted declarations.
-        for fm in CSS_FUNC_RE.finditer(value):
-            if fm.group(1).lower() not in ADMITTED_CSS_FUNCS:
-                sink.add("F_UNADMITTED_CSS",
-                         "CSS function not admitted by the offline profile",
-                         loc)
-        if prop in ("width", "height"):
-            code = _check_dimension_value(value.split("!")[0])
-            if code:
-                sink.add(code, "CSS dimension out of profile bounds", loc)
+                     "CSS function not admitted by the offline profile", loc)
+    if p in ("width", "height"):
+        code = _check_dimension_value(value.split("!")[0])
+        if code:
+            sink.add(code, "CSS dimension out of profile bounds", loc)
 
 
 def _check_attr_value(element: str, attr: str, value: str,
@@ -361,8 +688,13 @@ def _check_attr_value(element: str, attr: str, value: str,
     elif attr in ("fill", "stroke"):
         # Resource-bearing presentation attributes: plain colors and local
         # #fragment / data:image: paints are admitted; remote url() is not.
-        for m in CSS_URL_RE.finditer(_css_unescape(value)):
-            url = m.group(1).strip().strip("'\"")
+        # URL extraction is string-aware (same semantics as style blocks):
+        # a quoted /* inside the URL is string content, never a comment.
+        urls, uok = _css_extract_urls(_css_unescape(value))
+        if not uok:
+            sink.add("F_MALFORMED_CSS",
+                     "malformed url() in presentation attribute", loc)
+        for url in urls:
             for code in _url_codes(url):
                 if code == "F_EXTERNAL_REFERENCE":
                     code = "F_REMOTE_CSS"

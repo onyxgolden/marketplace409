@@ -121,6 +121,7 @@ EXPECTED_FAIL = {
     "bypass-03.html": "F_UNADMITTED_ATTR",         # meta http-equiv=refresh
     "bypass-04.html": "F_REMOTE_CSS",              # escaped u\72l() url
     "bypass-05.svg": "F_UNADMITTED_ELEMENT",       # <s:script> (ns prefix)
+    "bypass-06.svg": "F_REMOTE_CSS",              # quoted /* inside url()
 }
 for fname, code in EXPECTED_FAIL.items():
     ok, findings = check_file(FIX / fname)
@@ -153,6 +154,82 @@ ok, _ = check_text(
     '<svg xmlns="http://www.w3.org/2000/svg">'
     '<rect x="1" y="1" width="10" height="10" fill="url(#g)"/></svg>', ".svg")
 check("css:local-fill-url:passes", ok)
+# --- 2c. D641-001 round 4: quoted-comment URL bypass (tokenizer gap) ---
+# A /* inside a quoted url() is string content, never a comment: the
+# remote URL must reach the classifier whole.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect { fill:url("https://example.test/*"); /* trailing */ }'
+    "</style>"
+    '<rect width="20" height="20"/></svg>', ".svg")
+check("css:quoted-comment-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Escaped quote inside the URL still refuses (fail closed).
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url("https://example.test/a\\"b")}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-quote-url:refused", not ok,
+      f"codes={sorted({f['code'] for f in findings})}")
+# Comment marker smuggled in via CSS escapes decodes to a quoted /*:
+# still string content, still refused.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{fill:url("
+    '"\\68\\74\\74\\70\\73\\3a\\2f\\2fexample.test\\2f\\2a")}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:escaped-comment-marker-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Semicolon inside a quoted URL must not split the declaration and hide
+# the URL from the classifier.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url("https://example.test/a;b")}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:semicolon-in-string-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Unterminated string / comment fail closed (never silently truncated).
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url("https://example.test/}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:unterminated-string:refused",
+      (not ok) and "F_MALFORMED_CSS" in {f["code"] for f in findings})
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    "<style>rect{fill:red}/* oops</style>"
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:unterminated-comment:refused",
+      (not ok) and "F_MALFORMED_CSS" in {f["code"] for f in findings})
+# Same semantics in style attributes and presentation attributes.
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="10" height="10" '
+    'style="fill:url(&quot;https://example.test/*&quot;); /* x */"/></svg>',
+    ".svg")
+check("css:style-attr-quoted-comment-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+ok, findings = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="10" height="10" '
+    'fill="url(\'https://example.test/*\')"/></svg>', ".svg")
+check("css:fill-attr-quoted-comment-url:refused",
+      (not ok) and "F_REMOTE_CSS" in {f["code"] for f in findings})
+# Safe positives: local fragments and data URIs pass, quoted /* included.
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<style>rect{fill:url("#frag/*");/* ok */}</style>'
+    '<rect width="10" height="10"/></svg>', ".svg")
+check("css:local-fragment-quoted-comment:passes", ok)
+ok, _ = check_text(
+    '<svg xmlns="http://www.w3.org/2000/svg">'
+    '<rect width="10" height="10" '
+    'fill="url(data:image/svg+xml;base64,AAA)"/></svg>', ".svg")
+check("css:data-uri-paint:passes", ok)
+# Sanitizer refuses the quoted-comment bypass too (serialized output).
+ok_s, _, rep_s = sanitize(FIX / "bypass-06.svg")
+check("sanitize:quoted-comment-url:refused",
+      (not ok_s) and "F_REMOTE_CSS" in rep_s.get("finding_codes", []))
 # XML stylesheet processing instruction refused before the XML parser
 # discards it.
 ok, findings = check_text(
