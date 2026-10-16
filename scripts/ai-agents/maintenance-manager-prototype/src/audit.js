@@ -78,7 +78,15 @@ export function classifyWorkOrder(wo, { asOfMs, asOfDay, registeredAssets, citat
 }
 
 /** Aggregate classified work orders into the backlog/overdue/cancelled
- *  report sections, plus the integrity findings list. */
+ *  report sections, plus the integrity findings list.
+ *
+ *  MM-S1-002: every aggregate section carries explicit citation support —
+ *  the verified citations of the records whose values feed that
+ *  aggregate, or an explicit UNAVAILABLE state when there are no
+ *  contributing records. Verified citations live on the classified
+ *  records (attached by the caller in src/index.js); they are collected
+ *  here, not discarded, so the envelope can identify exactly which bytes
+ *  support each calculation. */
 export function aggregateWorkOrders(classified) {
   const backlog = { total: 0, by_priority: emptyPriorityMap(), by_bin: emptyBinMap() };
   const overdue = { total: 0, unknown_due_count: 0, by_priority: emptyPriorityMap() };
@@ -86,25 +94,52 @@ export function aggregateWorkOrders(classified) {
   let completed_count = 0;
   const integrityFindings = [];
 
+  // MM-S1-002: collect the verified citations feeding each aggregate.
+  // Sorted by record_id for deterministic ordering regardless of input order.
+  const backlogCitations = [];
+  const overdueCitations = [];
+  const cancelledCitations = [];
+
   for (const c of classified) {
     if (c.kind === "integrity") {
       integrityFindings.push({ code: c.reason, record_type: "work_order", record_id: c.work_order_id, citation: c.citation });
       continue;
     }
-    if (c.kind === "cancelled") { cancelled_count += 1; continue; }
+    if (c.kind === "cancelled") {
+      cancelled_count += 1;
+      if (c.citation?.verification === "VERIFIED") cancelledCitations.push({ id: c.work_order_id, citation: c.citation });
+      continue;
+    }
     if (c.kind === "completed") { completed_count += 1; continue; }
     // backlog
     backlog.total += 1;
     backlog.by_priority[c.priority] += 1;
     backlog.by_bin[c.bin] += 1;
+    if (c.citation?.verification === "VERIFIED") backlogCitations.push({ id: c.work_order_id, citation: c.citation });
     if (c.overdue === "overdue") {
       overdue.total += 1;
       overdue.by_priority[c.priority] += 1;
+      if (c.citation?.verification === "VERIFIED") overdueCitations.push({ id: c.work_order_id, citation: c.citation });
     } else if (c.overdue === "unknown") {
       overdue.unknown_due_count += 1;
     }
   }
-  return { backlog, overdue, cancelled_count, completed_count, integrityFindings };
+
+  // MM-S1-002: explicit citation support per aggregate. VERIFIED with the
+  // contributing citations (sorted by record_id for determinism), or
+  // UNAVAILABLE when no records feed the aggregate (nothing to cite).
+  const sortById = (arr) => arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((x) => x.citation);
+  backlog.citation_support = backlogCitations.length > 0
+    ? { state: "VERIFIED", record_count: backlogCitations.length, citations: sortById(backlogCitations) }
+    : { state: "UNAVAILABLE", reason: "no contributing backlog records" };
+  overdue.citation_support = overdueCitations.length > 0
+    ? { state: "VERIFIED", record_count: overdueCitations.length, citations: sortById(overdueCitations) }
+    : { state: "UNAVAILABLE", reason: "no contributing overdue records" };
+  const cancelled_support = cancelledCitations.length > 0
+    ? { state: "VERIFIED", record_count: cancelledCitations.length, citations: sortById(cancelledCitations) }
+    : { state: "UNAVAILABLE", reason: "no contributing cancelled records" };
+
+  return { backlog, overdue, cancelled_count, cancelled_citation_support: cancelled_support, completed_count, integrityFindings };
 }
 
 /**
@@ -134,16 +169,91 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
 
   const dueMembers = occurrences.filter((o) => o.due_ms >= windowStartMs && o.due_ms <= windowEndMs && o.due_ms <= asOfMs);
 
-  if (dueMembers.length === 0) {
+  // MM-S1-002: collect verified citations of due members for aggregate support.
+  // Sorted by occurrence_id for deterministic ordering regardless of input order.
+  const dueMemberCitations = [];
+  for (const o of dueMembers) {
+    const c = citations.get(o.occurrence_id);
+    if (c?.verification === "VERIFIED") dueMemberCitations.push({ id: o.occurrence_id, citation: c });
+  }
+  dueMemberCitations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const pmCitationSupport = dueMemberCitations.length > 0
+    ? { state: "VERIFIED", record_count: dueMemberCitations.length, citations: dueMemberCitations.map((x) => x.citation) }
+    : { state: "UNAVAILABLE", reason: "no contributing due occurrences" };
+
+  // MM-S1-004: population completeness defines the PM basis. When the
+  // population is not verified complete, the basis is UNVERIFIABLE for
+  // BOTH zero and nonzero visible due rows — a partial register must not
+  // publish a verified denominator/rate merely because its visible rows
+  // are internally consistent. Visible-subset counts are retained but
+  // explicitly labeled as non-whole-population evidence; no rate is
+  // published.
+  if (!populationComplete) {
+    let visible_early = 0, visible_late = 0, visible_cancelled_link = 0, visible_unlinked = 0;
+    const visiblePoisoning = [];
+    for (const occ of dueMembers) {
+      if (!registeredAssets.has(occ.asset_id)) {
+        visiblePoisoning.push(occ.occurrence_id);
+        continue;
+      }
+      if (citationUnavailableIds.has(occ.occurrence_id)) {
+        visiblePoisoning.push(occ.occurrence_id);
+        continue;
+      }
+      if (occ.linked_work_order_id === null) {
+        visible_unlinked += 1;
+        continue;
+      }
+      const linked = workOrderById.get(occ.linked_work_order_id);
+      if (!linked || workOrderIntegrityIds.has(occ.linked_work_order_id)) {
+        visiblePoisoning.push(occ.occurrence_id);
+        continue;
+      }
+      if (linked.kind === "cancelled") {
+        visible_cancelled_link += 1;
+        continue;
+      }
+      if (linked.kind !== "completed") continue;
+      const completedMs = linked.completed_ms;
+      if (completedMs < occ.window_start_ms) visible_early += 1;
+      else if (completedMs > occ.window_end_ms || completedMs > asOfMs) visible_late += 1;
+    }
     return {
       section: {
-        basis_state: populationComplete ? "NO_DUE_OCCURRENCES" : "UNVERIFIABLE",
-        denominator: populationComplete ? 0 : null,
-        numerator: populationComplete ? 0 : null,
+        basis_state: "UNVERIFIABLE",
+        denominator: null,
+        numerator: null,
         ratio: null,
         display_percent: null,
         early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0,
         poisoning_occurrence_ids: [],
+        // MM-S1-004: visible-subset evidence, explicitly NOT whole-population.
+        visible_subset: {
+          note: "visible-subset only; not whole-population evidence — no verified rate",
+          due_count: dueMembers.length,
+          early_count: visible_early,
+          late_count: visible_late,
+          cancelled_link_count: visible_cancelled_link,
+          unlinked_count: visible_unlinked,
+          poisoning_occurrence_ids: visiblePoisoning.sort(),
+        },
+        citation_support: pmCitationSupport,
+      },
+      additionalFindings,
+    };
+  }
+
+  if (dueMembers.length === 0) {
+    return {
+      section: {
+        basis_state: "NO_DUE_OCCURRENCES",
+        denominator: 0,
+        numerator: 0,
+        ratio: null,
+        display_percent: null,
+        early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0,
+        poisoning_occurrence_ids: [],
+        citation_support: pmCitationSupport,
       },
       additionalFindings,
     };
@@ -217,6 +327,7 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
         display_percent: null,
         early_count: early, late_count: late, cancelled_link_count: cancelledLink, unlinked_count: unlinked,
         poisoning_occurrence_ids: poisoningIds.sort(),
+        citation_support: pmCitationSupport,
       },
       additionalFindings,
     };
@@ -233,6 +344,7 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
       display_percent: `${rToFixed({ num: ratio.num * 100n, den: ratio.den }, 2)}%`,
       early_count: early, late_count: late, cancelled_link_count: cancelledLink, unlinked_count: unlinked,
       poisoning_occurrence_ids: [],
+      citation_support: pmCitationSupport,
     },
     additionalFindings,
   };
@@ -245,21 +357,39 @@ export function computePmCompliance(occurrences, { asOfMs, windowStartMs, window
  * contract) — the claimed value never overwrites or seeds the computed
  * one. When the computed basis itself isn't VERIFIED (e.g. UNVERIFIABLE,
  * NO_DUE_OCCURRENCES), the comparison is UNKNOWN, never silently a MATCH.
+ *
+ * MM-S1-003: every comparison carries its claim citation — the verified
+ * provenance citation supplied by the caller, or an explicit UNAVAILABLE
+ * marker when the claim set had no (or unverifiable) provenance. A claim
+ * without verified provenance can NEVER be MATCH; it is UNKNOWN with
+ * explicit unavailable support.
  */
-export function computeHeaderComparisons(claimedSummary, pmSection) {
+export function computeHeaderComparisons(claimedSummary, pmSection, claimCitation) {
   if (!claimedSummary) return [];
   const out = [];
+  // MM-S1-003: absent or unverifiable provenance → explicit UNAVAILABLE.
+  const effectiveCitation = claimCitation?.verification === "VERIFIED"
+    ? claimCitation
+    : { verification: "UNAVAILABLE", reason: claimCitation?.reason ?? "claim set has no verified provenance" };
+  const provenanceVerified = effectiveCitation.verification === "VERIFIED";
   for (const claim of claimedSummary.claims) {
     if (claim.metric === "pm_compliance_percent") {
       let computed_value = null;
       let evidence_state;
-      if (pmSection.basis_state === "VERIFIED") {
+      if (pmSection.basis_state === "VERIFIED" && provenanceVerified) {
         computed_value = pmSection.display_percent.replace("%", "");
         evidence_state = computed_value === claim.claimed_value ? "MATCH" : "MISMATCH";
       } else {
         evidence_state = "UNKNOWN";
       }
-      out.push({ claim_id: claim.claim_id, metric: claim.metric, claimed_value: claim.claimed_value, computed_value, evidence_state });
+      out.push({
+        claim_id: claim.claim_id,
+        metric: claim.metric,
+        claimed_value: claim.claimed_value,
+        computed_value,
+        evidence_state,
+        claim_citation: effectiveCitation,
+      });
     }
   }
   return out;

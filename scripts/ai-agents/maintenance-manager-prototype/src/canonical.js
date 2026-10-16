@@ -54,9 +54,17 @@ export const HEX64 = /^[0-9a-f]{64}$/;
  * outermost object/array itself counts as depth 1. Iterative (explicit
  * stack), not recursive, so a pathologically deep/wide input cannot blow
  * the native call stack before the depth check itself has a chance to
- * refuse it. Used as a pre-inspection guard (MM-S1-001): admitted JSON
- * (the task and the parsed register) is checked for depth >32 BEFORE any
- * shape/field validation walks it.
+ * refuse it.
+ *
+ * MM-S1-001: this is a STRUCTURAL preflight only. It uses own-property
+ * descriptors and NEVER invokes accessor properties (getters/setters) —
+ * they are skipped entirely without being read. Only data-descriptor
+ * values that are themselves objects/arrays are descended into; leaf
+ * values are never read. A throwing getter/proxy on the task path is
+ * therefore never touched by the depth guard. Used for the task object
+ * (which is caller-supplied and may carry accessors); the register uses
+ * the byte-level maxJsonNestingDepth() on its raw text before parsing,
+ * so parsed register candidates are never walked at all.
  */
 export function maxContainerDepth(value) {
   let max = 0;
@@ -64,15 +72,86 @@ export function maxContainerDepth(value) {
   while (stack.length) {
     const [v, d] = stack.pop();
     if (v !== null && typeof v === "object") {
-      if (d > max) max = d;
-      const children = Array.isArray(v) ? v : Object.values(v);
-      for (const c of children) stack.push([c, d + 1]);
+      if (d > max) {
+        max = d;
+        if (max > MAX_CONTAINER_DEPTH) return max;
+      }
+      let keys;
+      try {
+        keys = Object.keys(v);
+      } catch {
+        continue;
+      }
+      for (const k of keys) {
+        let desc;
+        try {
+          desc = Object.getOwnPropertyDescriptor(v, k);
+        } catch {
+          continue;
+        }
+        // Skip accessors entirely — never invoke user getters/setters.
+        if (!desc || !("value" in desc)) continue;
+        const child = desc.value;
+        if (child !== null && typeof child === "object") {
+          if (d >= MAX_CONTAINER_DEPTH) {
+            // At the cap with a deeper container present — depth exceeds cap.
+            return MAX_CONTAINER_DEPTH + 1;
+          }
+          stack.push([child, d + 1]);
+        }
+      }
     }
   }
   return max;
 }
 
 export const MAX_CONTAINER_DEPTH = 32;
+
+/**
+ * Byte-level JSON nesting depth scanner (MM-S1-001). Computes the maximum
+ * container nesting depth directly from raw JSON TEXT without parsing it
+ * and without constructing any objects — candidate fields are never
+ * materialized, let alone read. Tracks `{`/`[` depth while correctly
+ * skipping over string literals (with escape handling). Depth semantics
+ * match maxContainerDepth(): the outermost container counts as depth 1.
+ *
+ * Used for the register: the depth check runs on registerResolved.text
+ * BEFORE JSON.parse, so no parsed register candidate is ever walked by
+ * the guard. The text length is already bounded by the payload budget
+ * (resolveSourceRef charges it), so the scan is linear in an already-
+ * bounded input. Returns 0 for empty/non-JSON text (JSON.parse will then
+ * refuse it as INVALID_INPUT separately); never throws.
+ */
+export function maxJsonNestingDepth(text) {
+  if (typeof text !== "string" || text.length === 0) return 0;
+  let max = 0;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (c === 0x5c) { // backslash
+        escaped = true;
+      } else if (c === 0x22) { // quote
+        inString = false;
+      }
+      continue;
+    }
+    if (c === 0x22) { // quote
+      inString = true;
+    } else if (c === 0x7b || c === 0x5b) { // { or [
+      depth++;
+      if (depth > max) max = depth;
+      if (max > MAX_CONTAINER_DEPTH) return max; // early exit; already over cap
+    } else if (c === 0x7d || c === 0x5d) { // } or ]
+      if (depth > 0) depth--;
+    }
+  }
+  return max;
+}
 
 /**
  * Exact rational number as {num, den} BigInts, always reduced, den > 0.

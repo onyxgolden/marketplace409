@@ -54,6 +54,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -63,9 +67,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -76,7 +88,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -153,6 +169,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -162,9 +182,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -175,7 +203,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -252,6 +284,10 @@
           "bin_8_30": 2,
           "bin_31_90": 2,
           "bin_91_plus": 1
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 7
         }
       },
       "overdue": {
@@ -261,9 +297,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -274,7 +318,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -351,6 +399,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -360,9 +412,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -373,7 +433,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -450,6 +514,10 @@
           "bin_8_30": 0,
           "bin_31_90": 3,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 3
         }
       },
       "overdue": {
@@ -459,9 +527,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -472,7 +548,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -549,6 +629,10 @@
           "bin_8_30": 1,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -558,9 +642,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -571,7 +663,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -648,6 +744,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -657,9 +757,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -673,7 +781,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -750,6 +862,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -759,9 +875,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -775,7 +899,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -852,6 +980,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -861,9 +993,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -877,7 +1017,11 @@
         "late_count": 1,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -954,6 +1098,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -963,9 +1111,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -979,7 +1135,11 @@
         "late_count": 0,
         "cancelled_link_count": 1,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -1056,6 +1216,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -1065,9 +1229,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -1081,7 +1253,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 1,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -1158,6 +1334,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -1167,9 +1347,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1180,7 +1368,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -1235,7 +1427,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -1257,6 +1449,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -1266,9 +1462,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -1279,7 +1483,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -1334,7 +1551,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -1356,6 +1573,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -1365,9 +1586,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1378,7 +1607,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -1450,7 +1683,7 @@
     "clock": "2026-05-05T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -1472,6 +1705,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -1481,9 +1718,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1494,7 +1739,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -1595,6 +1844,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -1604,9 +1857,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1617,7 +1878,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -1694,6 +1959,10 @@
           "bin_8_30": 2,
           "bin_31_90": 2,
           "bin_91_plus": 2
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 7
         }
       },
       "overdue": {
@@ -1703,9 +1972,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1716,7 +1993,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -1771,7 +2052,7 @@
     "clock": "2026-05-31T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -1793,6 +2074,10 @@
           "bin_8_30": 2,
           "bin_31_90": 2,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 6
         }
       },
       "overdue": {
@@ -1802,9 +2087,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1815,7 +2108,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -1901,6 +2198,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 3
         }
       },
       "overdue": {
@@ -1910,9 +2211,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -1923,7 +2232,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2000,6 +2313,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -2009,9 +2326,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2022,7 +2347,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2077,7 +2406,7 @@
     "clock": "2026-05-05T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -2099,6 +2428,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -2108,9 +2441,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2121,7 +2462,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -2207,6 +2552,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -2216,9 +2565,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2229,7 +2586,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2306,6 +2667,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -2315,9 +2680,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2328,7 +2701,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2383,7 +2760,7 @@
     "clock": "2026-05-20T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -2405,6 +2782,10 @@
           "bin_8_30": 1,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -2414,9 +2795,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2427,7 +2816,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -2521,6 +2914,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -2530,9 +2927,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2543,7 +2948,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2620,6 +3029,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -2629,9 +3042,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2642,7 +3063,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2719,6 +3144,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 1
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -2728,9 +3157,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2741,7 +3178,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2818,6 +3259,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -2827,9 +3272,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -2840,7 +3293,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -2895,7 +3352,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -2917,6 +3374,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -2926,23 +3387,41 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
-        "basis_state": "VERIFIED",
-        "denominator": 1,
-        "numerator": 0,
-        "ratio": {
-          "num": "0",
-          "den": "1"
-        },
-        "display_percent": "0.00%",
+        "basis_state": "UNVERIFIABLE",
+        "denominator": null,
+        "numerator": null,
+        "ratio": null,
+        "display_percent": null,
         "early_count": 0,
         "late_count": 0,
         "cancelled_link_count": 0,
-        "unlinked_count": 1,
-        "poisoning_occurrence_ids": []
+        "unlinked_count": 0,
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 1,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 1,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -3019,6 +3498,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -3028,9 +3511,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3041,7 +3532,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -3118,6 +3613,10 @@
           "bin_8_30": 1,
           "bin_31_90": 4,
           "bin_91_plus": 2
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 7
         }
       },
       "overdue": {
@@ -3127,9 +3626,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3140,7 +3647,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -3217,6 +3728,10 @@
           "bin_8_30": 0,
           "bin_31_90": 3,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 3
         }
       },
       "overdue": {
@@ -3226,9 +3741,17 @@
           "P1": 0,
           "P2": 2,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3239,7 +3762,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -3294,7 +3821,7 @@
     "clock": "2026-05-16T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -3316,6 +3843,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -3325,9 +3856,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -3340,7 +3879,11 @@
         "unlinked_count": 0,
         "poisoning_occurrence_ids": [
           "PM-LATE"
-        ]
+        ],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -3410,7 +3953,7 @@
     "clock": "2026-04-15T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -3432,6 +3975,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -3441,9 +3988,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3454,7 +4009,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -3518,7 +4077,7 @@
     "clock": "2026-05-08T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -3540,6 +4099,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -3549,9 +4112,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3562,7 +4133,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -3626,7 +4201,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -3648,6 +4223,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -3657,9 +4236,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3670,7 +4257,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -3742,7 +4333,7 @@
     "clock": "2026-05-31T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -3764,6 +4355,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -3773,9 +4368,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3786,7 +4389,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -3872,6 +4479,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -3881,9 +4492,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3894,7 +4513,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -3971,6 +4594,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -3980,9 +4607,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -3993,7 +4628,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -4070,6 +4709,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4079,9 +4722,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -4092,7 +4743,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -4154,8 +4809,8 @@
     },
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
-      "status": "REPORT_READY",
-      "complete": true,
+      "status": "PARTIAL",
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -4177,6 +4832,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4186,9 +4845,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -4202,15 +4869,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [
         {
           "claim_id": "HDR-1",
           "metric": "pm_compliance_percent",
           "claimed_value": "100.00",
-          "computed_value": "100.00",
-          "evidence_state": "MATCH"
+          "computed_value": null,
+          "evidence_state": "UNKNOWN",
+          "claim_citation_verification": "UNAVAILABLE"
         }
       ],
       "integrity_findings": [],
@@ -4223,7 +4895,7 @@
         "unverifiable_citation_pm_occurrences": []
       },
       "coverage": {
-        "state": "COMPLETE",
+        "state": "PARTIAL",
         "admitted_count": 2,
         "excluded_count": 0
       }
@@ -4265,7 +4937,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -4287,6 +4959,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4296,9 +4972,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -4309,7 +4993,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -4373,7 +5061,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -4395,6 +5083,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4404,9 +5096,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -4417,7 +5117,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -4481,7 +5185,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -4503,6 +5207,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4512,9 +5220,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -4525,7 +5241,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -4589,7 +5309,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -4611,6 +5331,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4620,9 +5344,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -4633,7 +5365,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -4721,6 +5457,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4730,9 +5470,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -4743,7 +5491,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -4822,6 +5574,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4831,9 +5587,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -4844,7 +5608,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -4923,6 +5691,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -4932,9 +5704,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -4945,7 +5725,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -5000,7 +5784,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5022,6 +5806,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5031,9 +5819,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -5046,7 +5842,11 @@
         "unlinked_count": 0,
         "poisoning_occurrence_ids": [
           "PM-POISON-ORPHAN"
-        ]
+        ],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -5110,7 +5910,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5132,6 +5932,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5141,9 +5945,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -5156,7 +5968,11 @@
         "unlinked_count": 0,
         "poisoning_occurrence_ids": [
           "PM-DANGLING"
-        ]
+        ],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -5218,7 +6034,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5240,6 +6056,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5249,9 +6069,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -5264,7 +6092,11 @@
         "unlinked_count": 0,
         "poisoning_occurrence_ids": [
           "PM-LINKINVALID"
-        ]
+        ],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -5334,7 +6166,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5356,6 +6188,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -5365,9 +6201,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -5378,7 +6222,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -5433,7 +6290,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5455,6 +6312,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -5464,9 +6325,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -5477,7 +6346,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -5532,7 +6414,7 @@
     "clock": "2026-06-15T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5554,6 +6436,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5563,9 +6449,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -5576,7 +6470,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -5640,7 +6538,7 @@
     "clock": "2026-11-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5662,6 +6560,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5671,9 +6573,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -5684,7 +6594,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -5770,6 +6684,10 @@
           "bin_8_30": 1,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -5779,9 +6697,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -5792,7 +6718,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -5847,7 +6777,7 @@
     "clock": "2026-05-10T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -5869,6 +6799,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5878,9 +6812,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -5891,7 +6833,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -5977,6 +6923,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -5986,9 +6936,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -5999,7 +6957,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -6076,6 +7038,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6085,9 +7051,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -6098,7 +7072,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -6153,7 +7131,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -6175,6 +7153,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6184,9 +7166,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -6197,7 +7187,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -6285,6 +7279,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6294,9 +7292,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -6307,7 +7313,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -6386,6 +7396,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6395,9 +7409,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -6408,7 +7430,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -6463,7 +7489,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -6485,6 +7511,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -6494,9 +7524,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -6507,7 +7545,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -6579,7 +7630,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -6601,6 +7652,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6610,9 +7665,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -6623,7 +7686,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -6687,7 +7763,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -6709,6 +7785,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6718,9 +7798,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -6731,7 +7819,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -6795,7 +7896,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -6817,6 +7918,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6826,9 +7931,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -6839,7 +7952,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -6925,6 +8051,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -6934,9 +8064,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -6950,7 +8088,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -7027,6 +8169,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -7036,9 +8182,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -7049,7 +8203,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -7104,7 +8262,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -7126,6 +8284,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -7135,9 +8297,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -7148,7 +8318,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -7212,7 +8395,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -7234,6 +8417,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -7243,9 +8430,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -7256,7 +8451,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -7311,7 +8519,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -7333,6 +8541,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -7342,9 +8554,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -7355,7 +8575,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "visible_subset": {
+          "note": "visible-subset only; not whole-population evidence — no verified rate",
+          "due_count": 0,
+          "early_count": 0,
+          "late_count": 0,
+          "cancelled_link_count": 0,
+          "unlinked_count": 0,
+          "poisoning_occurrence_ids": []
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -7435,7 +8668,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -7457,6 +8690,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -7466,9 +8703,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -7482,15 +8727,20 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [
         {
           "claim_id": "HDR-2",
           "metric": "pm_compliance_percent",
           "claimed_value": "98.00",
-          "computed_value": "100.00",
-          "evidence_state": "MISMATCH"
+          "computed_value": null,
+          "evidence_state": "UNKNOWN",
+          "claim_citation_verification": "UNAVAILABLE"
         }
       ],
       "integrity_findings": [],
@@ -7553,7 +8803,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -7575,6 +8825,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -7584,9 +8838,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -7597,7 +8859,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [
         {
@@ -7605,7 +8871,8 @@
           "metric": "pm_compliance_percent",
           "claimed_value": "50.00",
           "computed_value": null,
-          "evidence_state": "UNKNOWN"
+          "evidence_state": "UNKNOWN",
+          "claim_citation_verification": "UNAVAILABLE"
         }
       ],
       "integrity_findings": [],
@@ -7684,6 +8951,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -7693,9 +8964,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -7706,7 +8985,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -7785,6 +9068,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -7794,9 +9081,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -7807,7 +9102,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -7886,6 +9185,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -7895,9 +9198,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -7908,7 +9219,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -7987,6 +9302,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -7996,9 +9315,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8009,7 +9336,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8088,6 +9419,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -8097,9 +9432,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8110,7 +9453,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8189,6 +9536,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -8198,9 +9549,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8211,7 +9570,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8290,6 +9653,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -8299,9 +9666,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8312,7 +9687,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8391,6 +9770,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -8400,9 +9783,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8413,7 +9804,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8492,6 +9887,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -8501,9 +9900,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8514,7 +9921,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8593,6 +10004,10 @@
           "bin_8_30": 0,
           "bin_31_90": 1,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "overdue": {
@@ -8602,9 +10017,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -8615,7 +10038,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -8694,6 +10121,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -8703,9 +10134,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -8716,7 +10155,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -8795,6 +10238,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -8804,9 +10251,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -8817,7 +10272,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -8896,6 +10355,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -8905,9 +10368,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -8918,7 +10389,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -8997,6 +10472,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9006,9 +10485,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9019,7 +10506,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9098,6 +10589,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9107,9 +10602,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9120,7 +10623,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9199,6 +10706,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9208,9 +10719,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9221,7 +10740,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9300,6 +10823,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9309,9 +10836,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9322,7 +10857,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9401,6 +10940,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9410,9 +10953,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9423,7 +10974,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9502,6 +11057,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9511,9 +11070,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9524,7 +11091,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9603,6 +11174,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9612,9 +11187,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9625,7 +11208,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9704,6 +11291,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9713,9 +11304,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9726,7 +11325,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9806,6 +11409,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9815,9 +11422,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9828,7 +11443,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -9908,6 +11527,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -9917,9 +11540,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -9930,7 +11561,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10010,6 +11645,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10019,9 +11658,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10032,7 +11679,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10092,7 +11743,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 1,
@@ -10114,6 +11765,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10123,9 +11778,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -10136,7 +11799,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -10200,7 +11867,7 @@
     "clock": "2026-06-01T12:00:00Z",
     "expected": {
       "status": "PARTIAL",
-      "complete": true,
+      "complete": false,
       "diagnostic_codes": [],
       "quarantined_work_order_ids": [],
       "source_ref_count": 2,
@@ -10222,6 +11889,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10231,9 +11902,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10246,7 +11925,11 @@
         "unlinked_count": 0,
         "poisoning_occurrence_ids": [
           "PM-SPANOOB"
-        ]
+        ],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [
@@ -10334,6 +12017,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10343,9 +12030,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10356,7 +12051,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10435,6 +12134,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10444,9 +12147,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10457,7 +12168,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10536,6 +12251,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10545,9 +12264,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10558,7 +12285,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10637,6 +12368,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10646,9 +12381,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10659,7 +12402,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10738,6 +12485,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10747,9 +12498,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10760,7 +12519,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10839,6 +12602,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10848,9 +12615,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10861,7 +12636,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -10940,6 +12719,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -10949,9 +12732,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -10962,7 +12753,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11061,6 +12856,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11070,9 +12869,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11083,7 +12890,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11162,6 +12973,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11171,9 +12986,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11184,7 +13007,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11264,6 +13091,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11273,9 +13104,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11286,7 +13125,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11366,6 +13209,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11375,9 +13222,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11388,7 +13243,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11472,6 +13331,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11481,9 +13344,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11494,7 +13365,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11591,6 +13466,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -11600,9 +13479,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -11613,7 +13500,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -11693,6 +13584,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11702,9 +13597,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11715,7 +13618,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11794,6 +13701,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11803,9 +13714,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11816,7 +13735,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11895,6 +13818,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -11904,9 +13831,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -11917,7 +13852,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -11994,6 +13933,10 @@
           "bin_8_30": 0,
           "bin_31_90": 53,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 53
         }
       },
       "overdue": {
@@ -12003,9 +13946,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -12016,7 +13967,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -12095,6 +14050,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -12104,9 +14063,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -12117,7 +14084,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -12194,6 +14165,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -12203,9 +14178,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -12216,7 +14199,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -12295,6 +14282,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -12304,9 +14295,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -12317,7 +14316,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -12396,6 +14399,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -12405,9 +14412,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -12418,7 +14433,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -12497,6 +14516,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -12506,9 +14529,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "UNVERIFIABLE",
         "denominator": null,
@@ -12519,7 +14550,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "integrity_findings": [],
       "header_comparisons": [],
@@ -12596,6 +14631,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -12605,9 +14644,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -12618,7 +14665,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -12695,6 +14746,10 @@
           "bin_8_30": 2,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 2
         }
       },
       "overdue": {
@@ -12704,9 +14759,17 @@
           "P1": 0,
           "P2": 1,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
         }
       },
       "cancelled_count": 1,
+      "cancelled_citation_support": {
+        "state": "VERIFIED",
+        "record_count": 1
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -12717,7 +14780,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -12794,6 +14861,10 @@
           "bin_8_30": 0,
           "bin_31_90": 0,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing backlog records"
         }
       },
       "overdue": {
@@ -12803,9 +14874,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "VERIFIED",
         "denominator": 1,
@@ -12819,7 +14898,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 1
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],
@@ -12896,6 +14979,10 @@
           "bin_8_30": 0,
           "bin_31_90": 53,
           "bin_91_plus": 0
+        },
+        "citation_support": {
+          "state": "VERIFIED",
+          "record_count": 53
         }
       },
       "overdue": {
@@ -12905,9 +14992,17 @@
           "P1": 0,
           "P2": 0,
           "P3": 0
+        },
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing overdue records"
         }
       },
       "cancelled_count": 0,
+      "cancelled_citation_support": {
+        "state": "UNAVAILABLE",
+        "reason": "no contributing cancelled records"
+      },
       "pm_compliance": {
         "basis_state": "NO_DUE_OCCURRENCES",
         "denominator": 0,
@@ -12918,7 +15013,11 @@
         "late_count": 0,
         "cancelled_link_count": 0,
         "unlinked_count": 0,
-        "poisoning_occurrence_ids": []
+        "poisoning_occurrence_ids": [],
+        "citation_support": {
+          "state": "UNAVAILABLE",
+          "reason": "no contributing due occurrences"
+        }
       },
       "header_comparisons": [],
       "integrity_findings": [],

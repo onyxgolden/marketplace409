@@ -24,7 +24,7 @@
  *    candidate is touched.
  */
 
-import { canonicalJson, sha256HexUtf8, canonicalByteLength, maxContainerDepth, MAX_CONTAINER_DEPTH } from "./canonical.js";
+import { canonicalJson, sha256HexUtf8, canonicalByteLength, maxContainerDepth, maxJsonNestingDepth, MAX_CONTAINER_DEPTH } from "./canonical.js";
 import { validateTask, validateRegisterShape, validateWorkOrder, validatePmOccurrence, SchemaError } from "./schemas.js";
 import { resolveSourceRef, verifySpanBounds, hasReadGrant, makeBudget, buildVerifiedCitation, buildUnverifiedCitation, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { chargeContext } from "./contextGuard.js";
@@ -38,10 +38,11 @@ export const SCHEMA_VERSION = "1";
 function emptyReport() {
   return {
     population: { declared_total: 0, complete: false, actual_total: 0, evidence_state: "unverifiable" },
-    backlog: { total: 0, by_priority: { P1: 0, P2: 0, P3: 0 }, by_bin: { bin_0_7: 0, bin_8_30: 0, bin_31_90: 0, bin_91_plus: 0 } },
-    overdue: { total: 0, unknown_due_count: 0, by_priority: { P1: 0, P2: 0, P3: 0 } },
+    backlog: { total: 0, by_priority: { P1: 0, P2: 0, P3: 0 }, by_bin: { bin_0_7: 0, bin_8_30: 0, bin_31_90: 0, bin_91_plus: 0 }, citation_support: { state: "UNAVAILABLE", reason: "no contributing backlog records" } },
+    overdue: { total: 0, unknown_due_count: 0, by_priority: { P1: 0, P2: 0, P3: 0 }, citation_support: { state: "UNAVAILABLE", reason: "no contributing overdue records" } },
     cancelled_count: 0,
-    pm_compliance: { basis_state: "UNVERIFIABLE", denominator: null, numerator: null, ratio: null, display_percent: null, early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0, poisoning_occurrence_ids: [] },
+    cancelled_citation_support: { state: "UNAVAILABLE", reason: "no contributing cancelled records" },
+    pm_compliance: { basis_state: "UNVERIFIABLE", denominator: null, numerator: null, ratio: null, display_percent: null, early_count: 0, late_count: 0, cancelled_link_count: 0, unlinked_count: 0, poisoning_occurrence_ids: [], citation_support: { state: "UNAVAILABLE", reason: "no contributing due occurrences" } },
     header_comparisons: [],
     integrity_findings: [],
     excluded_ids: { future_created: [], orphan_asset_work_orders: [], invalid_completion: [], orphan_asset_pm_occurrences: [], unverifiable_citation_work_orders: [], unverifiable_citation_pm_occurrences: [] },
@@ -92,10 +93,10 @@ export function run(task, context) {
   const clockRaw = context && typeof context === "object" ? context.clock : undefined;
   if (!Number.isFinite(clockRaw)) return refused(task, "INVALID_INPUT", "error", "context.clock must be a finite number");
 
-  // MM-S1-001: a pre-inspection depth guard on admitted JSON, before any
-  // shape/field validation walks it — bounded schema traversal rejects
-  // depth >32 per the brief, applied to the task itself here and to the
-  // parsed register below (both are "admitted JSON" structures).
+  // MM-S1-001: structural depth preflight on the task. maxContainerDepth
+  // uses own-property descriptors only and never invokes accessors, so a
+  // throwing getter/proxy on the task path is never touched by the guard.
+  // This runs before validateTask and before any budget charging.
   if (maxContainerDepth(task) > MAX_CONTAINER_DEPTH) {
     return refused(task, "INPUT_LIMIT", "error", `task exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
   }
@@ -160,13 +161,17 @@ export function run(task, context) {
 
   let rawRegister;
   let parsed;
+  // MM-S1-001: byte-level depth check on the raw register TEXT before
+  // JSON.parse — no parsed candidate is ever walked by the guard. The
+  // text length is already bounded by the payload budget charged in
+  // resolveSourceRef, so this scan is linear in a bounded input.
+  if (maxJsonNestingDepth(registerResolved.text) > MAX_CONTAINER_DEPTH) {
+    return refused(task, "INPUT_LIMIT", "error", `register exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
+  }
   try {
     parsed = JSON.parse(registerResolved.text);
   } catch {
     return refused(task, "INVALID_INPUT", "error", "register is not valid JSON");
-  }
-  if (maxContainerDepth(parsed) > MAX_CONTAINER_DEPTH) {
-    return refused(task, "INPUT_LIMIT", "error", `register exceeds the maximum container nesting depth of ${MAX_CONTAINER_DEPTH}`);
   }
   try {
     rawRegister = validateRegisterShape(parsed, "register");
@@ -333,7 +338,7 @@ export function run(task, context) {
     if (citation.verification === "VERIFIED") usedContentRefs.push(occ.content_ref);
   }
 
-  const { backlog, overdue, cancelled_count, integrityFindings } = aggregateWorkOrders(classified);
+  const { backlog, overdue, cancelled_count, cancelled_citation_support, integrityFindings } = aggregateWorkOrders(classified);
 
   const populationMatches = validatedTask.population.declared_total === rawRegister.assets.length;
   const populationComplete = validatedTask.population.complete === true && populationMatches;
@@ -360,10 +365,38 @@ export function run(task, context) {
   );
   const allFindings = [...integrityFindings, ...additionalFindings];
 
+  // MM-S1-003: resolve the claim set's provenance (when present) through
+  // the same verified pipeline as any other source: read grant, budget
+  // charge, blob verification, UTF-8 span verification. The resulting
+  // citation is carried into each header comparison. Absent provenance
+  // (or a failed verification) yields an explicit UNAVAILABLE claim
+  // citation — the comparison can then never be MATCH.
+  let claimCitation = null;
+  if (validatedTask.claimed_summary?.provenance) {
+    const prov = validatedTask.claimed_summary.provenance;
+    try {
+      if (!hasReadGrant(prov.source_ref, ctx.readGrants)) {
+        throw new ResolutionError("READ_DENIED", `read grant missing for claim provenance ${prov.source_ref.repo}/${prov.source_ref.path}`);
+      }
+      const provResolved = resolveSourceRef(prov.source_ref, ctx.sources, budget, "claim provenance source");
+      const provSpan = verifySpanBounds(provResolved.bytes, prov.span, budget, "claim provenance span");
+      claimCitation = buildVerifiedCitation(prov.source_ref, provSpan);
+    } catch (e) {
+      if (e instanceof ResolutionError) {
+        claimCitation = { verification: "UNAVAILABLE", reason: `claim provenance unverifiable: ${e.code}`, source_ref: prov.source_ref };
+      } else if (e instanceof BudgetError) {
+        return refused(task, e.code, "error", e.message);
+      } else {
+        throw e;
+      }
+    }
+  }
+
   // MM-S1-003: header claims are compared, never allowed to overwrite the
   // computed value; an unmatched or unknown-evidence comparison keeps the
   // whole rollup out of REPORT_READY, same as any other incompleteness.
-  const header_comparisons = computeHeaderComparisons(validatedTask.claimed_summary, pmSection);
+  // A claim without verified provenance can never be MATCH.
+  const header_comparisons = computeHeaderComparisons(validatedTask.claimed_summary, pmSection, claimCitation);
   const headerAllMatch = header_comparisons.every((h) => h.evidence_state === "MATCH");
 
   const fullyComplete = population.evidence_state === "verified" && !hasIntegrityFindings && additionalFindings.length === 0 && headerAllMatch;
@@ -378,6 +411,7 @@ export function run(task, context) {
     backlog,
     overdue,
     cancelled_count,
+    cancelled_citation_support,
     pm_compliance: pmSection,
     header_comparisons,
     integrity_findings: allFindings.sort((a, b) => (a.record_id < b.record_id ? -1 : a.record_id > b.record_id ? 1 : 0)),
@@ -403,7 +437,10 @@ export function run(task, context) {
 
   const result = envelope(task, {
     status,
-    complete: true,
+    // MM-S1-005: envelope `complete` is derived from the same completeness
+    // decision as status. PARTIAL is never complete:true. EMPTY is complete
+    // only when the population evidence itself is verified.
+    complete: status === "REPORT_READY" || (status === "EMPTY" && population.evidence_state === "verified"),
     source_refs,
     diagnostics: [],
     quarantined_sources,

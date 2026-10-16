@@ -193,11 +193,19 @@ export function validateCriteria(value, where) {
  * behavior. Per the common contract, a header value is a CLAIM, never an
  * input to its own verification: this schema only accepts the claim
  * itself, never a precomputed "match" flag.
+ *
+ * MM-S1-003: every claim set must carry provenance — a registered,
+ * pinned fixture (source_ref + byte span) whose bytes contain the
+ * claimed values. The provenance is resolved and span-verified by the
+ * caller; the resulting citation is carried into each header comparison.
+ * Absent provenance means the claim has no verified support: comparisons
+ * are emitted with an explicit UNAVAILABLE claim citation and can never
+ * be MATCH.
  */
 export function validateClaimedSummary(value, where) {
   if (value === null) return null;
   if (!isPlainObject(value)) fail(where, "must be null or an object");
-  exactKeys(value, ["claims"], where);
+  exactKeys(value, ["claims", "provenance"], where);
   if (!Array.isArray(value.claims) || value.claims.length > MAX_CLAIMS) fail(where, `claims must be an array of at most ${MAX_CLAIMS} entries`);
   const seen = new Set();
   const claims = [];
@@ -214,7 +222,19 @@ export function validateClaimedSummary(value, where) {
     if (!PERCENT_RE.test(claimed_value)) fail(w2, "claimed_value must be a 2-decimal percent string, e.g. '98.00'");
     claims.push({ claim_id, metric: c.metric, claimed_value });
   }
-  return { claims };
+  // MM-S1-003: optional provenance binding. When present it must be a
+  // valid SourceRef + span; the caller resolves and verifies it.
+  let provenance = null;
+  if (value.provenance !== undefined && value.provenance !== null) {
+    const p = value.provenance;
+    const w3 = `${where}.provenance`;
+    if (!isPlainObject(p)) fail(w3, "must be an object");
+    exactKeys(p, ["source_ref", "span"], w3);
+    const source_ref = validateSourceRef(p.source_ref, `${w3}.source_ref`);
+    const span = validateSpan(p.span, `${w3}.span`);
+    provenance = { source_ref, span };
+  }
+  return { claims, provenance };
 }
 
 /** Task input schema. kind: "analyze" | "prohibited". */

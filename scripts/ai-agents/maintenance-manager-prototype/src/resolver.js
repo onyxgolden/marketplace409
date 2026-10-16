@@ -148,17 +148,46 @@ export function hasReadGrant(ref, readGrants) {
 }
 
 /**
+ * True iff `offset` is a UTF-8 code-point boundary in `bytes`: 0,
+ * bytes.length, or a byte that is NOT a UTF-8 continuation byte
+ * (10xxxxxx). A span endpoint landing on a continuation byte would split
+ * a multibyte character.
+ */
+function isCodePointBoundary(bytes, offset) {
+  if (offset === 0 || offset === bytes.length) return true;
+  if (offset < 0 || offset > bytes.length) return false;
+  return (bytes[offset] & 0xc0) !== 0x80;
+}
+
+/**
  * Verify a declared byte span [start_byte, end_byte) actually lies within
- * the resolved content bytes, and return the exact quoted text at that
- * span. Throws ResolutionError (SPAN_MISMATCH) when the span is out of
- * bounds. Charged via countSpan().
+ * the resolved content bytes, both endpoints fall on UTF-8 code-point
+ * boundaries, and the decoded text re-encodes byte-for-byte to the same
+ * slice (exact quote equality — no replacement characters, no silent
+ * normalization). Returns the exact quoted text at that span. Throws
+ * ResolutionError (SPAN_MISMATCH) when any check fails. Charged via
+ * countSpan().
+ *
+ * MM-S1-002: a span that cuts through a multibyte character is NOT
+ * verified — it becomes an explicit UNVERIFIED citation via
+ * buildUnverifiedCitation, never a VERIFIED citation emitting
+ * replacement text.
  */
 export function verifySpanBounds(bytes, span, budget, what) {
   budget.countSpan(what);
   if (span.end_byte > bytes.length) {
     throw new ResolutionError("SPAN_MISMATCH", `span [${span.start_byte},${span.end_byte}) exceeds resolved content length ${bytes.length}`);
   }
-  const quoted_text = bytes.slice(span.start_byte, span.end_byte).toString("utf8");
+  if (!isCodePointBoundary(bytes, span.start_byte) || !isCodePointBoundary(bytes, span.end_byte)) {
+    throw new ResolutionError("SPAN_MISMATCH", `span [${span.start_byte},${span.end_byte}) splits a UTF-8 code point; endpoints must be code-point boundaries`);
+  }
+  const slice = bytes.slice(span.start_byte, span.end_byte);
+  const quoted_text = slice.toString("utf8");
+  // Exact quote equality: the decoded text must re-encode to the identical
+  // bytes. Any U+FFFD replacement or normalization breaks this.
+  if (!Buffer.from(quoted_text, "utf8").equals(slice)) {
+    throw new ResolutionError("SPAN_MISMATCH", `span [${span.start_byte},${span.end_byte}) does not decode to exact bytes (invalid UTF-8 in span)`);
+  }
   return { start_byte: span.start_byte, end_byte: span.end_byte, quoted_text };
 }
 

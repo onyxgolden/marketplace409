@@ -94,15 +94,30 @@ export function structuralOf(result) {
     quarantined_work_order_ids: (result.quarantined_sources ?? []).map((q) => q.work_order_id).sort(),
     source_ref_count: (result.source_refs ?? []).length,
     population: r.population ?? {},
-    backlog: r.backlog ?? {},
-    overdue: r.overdue ?? {},
+    backlog: r.backlog ? { ...r.backlog, citation_support: citationSupportStructural(r.backlog.citation_support) } : {},
+    overdue: r.overdue ? { ...r.overdue, citation_support: citationSupportStructural(r.overdue.citation_support) } : {},
     cancelled_count: r.cancelled_count ?? 0,
-    pm_compliance: r.pm_compliance ?? {},
+    cancelled_citation_support: citationSupportStructural(r.cancelled_citation_support),
+    pm_compliance: r.pm_compliance ? { ...r.pm_compliance, citation_support: citationSupportStructural(r.pm_compliance.citation_support) } : {},
     integrity_findings: [...(r.integrity_findings ?? [])].map((f) => ({ code: f.code, record_type: f.record_type, record_id: f.record_id, citation_verification: f.citation?.verification ?? null })).sort((a, b) => (a.record_id < b.record_id ? -1 : 1)),
-    header_comparisons: [...(r.header_comparisons ?? [])].map((h) => ({ claim_id: h.claim_id, metric: h.metric, claimed_value: h.claimed_value, computed_value: h.computed_value, evidence_state: h.evidence_state })).sort((a, b) => (a.claim_id < b.claim_id ? -1 : 1)),
+    header_comparisons: [...(r.header_comparisons ?? [])].map((h) => ({ claim_id: h.claim_id, metric: h.metric, claimed_value: h.claimed_value, computed_value: h.computed_value, evidence_state: h.evidence_state, claim_citation_verification: h.claim_citation?.verification ?? null })).sort((a, b) => (a.claim_id < b.claim_id ? -1 : 1)),
     excluded_ids: r.excluded_ids ?? {},
     coverage: r.coverage ?? {},
   };
+}
+
+/** Structural projection of citation_support: state + record count + reason
+ *  (not the full citation bytes, which are already covered by the
+ *  integrity-finding citation checks). */
+function citationSupportStructural(cs) {
+  if (!cs || typeof cs !== "object") return null;
+  const out = { state: cs.state ?? null };
+  if (cs.state === "VERIFIED") {
+    out.record_count = cs.record_count ?? 0;
+  } else {
+    out.reason = cs.reason ?? null;
+  }
+  return out;
 }
 
 /** Context for one case: base fixture store + named principal/criteria +
