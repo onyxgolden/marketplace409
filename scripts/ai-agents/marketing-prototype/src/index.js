@@ -18,7 +18,7 @@
  * and never an exception for malformed requests.
  */
 
-import { Budget, BudgetError, BUDGET_LIMITS, measureDepth } from "./budget.js";
+import { Budget, BudgetError, BUDGET_LIMITS, measureCanonicalBytes, StructuralError } from "./budget.js";
 import { canonicalJson, sha256HexUtf8, utf8ByteLength } from "./canonical.js";
 import { resolveFixtures } from "./resolver.js";
 import {
@@ -152,9 +152,9 @@ function makeSession(task, context, budget) {
     bindings: new Map(),
     completeness: new Map(),
     benefits: new Map(),
-    tags: new Set(),
-    templates: new Map(),
-    ctas: new Map(),
+    tags: new Map(), // M640-002: tag -> {byte_span, fixture_id, source_ref}
+    templates: new Map(), // M640-002: template_id -> {text, byte_span, fixture_id, source_ref}
+    ctas: new Map(), // M640-002: cta_id -> {text, byte_span, fixture_id, source_ref}
     duplicateGroups: [],
     headerComparisons: [],
     pooled: [],
@@ -223,7 +223,9 @@ function singleFixture(fixtures, task, kind, sx) {
   const ids = [...fixtures.entries()].filter(([, f]) => f.kind === kind).map(([id]) => id);
   if (ids.length > 1) sx.invalid(`more than one ${kind} fixture referenced: ${ids.join(",")}`);
   if (ids.length === 1) {
-    sx.markUsed(ids[0]); // the fixture is consulted for domain output
+    // M640-007: do NOT mark used on lookup. Usage is tracked at actual
+    // accepted-evidence consumption (e.g., a brief looked up but ignored
+    // because include_drafts:false is NOT used).
     return fixtures.get(ids[0]);
   }
   return null;
@@ -249,8 +251,7 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
       }
     }
   }
-  const depth = measureDepth(task);
-  if (!depth.ok) throw new RefusalSignal("INPUT_TOO_DEEP", `task envelope refused before traversal: ${depth.reason}`);
+  // Depth already enforced by the public-entry pre-scan (measureCanonicalBytes).
   const tv = validateTask(task);
   if (!tv.ok) throw new InputSignal(`task invalid: ${tv.errors.join("; ")}`);
 
@@ -289,27 +290,49 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
   if (context.relays !== undefined && !Array.isArray(context.relays)) {
     throw new InputSignal("context.relays: must be an array");
   }
+  // M640-007: host-injected source membership registry. The host (not the
+  // fixture store) declares which (fixture_id, path, blob) tuples are
+  // registered members. The resolver validates the exact tuple before
+  // declaring verified citations; fail closed on mismatch.
+  // Format: { [fixture_id]: { path: string, blob: 40-hex } }
+  const registry = context.source_registry;
+  if (registry === null || typeof registry !== "object" || Array.isArray(registry)) {
+    throw new InputSignal("context.source_registry: must be an object map (host-injected source membership table)");
+  }
+  const sourceRegistry = new Map();
+  for (const fid of Object.keys(registry)) {
+    const e = registry[fid];
+    if (!e || typeof e.path !== "string" || typeof e.blob !== "string" || !/^[0-9a-f]{40}$/.test(e.blob)) {
+      throw new InputSignal(`context.source_registry[${JSON.stringify(fid)}]: must have path string and 40-hex blob`);
+    }
+    sourceRegistry.set(fid, { path: e.path, blob: e.blob });
+  }
 
   const sx = makeSession(task, context, budget);
+  sx.sourceRegistry = sourceRegistry;
   checkAuthority(task, context, sx);
 
   // 4. scoped fixture resolution: budgeted, pinned, charge-before-inspect.
   const fixtures = resolveFixtures(task, context, sx);
 
   // 5. taxonomy (host-pinned v1): tags, templates, CTA registry.
+  // M640-002: retain row byte_spans for taxonomy-rule citations.
+  // sx.tags/templates/ctas map keys to {value, byte_span, fixture_id, source_ref}.
   const taxFx = singleFixture(fixtures, task, "taxonomy", sx);
   if (!taxFx) sx.invalid("taxonomy fixture is required (host-pinned taxonomy v1)");
   for (const w of taxFx.rows) {
+    sx.markUsed(w.fixture_id); // taxonomy entries consumed for classification/drafts
     const r = w.row;
+    const meta = { byte_span: w.byte_span, fixture_id: w.fixture_id, source_ref: w.source_ref };
     if (r.entry === "tag") {
       if (sx.tags.has(r.tag)) sx.invalid(`duplicate taxonomy tag ${JSON.stringify(r.tag)}`, w.source_ref, null);
-      sx.tags.add(r.tag);
+      sx.tags.set(r.tag, meta);
     } else if (r.entry === "template") {
       if (sx.templates.has(r.template_id)) sx.invalid(`duplicate template_id ${JSON.stringify(r.template_id)}`, w.source_ref, null);
-      sx.templates.set(r.template_id, r.text);
+      sx.templates.set(r.template_id, { text: r.text, ...meta });
     } else {
       if (sx.ctas.has(r.cta_id)) sx.invalid(`duplicate cta_id ${JSON.stringify(r.cta_id)}`, w.source_ref, null);
-      sx.ctas.set(r.cta_id, r.text);
+      sx.ctas.set(r.cta_id, { text: r.text, ...meta });
     }
   }
   if (sx.templates.size !== 3) {
@@ -324,7 +347,9 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
   // 7. completeness declarations (optional).
   const compFx = singleFixture(fixtures, task, "completeness", sx);
   if (compFx) {
+    if (!sx._completenessRowMeta) sx._completenessRowMeta = new Map();
     for (const w of compFx.rows) {
+      sx.markUsed(w.fixture_id); // completeness declaration consumed
       const r = w.row;
       const hits = scanRow("completeness", r);
       if (hits.length > 0) {
@@ -334,17 +359,26 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
       }
       if (sx.completeness.has(r.campaign_id)) sx.invalid(`duplicate completeness row for ${JSON.stringify(r.campaign_id)}`, w.source_ref, r.campaign_id);
       sx.completeness.set(r.campaign_id, r.complete);
+      // M640-002: retain for completeness-decision citations.
+      sx._completenessRowMeta.set(r.campaign_id, { byte_span: w.byte_span, fixture_id: w.fixture_id, source_ref: w.source_ref });
     }
   }
 
   // 8. bindings (optional): exact registered campaign bindings.
+  // M640-002: retain binding row metadata for attribution citations.
   const bindFx = singleFixture(fixtures, task, "bindings", sx);
   if (bindFx) {
     for (const w of bindFx.rows) {
+      sx.markUsed(w.fixture_id); // binding row consumed for attribution
       sx.budget.chargeSpan(2); // identity + binding evidence
       const r = w.row;
       if (!sx.bindings.has(r.event_id)) sx.bindings.set(r.event_id, []);
-      sx.bindings.get(r.event_id).push(r.campaign_id);
+      sx.bindings.get(r.event_id).push({
+        campaign_id: r.campaign_id,
+        byte_span: w.byte_span,
+        fixture_id: w.fixture_id,
+        source_ref: w.source_ref,
+      });
     }
   }
 
@@ -390,9 +424,16 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
     if (briefFx) {
       const benFx = singleFixture(fixtures, task, "benefit_registry", sx);
       if (!benFx) sx.invalid("benefit_registry fixture is required to render drafts");
+      if (!sx._benefitFixtureIds) sx._benefitFixtureIds = new Map();
+      if (!sx._benefitRowMeta) sx._benefitRowMeta = new Map();
       for (const w of benFx.rows) {
         if (sx.benefits.has(w.row.benefit_id)) sx.invalid(`duplicate benefit_id ${JSON.stringify(w.row.benefit_id)}`, w.source_ref, null);
         sx.benefits.set(w.row.benefit_id, w.row.benefit_text);
+        sx._benefitFixtureIds.set(w.row.benefit_id, w.fixture_id);
+        // M640-002: retain benefit row metadata for draft citations.
+        sx._benefitRowMeta.set(w.row.benefit_id, { byte_span: w.byte_span, fixture_id: w.fixture_id, source_ref: w.source_ref });
+        // Note: benefit fixture marked used in renderDrafts only when a
+        // draft actually renders (M640-007 consumption-based usage).
       }
       ({ draftsByCampaign, unattached: unattachedDrafts } = renderDrafts(briefFx.rows, sx));
     }
@@ -408,7 +449,9 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
       taxonomy_version: TAXONOMY_VERSION,
       currency: c.currency,
       drafts: draftsByCampaign.get(c.row.campaign_id) ?? [],
-      citations: c.citation ? [c.citation] : [],
+      // M640-002: campaign citations include the row AND the taxonomy
+      // rule that established the classification.
+      citations: c.citations ?? (c.citation ? [c.citation] : []),
     }))
     .sort((a, b) => (a.campaign_id < b.campaign_id ? -1 : 1));
   const metricsOut = [...sx.metrics.values()]
@@ -442,15 +485,23 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
   };
 
   // 14. status + completeness.
+  // M640-005: unresolved material header verification blocks completeness.
+  // A header comparison that is not MATCH (MISMATCH, UNCOMPARABLE,
+  // QUARANTINED) means a material claim was not verified — the report
+  // cannot be complete.
   let status;
   let complete;
+  const headerUnresolved = headerComparisons.some((h) => h.status !== "MATCH");
+  if (headerUnresolved) {
+    sx.diag("HEADER_UNRESOLVED", "warning", null, null, "one or more header claims not verified (mismatch/uncomparable/quarantined); report cannot be complete");
+  }
   if (sx.campaigns.size === 0) {
     status = "EMPTY";
     complete = true;
     sx.diag("EMPTY_POPULATION", "info", null, null, "no campaigns registered; nothing to analyze");
   } else {
     const allComplete = [...sx.campaigns.keys()].every((id) => sx.completeness.get(id) === true);
-    complete = allComplete && metricsOut.every((m) => m.status === "READY") && quarantined.length === 0;
+    complete = allComplete && metricsOut.every((m) => m.status === "READY") && quarantined.length === 0 && !headerUnresolved;
     status = complete ? "REPORT_READY" : "PARTIAL";
   }
 
@@ -511,24 +562,36 @@ function runInner(task, context, taskId, budget, taskBytes, contextBytes) {
  * prohibited actions and unsupported tasks yield structured REFUSED
  * denials — never an exception and never a default success.
  *
- * The task_id is derived AFTER the budget pre-charge: hashing the task
- * before charging would inspect it before its charge.
+ * M640-001: serialization IS inspection. run() NEVER calls
+ * canonicalJson(context): that would recursively read every field
+ * (firing getters, reading denied fixture bytes) before any charge.
+ * Instead, measureCanonicalBytes() performs a bounded descriptor-based
+ * pre-scan — no getter invocation, no accessor reads — establishing the
+ * byte accounting FIRST. The budget refuses over-limit input before a
+ * single value is read. Fixture payloads stay opaque (counted as strings)
+ * until scoped grant admission in the resolver.
+ *
+ * The task_id is derived from canonicalJson(task) AFTER the pre-scan and
+ * charging: the task envelope's bytes are fully accounted, and the task
+ * is the caller's own input (not third-party fixture data).
  */
 export function run(task, context) {
   const budget = new Budget();
-  // Pre-charge task/context envelopes and bytes BEFORE any inspection,
-  // including task_id derivation.
+  // Bounded pre-scan BEFORE any inspection, including task_id derivation.
   let taskBytes, contextBytes;
   try {
-    taskBytes = canonicalJson(task);
-    contextBytes = canonicalJson(context);
-  } catch {
-    return denialEnvelope("mkt-invalid-task", "INVALID_INPUT", "error", "task/context: not serializable to canonical JSON", null, null);
+    taskBytes = measureCanonicalBytes(task).bytes;
+    contextBytes = measureCanonicalBytes(context).bytes;
+  } catch (e) {
+    if (e instanceof StructuralError) {
+      return denialEnvelope("mkt-invalid-task", e.code, "error", `input pre-scan refused: ${e.message}`, null, null);
+    }
+    return denialEnvelope("mkt-invalid-task", "INVALID_INPUT", "error", "task/context: not measurable", null, null);
   }
   try {
     budget.chargeObject(1); // the task envelope, before inspection
     budget.chargeObject(1); // the context envelope, before inspection
-    budget.chargeInputBytes(utf8ByteLength(taskBytes) + utf8ByteLength(contextBytes));
+    budget.chargeInputBytes(taskBytes + contextBytes);
   } catch (e) {
     if (e instanceof BudgetError) {
       return denialEnvelope("mkt-invalid-task", e.code, "error", e.message, null, null);

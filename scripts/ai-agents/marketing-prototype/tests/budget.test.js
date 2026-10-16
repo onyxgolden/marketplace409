@@ -84,6 +84,9 @@ function scenario(nEvents, { poisonTail = false } = {}) {
     relays: [],
     grants: Object.keys(fixtures),
     fixtures,
+    source_registry: Object.fromEntries(
+      Object.entries(fixtures).map(([fid, e]) => [fid, { path: e.source_ref.path, blob: e.source_ref.blob }])
+    ),
   };
   return { task, context };
 }

@@ -53,12 +53,19 @@ let canonicalJson;
 let harness;
 
 function contextFor(c) {
+  const source_registry = {};
+  for (const [fid, entry] of Object.entries(c.fixture.fixtures || {})) {
+    if (entry?.source_ref) {
+      source_registry[fid] = { path: entry.source_ref.path, blob: entry.source_ref.blob };
+    }
+  }
   return {
     clock: c.fixture.clock,
     principal: c.fixture.principal,
     relays: c.fixture.relays ?? [],
     grants: c.fixture.grants,
     fixtures: c.fixture.fixtures,
+    source_registry,
   };
 }
 
@@ -115,6 +122,11 @@ describe("determinism", () => {
       const header = Buffer.from(`blob ${b.length}\0`, "utf8");
       entry.source_ref.blob = createHash("sha1").update(header).update(b).digest("hex");
       const ctx2 = { ...contextFor(c), fixtures: fixtures2 };
+      // M640-007: the host registry must reflect the re-pinned blob.
+      ctx2.source_registry = {
+        ...ctx2.source_registry,
+        "events-01": { path: entry.source_ref.path, blob: entry.source_ref.blob },
+      };
       const r2 = run(c.task, ctx2);
       assert.equal(r2.status, "REPORT_READY", `nom-01 permutation ${s} did not stay REPORT_READY`);
       assert.deepEqual(harness.project(r2), base, `nom-01 permutation ${s} changed the report`);

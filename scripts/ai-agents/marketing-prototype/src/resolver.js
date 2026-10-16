@@ -14,7 +14,7 @@
  *      schema-validate that row alone.
  */
 
-import { gitBlobSha1, canonicalJson, utf8ByteLength } from "./canonical.js";
+import { gitBlobSha1 } from "./canonical.js";
 import { BudgetError, StructuralError, presplitRows } from "./budget.js";
 import { validateSourceRef, ROW_VALIDATORS } from "./schemas.js";
 
@@ -40,13 +40,33 @@ export function resolveFixtures(task, context, sx) {
       throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)} source_ref invalid: ${vsr.errors.join("; ")}`);
     }
     const bytes = Buffer.from(entry.bytes, "utf8");
-    // Bound byte length BEFORE decoding anything.
-    sx.budget.chargeInputBytes(bytes.length + utf8ByteLength(canonicalJson(entry.source_ref)));
+    // M640-001: byte length was ALREADY counted by the public-entry
+    // pre-scan (the fixture bytes string is opaque until grant admission).
+    // Do NOT chargeInputBytes here — that would double-bill.
+    // Object charges below are for the newly-parsed candidates (rows,
+    // nested spans), which the pre-scan could not see inside the opaque
+    // string.
     const recomputed = gitBlobSha1(bytes);
     if (recomputed !== entry.source_ref.blob) {
       throw sx.refused(
         "HASH_MISMATCH",
         `fixture ${JSON.stringify(ref.fixture_id)}: recomputed git blob ${recomputed} != pinned ${entry.source_ref.blob}`
+      );
+    }
+    // M640-007: source membership — the exact (fixture_id, path, blob)
+    // tuple must be in the host-registered membership table. Byte
+    // integrity (hash match) does NOT establish source identity. Fail
+    // closed on a mismatched tuple: no verified citations from an
+    // unregistered source.
+    const registered = sx.sourceRegistry?.get(ref.fixture_id);
+    if (
+      !registered ||
+      registered.path !== entry.source_ref.path ||
+      registered.blob !== entry.source_ref.blob
+    ) {
+      throw sx.refused(
+        "SOURCE_NOT_REGISTERED",
+        `fixture ${JSON.stringify(ref.fixture_id)}: source (path, blob) not in host-registered membership table; fail closed, no verified citations`
       );
     }
     let split;
@@ -79,11 +99,17 @@ export function resolveFixtures(task, context, sx) {
         throw sx.invalid(`fixture ${JSON.stringify(ref.fixture_id)} row ${i}: not valid JSON`);
       }
       // Charge every nested evidence_span candidate BEFORE the row
-      // validator inspects them. The span budget is enforced here, not
-      // after schema traversal.
+      // validator inspects them. M640-001: nested objects are consulted
+      // candidates — they count against BOTH the span budget (byte-range
+      // verification) AND the 64-object consultation budget (field
+      // inspection). Charging only spans lets nested candidates bypass
+      // the object budget.
       const spans = parsed?.evidence_spans;
       if (Array.isArray(spans)) {
-        for (const sp of spans) sx.budget.chargeSpan(1);
+        for (const sp of spans) {
+          sx.budget.chargeObject(1); // the nested span object, before inspection
+          sx.budget.chargeSpan(1);
+        }
       }
       const vr = validate(parsed, i);
       if (!vr.ok) {

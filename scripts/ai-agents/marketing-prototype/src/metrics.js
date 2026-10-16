@@ -42,7 +42,8 @@ export function classifyCampaigns(wrappedRows, tags, sx) {
     }
     seen.add(row.campaign_id);
     const tag = row.objective.tag;
-    const classification = tags.has(tag) ? tag : UNKNOWN_TAG;
+    const tagMeta = tags.get(tag);
+    const classification = tagMeta ? tag : UNKNOWN_TAG;
     if (classification === UNKNOWN_TAG) {
       sx.diag("UNKNOWN_OBJECTIVE_TAG", "info", w.source_ref, row.campaign_id, `objective tag ${JSON.stringify(tag)} not in taxonomy v1; classified UNKNOWN_TAG`);
     }
@@ -55,6 +56,27 @@ export function classifyCampaigns(wrappedRows, tags, sx) {
     } else {
       citation = unavailableCitation("source row bytes not retained", w.source_ref);
     }
+    // M640-002: cite the taxonomy rule (tag registry entry) that
+    // established the classification, not just the campaign row.
+    let ruleCitation = null;
+    if (tagMeta && tagMeta.byte_span) {
+      const taxBytes = sx.fixtureBytes.get(tagMeta.fixture_id);
+      if (taxBytes) {
+        try {
+          sx.budget.chargeSpan(1);
+          ruleCitation = makeCitation(taxBytes, tagMeta.byte_span[0], tagMeta.byte_span[1], tagMeta.source_ref);
+          sx.markUsed(tagMeta.fixture_id);
+        } catch {
+          ruleCitation = unavailableCitation("taxonomy tag row bytes not verifiable", tagMeta.source_ref);
+        }
+      } else {
+        ruleCitation = unavailableCitation("taxonomy tag row bytes not retained", tagMeta.source_ref);
+      }
+    } else if (classification !== UNKNOWN_TAG) {
+      ruleCitation = unavailableCitation("taxonomy tag registry entry not found", w.source_ref);
+    }
+    const citations = [citation];
+    if (ruleCitation) citations.push(ruleCitation);
     sx.markUsed(w.fixture_id);
     sx.campaigns.set(row.campaign_id, {
       row,
@@ -64,6 +86,8 @@ export function classifyCampaigns(wrappedRows, tags, sx) {
       fixture_id: w.fixture_id,
       source_ref: w.source_ref,
       citation,
+      ruleCitation,
+      citations,
     });
   }
 }
@@ -80,6 +104,7 @@ export function processEventRows(wrappedRows, sx) {
     const row = w.row;
     // 4 spans per event row: identity, timestamp, window, campaign binding.
     sx.budget.chargeSpan(4);
+    sx.markUsed(w.fixture_id); // event row consulted (valid, excluded, or duplicate)
     const prev = byId.get(row.event_id);
     const canon = canonicalJson(row);
     if (prev !== undefined) {
@@ -138,6 +163,8 @@ export function dedupeConversions(validEvents, sx) {
     const cid = evts[0].conversion_id;
     const campaignId = evts[0].campaign_id;
     // Verified citations to each duplicate event row.
+    // M640-002: invalid/missing citations force explicit unavailable
+    // status — never silently skipped.
     const citations = [];
     for (const e of evts) {
       if (e._byte_span && e._fixture_id) {
@@ -148,9 +175,13 @@ export function dedupeConversions(validEvents, sx) {
             citations.push(makeCitation(bytes, e._byte_span[0], e._byte_span[1], e._source_ref));
             sx.markUsed(e._fixture_id);
           } catch {
-            // byte span invalid; skip citation for this row
+            citations.push(unavailableCitation("duplicate event row bytes not verifiable", e._source_ref));
           }
+        } else {
+          citations.push(unavailableCitation("duplicate event row bytes not retained", e._source_ref));
         }
+      } else {
+        citations.push(unavailableCitation("duplicate event row byte span missing", e._source_ref ?? null));
       }
     }
     const payloads = evts.map((e) =>
@@ -189,6 +220,9 @@ export function dedupeConversions(validEvents, sx) {
  */
 export function applyAttribution(events, sx) {
   const unattributedByCampaign = new Map();
+  // M640-002: retain the binding row metadata for each attributed event,
+  // so metrics can cite the exact binding that established attribution.
+  if (!sx.attributionBindings) sx.attributionBindings = new Map(); // event_id -> {byte_span, fixture_id, source_ref}
   for (const e of events) {
     if (!CONVERSION_KINDS.has(e.kind)) continue;
     // 2 spans: attribution binding check + conversion identity check.
@@ -196,7 +230,7 @@ export function applyAttribution(events, sx) {
     const bound = sx.bindings.get(e.event_id) ?? [];
     const ok =
       bound.length === 1 &&
-      bound[0] === e.campaign_id &&
+      bound[0].campaign_id === e.campaign_id &&
       (e.attribution_campaign_id == null || e.attribution_campaign_id === e.campaign_id);
     if (!ok) {
       if (!unattributedByCampaign.has(e.campaign_id)) unattributedByCampaign.set(e.campaign_id, []);
@@ -208,6 +242,8 @@ export function applyAttribution(events, sx) {
         e.event_id,
         `no exact registered binding for event (bindings found: ${bound.length}); conversion/revenue metrics unavailable`
       );
+    } else {
+      sx.attributionBindings.set(e.event_id, bound[0]);
     }
   }
   return unattributedByCampaign;
@@ -277,7 +313,7 @@ export function computeEventMetrics(events, unattributedByCampaign, sx) {
   for (const e of events) {
     const m = acc.get(e.campaign_id);
     if (!m) continue;
-    // Cite each material event row.
+    // Cite each material event row. M640-002: never silently skip.
     if (e._byte_span && e._fixture_id) {
       const bytes = sx.fixtureBytes?.get(e._fixture_id);
       if (bytes) {
@@ -288,9 +324,19 @@ export function computeEventMetrics(events, unattributedByCampaign, sx) {
           );
           sx.markUsed(e._fixture_id);
         } catch {
-          // byte span invalid; citation unavailable for this row
+          citationsByCampaign.get(e.campaign_id).push(
+            unavailableCitation("event row bytes not verifiable", e._source_ref)
+          );
         }
+      } else {
+        citationsByCampaign.get(e.campaign_id).push(
+          unavailableCitation("event row bytes not retained", e._source_ref)
+        );
       }
+    } else {
+      citationsByCampaign.get(e.campaign_id).push(
+        unavailableCitation("event row byte span missing", e._source_ref ?? null)
+      );
     }
     if (e.kind === "IMPRESSION") m.impressions += 1;
     else if (e.kind === "CLICK") m.clicks += 1;
@@ -313,7 +359,43 @@ export function computeEventMetrics(events, unattributedByCampaign, sx) {
     }
     const fin = finalizeRates(m, sx);
     if (m.status === "UNAVAILABLE") fin.revenue_minor = null; // unattributed revenue is not a usable total
-    fin.citations = citationsByCampaign.get(cid);
+    const mc = citationsByCampaign.get(cid);
+    // M640-002: cite the binding rows that established attribution for
+    // this campaign's conversions, and the completeness declaration.
+    if (sx.attributionBindings) {
+      const seenB = new Set();
+      for (const e of events) {
+        if (e.campaign_id !== cid) continue;
+        const b = sx.attributionBindings.get(e.event_id);
+        if (b && b.byte_span && !seenB.has(b.fixture_id + ":" + b.byte_span[0])) {
+          seenB.add(b.fixture_id + ":" + b.byte_span[0]);
+          const bb = sx.fixtureBytes.get(b.fixture_id);
+          if (bb) {
+            try {
+              sx.budget.chargeSpan(1);
+              mc.push(makeCitation(bb, b.byte_span[0], b.byte_span[1], b.source_ref));
+              sx.markUsed(b.fixture_id);
+            } catch {
+              mc.push(unavailableCitation("binding row bytes not verifiable", b.source_ref));
+            }
+          }
+        }
+      }
+    }
+    // Completeness declaration citation.
+    const compMeta = sx._completenessRowMeta?.get(cid);
+    if (compMeta && compMeta.byte_span) {
+      const cb = sx.fixtureBytes.get(compMeta.fixture_id);
+      if (cb) {
+        try {
+          sx.budget.chargeSpan(1);
+          mc.push(makeCitation(cb, compMeta.byte_span[0], compMeta.byte_span[1], compMeta.source_ref));
+        } catch {
+          mc.push(unavailableCitation("completeness row bytes not verifiable", compMeta.source_ref));
+        }
+      }
+    }
+    fin.citations = mc;
     sx.metrics.set(cid, fin);
   }
 }
@@ -370,6 +452,23 @@ export function computeAggregateMetrics(wrappedRows, sx) {
     m.revenueMinor = BigInt(row.revenue_minor);
     m.citations = [citation];
     if (camp.citation) m.citations.push(camp.citation);
+    // M640-002: cite the completeness declaration behind the
+    // population_complete decision.
+    const compMeta = sx._completenessRowMeta?.get(row.campaign_id);
+    if (compMeta && compMeta.byte_span) {
+      const cb = sx.fixtureBytes.get(compMeta.fixture_id);
+      if (cb) {
+        try {
+          sx.budget.chargeSpan(1);
+          m.citations.push(makeCitation(cb, compMeta.byte_span[0], compMeta.byte_span[1], compMeta.source_ref));
+        } catch {
+          m.citations.push(unavailableCitation("completeness row bytes not verifiable", compMeta.source_ref));
+        }
+      }
+    } else if (!declaredComplete) {
+      // No declaration row: the "not complete" decision is explicit.
+      m.citations.push(unavailableCitation("no completeness declaration row for campaign; population_complete=false", w.source_ref));
+    }
     if (!declaredComplete) {
       // Empty/missing line items behind claimed totals => UNVERIFIABLE, complete:false.
       m.status = "UNVERIFIABLE";
@@ -387,21 +486,29 @@ export function computeAggregateMetrics(wrappedRows, sx) {
     sx.metrics.set(row.campaign_id, m);
   }
   // Registered campaigns with no aggregate row: absent primary counts are
-  // NOT evidence of zero. Without an explicit supported evidenced zero
-  // row, the metric is UNVERIFIABLE and the report cannot be complete.
+  // NOT evidence of zero. M640-004: absent counts are null (typed
+  // unknown), NEVER numeric zero — a zero would let a header claim of
+  // "0" MATCH against absent evidence. Without an explicit supported
+  // evidenced zero row, the metric is UNVERIFIABLE and the report cannot
+  // be complete.
   for (const c of sx.campaigns.values()) {
     if (!sx.metrics.has(c.row.campaign_id)) {
       const m = baseMetricRow(c.row.campaign_id, c.currency, "aggregate_counts", sx);
-      m.spendMinor = 0n;
-      m.revenueMinor = 0n;
+      m.impressions = null;
+      m.clicks = null;
+      m.conversions = null;
+      m.spend_minor = null;
+      m.revenue_minor = null;
       m.status = "UNVERIFIABLE";
       m.ctr = unverifiableRate();
       m.conversion_rate = unverifiableRate();
       m.roas = unverifiableRate();
-      m.spend_minor = "0";
-      m.revenue_minor = "0";
-      delete m.spendMinor;
-      delete m.revenueMinor;
+      // Cite the campaign registration (the only evidence: the campaign
+      // exists but has no aggregate row). The absent counts are explicitly
+      // unavailable, not zero.
+      m.citations = [];
+      if (c.citation) m.citations.push(c.citation);
+      m.citations.push(unavailableCitation("no aggregate_counts row for campaign; counts unavailable, not zero", null));
       sx.diag("METRICS_UNVERIFIABLE", "warning", null, c.row.campaign_id, "no aggregate row for registered campaign; absent counts are not evidence of zero; metrics UNVERIFIABLE");
       sx.metrics.set(c.row.campaign_id, m);
     }
@@ -447,6 +554,18 @@ export function poolMetrics(poolGroups, sx) {
     const ctrR = I === 0n ? null : rat(C, I);
     const cvrR = C === 0n ? null : rat(V, C);
     const roasR = S === 0n ? null : rat(R, S);
+    // M640-002: pooled outputs cite their member metrics' evidence.
+    const poolCitations = [];
+    for (const r of rows) {
+      if (r.metric?.citations) {
+        for (const c of r.metric.citations) {
+          // Deduplicate by quoted_span to avoid repetition.
+          if (!poolCitations.some((pc) => pc.quoted_span === c.quoted_span && pc.quoted_span !== null)) {
+            poolCitations.push(c);
+          }
+        }
+      }
+    }
     pooled.push({
       pool_id: poolId,
       members: [...members].sort(),
@@ -460,6 +579,7 @@ export function poolMetrics(poolGroups, sx) {
       ctr: ctrR ? { status: "DEFINED", numerator: ctrR.n.toString(), denominator: ctrR.d.toString(), display: formatPercent(ctrR) } : undefinedRate(),
       conversion_rate: cvrR ? { status: "DEFINED", numerator: cvrR.n.toString(), denominator: cvrR.d.toString(), display: formatPercent(cvrR) } : undefinedRate(),
       roas: roasR ? { status: "DEFINED", numerator: roasR.n.toString(), denominator: roasR.d.toString(), display: formatRoas(roasR) } : undefinedRate(),
+      citations: poolCitations,
     });
   });
   return pooled;

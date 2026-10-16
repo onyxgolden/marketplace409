@@ -302,3 +302,123 @@ export function measureDepth(value) {
   const ok = go(value, 0);
   return ok ? { ok: true } : { ok: false, reason: `value nesting exceeds ${BUDGET_LIMITS.maxDepth} or is cyclic` };
 }
+
+/**
+ * measureCanonicalBytes(value) — bounded pre-scan at the public entry.
+ *
+ * Computes the EXACT UTF-8 byte length that canonicalJson(value) would
+ * produce, WITHOUT invoking any getter/setter or reading accessor
+ * properties. Uses Object.getOwnPropertyDescriptor exclusively: data
+ * descriptors are measured, accessor descriptors are counted as opaque
+ * nodes (0 bytes measured, never invoked).
+ *
+ * This is the "bounded incremental traversal/accounting at the actual
+ * public entry, before canonicalization, validation, hashing, property
+ * read and nested parsing" required by M640-001. Serialization IS
+ * inspection: calling canonicalJson() on uncharged input recursively
+ * reads every field (firing getters, reading denied fixture bytes).
+ * This pre-scan establishes the byte/object accounting FIRST, so the
+ * budget can refuse BEFORE any value is read.
+ *
+ * Returns { bytes, nodes }. Throws StructuralError on depth > 32,
+ * cyclic structures, or node count exceeding the sanity cap.
+ * The node cap is a DoS bound, not the 64-object consultation budget.
+ */
+const PRESCAN_NODE_CAP = 100000;
+
+function jsonStringByteLength(s) {
+  // Exact JSON string encoding length: quotes + escapes.
+  // JSON.stringify emits valid surrogate PAIRS as raw UTF-8; only LONE
+  // surrogates become \uXXXX (6 bytes).
+  let n = 2; // quotes
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 0x22 || c === 0x5c) {
+      n += 2; // \" or \\
+    } else if (c < 0x20) {
+      // \b \f \n \r \t are 2 bytes; others are \uXXXX (6 bytes)
+      n += (c === 0x08 || c === 0x0c || c === 0x0a || c === 0x0d || c === 0x09) ? 2 : 6;
+    } else if (c >= 0xd800 && c <= 0xdbff) {
+      const d = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (d >= 0xdc00 && d <= 0xdfff) {
+        n += 4; i++; // valid pair -> raw UTF-8 (4 bytes)
+      } else {
+        n += 6; // lone high surrogate -> \uXXXX
+      }
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      n += 6; // lone low surrogate -> \uXXXX
+    } else {
+      n += Buffer.byteLength(s[i], "utf8");
+    }
+  }
+  return n;
+}
+
+export function measureCanonicalBytes(value) {
+  const seen = new Set();
+  let nodes = 0;
+  function go(v, depth) {
+    if (++nodes > PRESCAN_NODE_CAP) {
+      throw new StructuralError("INVALID_INPUT", "input: node count exceeds pre-scan cap");
+    }
+    if (depth > BUDGET_LIMITS.maxDepth) {
+      throw new StructuralError("INPUT_TOO_DEEP", `input: nesting depth exceeds ${BUDGET_LIMITS.maxDepth}`);
+    }
+    if (v === null) return 4; // null
+    const t = typeof v;
+    if (t === "string") return jsonStringByteLength(v);
+    if (t === "number") {
+      const s = JSON.stringify(v);
+      return s === undefined ? 4 : Buffer.byteLength(s, "utf8"); // non-finite -> null
+    }
+    if (t === "boolean") return v ? 4 : 5;
+    if (t === "undefined" || t === "function" || t === "symbol") return 0; // dropped by canonicalize
+    // object or array: descriptor-based traversal, never invoking accessors
+    if (seen.has(v)) {
+      throw new StructuralError("INVALID_INPUT", "input: cyclic structure");
+    }
+    seen.add(v);
+    let n;
+    if (Array.isArray(v)) {
+      n = 2; // []
+      const names = Object.getOwnPropertyNames(v);
+      // Array elements: canonicalize maps each; undefined/function/symbol -> null in JSON arrays
+      let first = true;
+      for (let i = 0; i < v.length; i++) {
+        if (!first) n += 1; // comma
+        first = false;
+        const desc = Object.getOwnPropertyDescriptor(v, i);
+        if (!desc || !("value" in desc)) {
+          n += 4; // hole or accessor -> null (accessor never invoked)
+        } else {
+          const ev = desc.value;
+          const et = typeof ev;
+          if (ev === undefined || et === "function" || et === "symbol") {
+            n += 4; // null
+          } else {
+            n += go(ev, depth + 1);
+          }
+        }
+      }
+      // Non-index own properties on arrays are ignored by JSON.stringify; ignore here too.
+    } else {
+      n = 2; // {}
+      const names = Object.getOwnPropertyNames(v).sort();
+      let first = true;
+      for (const k of names) {
+        const desc = Object.getOwnPropertyDescriptor(v, k);
+        if (!desc) continue;
+        if (!("value" in desc)) continue; // accessor: opaque, never invoked, 0 bytes
+        const ev = desc.value;
+        if (ev === undefined || typeof ev === "function" || typeof ev === "symbol") continue; // dropped
+        if (!first) n += 1; // comma
+        first = false;
+        n += jsonStringByteLength(k) + 1 + go(ev, depth + 1); // "key":value
+      }
+    }
+    seen.delete(v);
+    return n;
+  }
+  const bytes = go(value, 0);
+  return { bytes, nodes };
+}
