@@ -1,0 +1,147 @@
+/**
+ * resolver.js — fixture Git-object resolution, quoted-span verification,
+ * read-permission checks and the per-task budget.
+ *
+ * Budget discipline (the bug class that has bounced CS-001, DOC-002 and
+ * FM-005 today): every candidate object — fixture sources, transaction
+ * rows, span checks, AND every element of the injected trusted context
+ * (sources, revisions, read grants, principal, criteria) — is charged
+ * with countObject()/countSpan() BEFORE the caller inspects any field
+ * of that candidate. Attempt 65 (or span 513) refuses before that
+ * candidate is touched at all, not merely before a "success" result is
+ * returned. validateContext() in schemas.js applies the same discipline
+ * to the context population; it requires the caller's live budget and
+ * must never be called without one.
+ */
+
+import { gitBlobId, HEX40 } from "./canonical.js";
+import { validateSourceRef, SchemaError } from "./schemas.js";
+
+export const BUDGET_LIMITS = {
+  maxPayloadBytes: 262144, // 256 KiB total UTF-8 data per task
+  maxObjects: 64, // candidate objects: fixture sources + transactions + criteria/registry entries
+  maxSpans: 512, // evidence span checks
+  maxOutputRecords: 256, // output records
+  maxOutputBytes: 262144, // 256 KiB output
+};
+
+export class BudgetError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "BudgetError";
+    this.code = code;
+  }
+}
+
+export class ResolutionError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "ResolutionError";
+    this.code = code;
+  }
+}
+
+/** Per-task monotonic budget: every object resolution, span check and
+ *  payload byte is charged, incrementally, before inspection. */
+export function makeBudget() {
+  const used = { objects: 0, spans: 0, payloadBytes: 0 };
+  return {
+    used,
+    countPayload(bytes, what) {
+      used.payloadBytes += Buffer.byteLength(bytes, "utf8");
+      if (used.payloadBytes > BUDGET_LIMITS.maxPayloadBytes) {
+        throw new BudgetError("INPUT_LIMIT", `${what ?? "payload"} exceeds ${BUDGET_LIMITS.maxPayloadBytes} bytes`);
+      }
+    },
+    countObject(what) {
+      used.objects += 1;
+      if (used.objects > BUDGET_LIMITS.maxObjects) {
+        throw new BudgetError("BUDGET_EXCEEDED", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}${what ? ` (at ${what})` : ""}`);
+      }
+    },
+    countSpan(what) {
+      used.spans += 1;
+      if (used.spans > BUDGET_LIMITS.maxSpans) {
+        throw new BudgetError("BUDGET_EXCEEDED", `span checks exceed ${BUDGET_LIMITS.maxSpans}${what ? ` (at ${what})` : ""}`);
+      }
+    },
+  };
+}
+
+function sourceKeyOf(ref) {
+  return `${ref.repo}|${ref.path}`;
+}
+
+/**
+ * Resolve a SourceRef through the fixture Git object store. Verifies the
+ * source key is registered, the commit is a registered revision, and the
+ * recomputed Git blob ID equals the pinned blob. Returns {bytes, text}.
+ * Throws ResolutionError (SOURCE_UNVERIFIED / HASH_MISMATCH).
+ */
+export function resolveSourceRef(ref, sources, budget, what) {
+  budget.countObject(what);
+  try {
+    validateSourceRef(ref, "source pin");
+  } catch (e) {
+    if (e instanceof SchemaError) throw new ResolutionError("SOURCE_UNVERIFIED", `pin failed validation: ${e.message}`);
+    throw e;
+  }
+  const key = sourceKeyOf(ref);
+  const entry = sources[key];
+  if (!entry || typeof entry !== "object") {
+    throw new ResolutionError("SOURCE_UNVERIFIED", `source key not registered: ${ref.repo}/${ref.path}`);
+  }
+  const revisions = entry.revisions;
+  if (!revisions || typeof revisions !== "object") {
+    throw new ResolutionError("SOURCE_UNVERIFIED", `no revisions registered for ${ref.repo}/${ref.path}`);
+  }
+  const rev = revisions[ref.commit];
+  if (!rev || typeof rev !== "object") {
+    throw new ResolutionError("SOURCE_UNVERIFIED", `commit ${ref.commit} not registered for ${ref.repo}/${ref.path}`);
+  }
+  if (typeof rev.text !== "string") {
+    throw new ResolutionError("SOURCE_UNVERIFIED", `revision bytes missing for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}`);
+  }
+  const bytes = Buffer.from(rev.text, "utf8");
+  budget.countPayload(rev.text, `source ${ref.repo}/${ref.path}`);
+  const actualBlob = gitBlobId(bytes);
+  if (actualBlob !== ref.blob) {
+    throw new ResolutionError("HASH_MISMATCH", `blob mismatch for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}: pinned ${ref.blob.slice(0, 12)}… recomputed ${actualBlob.slice(0, 12)}…`);
+  }
+  return { bytes, text: rev.text };
+}
+
+/** Exact read-grant check: grants are exact repo+path, never prefixes. */
+export function hasReadGrant(ref, readGrants) {
+  return readGrants.some((g) => g.repo === ref.repo && g.path === ref.path);
+}
+
+/**
+ * Locate a quoted span by exact byte search in the source bytes.
+ * Returns {start_byte, end_byte, quoted_text}. Throws ResolutionError
+ * (SPAN_MISMATCH) when the quoted text is not found exactly.
+ *
+ * UTF-8 safety: the needle is located by byte search; start/end are byte
+ * offsets. A span that would split a multi-byte sequence is rejected —
+ * the located bytes must decode to exactly the quoted string.
+ */
+export function verifySpan(bytes, quotedSpan, budget, what) {
+  budget.countSpan(what);
+  if (typeof quotedSpan !== "string" || quotedSpan.length === 0) {
+    throw new ResolutionError("SPAN_MISMATCH", "quoted span must be a non-empty string");
+  }
+  const needle = Buffer.from(quotedSpan, "utf8");
+  const start = bytes.indexOf(needle);
+  if (start < 0) {
+    throw new ResolutionError("SPAN_MISMATCH", "quoted span not found exactly in source bytes");
+  }
+  const end = start + needle.length;
+  // UTF-8 boundary check: slicing at these offsets must round-trip.
+  const slice = bytes.subarray(start, end).toString("utf8");
+  if (slice !== quotedSpan) {
+    throw new ResolutionError("SPAN_MISMATCH", "quoted span splits a UTF-8 sequence");
+  }
+  return { start_byte: start, end_byte: end, quoted_text: quotedSpan };
+}
+
+export { HEX40 };
