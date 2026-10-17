@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:svg xmlns:s="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200"><s:rect x="20" y="40" width="140" height="60"/><s:script>alert(1)</s:script></s:svg>
