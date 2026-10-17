@@ -240,10 +240,14 @@ addCase("con-005-single-transfer", "contradiction_incomplete_duplicate", "transf
   status: "REPORT_READY", anomalyCodes: ["UNPAIRED_TRANSFER"],
 });
 addCase("con-006-unknown-account", "contradiction_incomplete_duplicate", "unknown-account", {}, {
-  status: "REPORT_READY", anomalyCodes: ["UNKNOWN_ACCOUNT"],
+  // FIN-003: unknown classifications make the income measure unavailable —
+  // PARTIAL with the summary blocked and aggregates nulled, never REPORT_READY.
+  status: "PARTIAL", summaryNull: true, anomalyCodes: ["UNKNOWN_ACCOUNT"],
 });
 addCase("con-007-wrong-currency", "contradiction_incomplete_duplicate", "wrong-currency", {}, {
-  status: "REPORT_READY", admitted: 1, diagnosticCodes: ["CURRENCY_UNVERIFIABLE"],
+  // FIN-003: incompatible currencies make income AND cash measures
+  // unavailable (no FX) — PARTIAL, summary blocked, aggregates nulled.
+  status: "PARTIAL", summaryNull: true, admitted: 1, diagnosticCodes: ["CURRENCY_UNVERIFIABLE"],
 });
 addCase("con-008-incomplete", "contradiction_incomplete_duplicate", "single-income", { complete: false }, {
   status: "PARTIAL", summaryNull: true,
@@ -259,10 +263,12 @@ for (let i = 10; i <= 30; i++) {
   const variants = [
     ["duplicate-ids", {}, { anomalyCodes: ["DUPLICATE_ID"], summaryNull: true, status: "EMPTY", admitted: 0 }],
     ["transfers-unbalanced", {}, { anomalyCodes: ["UNPAIRED_TRANSFER"] }],
-    ["unknown-account", {}, { anomalyCodes: ["UNKNOWN_ACCOUNT"] }],
+    // FIN-003: unknown accounts block the ready summary
+    ["unknown-account", {}, { status: "PARTIAL", summaryNull: true, anomalyCodes: ["UNKNOWN_ACCOUNT"] }],
     ["out-of-period", {}, { anomalyCodes: ["OUT_OF_PERIOD"] }],
     ["single-income", { complete: false }, { status: "PARTIAL", summaryNull: true }],
-    ["wrong-currency", {}, { diagnosticCodes: ["CURRENCY_UNVERIFIABLE"] }],
+    // FIN-003: wrong currencies block the ready summary
+    ["wrong-currency", {}, { status: "PARTIAL", summaryNull: true, diagnosticCodes: ["CURRENCY_UNVERIFIABLE"] }],
   ];
   const [bundle, overrides, exp] = variants[i % variants.length];
   addCase(id, "contradiction_incomplete_duplicate", bundle, overrides, { status: "REPORT_READY", ...exp });
@@ -364,15 +370,16 @@ addCase("bud-001-over-budget-1000", "budget_replay_mutation", "over-budget-1000"
 // 1000-row bundle: revision text is payload-charged in validateContext AND
 // again on resolveSourceRef, so the 256 KiB input limit fires before the
 // 64-object cap. INPUT_LIMIT is the correct fail-closed refusal here.
-addCase("bud-002-boundary-54-ok", "budget_replay_mutation", "boundary-54", {}, {
-  status: "REPORT_READY", admitted: 54,
+addCase("bud-002-boundary-46-ok", "budget_replay_mutation", "boundary-46", {}, {
+  status: "REPORT_READY", admitted: 46,
 });
-// 8 context (2 sources + 2 revisions + 2 grants + principal + criteria)
-// + 2 fixture-source resolutions + 54 transactions = 64 = cap. Must succeed.
-addCase("bud-003-boundary-55-refuse", "budget_replay_mutation", "boundary-55", {}, {
+// FIN-001: 16 context (2 sources + 2 revisions + 2 grants + principal +
+// criteria + 8 chart entries) + 2 fixture-source resolutions + 46
+// transactions = 64 = cap. Must succeed.
+addCase("bud-003-boundary-47-refuse", "budget_replay_mutation", "boundary-47", {}, {
   status: "REFUSED", refusedCode: "BUDGET_EXCEEDED",
 });
-// 8 + 2 + 55 = 65 > 64. Must refuse before inspecting txn 55.
+// 16 + 2 + 47 = 65 > 64. Must refuse before decoding txn 47.
 for (let i = 4; i <= 10; i++) {
   addCase(`bud-${String(i).padStart(3, "0")}`, "budget_replay_mutation", "over-budget-1000", {}, {
     status: "REFUSED", refusedCode: "INPUT_LIMIT",

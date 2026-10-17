@@ -7,14 +7,19 @@
  * CRITICAL (CS-001 / DOC-002 / FM-005 bug class): validateContext()
  * treats the injected trusted context as a CANDIDATE POPULATION, not a
  * free pre-pass. Every registered source, every revision within it,
- * every read grant, the principal record and the criteria record are
- * each object-charged via budget.countObject() as the FIRST statement
- * before any of that candidate's own fields are read. A revision's text
- * bytes are payload-charged before acceptance whether or not that
- * revision is ever resolved/used — an unused oversized revision must
- * still count against the input budget, never traversed for free.
+ * every read grant, the principal record, the criteria record, and —
+ * FIN-001 — EVERY chart entry inside the criteria are each object-charged
+ * via budget.countObject() as the FIRST statement before any of that
+ * candidate's own fields are read. A revision's text bytes are
+ * payload-charged before acceptance whether or not that revision is ever
+ * resolved/used — an unused oversized revision must still count against
+ * the input budget, never traversed for free.
  * `budget` is REQUIRED.
- */
+ *
+ * FIN-002: splitTopLevelArray() establishes the transaction bundle's
+ * bounded container and yields raw per-element source spans WITHOUT
+ * decoding any candidate's fields; the caller charges each candidate
+ * before JSON.parse on its span. */
 
 import { HEX40, parseMinorUnits, parseDecimalToRational } from "./canonical.js";
 
@@ -112,8 +117,14 @@ export function validatePrincipal(value, where) {
 
 /** Trusted criteria: versioned chart of accounts (exact code -> class),
  *  currency scale metadata, and the pinned chart document SourceRef.
- *  Host-injected only — never supplied or overridable by task content. */
-export function validateCriteria(value, where) {
+ *  Host-injected only — never supplied or overridable by task content.
+ *
+ *  FIN-001: every chart entry is its own candidate. The live monotonic
+ *  budget is REQUIRED; each entry is object-charged BEFORE its code/class
+ *  is read. A poisoned 200-entry chart can no longer be enumerated for
+ *  free under the single criteria charge. */
+export function validateCriteria(value, where, budget) {
+  if (!budget || typeof budget.countObject !== "function") fail(where, "internal: validateCriteria requires a live budget");
   if (!isPlainObject(value)) fail(where, "criteria must be an object");
   exactKeys(value, ["chart_version", "chart", "currency", "currency_scale", "chart_ref"], where);
   const chart_version = reqStr(value, "chart_version", where);
@@ -123,6 +134,9 @@ export function validateCriteria(value, where) {
   if (chartEntries.length === 0 || chartEntries.length > 256) fail(where, "chart must have 1..256 entries");
   const chart = {};
   for (const [code, cls] of chartEntries) {
+    // Charge FIRST: the entry key is container-level (already enumerated),
+    // the code/class pair is the candidate's own fields — unread until charged.
+    budget.countObject(`${where}.chart[${code}]`);
     if (!ACCOUNT_CODE_RE.test(code)) fail(where, `invalid account code '${code}'`);
     if (!ACCOUNT_CLASSES.includes(cls)) fail(where, `account '${code}' class must be one of ${ACCOUNT_CLASSES.join(", ")}`);
     chart[code] = cls;
@@ -189,7 +203,9 @@ export function validateContext(context, budget) {
   budget.countObject("context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
   budget.countObject("context.criteria");
-  const criteria = validateCriteria(context.criteria, "context.criteria");
+  // FIN-001: the criteria charge covers the record itself; validateCriteria
+  // charges each chart entry as its own candidate on the same budget.
+  const criteria = validateCriteria(context.criteria, "context.criteria", budget);
 
   return { clock, sources: context.sources, readGrants, principal, criteria };
 }
@@ -347,13 +363,127 @@ export function validateTransaction(value, where) {
   };
 }
 
-/** Outer transaction-bundle shape: a JSON array. The "bounded preflight
- *  may inspect containers/lengths" step — never walks an UNCHARGED
- *  candidate's own fields. */
-export function validateTransactionBundleShape(parsed, where) {
-  if (!Array.isArray(parsed)) fail(where, "transaction bundle must be a JSON array");
-  if (parsed.length > MAX_TXNS_PER_BUNDLE_SCHEMA) fail(where, `transaction bundle exceeds ${MAX_TXNS_PER_BUNDLE_SCHEMA} entries`);
-  return parsed;
+/** FIN-002 — bounded-container preflight.
+ *
+ *  splitTopLevelArray(text, where) verifies the bundle text is a JSON
+ *  array and returns the RAW SOURCE SPAN of each top-level element —
+ *  WITHOUT decoding any element's fields. It is a structural scanner,
+ *  not a parser: it tracks nesting depth and string boundaries (with
+ *  escape awareness) and never unescapes, interprets, or validates a
+ *  candidate's own content. The caller must budget.countObject() each
+ *  candidate FIRST, then JSON.parse only that candidate's span.
+ *
+ *  Malformed structure -> SchemaError (INVALID_INPUT). A structurally
+ *  valid but schema-invalid element survives this scan untouched; only
+ *  the charged per-candidate decode can reject it — which is exactly
+ *  what the FIN-002 sentinel test proves never happens past the budget.
+ */
+const WS_CHARS = new Set([" ", "\t", "\n", "\r"]);
+
+function scanScalar(text, i, where) {
+  const n = text.length;
+  for (const lit of ["true", "false", "null"]) {
+    if (text.startsWith(lit, i)) {
+      const after = i + lit.length;
+      if (after < n && /[A-Za-z0-9_$]/.test(text[after])) fail(where, "transaction bundle is not a valid JSON array");
+      return after;
+    }
+  }
+  // Number: consume the numeric charset leniently; JSON.parse validates
+  // the exact grammar per span later.
+  let j = i;
+  while (j < n && /[-+0-9.eE]/.test(text[j])) j++;
+  if (j === i) fail(where, "transaction bundle is not a valid JSON array");
+  return j;
+}
+
+/** Scan one complete composite value (string/object/array) starting at i;
+ *  return the index just past it. Structural only — strings are skipped
+ *  by boundary, never unescaped. */
+function scanComposite(text, i, where) {
+  const n = text.length;
+  if (text[i] === '"') {
+    // Bare string element: scan to its closing quote, never unescaping.
+    i++;
+    while (i < n) {
+      if (text[i] === "\\") { i += 2; continue; }
+      if (text[i] === '"') return i + 1;
+      if (text[i] < " ") fail(where, "transaction bundle is not a valid JSON array");
+      i++;
+    }
+    fail(where, "transaction bundle is not a valid JSON array");
+  }
+  const stack = [];
+  while (i < n) {
+    const ch = text[i];
+    if (ch === '"') {
+      i++;
+      while (i < n) {
+        if (text[i] === "\\") { i += 2; continue; }
+        if (text[i] === '"') break;
+        if (text[i] < " ") fail(where, "transaction bundle is not a valid JSON array");
+        i++;
+      }
+      if (i >= n) fail(where, "transaction bundle is not a valid JSON array");
+      i++; // past the closing quote
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      stack.push(ch);
+    } else if (ch === "}" || ch === "]") {
+      const open = stack.pop();
+      if ((ch === "}" && open !== "{") || (ch === "]" && open !== "[")) {
+        fail(where, "transaction bundle is not a valid JSON array");
+      }
+      if (stack.length === 0) return i + 1;
+    }
+    i++;
+  }
+  fail(where, "transaction bundle is not a valid JSON array");
+}
+
+export function splitTopLevelArray(text, where) {
+  if (typeof text !== "string") fail(where, "transaction bundle must be a JSON array");
+  const n = text.length;
+  let i = 0;
+  while (i < n && WS_CHARS.has(text[i])) i++;
+  if (i >= n || text[i] !== "[") fail(where, "transaction bundle must be a JSON array");
+  i++; // past '['
+  const spans = [];
+  let afterComma = false; // ']' is legal only for the empty bundle — never after a comma or an element
+  for (;;) {
+    while (i < n && WS_CHARS.has(text[i])) i++;
+    if (i >= n) fail(where, "transaction bundle is not a valid JSON array");
+    if (text[i] === "]") {
+      if (afterComma || spans.length > 0) fail(where, "transaction bundle is not a valid JSON array");
+      i++;
+      while (i < n && WS_CHARS.has(text[i])) i++;
+      if (i !== n) fail(where, "transaction bundle has trailing content");
+      return spans;
+    }
+    const start = i;
+    const c = text[i];
+    if (c === '"' || c === "{" || c === "[") i = scanComposite(text, i, where);
+    else if (c === "t" || c === "f" || c === "n" || c === "-" || (c >= "0" && c <= "9") || c === "+") {
+      i = scanScalar(text, i, where);
+    } else {
+      fail(where, "transaction bundle is not a valid JSON array");
+    }
+    spans.push(text.slice(start, i));
+    if (spans.length > MAX_TXNS_PER_BUNDLE_SCHEMA) fail(where, `transaction bundle exceeds ${MAX_TXNS_PER_BUNDLE_SCHEMA} entries`);
+    afterComma = false;
+    while (i < n && WS_CHARS.has(text[i])) i++;
+    if (i >= n) fail(where, "transaction bundle is not a valid JSON array");
+    const sep = text[i];
+    if (sep === ",") { i++; afterComma = true; continue; }
+    if (sep === "]") {
+      i++;
+      while (i < n && WS_CHARS.has(text[i])) i++;
+      if (i !== n) fail(where, "transaction bundle has trailing content");
+      return spans;
+    }
+    fail(where, "transaction bundle is not a valid JSON array");
+  }
 }
 
 export { REPO_RE, PATH_RE, RECORD_ID_RE, SLUG_RE, ACCOUNT_CODE_RE, CURRENCY_RE };
