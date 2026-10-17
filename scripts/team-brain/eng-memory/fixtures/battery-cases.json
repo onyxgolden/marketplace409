@@ -1,0 +1,3102 @@
+{
+  "generatedBy": "scripts/team-brain/eng-memory/fixtures/generateBattery.mjs",
+  "synthetic": true,
+  "counts": {
+    "valid": 30,
+    "duplicate": 20,
+    "prohibited": 30,
+    "malformed": 16,
+    "conflict": 2,
+    "budget": 1,
+    "crash": 1
+  },
+  "cases": [
+    {
+      "caseId": "V-001",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-002",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-003",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-003-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "d1852413d01bb59eadbf18a0295684eb102201c3"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T10:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-004",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-004-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "41e874028bc6c215c531a3ba428cb6ab051ccce59c070338e31015a1d90206d9"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-04T11:00:00Z",
+        "kind": "COMPLETED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-005",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-005-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "209770734dde444ca843794b5498c4db60661d17"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-05T12:00:00Z",
+        "kind": "VERDICT",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-006",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-006-synthetic",
+        "taskId": "eng-task-006",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "6607420f1e4014acec9954d0280bfb4f8d37dcff8dc4c73474ea8b617633aa60"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-06T13:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-007",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-007-synthetic",
+        "taskId": "eng-task-007",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "b37a99d0356cc805e190a0224bdae1bd1a1408b8"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-07T14:00:00Z",
+        "kind": "REVOKED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-008",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-008-synthetic",
+        "taskId": "eng-task-008",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/ai-agents/marketing-prototype/src/resolver.js",
+          "pin": {
+            "algo": "sha256",
+            "id": "4d6b949090b4681a03b1c4c6d19c37eab42109969b4ff69bf4852055a6a52810"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-08T15:00:00Z",
+        "kind": "FILED",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-009",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-009-synthetic",
+        "taskId": "eng-task-009",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "forge-ai-drop/MASTER-TRACKER.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "be7e95b44f9f7a9c4bdb899ae17bd4014588111b"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-09T16:00:00Z",
+        "kind": "PROGRESS",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-010",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-010-synthetic",
+        "taskId": "eng-task-010",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "358db4ef45db6992b2a1b3a6ac5d29294f69ec4cb9ac83206313e66ddb400867"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-10T17:00:00Z",
+        "kind": "BLOCKED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-011",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-011-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "009370666240e005d8df5ba996c73e9b28fa286c"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-11T08:00:00Z",
+        "kind": "COMPLETED",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-012",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-012-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "349353a61dd20270a1df27e13674285455ba369704cfc3688b694afa8a890af2"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-12T09:00:00Z",
+        "kind": "VERDICT",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-013",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-013-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "741a4c7ae7025fff9578a4e437b92fcd82d2ee1c"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-13T10:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-014",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-014-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "eca9b2c20381cb26c43df8196ed0af0d4688bffeac8dc684b90d09ae014fab8c"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-14T11:00:00Z",
+        "kind": "REVOKED",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-015",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-015-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "1bb27c62a54037b59eda6c44e43246f0b4900133"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-15T12:00:00Z",
+        "kind": "FILED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-016",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-016-synthetic",
+        "taskId": "eng-task-006",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "sha256",
+            "id": "df0284bac7c4c776834caecafa8754883282e16850bfb6ad3d7d5f0dbae1d1e8"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-16T13:00:00Z",
+        "kind": "PROGRESS",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-017",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-017-synthetic",
+        "taskId": "eng-task-007",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/marketing-prototype/src/resolver.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "de382b00ccbac13187693cb9fe425c4903825afa"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T14:00:00Z",
+        "kind": "BLOCKED",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-018",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-018-synthetic",
+        "taskId": "eng-task-008",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "forge-ai-drop/MASTER-TRACKER.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "5c0adfd09508d0ba7f3859e4def28b0b3a579784d228206dd248ff97801841f0"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T15:00:00Z",
+        "kind": "COMPLETED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-019",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-019-synthetic",
+        "taskId": "eng-task-009",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "851d3ed7ddb64af7d436ce8c84d82ac8bc8207b5"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T16:00:00Z",
+        "kind": "VERDICT",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-020",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-020-synthetic",
+        "taskId": "eng-task-010",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "f541411af108f169eec4eb426a1616af1f0ec6cd70c1e6c1c492301a7958c257"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-04T17:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-021",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-021-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "4d4d43e14f7c9d2ff6b8b6879fc2da8241a63af8"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-05T08:00:00Z",
+        "kind": "REVOKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-022",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-022-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "2c83501f803accd9210b16c0f8f7f6a7f69485a7048d9201a59f82d8ff09fc76"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-06T09:00:00Z",
+        "kind": "FILED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-023",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-023-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "eb57db93e1b6af0ca6eebd29ee450f89d1326f5d"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-07T10:00:00Z",
+        "kind": "PROGRESS",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-024",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-024-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "a8a9b8b400e188a6b57b3e66cbd4cd61aef372dad16fac002835f2f4adbbf125"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-08T11:00:00Z",
+        "kind": "BLOCKED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-025",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-025-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "54a008f8ae3651b7f3ac12eb959a2c08bd423a62"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-09T12:00:00Z",
+        "kind": "COMPLETED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-026",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-026-synthetic",
+        "taskId": "eng-task-006",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/ai-agents/marketing-prototype/src/resolver.js",
+          "pin": {
+            "algo": "sha256",
+            "id": "133b0cb69dcfcb2877ca0c40db9cfe7d21250c546a3837cbb05e8d15d4841723"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-10T13:00:00Z",
+        "kind": "VERDICT",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-027",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-027-synthetic",
+        "taskId": "eng-task-007",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "forge-ai-drop/MASTER-TRACKER.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "453ec2cebc9a185f78c697f7779e955949163945"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-11T14:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-028",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-028-synthetic",
+        "taskId": "eng-task-008",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "bf496471101948e2aeac5fc38f34dc2acbe5a055b75cff35cc80561b477bb40a"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-12T15:00:00Z",
+        "kind": "REVOKED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-029",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-029-synthetic",
+        "taskId": "eng-task-009",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "72ed01852c0071dbb2773ea5961b1d5c80c17d57"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-13T16:00:00Z",
+        "kind": "FILED",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "V-030",
+      "category": "valid",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-030-synthetic",
+        "taskId": "eng-task-010",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "aa4036cde0cc4f12576d4414777c1073efaabb2278df8e4232c46c8236cfcca0"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-14T17:00:00Z",
+        "kind": "PROGRESS",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-001",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-002",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-003",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-003-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "d1852413d01bb59eadbf18a0295684eb102201c3"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T10:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-004",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-004-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "41e874028bc6c215c531a3ba428cb6ab051ccce59c070338e31015a1d90206d9"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-04T11:00:00Z",
+        "kind": "COMPLETED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-005",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-005-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "209770734dde444ca843794b5498c4db60661d17"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-05T12:00:00Z",
+        "kind": "VERDICT",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-006",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-replay-6-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-007",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-replay-7-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-008",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-replay-8-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "d1852413d01bb59eadbf18a0295684eb102201c3"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T10:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "DUPLICATE_REPLAY",
+        "code": "DUPLICATE_REPLAY"
+      }
+    },
+    {
+      "caseId": "D-009",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "e714adf0f8e00bcb17ddaea86c06fac652ef2a34dd481d6db3130389edfd5f83"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-010",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "f54f440cdfda6b5a7b3a365a3f3e614e29fac3dde4760ec4564319930aed5e09"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-011",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-003-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "f3324ea6057edb6183bc1565742ec5768d8d61026cda8c57f7a9c5bed79d5fce"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T10:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-012",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-032-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "70c1626bd3d0c4f2819b364f9feb467b5440dc88abec88a09dff628d11e95f43"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-16T09:00:00Z",
+        "kind": "COMPLETED",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-013",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-033-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "c036f66fc98201860ca55616d1b756084b25db4f"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T10:00:00Z",
+        "kind": "VERDICT",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-014",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-014-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "eca9b2c20381cb26c43df8196ed0af0d4688bffeac8dc684b90d09ae014fab8c"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-14T11:00:00Z",
+        "kind": "REVOKED",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-015",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-015-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "1bb27c62a54037b59eda6c44e43246f0b4900133"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-15T12:00:00Z",
+        "kind": "FILED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-016",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-016-synthetic",
+        "taskId": "eng-task-006",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "sha256",
+            "id": "df0284bac7c4c776834caecafa8754883282e16850bfb6ad3d7d5f0dbae1d1e8"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-16T13:00:00Z",
+        "kind": "PROGRESS",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-017",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-017-synthetic",
+        "taskId": "eng-task-007",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/marketing-prototype/src/resolver.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "de382b00ccbac13187693cb9fe425c4903825afa"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-15T07:00:00Z",
+        "kind": "PROGRESS",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-018",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-018-synthetic",
+        "taskId": "eng-task-008",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "forge-ai-drop/MASTER-TRACKER.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "5c0adfd09508d0ba7f3859e4def28b0b3a579784d228206dd248ff97801841f0"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-15T08:00:00Z",
+        "kind": "PROGRESS",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-019",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-024-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "a8a9b8b400e188a6b57b3e66cbd4cd61aef372dad16fac002835f2f4adbbf125"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-08T11:00:00Z",
+        "kind": "BLOCKED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "D-020",
+      "category": "duplicate",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-025-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "54a008f8ae3651b7f3ac12eb959a2c08bd423a62"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-09T12:00:00Z",
+        "kind": "COMPLETED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "P-001",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "tenantId": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-002",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "ledgerEntry": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-003",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "paymentMethod": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-004",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "scheduleData": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-005",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "transcriptText": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-006",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "cookieValue": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-007",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "authHeader": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-008",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "bearerToken": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-009",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "apiKey": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-010",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "vaultSecret": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-011",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "ssnValue": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-012",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "bankAccount": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-013",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-001-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "14e629ae630deebaa7f0a7e20beb50f6e38eead7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T08:00:00Z",
+        "kind": "FILED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "imageBytes": "CANARY_SHOULD_NEVER_PERSIST"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "P-014",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "prefix-CANARY_TENANT_9f2e7a-suffix",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-015",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "prefix-CANARY_LEDGER_77ab12-suffix",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-016",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "prefix-CANARY_TOKEN_zz11qx-suffix",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-017",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "prefix-CANARY_SECRET_kp09mz-suffix",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-018",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "prefix-CANARY_COOKIE_44de-suffix",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-019",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "prefix-CANARY_SSN_0088ab-suffix",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-020",
+      "category": "prohibited",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-002-synthetic",
+        "taskId": "prefix-CANARY_BEARER_wq77tt-suffix",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c7e29c9013b540f1385324326ea2f965f527f6e86d51d8fc416e9cf587a45314"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-02T09:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "PROHIBITED_DATA"
+      }
+    },
+    {
+      "caseId": "P-021",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "denySource",
+          "input": {
+            "repo": "onyxgolden/marketplace409",
+            "path": "scripts/team-brain/README.md",
+            "reason": "synthetic-denial",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            },
+            "revokedAt": "2026-10-16T09:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-021-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "853e708f429e3440b4c7ddc42a8e6e5dff48552d"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-05T08:00:00Z",
+        "kind": "REVOKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "DENIED_SOURCE"
+      }
+    },
+    {
+      "caseId": "P-022",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "denySource",
+          "input": {
+            "repo": "onyxgolden/forge-ai-drop",
+            "path": "scripts/team-brain/ledger/repository.mjs",
+            "reason": "synthetic-denial",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            },
+            "revokedAt": "2026-10-16T09:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-022-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "d42e50b8202056ae6f07a3ccca4ac4f264295f88"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-06T09:00:00Z",
+        "kind": "FILED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "DENIED_SOURCE"
+      }
+    },
+    {
+      "caseId": "P-023",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "denySource",
+          "input": {
+            "repo": "onyxgolden/marketplace409",
+            "path": "scripts/team-brain/ledger/validation.mjs",
+            "reason": "synthetic-denial",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            },
+            "revokedAt": "2026-10-16T09:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-023-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "575c3d775b14f7b9fee20b3f9360d44b4640c7d4"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-07T10:00:00Z",
+        "kind": "PROGRESS",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "DENIED_SOURCE"
+      }
+    },
+    {
+      "caseId": "P-024",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "denySource",
+          "input": {
+            "repo": "onyxgolden/forge-ai-drop",
+            "path": "scripts/team-brain/queue/projection.mjs",
+            "reason": "synthetic-denial",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            },
+            "revokedAt": "2026-10-16T09:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-024-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "7fe2bb1b27973d5d4f9fc5a0ca12e8a01cc13d0b"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-08T11:00:00Z",
+        "kind": "BLOCKED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "DENIED_SOURCE"
+      }
+    },
+    {
+      "caseId": "P-025",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "revokeSource",
+          "input": {
+            "repo": "onyxgolden/forge-ai-drop",
+            "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+            "reason": "synthetic-revocation",
+            "attribution": {
+              "actor": "Claude",
+              "authorityRef": "auth:jason:eng-memory:2"
+            },
+            "revokedAt": "2026-10-16T10:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-025-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "262eedacb8f3ad78808e0c3a6269d667236a7007f4fcd38f53ff884c648be19b"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-09T12:00:00Z",
+        "kind": "COMPLETED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "SOURCE_REVOKED"
+      }
+    },
+    {
+      "caseId": "P-026",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "revokeSource",
+          "input": {
+            "repo": "onyxgolden/marketplace409",
+            "path": "scripts/team-brain/report/buildReport.mjs",
+            "reason": "synthetic-revocation",
+            "attribution": {
+              "actor": "Claude",
+              "authorityRef": "auth:jason:eng-memory:2"
+            },
+            "revokedAt": "2026-10-16T10:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-026-synthetic",
+        "taskId": "eng-task-006",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "c23ab16e8fcfb48b036a53c53e3f68a523dfa4229949a166813b53a3f40c8b8f"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-10T13:00:00Z",
+        "kind": "VERDICT",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "SOURCE_REVOKED"
+      }
+    },
+    {
+      "caseId": "P-027",
+      "category": "prohibited",
+      "setup": [
+        {
+          "op": "revokeSource",
+          "input": {
+            "repo": "onyxgolden/forge-ai-drop",
+            "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+            "reason": "synthetic-revocation",
+            "attribution": {
+              "actor": "Claude",
+              "authorityRef": "auth:jason:eng-memory:2"
+            },
+            "revokedAt": "2026-10-16T10:00:00Z"
+          }
+        }
+      ],
+      "op": "capture",
+      "input": {
+        "eventId": "evt-027-synthetic",
+        "taskId": "eng-task-007",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "sha256",
+            "id": "08aaff5f539d8c250a57a7edc8ef9bba40b4b6b9a46228eae8d40ce052a255ae"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-11T14:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "SOURCE_REVOKED"
+      }
+    },
+    {
+      "caseId": "P-028",
+      "category": "prohibited",
+      "op": "capture",
+      "sentinel": {
+        "kind": "throwing-getter",
+        "at": "body",
+        "note": "unknown key with throwing getter"
+      },
+      "base": {
+        "eventId": "evt-003-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/validation.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "d1852413d01bb59eadbf18a0295684eb102201c3"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T10:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD",
+        "accessorInvocations": 0
+      }
+    },
+    {
+      "caseId": "P-029",
+      "category": "prohibited",
+      "op": "capture",
+      "sentinel": {
+        "kind": "throwing-getter",
+        "at": "taskId",
+        "note": "known key with throwing getter"
+      },
+      "base": {
+        "eventId": "evt-004-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "41e874028bc6c215c531a3ba428cb6ab051ccce59c070338e31015a1d90206d9"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-04T11:00:00Z",
+        "kind": "COMPLETED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "ACCESSOR_REJECTED",
+        "accessorInvocations": 0
+      }
+    },
+    {
+      "caseId": "P-030",
+      "category": "prohibited",
+      "op": "capture",
+      "sentinel": {
+        "kind": "throwing-getter",
+        "at": "source",
+        "note": "nested object replaced by throwing getter"
+      },
+      "base": {
+        "eventId": "evt-005-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "209770734dde444ca843794b5498c4db60661d17"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-05T12:00:00Z",
+        "kind": "VERDICT",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "ACCESSOR_REJECTED",
+        "accessorInvocations": 0
+      }
+    },
+    {
+      "caseId": "M-001",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-040-synthetic",
+        "taskId": "eng-task-010",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/queue/projection.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "cc6b2b1a6a6dc9328b4aefae00ec51aa581ff4dc2a54237ff179a77ce272baf3"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "10/16/2026 11:00",
+        "kind": "VERDICT",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "MALFORMED_TIMESTAMP"
+      }
+    },
+    {
+      "caseId": "M-002",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-041-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "e7303f91fbf11defdc9a662e8ffc4d7a19b34004"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-02-30T10:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "MALFORMED_TIMESTAMP"
+      }
+    },
+    {
+      "caseId": "M-003",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-042-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "e499523f0add9f882d14c6e534a6368754bb97b4df59d9ce1180c183e74f899d"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-10T09:00:00Z",
+        "kind": "SUMMARIZED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "INVALID_KIND"
+      }
+    },
+    {
+      "caseId": "M-004",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-043-synthetic",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "993d934f6842441b8f6f9f7c02f4aa0ef6d8fa5f"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-11T10:00:00Z",
+        "kind": "FILED",
+        "status": "ARCHIVED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "INVALID_STATUS"
+      }
+    },
+    {
+      "caseId": "M-005",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-044-synthetic",
+        "taskId": "eng-task-004",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "md5",
+            "id": "abc"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-12T11:00:00Z",
+        "kind": "PROGRESS",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "INVALID_PIN"
+      }
+    },
+    {
+      "caseId": "M-006",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-045-synthetic",
+        "taskId": "eng-task-005",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "nothex!!"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-13T12:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "INVALID_PIN"
+      }
+    },
+    {
+      "caseId": "M-007",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-046-synthetic",
+        "taskId": "eng-task-006",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "5d1b3d1056c85b775cf03e752e3580a70133ba1d4698681eba635ba556d52291"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-14T13:00:00Z",
+        "kind": "COMPLETED",
+        "status": "COMPLETE"
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "MISSING_ATTRIBUTION"
+      }
+    },
+    {
+      "caseId": "M-008",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-047-synthetic",
+        "taskId": "eng-task-007",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/ledger/repository.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "db16dfa4c08c69834a64136d3fa7440c4d13bf3a"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-15T14:00:00Z",
+        "kind": "VERDICT",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:self-issued:fake"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "FORGED_AUTHORITY"
+      }
+    },
+    {
+      "caseId": "M-009",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-048-synthetic",
+        "taskId": "eng-task-008",
+        "source": {
+          "repo": "evil/corp",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "32b364cafc26fe55cb79621dd3730ee364d9b90f2bfabaaaaf08380ded87d5bb"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-16T15:00:00Z",
+        "kind": "SUPERSEDED",
+        "status": "SUPERSEDED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNAPPROVED_REPO"
+      }
+    },
+    {
+      "caseId": "M-010",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-049-synthetic",
+        "taskId": "eng-task-009",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "secrets/prod.env",
+          "pin": {
+            "algo": "sha256",
+            "id": "bf6858b4baa48b8d44d286907d1ee3687ff9977fb063de1bb5045920c9fdf4b7"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-01T16:00:00Z",
+        "kind": "REVOKED",
+        "status": "OPEN",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNAPPROVED_PATH"
+      }
+    },
+    {
+      "caseId": "M-011",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-050-synthetic",
+        "taskId": "eng-task-010",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/handoffs/stateMachine.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "9aad353b4f2ce984e54486fffbf12ebe088ba8029097ebf5ecda86ab74b7579e"
+          }
+        },
+        "principal": "principal:intruder",
+        "eventAt": "2026-10-02T17:00:00Z",
+        "kind": "FILED",
+        "status": "IN_PROGRESS",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_PRINCIPAL"
+      }
+    },
+    {
+      "caseId": "M-012",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-051-synthetic",
+        "taskId": "eng-task-001",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "3cbf40a46f4893ae2d5992cce5a41fc1ab3d642c"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-03T08:00:00Z",
+        "kind": "PROGRESS",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        },
+        "extraNested": {
+          "deep": {
+            "deeper": 1
+          }
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "M-013",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-052-synthetic",
+        "taskId": "eng-task-002",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/team-brain/README.md",
+          "pin": {
+            "algo": "sha256",
+            "id": "b2f97f586908ab27882f84ccde5e4d37d48119fe01c24a3b9f2f094c4e89dbcd"
+          },
+          "extra": 1
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-04T09:00:00Z",
+        "kind": "BLOCKED",
+        "status": "COMPLETE",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "UNKNOWN_FIELD"
+      }
+    },
+    {
+      "caseId": "M-014",
+      "category": "malformed",
+      "op": "capture",
+      "input": {
+        "eventId": "",
+        "taskId": "eng-task-003",
+        "source": {
+          "repo": "onyxgolden/marketplace409",
+          "path": "scripts/ai-agents/marketing-prototype/src/resolver.js",
+          "pin": {
+            "algo": "git-blob-sha1",
+            "id": "2c20ccabad6d5c36623d3247d806fd3c8f896c3f"
+          }
+        },
+        "principal": "principal:muse",
+        "eventAt": "2026-10-05T10:00:00Z",
+        "kind": "COMPLETED",
+        "status": "REVOKED",
+        "attribution": {
+          "actor": "Muse",
+          "authorityRef": "auth:jason:eng-memory:1"
+        }
+      },
+      "expect": {
+        "result": "REFUSED",
+        "code": "INVALID_FIELD"
+      }
+    },
+    {
+      "caseId": "M-015",
+      "category": "malformed",
+      "op": "capture",
+      "input": null,
+      "expect": {
+        "result": "REFUSED",
+        "code": "ADMISSION_TYPE"
+      }
+    },
+    {
+      "caseId": "M-016",
+      "category": "malformed",
+      "op": "capture",
+      "input": [
+        1,
+        2,
+        3
+      ],
+      "expect": {
+        "result": "REFUSED",
+        "code": "ADMISSION_TYPE"
+      }
+    },
+    {
+      "caseId": "M-017",
+      "category": "conflict",
+      "op": "capture",
+      "input": {
+        "eventId": "evt-060-synthetic",
+        "taskId": "eng-task-conflict-001",
+        "source": {
+          "repo": "onyxgolden/forge-ai-drop",
+          "path": "scripts/team-brain/report/buildReport.mjs",
+          "pin": {
+            "algo": "sha256",
+            "id": "4e0eae5be6aa8c9803fde6f6e3e43573fbfbb884a8593aeea2a29f2f56ebad49"
+          }
+        },
+        "principal": "principal:claude",
+        "eventAt": "2026-10-16T11:00:00Z",
+        "kind": "BLOCKED",
+        "status": "BLOCKED",
+        "attribution": {
+          "actor": "Claude",
+          "authorityRef": "auth:jason:eng-memory:2"
+        }
+      },
+      "expect": {
+        "result": "CAPTURED",
+        "code": "EPISODE_CAPTURED"
+      }
+    },
+    {
+      "caseId": "M-018",
+      "category": "conflict",
+      "op": "recall",
+      "query": {
+        "taskId": "eng-task-conflict-001"
+      },
+      "setup": [
+        {
+          "op": "captureSeed",
+          "input": {
+            "eventId": "evt-061-synthetic",
+            "taskId": "eng-task-conflict-001",
+            "source": {
+              "repo": "onyxgolden/marketplace409",
+              "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+              "pin": {
+                "algo": "git-blob-sha1",
+                "id": "653ea073a97375058ced9775569e1c8dc7abc9de"
+              }
+            },
+            "principal": "principal:muse",
+            "eventAt": "2026-10-16T12:00:00Z",
+            "kind": "PROGRESS",
+            "status": "IN_PROGRESS",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            }
+          }
+        }
+      ],
+      "expect": {
+        "result": "RECALLED",
+        "uncertainty": "NONE",
+        "conflictCount": 2
+      }
+    },
+    {
+      "caseId": "M-019",
+      "category": "budget",
+      "op": "recall",
+      "query": {
+        "kind": "FILED"
+      },
+      "setup": [
+        {
+          "op": "seedEvents",
+          "count": 70,
+          "taskPrefix": "budget-task"
+        }
+      ],
+      "expect": {
+        "result": "REFUSED",
+        "code": "BUDGET_EXHAUSTED"
+      }
+    },
+    {
+      "caseId": "M-020",
+      "category": "crash",
+      "op": "recall",
+      "query": {
+        "kind": "PROGRESS"
+      },
+      "clock": "expired",
+      "expect": {
+        "result": "REFUSED",
+        "code": "WATCHDOG_EXCEEDED"
+      }
+    }
+  ],
+  "gold": [
+    {
+      "queryId": "G-001",
+      "query": {
+        "taskId": "eng-task-001"
+      },
+      "expect": {
+        "result": "RECALLED",
+        "uncertainty": "NONE",
+        "minResults": 1,
+        "taskIds": [
+          "eng-task-001"
+        ]
+      }
+    },
+    {
+      "queryId": "G-002",
+      "query": {
+        "taskId": "eng-task-002",
+        "sourceRepo": "onyxgolden/forge-ai-drop"
+      },
+      "expect": {
+        "result": "RECALLED",
+        "uncertainty": "NONE",
+        "minResults": 1
+      }
+    },
+    {
+      "queryId": "G-003",
+      "setup": [
+        {
+          "op": "captureSeed",
+          "input": {
+            "eventId": "evt-gold-003-synthetic",
+            "taskId": "eng-task-gold-003",
+            "source": {
+              "repo": "onyxgolden/marketplace409",
+              "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+              "pin": {
+                "algo": "sha256",
+                "id": "97d8880297bd53368339de8addf76a54cd560bca67ad8287504021cb49c2b141"
+              }
+            },
+            "principal": "principal:muse",
+            "eventAt": "2026-10-15T09:00:00Z",
+            "kind": "FILED",
+            "status": "OPEN",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            }
+          }
+        },
+        {
+          "op": "revokeSource",
+          "input": {
+            "repo": "onyxgolden/marketplace409",
+            "path": "scripts/ai-agents/maintenance-manager-prototype/src/index.js",
+            "reason": "synthetic-gold-revocation",
+            "attribution": {
+              "actor": "Muse",
+              "authorityRef": "auth:jason:eng-memory:1"
+            },
+            "revokedAt": "2026-10-15T10:00:00Z"
+          }
+        }
+      ],
+      "query": {
+        "taskId": "eng-task-gold-003"
+      },
+      "expect": {
+        "result": "RECALLED",
+        "uncertainty": "NO_MATCH",
+        "maxResults": 0,
+        "minSuppressed": 1
+      }
+    },
+    {
+      "queryId": "G-004",
+      "query": {
+        "kind": "VERDICT"
+      },
+      "expect": {
+        "result": "RECALLED",
+        "uncertainty": "AMBIGUOUS_CUES",
+        "minResults": 1
+      }
+    },
+    {
+      "queryId": "G-005",
+      "query": {
+        "taskId": "eng-task-does-not-exist"
+      },
+      "expect": {
+        "result": "RECALLED",
+        "uncertainty": "NO_MATCH",
+        "maxResults": 0
+      }
+    }
+  ]
+}
