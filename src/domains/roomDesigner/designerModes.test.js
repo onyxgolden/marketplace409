@@ -10,6 +10,7 @@ import {
   normalizeDesignMode,
   setDesignMode,
 } from "./designerModes";
+import { PINNED_TOOL_IDS, getToolCategories } from "./designerToolbar";
 import { createEmptyDesign } from "./designerDocument";
 
 describe("designerModes — normalization", () => {
@@ -84,5 +85,31 @@ describe("designerModes — config", () => {
     expect(domainVisibleInMode("buildingElements", "home")).toBe(true);
     expect(domainVisibleInMode("buildingElements", "industrial")).toBe(true);
     expect(domainVisibleInMode("siteOutdoor", "industrial")).toBe(true);
+  });
+});
+
+describe("designerModes — measurement tools in both modes (D647-003)", () => {
+  // Mirrors DesignerScreen's palette construction: a tool id is reachable
+  // in a mode iff it is pinned or listed in one of the mode's visible
+  // categories.
+  function paletteToolIdsForMode(mode) {
+    const ids = new Set(PINNED_TOOL_IDS);
+    for (const c of getToolCategories()) {
+      if (categoryVisibleInMode(c.id, mode)) for (const id of c.toolIds) ids.add(id);
+    }
+    return ids;
+  }
+
+  it.each(["home", "industrial"])("measure and measure-area are in the %s palette", (mode) => {
+    const ids = paletteToolIdsForMode(mode);
+    expect(ids.has("measure")).toBe(true);
+    expect(ids.has("measure-area")).toBe(true);
+  });
+
+  it("the plan category carries the measurement tools and is shared", () => {
+    const plan = getToolCategories().find((c) => c.id === "plan");
+    expect(plan.toolIds).toEqual(expect.arrayContaining(["measure", "measure-area"]));
+    expect(categoryVisibleInMode("plan", "home")).toBe(true);
+    expect(categoryVisibleInMode("plan", "industrial")).toBe(true);
   });
 });

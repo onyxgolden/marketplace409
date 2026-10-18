@@ -217,48 +217,47 @@ export const TOOL_DEFS = [
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
 
-// Tool-palette (left sidebar) resize: persisted per browser in localStorage.
-// Min keeps the palette readable; max keeps at least half the viewport for
-// the canvas. The handle itself is desktop-only (md+).
-const SIDEBAR_WIDTH_STORAGE_KEY = "forge-designer-sidebar-width";
-const SIDEBAR_MIN_PX = 240;
-function clampSidebarWidth(px) {
-  const maxPx =
-    typeof window !== "undefined" ? Math.floor(window.innerWidth / 2) : 960;
-  return Math.min(Math.max(px, SIDEBAR_MIN_PX), Math.max(maxPx, SIDEBAR_MIN_PX));
-}
+import {
+  clampSidebarWidth,
+  readSidebarWidth,
+  writeSidebarWidth,
+} from "@/domains/roomDesigner/designerSidebarWidth";
 
 export default function DesignerScreen({ projectId, initialName, userId = null }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
   // Tool-palette (left sidebar) width in px, or null for the default.
-  // Restored after mount (never a lazy initializer) for the same hydration
-  // reason as the shape library below: localStorage is client-only.
+  // Persisted per signed-in user (D647-004) so users sharing one browser
+  // never overwrite each other. Restored after mount (never a lazy
+  // initializer) for the same hydration reason as the shape library below:
+  // localStorage is client-only.
   const [sidebarWidthPx, setSidebarWidthPx] = useState(null);
+  // The identity the width was restored for; the persist effect below must
+  // not write until the restore for the CURRENT user has run (otherwise a
+  // user switch would save the old user's width under the new user's key).
+  const sidebarWidthUserRef = useRef(undefined);
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
-      const n = Number.parseInt(raw, 10);
-      if (Number.isFinite(n)) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount.
-        setSidebarWidthPx(clampSidebarWidth(n));
-      }
-    } catch {
-      // Storage may be unavailable (private mode, quota); the default width stands.
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount / user change.
+    setSidebarWidthPx(readSidebarWidth(userId));
+    sidebarWidthUserRef.current = userId ?? null;
+  }, [userId]);
+  useEffect(() => {
+    if (sidebarWidthUserRef.current !== (userId ?? null)) return;
+    writeSidebarWidth(userId, sidebarWidthPx);
+  }, [sidebarWidthPx, userId]);
+  // A fixed width can exceed the 50%-viewport maximum after the viewport
+  // shrinks (window resize, tablet orientation change): re-clamp the live
+  // width so the palette never eats the canvas (D647-004). The palette also
+  // carries a CSS max-width guard as a second layer.
+  useEffect(() => {
+    const onResize = () =>
+      setSidebarWidthPx((w) => (w == null ? w : clampSidebarWidth(w)));
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
   }, []);
-  const sidebarWidthMountedRef = useRef(false);
-  useEffect(() => {
-    if (!sidebarWidthMountedRef.current) {
-      sidebarWidthMountedRef.current = true;
-      return;
-    }
-    try {
-      if (sidebarWidthPx == null) window.localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
-      else window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthPx));
-    } catch {
-      // Storage may be unavailable; the in-memory width still works.
-    }
-  }, [sidebarWidthPx]);
   // Drag the handle on the palette's right edge to resize. Pointer capture
   // on the handle keeps the drag alive outside its hit area; the canvas
   // reflows because the palette is shrink-0 in the flex row.
@@ -877,20 +876,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
   // Home | Industrial mode switch (designerModes.js). The mode persists on
-  // the design document (SET_MODE -> touch -> autosave). When the armed tool
-  // doesn't exist in the target mode's palette, fall back to select so the
-  // right panel can never show a library the mode hides.
+  // the design document (SET_MODE -> touch -> autosave). The reducer clears
+  // any armed tool / pending placement state the target mode cannot show
+  // atomically with the mode change (D647-002), so one dispatch is enough.
   const switchDesignMode = (nextMode) => {
     const target = normalizeDesignMode(nextMode);
     if (target === designMode) return;
     dispatch({ type: "SET_MODE", mode: target });
-    const targetCats = getToolCategories().filter((c) => categoryVisibleInMode(c.id, target));
-    const targetIds = new Set(PINNED_TOOL_IDS);
-    for (const c of targetCats) for (const id of c.toolIds) targetIds.add(id);
-    const current = TOOL_DEFS.find((t) => t.id === tool);
-    if (current && !current.customShapeId && !targetIds.has(tool)) {
-      dispatch({ type: "SET_TOOL", tool: "select" });
-    }
   };
   // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
   const [zoomRequest, setZoomRequest] = useState(null);
@@ -1095,6 +1087,9 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
         {/* tool palette: pinned tools, then collapsible Visio-style categories */}
         <ToolPalette
           grouped={groupedToolDefs}
+          // Shape search honors the same mode allowlist as the palette and
+          // object library (D647-001).
+          mode={designMode}
           // The Equipment tool IS the symbol tool on the process domain;
           // light its palette button while that library is in use.
           activeToolId={

@@ -133,7 +133,10 @@ function assertProject(project) {
 
 /**
  * Create a new project with a single empty level.
- * options: { levelName, units, building }
+ * options: { levelName, units, building, mode }
+ * options.mode ("home" | "industrial") selects the workspace mode the new
+ * project opens in; each mode's starter is an empty level in that mode
+ * (D647-005).
  */
 export function createHomeProject(name, options = {}) {
   const opts = options && typeof options === "object" ? options : {};
@@ -150,7 +153,7 @@ export function createHomeProject(name, options = {}) {
     version: HOME_PROJECT_VERSION,
     name: String(name || "Untitled project"),
     units,
-    levels: [makeLevel(levelName, createEmptyDesign(levelName))],
+    levels: [makeLevel(levelName, createEmptyDesign(levelName, { mode: opts.mode }))],
     currentLevelId: null,
     building: normalizeBuilding(opts.building),
     // Slice 4: every project carries an (initially empty) estimate envelope.

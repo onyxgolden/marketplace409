@@ -56,15 +56,25 @@ describe("ToolPalette shape search", () => {
     expect(categoryToggle()).not.toBeNull();
   });
 
-  it("arms a furniture or symbol result through onPickShape", () => {
+  it("arms a furniture or symbol result through onPickShape (search is mode-scoped, D647-001)", () => {
     const onPickShape = vi.fn();
-    render({ onPickShape });
+    render({ onPickShape, mode: "home" });
     type(box(), "queen bed");
     act(() => results()[0].click());
     expect(onPickShape).toHaveBeenCalledWith(expect.objectContaining({ kind: "catalog", domain: "furniture", id: "bed-queen" }));
+    // Process equipment is not searchable in home mode — the search index
+    // uses the mode's domain allowlist.
+    type(box(), "centrifugal pump");
+    expect(results()).toHaveLength(0);
+    expect(onPickShape).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms a process-equipment result through onPickShape in industrial mode", () => {
+    const onPickShape = vi.fn();
+    render({ onPickShape, mode: "industrial" });
     type(box(), "centrifugal pump");
     act(() => results()[0].click());
-    expect(onPickShape).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "symbol", domain: "processEquipment", id: "centrifugal-pump" }));
+    expect(onPickShape).toHaveBeenCalledWith(expect.objectContaining({ kind: "symbol", domain: "processEquipment", id: "centrifugal-pump" }));
   });
 
   it("selects a matching tool through onSelect, and respects disabled tools", () => {

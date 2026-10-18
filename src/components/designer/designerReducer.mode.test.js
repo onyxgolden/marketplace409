@@ -32,3 +32,97 @@ describe("SET_MODE", () => {
     expect(state.design.mode).toBe("home");
   });
 });
+
+// D647-002: switching modes clears armed tool state the target mode cannot
+// show, atomically with the mode change. The reducer's active
+// symbol-placement tool is the generic "symbol" (no TOOL_DEFS entry), so
+// admissibility is derived from the full tool state, not just the palette
+// tool id.
+describe("SET_MODE clears mode-disallowed tool state", () => {
+  function industrialWith(armed) {
+    let state = freshState();
+    state = designerReducer(state, { type: "SET_MODE", mode: "industrial" });
+    return designerReducer(state, armed);
+  }
+
+  it("clears an armed process-equipment symbol switching industrial -> home", () => {
+    let state = industrialWith({
+      type: "SET_PENDING_SYMBOL",
+      domain: "processEquipment",
+      symbolId: "centrifugal-pump",
+    });
+    expect(state.tool).toBe("symbol");
+    expect(state.pendingSymbol).toEqual({ domain: "processEquipment", symbolId: "centrifugal-pump" });
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.design.mode).toBe("home");
+    expect(state.tool).toBe("select");
+    expect(state.pendingSymbol).toBeNull();
+  });
+
+  it("clears an armed piping symbol switching industrial -> home", () => {
+    let state = industrialWith({
+      type: "SET_PENDING_SYMBOL",
+      domain: "piping",
+      symbolId: "gate-valve",
+    });
+    expect(state.tool).toBe("piping");
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.tool).toBe("select");
+    expect(state.pendingSymbol).toBeNull();
+  });
+
+  it("clears an armed furniture item switching home -> industrial", () => {
+    let state = freshState();
+    state = designerReducer(state, { type: "SET_PENDING_CATALOG", catalogId: "bed-queen" });
+    expect(state.tool).toBe("furniture");
+    state = designerReducer(state, { type: "SET_MODE", mode: "industrial" });
+    expect(state.design.mode).toBe("industrial");
+    expect(state.tool).toBe("select");
+    expect(state.pendingCatalogId).toBeNull();
+  });
+
+  it("keeps an armed shared-domain symbol (site/outdoor deck) across modes", () => {
+    let state = industrialWith({
+      type: "SET_PENDING_SYMBOL",
+      domain: "siteOutdoor",
+      symbolId: "deck",
+    });
+    expect(state.tool).toBe("symbol");
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.tool).toBe("symbol");
+    expect(state.pendingSymbol).toEqual({ domain: "siteOutdoor", symbolId: "deck" });
+  });
+
+  it("keeps ordinary allowed tools (wall) and custom shapes across modes", () => {
+    let state = industrialWith({ type: "SET_TOOL", tool: "wall" });
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.tool).toBe("wall");
+
+    state = industrialWith({
+      type: "SET_PENDING_CUSTOM_SHAPE",
+      shape: { id: "s1", entities: { walls: [] } },
+    });
+    expect(state.tool).toBe("custom-shape");
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.tool).toBe("custom-shape");
+    expect(state.pendingCustomShape.id).toBe("s1");
+  });
+
+  it("resets a piping-run tool switching industrial -> home", () => {
+    let state = industrialWith({ type: "SET_TOOL", tool: "pipe" });
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.tool).toBe("select");
+  });
+
+  it("the mode change stays one undo step even when tool state is cleared", () => {
+    let state = industrialWith({
+      type: "SET_PENDING_SYMBOL",
+      domain: "processEquipment",
+      symbolId: "centrifugal-pump",
+    });
+    state = designerReducer(state, { type: "SET_MODE", mode: "home" });
+    expect(state.tool).toBe("select");
+    state = designerReducer(state, { type: "UNDO" });
+    expect(state.design.mode).toBe("industrial");
+  });
+});

@@ -299,3 +299,37 @@ describe("serialize/parse round-trip", () => {
     expect(parsed.building).toEqual({ address: "", city: "", state: "", zip: "", notes: "" });
   });
 });
+
+describe("createHomeProject — workspace mode (D647-005)", () => {
+  it("new projects default to home mode", () => {
+    const project = createHomeProject("Shop");
+    expect(getCurrentDesign(project).mode).toBe("home");
+  });
+
+  it("accepts an industrial mode for the new project", () => {
+    const project = createHomeProject("Plant", { mode: "industrial" });
+    const design = getCurrentDesign(project);
+    expect(design.mode).toBe("industrial");
+    // Starter content: an empty document in that mode.
+    expect(design.walls).toEqual([]);
+    expect(design.symbols).toEqual([]);
+  });
+
+  it("normalizes unknown modes to home", () => {
+    const project = createHomeProject("Shop", { mode: "bogus" });
+    expect(getCurrentDesign(project).mode).toBe("home");
+  });
+});
+
+describe("createEmptyDesign — workspace mode (D647-005)", () => {
+  it("defaults to home and keeps the existing single-arg call shape", () => {
+    expect(createEmptyDesign("A").mode).toBe("home");
+    expect(createEmptyDesign().mode).toBe("home");
+  });
+
+  it("accepts a mode option", () => {
+    expect(createEmptyDesign("P", { mode: "industrial" }).mode).toBe("industrial");
+    expect(createEmptyDesign("P", { mode: "bogus" }).mode).toBe("home");
+    expect(createEmptyDesign("P", null).mode).toBe("home");
+  });
+});
