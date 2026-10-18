@@ -54,7 +54,7 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "bcf618169461b9136e23ffe1d99865dba71546e36ec01d8f3be609160ea6e3c2"
+      "sha256": "fa66cb2b940bfd762db732e4e4d7d645201acd18d9b26ee09f0a53ab08588a75"
     },
     {
       "path": "tests/battery.test.js",
@@ -62,7 +62,7 @@
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "47eb268db781e7c6134e26fef711df8b8b36fee22c8607a9b8e6e55892c9dcb5"
+      "sha256": "878aecc0f0f705179157faf699eb06372959b774e5f38455f1fd9db18b7f43a7"
     },
     {
       "path": "tests/canonical.test.js",

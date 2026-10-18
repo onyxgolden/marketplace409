@@ -118,10 +118,12 @@ export function validatePrincipal(value, where) {
 /** Trusted criteria: versioned chart of accounts (exact code -> class),
  *  currency scale metadata, and the pinned chart document SourceRef.
  *  Host-injected only — never supplied or overridable by task content.
- *
  *  FIN-001: every chart entry is its own candidate. The live monotonic
  *  budget is REQUIRED; each entry is object-charged BEFORE its code/class
- *  is read. A poisoned 200-entry chart can no longer be enumerated for
+ *  is read. Keys are enumerated via Object.keys() (never Object.entries(),
+ *  which would invoke value getters before the first charge); the value is
+ *  retrieved only after charging, via the own data descriptor or Reflect.get
+ *  for accessors. A poisoned 200-entry chart can no longer be enumerated for
  *  free under the single criteria charge. */
 export function validateCriteria(value, where, budget) {
   if (!budget || typeof budget.countObject !== "function") fail(where, "internal: validateCriteria requires a live budget");
@@ -130,13 +132,24 @@ export function validateCriteria(value, where, budget) {
   const chart_version = reqStr(value, "chart_version", where);
   if (!SLUG_RE.test(chart_version)) fail(where, `invalid chart_version '${chart_version}'`);
   if (!isPlainObject(value.chart)) fail(where, "chart must be an object");
-  const chartEntries = Object.entries(value.chart);
-  if (chartEntries.length === 0 || chartEntries.length > 256) fail(where, "chart must have 1..256 entries");
+  // FIN-001 round 2: enumerate own KEYS only — Object.keys() never invokes
+  // value getters. Object.entries()/Object.values() would evaluate every
+  // candidate value while building the array, before the first per-entry
+  // charge. The container bound is enforced on the key count; each entry is
+  // object-charged BEFORE its value is retrieved.
+  const chartKeys = Object.keys(value.chart);
+  if (chartKeys.length === 0 || chartKeys.length > 256) fail(where, "chart must have 1..256 entries");
   const chart = {};
-  for (const [code, cls] of chartEntries) {
-    // Charge FIRST: the entry key is container-level (already enumerated),
-    // the code/class pair is the candidate's own fields — unread until charged.
+  for (const code of chartKeys) {
+    // Charge FIRST: the entry's value is unread until charged. Read the own
+    // data descriptor directly so a plain value is retrieved without invoking
+    // anything; accessor properties are read via Reflect.get only AFTER the
+    // charge, preserving charge-before-read order.
     budget.countObject(`${where}.chart[${code}]`);
+    const desc = Object.getOwnPropertyDescriptor(value.chart, code);
+    const cls = desc && Object.prototype.hasOwnProperty.call(desc, "value")
+      ? desc.value
+      : Reflect.get(value.chart, code);
     if (!ACCOUNT_CODE_RE.test(code)) fail(where, `invalid account code '${code}'`);
     if (!ACCOUNT_CLASSES.includes(cls)) fail(where, `account '${code}' class must be one of ${ACCOUNT_CLASSES.join(", ")}`);
     chart[code] = cls;

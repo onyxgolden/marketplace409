@@ -112,6 +112,35 @@ test("FIN-001: chart entries are charged candidates — first over-budget entry 
   assert.equal(r.complete, false);
 });
 
+test("FIN-001 round 2: getter on first over-budget chart entry is never invoked", () => {
+  // Same budget shape as the FIN-001 test above: 56 valid entries fill the
+  // budget (8 ctx + 56 = 64); index 56 is charge 65. The entry at index 56
+  // is an accessor whose getter records access and returns a VALID class —
+  // so the only signal of premature evaluation is the access flag itself.
+  // With the old Object.entries() implementation the getter fired while the
+  // entries array was built, before any charge; the fixed implementation
+  // enumerates keys only and refuses on the charge before reading the value.
+  const ctx = ctxFor("single-income");
+  const chart = {};
+  for (let i = 0; i < 56; i++) chart[`ACC${String(i).padStart(3, "0")}`] = i % 2 === 0 ? "INCOME" : "EXPENSE";
+  let getterFired = false;
+  Object.defineProperty(chart, "ACC056", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterFired = true;
+      return "INCOME";
+    },
+  });
+  ctx.criteria = { ...ctx.criteria, chart };
+  const r = run(taskFor("single-income", 1), ctx);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
+  assert.ok(!r.diagnostics.some((d) => d.code === "INVALID_INPUT"));
+  assert.equal(r.complete, false);
+  assert.equal(getterFired, false, "over-budget chart entry getter was invoked before its charge");
+});
+
 test("FIN-003: unknown account blocks the ready summary and nulls affected aggregates", () => {
   // one known + one unknown account row
   const r = run(taskFor("unknown-account", 2), ctxFor("unknown-account"));
