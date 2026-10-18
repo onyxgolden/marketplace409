@@ -36,22 +36,25 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 2. Constraint names are per-table, but the backing unique index name must
-  --    be schema-unique. If an unrelated object already owns our preferred
-  --    name, fall back to a free one: the seed's ON CONFLICT (nmls_number)
-  --    only needs A unique index on the column, not this specific name.
+  -- 2. The backing unique index name must be schema-unique. If an unrelated
+  --    object already owns our preferred name, let PostgreSQL choose a
+  --    collision-safe generated name (D646-002): PG's generated constraint
+  --    names (dscr_lenders_nmls_number_key, suffixed _1/_2 as needed) are
+  --    guaranteed unique within the schema — a second fixed fallback name can
+  --    still collide. The seed's ON CONFLICT (nmls_number) uses index
+  --    inference, so the physical name is immaterial.
   IF EXISTS (
     SELECT 1 FROM pg_class
     WHERE relname = v_conname
       AND relnamespace = 'public'::regnamespace
   ) THEN
-    v_conname := 'uq_dscr_lenders_nmls_number';
+    ALTER TABLE public.dscr_lenders ADD UNIQUE (nmls_number);
+  ELSE
+    EXECUTE format(
+      'ALTER TABLE public.dscr_lenders ADD CONSTRAINT %I UNIQUE (nmls_number)',
+      v_conname
+    );
   END IF;
-
-  EXECUTE format(
-    'ALTER TABLE public.dscr_lenders ADD CONSTRAINT %I UNIQUE (nmls_number)',
-    v_conname
-  );
 END $$;
 
 INSERT INTO public.dscr_lenders (
