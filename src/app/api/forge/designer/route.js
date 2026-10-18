@@ -3,7 +3,6 @@ import { createAuthenticatedForgeApplication } from "@/lib/supabase/createAuthen
 // HOME DESIGNER slice 2: new projects are born as a HomeProject envelope so
 // multi-level works from creation. Legacy rows keep loading untouched.
 import { createHomeProject } from "@/domains/roomDesigner/homeProject";
-import { normalizeDesignMode } from "@/domains/roomDesigner/designerModes";
 
 function ownerIdOf(authenticated) {
   return authenticated.effectiveOwnerId || authenticated.user.id;
@@ -45,9 +44,7 @@ export async function POST(request) {
       typeof body.name === "string" && body.name.trim()
         ? body.name.trim().slice(0, 120)
         : "Untitled design";
-    // Workspace mode for the new project ("home" | "industrial"); unknown
-    // values fall back to home (D647-005).
-    const design = createHomeProject(name, { mode: normalizeDesignMode(body.mode) });
+    const design = createHomeProject(name);
     const id = `design_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const { error } = await authenticated.supabaseClient
       .from("designer_projects")

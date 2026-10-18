@@ -98,33 +98,6 @@ describe("POST /api/forge/designer", () => {
     expect(db.insert.mock.calls[0][0].project_name).toBe("Untitled design");
   });
 
-  it("creates the project in the requested workspace mode (D647-005)", async () => {
-    const db = insertClient();
-    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    const request = new Request("https://test/api/forge/designer", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Plant", mode: "industrial" }),
-    });
-    const response = await POST(request);
-    expect(response.status).toBe(200);
-    const record = db.insert.mock.calls[0][0];
-    expect(record.design.levels[0].design.mode).toBe("industrial");
-  });
-
-  it("falls back to home mode for unknown modes", async () => {
-    const db = insertClient();
-    createAuthenticatedForgeApplication.mockResolvedValue(authed(db.client));
-    const request = new Request("https://test/api/forge/designer", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Plant", mode: "bogus" }),
-    });
-    await POST(request);
-    const record = db.insert.mock.calls[0][0];
-    expect(record.design.levels[0].design.mode).toBe("home");
-  });
-
   it("returns 401 when unauthenticated", async () => {
     createAuthenticatedForgeApplication.mockResolvedValue({
       response: new Response(null, { status: 401 }),

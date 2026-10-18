@@ -12,8 +12,6 @@ export default function ProjectsList() {
   const [projects, setProjects] = useState([]);
   const [status, setStatus] = useState({ kind: "loading" });
   const [newName, setNewName] = useState("");
-  // Workspace mode for the new project (D647-005): Home or Industrial.
-  const [newMode, setNewMode] = useState("home");
   const [creating, setCreating] = useState(false);
   const [forking, setForking] = useState(null);
 
@@ -40,7 +38,7 @@ export default function ProjectsList() {
       const res = await fetch("/api/forge/designer", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: newName.trim() || undefined, mode: newMode }),
+        body: JSON.stringify({ name: newName.trim() || undefined }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || `Create failed (${res.status})`);
@@ -99,33 +97,15 @@ export default function ProjectsList() {
         Floor plans for remodels and new layouts — 2D plans with a 3D view.
       </p>
 
-      <div className="mt-6 flex flex-wrap items-center gap-2">
+      <div className="mt-6 flex gap-2">
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") create(); }}
           placeholder="New design name (e.g. Kitchen remodel)"
-          className="min-w-0 flex-1 rounded bg-gray-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-500"
+          className="flex-1 rounded bg-gray-800 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-emerald-500"
           aria-label="New design name"
         />
-        {/* New-project workspace mode (D647-005): the starter project opens
-            in the selected mode's toolbar/library arrangement. */}
-        <div className="flex overflow-hidden rounded border border-gray-700" role="group" aria-label="New design workspace mode">
-          {[
-            { id: "home", label: "Home" },
-            { id: "industrial", label: "Industrial" },
-          ].map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => setNewMode(m.id)}
-              aria-pressed={newMode === m.id}
-              className={`px-3 py-2 text-sm ${newMode === m.id ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
         <button
           onClick={create}
           disabled={creating}

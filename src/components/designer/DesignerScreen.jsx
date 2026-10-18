@@ -230,20 +230,35 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   // never overwrite each other. Restored after mount (never a lazy
   // initializer) for the same hydration reason as the shape library below:
   // localStorage is client-only.
-  const [sidebarWidthPx, setSidebarWidthPx] = useState(null);
-  // The identity the width was restored for; the persist effect below must
-  // not write until the restore for the CURRENT user has run (otherwise a
-  // user switch would save the old user's width under the new user's key).
-  const sidebarWidthUserRef = useRef(undefined);
+  //
+  // The loaded width and the identity it was loaded for are ONE state value.
+  // That closes the user-switch write race: the restore effect and the
+  // identity it restores for commit atomically, so the persist effect can
+  // never write the previous user's width under the new user's key (D647-004
+  // fix round 3 — a separate ref set in the same effect flush runs ahead of
+  // the scheduled restore state update).
+  const [sidebarWidth, setSidebarWidth] = useState({ userId: undefined, widthPx: null });
+  // Update only the width, keeping the owner identity it was loaded for.
+  const setSidebarWidthPx = (valueOrUpdater) =>
+    setSidebarWidth((s) => ({
+      userId: s.userId,
+      widthPx:
+        typeof valueOrUpdater === "function"
+          ? valueOrUpdater(s.widthPx)
+          : valueOrUpdater,
+    }));
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount / user change.
-    setSidebarWidthPx(readSidebarWidth(userId));
-    sidebarWidthUserRef.current = userId ?? null;
+    setSidebarWidth({ userId: userId ?? null, widthPx: readSidebarWidth(userId) });
   }, [userId]);
   useEffect(() => {
-    if (sidebarWidthUserRef.current !== (userId ?? null)) return;
-    writeSidebarWidth(userId, sidebarWidthPx);
-  }, [sidebarWidthPx, userId]);
+    // Persist only when this render's width was loaded for the CURRENT
+    // user. After a user switch, the first flush still carries the old
+    // { userId, widthPx } pair, so the guard below skips the write and the
+    // new user's stored width is never overwritten by the old user's value.
+    if (sidebarWidth.userId === undefined || sidebarWidth.userId !== (userId ?? null)) return;
+    writeSidebarWidth(userId, sidebarWidth.widthPx);
+  }, [sidebarWidth, userId]);
   // A fixed width can exceed the 50%-viewport maximum after the viewport
   // shrinks (window resize, tablet orientation change): re-clamp the live
   // width so the palette never eats the canvas (D647-004). The palette also
@@ -1151,7 +1166,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
           }}
           // Desktop (md+): the palette is width-adjustable via the handle
           // below; the width persists in localStorage.
-          widthPx={sidebarWidthPx}
+          widthPx={sidebarWidth.widthPx}
         />
         {/* tool-palette resize handle: desktop only. Drag to resize the
             left sidebar between 240px and half the viewport; double-click

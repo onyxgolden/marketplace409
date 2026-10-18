@@ -300,27 +300,6 @@ describe("serialize/parse round-trip", () => {
   });
 });
 
-describe("createHomeProject — workspace mode (D647-005)", () => {
-  it("new projects default to home mode", () => {
-    const project = createHomeProject("Shop");
-    expect(getCurrentDesign(project).mode).toBe("home");
-  });
-
-  it("accepts an industrial mode for the new project", () => {
-    const project = createHomeProject("Plant", { mode: "industrial" });
-    const design = getCurrentDesign(project);
-    expect(design.mode).toBe("industrial");
-    // Starter content: an empty document in that mode.
-    expect(design.walls).toEqual([]);
-    expect(design.symbols).toEqual([]);
-  });
-
-  it("normalizes unknown modes to home", () => {
-    const project = createHomeProject("Shop", { mode: "bogus" });
-    expect(getCurrentDesign(project).mode).toBe("home");
-  });
-});
-
 describe("createEmptyDesign — workspace mode (D647-005)", () => {
   it("defaults to home and keeps the existing single-arg call shape", () => {
     expect(createEmptyDesign("A").mode).toBe("home");
