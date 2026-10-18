@@ -752,7 +752,9 @@ export function ghostOpeningSpan(
   let bestD = tolIn;
   for (const wall of walls || []) {
     const d = distancePointToSegment(plan, wall.a, wall.b);
-    if (d < bestD) {
+    // <= (not <): mirror the click path — on overlapping walls the
+    // opening lands on the topmost one, so the ghost must preview there.
+    if (d <= bestD) {
       bestD = d;
       best = wall;
     }

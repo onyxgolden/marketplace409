@@ -676,7 +676,11 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       let bestD = tolIn;
       for (const wall of design.walls) {
         const d = distancePointToSegment(plan, wall.a, wall.b);
-        if (d < bestD) { bestD = d; best = wall; }
+        // <= (not <): when walls overlap, the opening must land on the
+        // topmost one — walls paint in array order, so an opening on a
+        // lower duplicate would be painted over by the upper wall's solid
+        // line and never be visible (yet still count in the summary).
+        if (d <= bestD) { bestD = d; best = wall; }
       }
       if (best) {
         const rawOffset = offsetAlongWall(plan, best);
