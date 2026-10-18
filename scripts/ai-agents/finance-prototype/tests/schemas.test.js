@@ -83,8 +83,9 @@ test("validateContext: charges context candidates", () => {
   const budget = makeBudget();
   const before = budget.used.objects;
   validateContext(validContext(), budget);
-  // 2 sources + 2 revisions + 2 grants + principal + criteria = 8
-  assert.equal(budget.used.objects - before, 8);
+  // 2 sources + 2 revisions + 2 grants + principal + criteria = 8,
+  // FIN-001: + 8 chart entries = 16
+  assert.equal(budget.used.objects - before, 16);
 });
 
 test("validateContext: rejects missing clock", () => {

@@ -39,14 +39,14 @@ function taskFor(bundleName, n) {
   };
 }
 
-test("budget: 54 transactions succeeds (8 ctx + 2 resolve + 54 = 64)", () => {
-  const r = run(taskFor("boundary-54", 54), ctxFor("boundary-54"));
+test("budget: 46 transactions succeeds (16 ctx + 2 resolve + 46 = 64)", () => {
+  const r = run(taskFor("boundary-46", 46), ctxFor("boundary-46"));
   assert.equal(r.status, "REPORT_READY");
-  assert.equal(r.report.transaction_results.length, 54);
+  assert.equal(r.report.transaction_results.length, 46);
 });
 
-test("budget: 55 transactions refuses (65 > 64)", () => {
-  const r = run(taskFor("boundary-55", 55), ctxFor("boundary-55"));
+test("budget: 47 transactions refuses (65 > 64)", () => {
+  const r = run(taskFor("boundary-47", 47), ctxFor("boundary-47"));
   assert.equal(r.status, "REFUSED");
   assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
   assert.equal(r.complete, false);
@@ -65,10 +65,15 @@ test("budget: 1000-row bundle refuses fast without inspecting all rows", () => {
 });
 
 test("budget: sentinel — later records untouched on refusal", () => {
-  // The 55th transaction would be txn-b55-54; refusal must occur before
-  // its fields are read. We prove this behaviorally: the refusal happens
-  // during the charged pass, and no transaction_results are emitted.
-  const r = run(taskFor("boundary-55", 55), ctxFor("boundary-55"));
+  // FIN-002: the 47th transaction (and the 48th after it) are structurally
+  // valid JSON but schema-invalid (missing amount_minor). Had any
+  // over-budget candidate been decoded, the refusal would be
+  // INVALID_INPUT — BUDGET_EXCEEDED proves they were never touched.
+  const r = run(taskFor("boundary-47-sentinel", 48), ctxFor("boundary-47-sentinel"));
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
+  assert.ok(!r.diagnostics.some((d) => d.code === "INVALID_INPUT"));
+  assert.equal(r.complete, false);
   assert.equal(r.report.transaction_results.length, 0);
   assert.equal(r.report.anomalies.length, 0);
 });
@@ -85,4 +90,47 @@ test("budget: context validation is charged (unbudgeted traversal refused)", () 
   const r = run(taskFor("single-income", 1), ctx);
   assert.equal(r.status, "REFUSED");
   assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED" || d.code === "INVALID_INPUT"));
+});
+
+test("FIN-001: chart entries are charged candidates — first over-budget entry unread", () => {
+  // 60-entry chart: entries 0..55 fill the budget (8 ctx + 56 = 64);
+  // entry 56 is charge 65. Entries 56..59 are INVALID (bad code and bad
+  // class). Had any over-budget entry been read, validateCriteria would
+  // throw INVALID_INPUT — BUDGET_EXCEEDED proves they were never touched.
+  const ctx = ctxFor("single-income");
+  const chart = {};
+  for (let i = 0; i < 56; i++) chart[`ACC${String(i).padStart(3, "0")}`] = i % 2 === 0 ? "INCOME" : "EXPENSE";
+  chart["bad code!"] = "INCOME"; // index 56: invalid code — must never be read
+  chart["ACC057"] = "NOPE"; // index 57: invalid class — must never be read
+  chart["ACC058"] = "INCOME";
+  chart["ACC059"] = "EXPENSE";
+  ctx.criteria = { ...ctx.criteria, chart };
+  const r = run(taskFor("single-income", 1), ctx);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
+  assert.ok(!r.diagnostics.some((d) => d.code === "INVALID_INPUT"));
+  assert.equal(r.complete, false);
+});
+
+test("FIN-003: unknown account blocks the ready summary and nulls affected aggregates", () => {
+  // one known + one unknown account row
+  const r = run(taskFor("unknown-account", 2), ctxFor("unknown-account"));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.summary, null);
+  assert.equal(r.report.income_expense.net_income_minor, null);
+  assert.equal(r.report.income_expense.evidence_state, "unavailable");
+  assert.ok(r.diagnostics.some((d) => d.code === "MEASURE_UNAVAILABLE"));
+  assert.ok(r.report.anomalies.some((a) => a.code === "UNKNOWN_ACCOUNT"));
+});
+
+test("FIN-003: mixed currency blocks the ready summary and nulls affected aggregates", () => {
+  // one USD + one EUR row
+  const r = run(taskFor("wrong-currency", 2), ctxFor("wrong-currency"));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.summary, null);
+  assert.equal(r.report.income_expense.net_income_minor, null);
+  assert.equal(r.report.cash.movement_minor, null);
+  assert.equal(r.report.cash.closing_derived_minor, null);
+  assert.ok(r.diagnostics.some((d) => d.code === "MEASURE_UNAVAILABLE"));
+  assert.ok(r.diagnostics.some((d) => d.code === "CURRENCY_UNVERIFIABLE"));
 });

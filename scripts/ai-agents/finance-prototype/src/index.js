@@ -21,7 +21,7 @@
  */
 
 import { canonicalJson, sha256HexUtf8, canonicalByteLength, parseMinorUnits, lineExtensionMinor, lineTaxMinor, formatMinor } from "./canonical.js";
-import { validateTask, validateContext, validateTransaction, validateTransactionBundleShape, SchemaError } from "./schemas.js";
+import { validateTask, validateContext, validateTransaction, splitTopLevelArray, SchemaError } from "./schemas.js";
 import { resolveSourceRef, verifySpan, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
 import { classifyAccount, cashMovement } from "./classifier.js";
@@ -223,20 +223,25 @@ export function run(task, context) {
     throw e;
   }
 
-  let rawTxns;
+  // FIN-002: bounded-container preflight FIRST — splitTopLevelArray
+  // establishes the array and the raw source span of each top-level
+  // element WITHOUT decoding any candidate's fields. The charged loop
+  // below then does budget.countObject() strictly BEFORE JSON.parse on
+  // that candidate's span. Attempt 65 refuses before the candidate (or
+  // any later one) is decoded at all.
+  let spans;
   try {
-    const parsed = JSON.parse(bundleResolved.text);
-    rawTxns = validateTransactionBundleShape(parsed, "transaction bundle");
+    spans = splitTopLevelArray(bundleResolved.text, "transaction bundle");
   } catch (e) {
     if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
-    return refused(task, "INVALID_INPUT", "error", "transaction bundle is not valid JSON");
+    throw e;
   }
 
   // ---- Charged pass: one countObject() per transaction, strictly before
-  // any field of that transaction is read. ----
+  // that candidate's span is decoded or any of its fields read. ----
   const provisional = [];
   let budgetExceeded = false;
-  for (let i = 0; i < rawTxns.length; i++) {
+  for (let i = 0; i < spans.length; i++) {
     try {
       budget.countObject(`transaction[${i}]`);
     } catch (e) {
@@ -246,7 +251,12 @@ export function run(task, context) {
       }
       throw e;
     }
-    const raw = rawTxns[i];
+    let raw;
+    try {
+      raw = JSON.parse(spans[i]);
+    } catch {
+      return refused(task, "INVALID_INPUT", "error", `transaction bundle entry ${i} is not valid JSON`);
+    }
     let txn;
     try {
       txn = validateTransaction(raw, `transaction bundle[${i}]`);
@@ -469,8 +479,15 @@ export function run(task, context) {
     }
   }
 
+  // FIN-003: unknown chart codes make the income measure unavailable;
+  // incompatible currencies make income AND cash measures unavailable
+  // (no FX). Computed here, right after the admitted loop finalizes the
+  // classification/currency counts.
+  const incomeBlocked = unknownClassCount > 0 || currencyMismatchCount > 0 || !currencyMatch;
+  const cashBlocked = currencyMismatchCount > 0 || !currencyMatch;
+
   // Population and coverage.
-  const totalPopulation = rawTxns.length;
+  const totalPopulation = spans.length;
   const populationMatches = validatedTask.population.declared_total === totalPopulation;
   const populationVerified = validatedTask.population.complete === true && populationMatches;
   const population = {
@@ -482,6 +499,22 @@ export function run(task, context) {
 
   const admittedCount = transaction_results.length;
   const excludedCount = excluded_ids.length;
+
+  // FIN-003: explicit unavailable-fields diagnostic with coverage
+  // denominators — PARTIAL must say WHAT is unavailable and WHY, not
+  // just carry a nested "partial" evidence flag.
+  if (incomeBlocked || cashBlocked) {
+    const unavailable = [];
+    if (incomeBlocked) unavailable.push("income_expense.net_income_minor", "summary");
+    if (cashBlocked) unavailable.push("cash.movement_minor", "cash.closing_derived_minor");
+    diagnostics.push({
+      code: "MEASURE_UNAVAILABLE",
+      severity: "error",
+      source_ref: null,
+      record_id: null,
+      reason: `affected aggregates unavailable (unknown_classifications=${unknownClassCount}, currency_mismatches=${currencyMismatchCount}, host_currency_match=${currencyMatch}); unavailable fields: ${unavailable.join(", ")}; coverage admitted=${admittedCount} excluded=${excludedCount} of declared=${totalPopulation}`,
+    });
+  }
   let coverageState;
   if (admittedCount === 0) coverageState = populationVerified ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY";
   else coverageState = populationVerified ? "COMPLETE" : "PARTIAL";
@@ -490,9 +523,12 @@ export function run(task, context) {
   // leave the measure not fully verifiable.
   const incomeEvidence = unknownClassCount > 0 || currencyMismatchCount > 0 || !currencyMatch ? "partial" : populationVerified ? "verified" : "unverifiable";
 
-  // Summary: refused (null) on duplicates, severe conflict, or any header
-  // mismatch. Recomputation remains displayed as audit evidence.
-  const summaryBlocked = hasDuplicates || severeConflict || headerMismatch;
+  // Summary: refused (null) on duplicates, severe conflict, any header
+  // mismatch, or — FIN-003 — unavailable income measures (incomeBlocked
+  // defined above, right after the admitted loop). Recomputation remains
+  // displayed as audit evidence only where the rows are fully
+  // classifiable and in-currency.
+  const summaryBlocked = hasDuplicates || severeConflict || headerMismatch || incomeBlocked;
   let summary = null;
   if (!summaryBlocked && populationVerified && admittedCount > 0) {
     summary = {
@@ -535,21 +571,27 @@ export function run(task, context) {
       grand_total_display: formatMinor(grandTotalMinor, scale),
     },
     income_expense: {
-      income_total_minor: incomeTotalMinor.toString(),
-      income_display: formatMinor(incomeTotalMinor, scale),
-      expense_total_minor: expenseTotalMinor.toString(),
-      expense_display: formatMinor(expenseTotalMinor, scale),
-      net_income_minor: netIncomeMinor.toString(),
-      net_display: formatMinor(netIncomeMinor, scale),
-      evidence_state: incomeEvidence,
+      // FIN-003: unknown classifications or incompatible currencies make
+      // the income measure unavailable — null the affected aggregates,
+      // never publish a ready-looking net income over a partial set.
+      income_total_minor: incomeBlocked ? null : incomeTotalMinor.toString(),
+      income_display: incomeBlocked ? null : formatMinor(incomeTotalMinor, scale),
+      expense_total_minor: incomeBlocked ? null : expenseTotalMinor.toString(),
+      expense_display: incomeBlocked ? null : formatMinor(expenseTotalMinor, scale),
+      net_income_minor: incomeBlocked ? null : netIncomeMinor.toString(),
+      net_display: incomeBlocked ? null : formatMinor(netIncomeMinor, scale),
+      evidence_state: incomeBlocked ? "unavailable" : incomeEvidence,
     },
     cash: {
-      movement_minor: movementMinor.toString(),
-      movement_display: formatMinor(movementMinor, scale),
+      // FIN-003: incompatible currencies make cash movement/closing
+      // unavailable (no FX). Claimed opening is an input, not an
+      // affected aggregate — it stays.
+      movement_minor: cashBlocked ? null : movementMinor.toString(),
+      movement_display: cashBlocked ? null : formatMinor(movementMinor, scale),
       opening_claimed_minor: opening_balance_minor.toString(),
       opening_claimed_display: formatMinor(opening_balance_minor, scale),
-      closing_derived_minor: closingDerivedMinor.toString(),
-      closing_derived_display: formatMinor(closingDerivedMinor, scale),
+      closing_derived_minor: cashBlocked ? null : closingDerivedMinor.toString(),
+      closing_derived_display: cashBlocked ? null : formatMinor(closingDerivedMinor, scale),
       derivation_note: "derived from claimed opening, not independently verified",
     },
     header_comparisons,

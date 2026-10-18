@@ -201,19 +201,34 @@ for (let i = 0; i < 1000; i++) {
 }
 addBundle("over-budget-1000", big);
 
-// Exactly 54 transactions (budget boundary: 8 context + 2 fixture sources + 54 = 64, the exact cap)
-const boundary54 = [];
-for (let i = 0; i < 54; i++) {
-  boundary54.push(t({ transaction_id: `txn-b54-${String(i).padStart(2, "0")}`, amount_minor: "100" }));
+// FIN-001: chart entries are charged candidates now. Boundary: 16 context
+// (2 sources + 2 revisions + 2 grants + principal + criteria + 8 chart
+// entries) + 2 fixture-source resolutions + 46 transactions = 64 = cap.
+const boundary46 = [];
+for (let i = 0; i < 46; i++) {
+  boundary46.push(t({ transaction_id: `txn-b46-${String(i).padStart(2, "0")}`, amount_minor: "100" }));
 }
-addBundle("boundary-54", boundary54);
+addBundle("boundary-46", boundary46);
 
-// 55 transactions (over budget: 8 + 2 + 55 = 65 > 64)
-const boundary55 = [];
-for (let i = 0; i < 55; i++) {
-  boundary55.push(t({ transaction_id: `txn-b55-${String(i).padStart(2, "0")}`, amount_minor: "100" }));
+// 47 transactions (over budget: 16 + 2 + 47 = 65 > 64)
+const boundary47 = [];
+for (let i = 0; i < 47; i++) {
+  boundary47.push(t({ transaction_id: `txn-b47-${String(i).padStart(2, "0")}`, amount_minor: "100" }));
 }
-addBundle("boundary-55", boundary55);
+addBundle("boundary-47", boundary47);
+
+// FIN-002 sentinel: 48 rows where rows 46 and 47 are structurally valid
+// JSON but schema-invalid (missing amount_minor). The budget refuses at
+// charge 65 (transaction[46]) BEFORE decoding — had any over-budget
+// candidate been decoded, the refusal would be INVALID_INPUT, not
+// BUDGET_EXCEEDED. Rows 46/47 also prove LATER candidates are untouched.
+const sentinel48 = [];
+for (let i = 0; i < 46; i++) {
+  sentinel48.push(t({ transaction_id: `txn-sen-${String(i).padStart(2, "0")}`, amount_minor: "100" }));
+}
+sentinel48.push({ transaction_id: "txn-sen-46", date: "2026-01-15", account_code: "REV001", direction: "IN", currency: "USD" });
+sentinel48.push({ transaction_id: "txn-sen-47", date: "2026-01-15", account_code: "REV001", direction: "IN", currency: "USD" });
+addBundle("boundary-47-sentinel", sentinel48);
 
 // Malformed: missing amount
 addBundle("malformed-missing-amount", [

@@ -6,7 +6,7 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "540b754a879acc90b8818b7fa8dfddd10347ba866f45eef2c24c65d46002f519"
+      "sha256": "57b51cab08bcc0808305f6a1d5717f2f45e6c348f636b77997efbeb60cd359f6"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -14,15 +14,15 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "6b33891ad8df6c9de8a35f196f6b002408292765661ff4528a661326aff5f45d"
+      "sha256": "224af0f50066c0bb77698c4990d3f21ec6f8ac6129c41d96c5ff2bb196ad0eee"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "8ba1652876a2da99a27d6a79b18cf60915c1edfaea8e261f75eae2bf12d9bf33"
+      "sha256": "7511c6bbfcf25eb928b2a69ff92228f932d4437e1d544b9b24ef172967c019a7"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "dad29e6f67a5794f5794a2a9564658f02b3f5c8768d5af0681ede8fc68c7f793"
+      "sha256": "e7fe9ba3e01e90d1754ce85eaa92df5dbb7eae39ccaf96cb563337a647fed9e8"
     },
     {
       "path": "package.json",
@@ -42,7 +42,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "c03aa3dd31cd529962172d0bb3374e8d9f55246dfb0feaeb3f0833d2bd2ef4c2"
+      "sha256": "c79e776d457aa4ab1358b39668e9f7137a1727c22c87957744073512feb81d94"
     },
     {
       "path": "src/injection.js",
@@ -54,7 +54,7 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "7feffbeb5b51a4a23a4be041a10fb85cdf3f0e70f769ee207f52dfbee6f7b43e"
+      "sha256": "bcf618169461b9136e23ffe1d99865dba71546e36ec01d8f3be609160ea6e3c2"
     },
     {
       "path": "tests/battery.test.js",
@@ -62,7 +62,7 @@
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "9526581068e5314d2b66b0a75803a9b7a3694e3908af5d7f3cf6deacd65c48e8"
+      "sha256": "47eb268db781e7c6134e26fef711df8b8b36fee22c8607a9b8e6e55892c9dcb5"
     },
     {
       "path": "tests/canonical.test.js",
@@ -90,7 +90,7 @@
     },
     {
       "path": "tests/schemas.test.js",
-      "sha256": "39341f3cfa2769718a654280699b669c0ef5667d9bea130cae79e504e9f2b820"
+      "sha256": "5a9ffe94cf73599bb6039ce626f16ed1ebf090dec2923fc0c7701cd066b1676b"
     }
   ]
 }
