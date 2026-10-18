@@ -1,0 +1,1 @@
+{"description":"Finance Agent Phase 2 slice 1 synthetic prototype — transaction classifier, arithmetic audit, anomaly register, period summary. Pure Node 24 ESM, zero runtime dependencies, offline, fixture-only.","name":"finance-agent-prototype","scripts":{"battery":"node tests/run-battery.js","test":"node tests/run-tests.js"},"type":"module","version":"1.0.0"}
