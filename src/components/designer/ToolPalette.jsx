@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FURNITURE_CATALOG } from "@/domains/roomDesigner/furnitureCatalog";
 import { listSymbolSets } from "@/domains/roomDesigner/symbolRegistry";
 import { buildShapeSearchIndex, searchShapes } from "@/domains/roomDesigner/designerShapeSearch";
+import { DESIGNER_MODE_HOME, domainVisibleInMode } from "@/domains/roomDesigner/designerModes";
 import { ChevronDown, ChevronRight, Shapes, Star } from "lucide-react";
 import { MobileDrawer } from "./MobileDrawer";
 
@@ -119,6 +120,15 @@ export default function ToolPalette({
   // the panel/tools/House Plans drawers stay mutually exclusive).
   mobileToolsOpen = false,
   onToggleMobileTools = null,
+  // Desktop (md+): explicit palette width in px, or null for the default.
+  // Applied through a CSS variable so it only takes effect at md+ — below
+  // md the palette stays the slim icon rail regardless of the stored width.
+  widthPx = null,
+  // Designer workspace mode ("home" | "industrial"): the shape search index
+  // is built from the same mode-scoped domain allowlist as the palette and
+  // object library, so search can never surface or arm a symbol the mode
+  // hides (D647-001).
+  mode = DESIGNER_MODE_HOME,
 }) {
   // Every category starts collapsed each time the designer opens (owner
   // decision); expanding is per session and deliberately not remembered.
@@ -188,14 +198,24 @@ export default function ToolPalette({
     />
   );
 
-  // One search across palette tools (incl. saved shapes), furniture and
-  // every symbol domain. While a query is typed, results replace the
-  // favorites and categories.
+  // One search across palette tools (incl. saved shapes) and the symbols
+  // the CURRENT MODE allows. The furniture catalog and symbol domains are
+  // filtered by the mode's libraryDomains — the same allowlist the object
+  // library dropdown uses — so a Home search can never return process
+  // equipment/piping and an Industrial search can never return home
+  // furniture. While a query is typed, results replace the favorites and
+  // categories.
   const searchIndex = useMemo(
-    () => buildShapeSearchIndex({ tools: allTools, furniture: FURNITURE_CATALOG, symbolSets: listSymbolSets() }),
-    // allTools is rebuilt each render from `grouped`; key the index on it.
+    () =>
+      buildShapeSearchIndex({
+        tools: allTools,
+        furniture: domainVisibleInMode("furniture", mode) ? FURNITURE_CATALOG : [],
+        symbolSets: listSymbolSets().filter((set) => domainVisibleInMode(set.domain, mode)),
+      }),
+    // allTools is rebuilt each render from `grouped`; key the index on it
+    // and on the mode.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [grouped],
+    [grouped, mode],
   );
   const results = query.trim() ? searchShapes(searchIndex, query, 40) : null;
   const pickResult = (result, selectFn = onSelect, pickShapeFn = onPickShape) => {
@@ -290,7 +310,10 @@ export default function ToolPalette({
       // Phone layout: slim icon rail below md (pinned tools + an "All tools"
       // button that opens the full library drawer); the full labeled palette
       // with search and stencil categories returns at md+.
-      className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:w-28 md:p-2"
+      className={`flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:p-2 ${
+        widthPx != null ? "md:w-[var(--palette-width)]" : "md:w-28"
+      } md:max-w-[50vw]`}
+      style={widthPx != null ? { "--palette-width": `${widthPx}px` } : undefined}
       aria-label="Tools"
     >
       {grouped.pinned.map((t) => renderTool(t))}

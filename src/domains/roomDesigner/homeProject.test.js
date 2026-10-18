@@ -299,3 +299,16 @@ describe("serialize/parse round-trip", () => {
     expect(parsed.building).toEqual({ address: "", city: "", state: "", zip: "", notes: "" });
   });
 });
+
+describe("createEmptyDesign — workspace mode (D647-005)", () => {
+  it("defaults to home and keeps the existing single-arg call shape", () => {
+    expect(createEmptyDesign("A").mode).toBe("home");
+    expect(createEmptyDesign().mode).toBe("home");
+  });
+
+  it("accepts a mode option", () => {
+    expect(createEmptyDesign("P", { mode: "industrial" }).mode).toBe("industrial");
+    expect(createEmptyDesign("P", { mode: "bogus" }).mode).toBe("home");
+    expect(createEmptyDesign("P", null).mode).toBe("home");
+  });
+});

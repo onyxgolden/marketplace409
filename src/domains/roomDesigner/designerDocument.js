@@ -28,6 +28,7 @@
 
 import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitureCatalog";
 import { findSymbol } from "./symbolRegistry";
+import { normalizeDesignMode } from "./designerModes";
 import { isCameraPose, nextViewId } from "./namedCameraViews";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
@@ -92,7 +93,17 @@ function clonePoint(p) {
   return { x: p.x, y: p.y };
 }
 
-export function createEmptyDesign(name = "Untitled design") {
+/**
+ * A new, empty design document.
+ *
+ * options.mode ("home" | "industrial", default "home") selects the
+ * workspace mode the project opens in — each mode's new-project starter is
+ * an empty document in that mode, so the toolbar arrangement and object
+ * library match the workspace from the first render (D647-005). Unknown or
+ * missing modes fall back to home without mutating anything.
+ */
+export function createEmptyDesign(name = "Untitled design", options = {}) {
+  const opts = options && typeof options === "object" ? options : {};
   return {
     version: DESIGN_VERSION,
     name: String(name || "Untitled design"),
@@ -109,6 +120,7 @@ export function createEmptyDesign(name = "Untitled design") {
     decks: [], // plan rectangles, top dropIn below the threshold; see addDeck
     cameraViews: [], // saved 3D camera angles { id, name, pose }; see namedCameraViews.js
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
+    mode: normalizeDesignMode(opts.mode), // designer workspace mode: "home" | "industrial" (see designerModes.js)
   };
 }
 

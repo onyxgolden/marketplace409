@@ -21,6 +21,26 @@ import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
 
+// Symbol domain for the site/outdoor catalog (decks, patios, fences, ...).
+// The catalog module registers the set but does not export a domain
+// constant, so it lives here next to the other 3D pipeline constants.
+export const SITE_OUTDOOR_DOMAIN = "siteOutdoor";
+
+// Nominal 3D heights (inches) for site/outdoor symbols. Surfaces render as
+// flat slabs at grade; structures/landscape render as low boxes on grade
+// (the rectangular pool is recessed: its top sits at grade).
+const SITE_OUTDOOR_HEIGHTS_IN = Object.freeze({
+  deck: 4,
+  patio: 4,
+  driveway: 4,
+  walkway: 4,
+  fence: 48,
+  shed: 96,
+  "garden-bed": 12,
+  "pool-rect": 24,
+});
+const SITE_OUTDOOR_DEFAULT_HEIGHT_IN = 24;
+
 /**
  * Split a wall into solid segments around its openings.
  * Doors leave a full-height gap; windows leave a gap between the sill and
@@ -361,9 +381,47 @@ export function equipmentDescriptors(design) {
 }
 
 /**
+ * Site/outdoor symbols -> 3D descriptors (plain JSON, like equipmentDescriptors):
+ * { kind:"siteOutdoor", id, symbolId, category, x, z, rotY, widthIn, depthIn,
+ *   heightIn, baseYIn, color }. Surfaces (deck/patio/driveway/walkway) render
+ * as flat slabs at grade; structures and landscape render as low boxes on
+ * grade, except the rectangular pool which is recessed (top at grade).
+ * Other symbol domains are handled elsewhere and are skipped here.
+ */
+export function siteOutdoorDescriptors(design) {
+  const out = [];
+  for (const inst of design?.symbols || []) {
+    if (inst.domain !== SITE_OUTDOOR_DOMAIN) continue;
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol) continue;
+    const heightIn =
+      symbol.heightIn ??
+      SITE_OUTDOOR_HEIGHTS_IN[inst.symbolId] ??
+      SITE_OUTDOOR_DEFAULT_HEIGHT_IN;
+    const recessed = inst.symbolId === "pool-rect";
+    out.push({
+      kind: "siteOutdoor",
+      id: inst.id,
+      symbolId: inst.symbolId,
+      category: symbol.category,
+      x: inst.x,
+      z: inst.y,
+      // screen-space clockwise degrees -> three.js counter-clockwise radians
+      rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
+      widthIn: inst.widthIn ?? symbol.widthIn,
+      depthIn: inst.depthIn ?? symbol.depthIn,
+      heightIn,
+      baseYIn: recessed ? -heightIn : 0,
+      color: symbol.color,
+    });
+  }
+  return out;
+}
+
+/**
  * Full scene descriptor for a design:
  * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...],
- *   equipment: [...primitives], floor: {minX,minZ,maxX,maxZ}|null }
+ *   equipment: [...primitives], siteOutdoor: [...descriptors], floor: {minX,minZ,maxX,maxZ}|null }
  */
 export function buildThreeScene(design) {
   if (!design || !Array.isArray(design.walls)) {
@@ -386,6 +444,7 @@ export function buildThreeScene(design) {
     .filter(Boolean);
   const stairs = stairsDescriptors(design);
   const equipment = equipmentDescriptors(design);
+  const siteOutdoor = siteOutdoorDescriptors(design);
   const decks = decksOf(design).map((d) => {
     const spec = DECK_MATERIALS[d.material] || DECK_MATERIALS.wood;
     return {
@@ -406,7 +465,7 @@ export function buildThreeScene(design) {
     xs.push(wall.a.x, wall.b.x);
     zs.push(wall.a.y, wall.b.y);
   }
-  for (const f of [...furniture, ...equipment]) {
+  for (const f of [...furniture, ...equipment, ...siteOutdoor]) {
     xs.push(f.x - f.widthIn / 2, f.x + f.widthIn / 2);
     zs.push(f.z - f.depthIn / 2, f.z + f.depthIn / 2);
   }
@@ -420,7 +479,7 @@ export function buildThreeScene(design) {
     };
     floor.deckHoles = deckHolesInFloor(floor, decks);
   }
-  return { walls, glass, furniture, stairs, equipment, decks, floor };
+  return { walls, glass, furniture, stairs, equipment, siteOutdoor, decks, floor };
 }
 
 /**

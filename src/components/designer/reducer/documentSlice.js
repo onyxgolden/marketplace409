@@ -87,6 +87,16 @@ import {
   doorSwingOf,
 } from "@/domains/roomDesigner/designerHandles";
 import {
+  categoryVisibleInMode,
+  modeConfig,
+  normalizeDesignMode,
+  setDesignMode,
+} from "@/domains/roomDesigner/designerModes";
+import {
+  PINNED_TOOL_IDS,
+  getToolCategories,
+} from "@/domains/roomDesigner/designerToolbar";
+import {
   DUPLICATE_OFFSET_IN,
   copyScope,
   deleteScope,
@@ -128,6 +138,64 @@ import {
   placeCopy,
   multiPieces,
 } from "./_shared";
+
+/**
+ * After a workspace mode change, the armed tool — and its pending placement
+ * state — must belong to the new mode. The palette tool id alone is not
+ * enough: the reducer's active symbol-placement tool is the generic
+ * "symbol" (no TOOL_DEFS entry), and furniture/piping/room arming lives in
+ * pendingCatalogId / pendingSymbol / pendingPipe / pendingRoomTemplate.
+ * Admissibility is therefore derived from the full tool state, and any
+ * prohibited pending state is cleared atomically with the mode change
+ * (D647-002) — no render ever sees a hidden pending symbol.
+ *
+ * Returns the state unchanged when the current tool state is allowed.
+ */
+export function clearToolStateDisallowedInMode(state, mode) {
+  const target = normalizeDesignMode(mode);
+  const domains = modeConfig(target).libraryDomains;
+  const tool = state.tool;
+  let cleared = null;
+
+  if (tool === "symbol") {
+    // The pending symbol's domain decides; an open-but-empty library falls
+    // back to the domain it was opened on.
+    const domain = state.pendingSymbol?.domain ?? state.libraryDomain;
+    if (!domains.includes(domain)) {
+      cleared = { tool: "select", pendingSymbol: null, libraryDomain: domains[0] };
+    }
+  } else if (tool === "furniture") {
+    if (!domains.includes("furniture")) {
+      cleared = { tool: "select", pendingCatalogId: null };
+    }
+  } else if (tool === "piping" || tool === "pipe") {
+    if (!domains.includes("piping")) {
+      cleared = { tool: "select", pendingPipe: null, pendingSymbol: null };
+    }
+  } else if (tool === "room") {
+    // Room presets live in the "rooms" category (Home only).
+    if (!categoryVisibleInMode("rooms", target)) {
+      cleared = { tool: "select", pendingRoomTemplate: null };
+    }
+  } else if (tool === "custom-shape") {
+    // The user's own shape library is mode-independent: always allowed.
+  } else {
+    // Ordinary palette tools: must exist in the target mode's palette
+    // (pinned tools plus the mode's visible categories).
+    const allowed = new Set(PINNED_TOOL_IDS);
+    for (const category of getToolCategories()) {
+      if (categoryVisibleInMode(category.id, target)) {
+        for (const id of category.toolIds) allowed.add(id);
+      }
+    }
+    if (!allowed.has(tool)) {
+      cleared = { tool: "select" };
+    }
+  }
+
+  if (!cleared) return state;
+  return { ...state, ...cleared, selection: null, multiSelection: [] };
+}
 
 export function documentSlice(state, action) {
   switch (action.type) {
@@ -200,6 +268,17 @@ export function documentSlice(state, action) {
 
     case "RENAME":
       return touch(state, renameDesign(state.design, action.name));
+
+    case "SET_MODE": {
+      const mode = normalizeDesignMode(action.mode);
+      // One undoable step: the mode lands on the document and any armed
+      // tool / pending placement state the new mode cannot show is cleared
+      // in the same transition (D647-002).
+      return clearToolStateDisallowedInMode(
+        touch(state, setDesignMode(state.design, mode)),
+        mode,
+      );
+    }
 
     case "UPDATE_SETTINGS":
       return touch(state, updateDesignSettings(state.design, action.settings));

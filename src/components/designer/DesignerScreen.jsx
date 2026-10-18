@@ -153,7 +153,14 @@ import ElevationPrintOverlay from "./ElevationPrintOverlay";
 import DxfExportDialog from "./DxfExportDialog";
 import GlbExportDialog from "./GlbExportDialog";
 import DesignerHelpModal from "./DesignerHelpModal";
-import { FIXTURE_TOOL_PREFIX, HOUSE_FIXTURE_CATEGORIES, groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
+import { FIXTURE_TOOL_PREFIX, HOUSE_FIXTURE_CATEGORIES, PINNED_TOOL_IDS, getToolCategories, groupToolsByCategory } from "@/domains/roomDesigner/designerToolbar";
+import {
+  DESIGNER_MODE_IDS,
+  categoryVisibleInMode,
+  designModeOf,
+  modeConfig,
+  normalizeDesignMode,
+} from "@/domains/roomDesigner/designerModes";
 import ToolPalette from "./ToolPalette";
 
 // Exported for catalog-integrity tests: every roomTemplate referenced by a
@@ -210,8 +217,89 @@ export const TOOL_DEFS = [
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
 
+import {
+  clampSidebarWidth,
+  readSidebarWidth,
+  writeSidebarWidth,
+} from "@/domains/roomDesigner/designerSidebarWidth";
+
 export default function DesignerScreen({ projectId, initialName, userId = null }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
+  // Tool-palette (left sidebar) width in px, or null for the default.
+  // Persisted per signed-in user (D647-004) so users sharing one browser
+  // never overwrite each other. Restored after mount (never a lazy
+  // initializer) for the same hydration reason as the shape library below:
+  // localStorage is client-only.
+  //
+  // The loaded width and the identity it was loaded for are ONE state value.
+  // That closes the user-switch write race: the restore effect and the
+  // identity it restores for commit atomically, so the persist effect can
+  // never write the previous user's width under the new user's key (D647-004
+  // fix round 3 — a separate ref set in the same effect flush runs ahead of
+  // the scheduled restore state update).
+  const [sidebarWidth, setSidebarWidth] = useState({ userId: undefined, widthPx: null });
+  // Update only the width, keeping the owner identity it was loaded for.
+  const setSidebarWidthPx = (valueOrUpdater) =>
+    setSidebarWidth((s) => ({
+      userId: s.userId,
+      widthPx:
+        typeof valueOrUpdater === "function"
+          ? valueOrUpdater(s.widthPx)
+          : valueOrUpdater,
+    }));
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount / user change.
+    setSidebarWidth({ userId: userId ?? null, widthPx: readSidebarWidth(userId) });
+  }, [userId]);
+  useEffect(() => {
+    // Persist only when this render's width was loaded for the CURRENT
+    // user. After a user switch, the first flush still carries the old
+    // { userId, widthPx } pair, so the guard below skips the write and the
+    // new user's stored width is never overwritten by the old user's value.
+    if (sidebarWidth.userId === undefined || sidebarWidth.userId !== (userId ?? null)) return;
+    writeSidebarWidth(userId, sidebarWidth.widthPx);
+  }, [sidebarWidth, userId]);
+  // A fixed width can exceed the 50%-viewport maximum after the viewport
+  // shrinks (window resize, tablet orientation change): re-clamp the live
+  // width so the palette never eats the canvas (D647-004). The palette also
+  // carries a CSS max-width guard as a second layer.
+  useEffect(() => {
+    const onResize = () =>
+      setSidebarWidthPx((w) => (w == null ? w : clampSidebarWidth(w)));
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
+  // Drag the handle on the palette's right edge to resize. Pointer capture
+  // on the handle keeps the drag alive outside its hit area; the canvas
+  // reflows because the palette is shrink-0 in the flex row.
+  const startSidebarResize = (e) => {
+    const handle = e.currentTarget;
+    const paletteEl = handle.previousElementSibling;
+    if (!paletteEl) return;
+    e.preventDefault();
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // Older browsers: the window-level listeners below still track the drag.
+    }
+    const startX = e.clientX;
+    const startWidth = paletteEl.getBoundingClientRect().width;
+    const onMove = (ev) => {
+      setSidebarWidthPx(clampSidebarWidth(Math.round(startWidth + (ev.clientX - startX))));
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
   // Personal custom-shape library: local-only, per signed-in user (keyed by
   // `userId` in localStorage), not part of the design document (a shape
   // belongs to the DESIGNER, not to any one plan). Starter favorites are
@@ -280,14 +368,28 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   // was exactly the bug before this fix.
   registerCustomShapeCategory(shapeLibrary);
 
-  // Pinned tools first, then Visio-style collapsible categories (House,
-  // Rooms, Structures, Mechanical, Process, Plan, My shapes) in the left
+  // Pinned tools first, then Visio-style collapsible categories in the left
   // tool palette. Recomputed as the library changes (unlike the other
   // categories, this one is genuinely dynamic).
-  const groupedToolDefs = groupToolsByCategory([
-    ...TOOL_DEFS,
-    ...customShapeToolDefs(shapeLibrary, Puzzle),
-  ]);
+  //
+  // Home vs Industrial mode (designerModes.js): only the current mode's
+  // tool categories are shown. The defs themselves are filtered too — not
+  // just the categories — because groupToolsByCategory surfaces any
+  // uncategorized def in `ungrouped`, so category-only filtering would leak
+  // the other mode's tools back into the palette. Custom shapes (the user's
+  // own library) stay visible in both modes.
+  const designMode = designModeOf(state.design);
+  const modeToolCategories = getToolCategories().filter((c) =>
+    categoryVisibleInMode(c.id, designMode),
+  );
+  const modeToolIds = new Set(PINNED_TOOL_IDS);
+  for (const c of modeToolCategories) for (const id of c.toolIds) modeToolIds.add(id);
+  const groupedToolDefs = groupToolsByCategory(
+    [...TOOL_DEFS, ...customShapeToolDefs(shapeLibrary, Puzzle)].filter(
+      (t) => t.customShapeId || modeToolIds.has(t.id),
+    ),
+    modeToolCategories,
+  );
   // One-tap placement from Favorites: each pane reports the plan point at
   // the middle of what it shows (refs — updated on every pan/zoom/orbit
   // without re-rendering the screen), and the tap drops the shape there.
@@ -788,6 +890,15 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, view, dirty, past, future } = state;
   const summary = summarizeDesignForEstimating(design);
   const activeTool = TOOL_DEFS.find((t) => t.id === tool);
+  // Home | Industrial mode switch (designerModes.js). The mode persists on
+  // the design document (SET_MODE -> touch -> autosave). The reducer clears
+  // any armed tool / pending placement state the target mode cannot show
+  // atomically with the mode change (D647-002), so one dispatch is enough.
+  const switchDesignMode = (nextMode) => {
+    const target = normalizeDesignMode(nextMode);
+    if (target === designMode) return;
+    dispatch({ type: "SET_MODE", mode: target });
+  };
   // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
   const [zoomRequest, setZoomRequest] = useState(null);
   const zoomSeq = useRef(0);
@@ -857,6 +968,19 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               <BookOpen size={15} /> House Plans
             </button>
           )}
+          <div className="flex overflow-hidden rounded border border-gray-700" role="group" aria-label="Designer mode">
+            {DESIGNER_MODE_IDS.map((m) => (
+              <button
+                key={m}
+                onClick={() => switchDesignMode(m)}
+                aria-pressed={designMode === m}
+                title={m === "home" ? "Home design workspace" : "Industrial plant workspace"}
+                className={`px-3 py-1 text-sm ${designMode === m ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}
+              >
+                {modeConfig(m).label}
+              </button>
+            ))}
+          </div>
           <div className="flex overflow-hidden rounded border border-gray-700">
             {(["2d", "split", "3d"]).map((v) => (
               <button
@@ -978,6 +1102,9 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
         {/* tool palette: pinned tools, then collapsible Visio-style categories */}
         <ToolPalette
           grouped={groupedToolDefs}
+          // Shape search honors the same mode allowlist as the palette and
+          // object library (D647-001).
+          mode={designMode}
           // The Equipment tool IS the symbol tool on the process domain;
           // light its palette button while that library is in use.
           activeToolId={
@@ -1037,6 +1164,21 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             setMobileDrawer((d) => toggleExclusiveDrawer(d, "tools"));
             setHousePlansOpen(false);
           }}
+          // Desktop (md+): the palette is width-adjustable via the handle
+          // below; the width persists in localStorage.
+          widthPx={sidebarWidth.widthPx}
+        />
+        {/* tool-palette resize handle: desktop only. Drag to resize the
+            left sidebar between 240px and half the viewport; double-click
+            resets to the default width. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize tool panel"
+          title="Drag to resize the tool panel · double-click to reset"
+          onPointerDown={startSidebarResize}
+          onDoubleClick={() => setSidebarWidthPx(null)}
+          className="hidden w-2 shrink-0 cursor-ew-resize touch-none bg-transparent hover:bg-emerald-600/50 active:bg-emerald-600/70 md:block"
         />
 
         {/* canvas */}
@@ -1080,10 +1222,10 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               drawer's copy below ever receives pendingDropFile, even though
               both are mounted simultaneously whenever the drawer is open —
               see its own doc comment above RightPanel for why that matters. */}
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "aside")} onDropFileHandled={onDropFileHandled} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "aside")} onDropFileHandled={onDropFileHandled} mode={designMode} />
         </aside>
         <MobileDrawer open={mobileDrawer === "panel"} onClose={() => setMobileDrawer(null)} label="Design panels">
-          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "drawer")} onDropFileHandled={onDropFileHandled} />
+          <RightPanel state={state} dispatch={dispatch} summary={summary} project={project} onPrint={openPrint} onSetUnitCost={commitUnitCost} onPrintProposal={openProposal} onSaveAndPrint={saveAndPrintProposal} onPrintElevation={openElevation} onSaveAndPrintElevation={saveAndPrintElevation} onZoomToSheet={(sheet) => setZoomRequest({ rect: sheetPlanBounds(sheet), nonce: (zoomSeq.current += 1) })} onSaveShape={saveSelectionAsShape} priceBooks={priceBookSync.books} priceBookSync={priceBookSync} pendingDropFile={dropFileForPanel(pendingDropFile, mobileDrawer, "drawer")} onDropFileHandled={onDropFileHandled} mode={designMode} />
         </MobileDrawer>
 
         {/* HOUSE PLANS (HP-L0): docked reference panel. The canvas stays
@@ -1221,7 +1363,7 @@ export function dropFileForPanel(pendingDropFile, mobileDrawer, panel) {
   return thisPanelIsVisible ? pendingDropFile : null;
 }
 
-function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null, pendingDropFile = null, onDropFileHandled = null }) {
+function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet, onSetUnitCost, onPrintProposal, onSaveAndPrint, onPrintElevation, onSaveAndPrintElevation, onSaveShape, priceBooks = [], priceBookSync = null, pendingDropFile = null, onDropFileHandled = null, mode = "home" }) {
   const { design, tool, selection, multiSelection, pendingCatalogId, pendingRoomTemplate, pendingSymbol } = state;
 
   // Scale calibration for the background underlay (Visio trace-over workflow).
@@ -1256,8 +1398,13 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         pendingCatalogId={pendingCatalogId}
         pendingSymbol={pendingSymbol}
         initialDomain={tool === "symbol" ? pendingSymbol?.domain ?? state.libraryDomain : "furniture"}
+        // The current designer mode decides which symbol domains the
+        // library offers (Home hides process equipment/piping; Industrial
+        // hides home furniture). Remount on mode change so a domain the new
+        // mode hides can never stay selected.
+        domains={modeConfig(mode).libraryDomains}
         // Remount when a palette tool switches domains, so the panel opens on it.
-        key={tool === "symbol" ? state.libraryDomain ?? "symbol" : "furniture"}
+        key={`${mode}:${tool === "symbol" ? state.libraryDomain ?? "symbol" : "furniture"}`}
       />
     );
   }

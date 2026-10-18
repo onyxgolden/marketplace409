@@ -87,7 +87,10 @@ export const TOOL_CATEGORIES = [
   },
   { id: "mechanical", label: "Mechanical", toolIds: ["pipe", "piping"] },
   { id: "process", label: "Process", toolIds: ["process-equipment"] },
-  { id: "plan", label: "Plan", toolIds: ["orgchart", "calibrate"] },
+  // Measurement tools live in Plan (shared core): both Home and Industrial
+  // modes include the "plan" category, so Measure/Area stay reachable after
+  // the mode split (D647-003).
+  { id: "plan", label: "Plan", toolIds: ["orgchart", "calibrate", "measure", "measure-area"] },
 ];
 
 // Runtime-registered categories (custom shapes, future catalogs). Registering
