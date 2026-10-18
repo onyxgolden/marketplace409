@@ -514,3 +514,34 @@ describe("ToolPalette (favoritesSection slot)", () => {
     container.remove();
   });
 });
+
+describe("ToolPalette (widthPx)", () => {
+  async function renderPalette(props = {}) {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<ToolPalette grouped={grouped()} {...props} />);
+    });
+    return { container, root };
+  }
+
+  it("applies an explicit desktop width through a CSS variable", async () => {
+    const { container, root } = await renderPalette({ widthPx: 320 });
+    const nav = container.querySelector("nav");
+    expect(nav).not.toBeNull();
+    expect(nav.style.getPropertyValue("--palette-width")).toBe("320px");
+    expect(nav.className).toContain("md:w-[var(--palette-width)]");
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("falls back to the default width class without widthPx", async () => {
+    const { container, root } = await renderPalette();
+    const nav = container.querySelector("nav");
+    expect(nav.style.getPropertyValue("--palette-width")).toBe("");
+    expect(nav.className).toContain("md:w-28");
+    await act(async () => root.unmount());
+    container.remove();
+  });
+});

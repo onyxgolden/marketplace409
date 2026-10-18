@@ -119,6 +119,10 @@ export default function ToolPalette({
   // the panel/tools/House Plans drawers stay mutually exclusive).
   mobileToolsOpen = false,
   onToggleMobileTools = null,
+  // Desktop (md+): explicit palette width in px, or null for the default.
+  // Applied through a CSS variable so it only takes effect at md+ — below
+  // md the palette stays the slim icon rail regardless of the stored width.
+  widthPx = null,
 }) {
   // Every category starts collapsed each time the designer opens (owner
   // decision); expanding is per session and deliberately not remembered.
@@ -290,7 +294,10 @@ export default function ToolPalette({
       // Phone layout: slim icon rail below md (pinned tools + an "All tools"
       // button that opens the full library drawer); the full labeled palette
       // with search and stencil categories returns at md+.
-      className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:w-28 md:p-2"
+      className={`flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-gray-800 bg-gray-900 p-1 md:p-2 ${
+        widthPx != null ? "md:w-[var(--palette-width)]" : "md:w-28"
+      }`}
+      style={widthPx != null ? { "--palette-width": `${widthPx}px` } : undefined}
       aria-label="Tools"
     >
       {grouped.pinned.map((t) => renderTool(t))}

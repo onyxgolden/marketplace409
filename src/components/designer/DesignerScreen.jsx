@@ -210,8 +210,75 @@ export const TOOL_DEFS = [
   { id: "calibrate", label: "Calibrate", icon: Ruler, hint: "Set the background image scale: click two points on it, then enter the real distance", needsUnderlay: true },
 ];
 
+// Tool-palette (left sidebar) resize: persisted per browser in localStorage.
+// Min keeps the palette readable; max keeps at least half the viewport for
+// the canvas. The handle itself is desktop-only (md+).
+const SIDEBAR_WIDTH_STORAGE_KEY = "forge-designer-sidebar-width";
+const SIDEBAR_MIN_PX = 240;
+function clampSidebarWidth(px) {
+  const maxPx =
+    typeof window !== "undefined" ? Math.floor(window.innerWidth / 2) : 960;
+  return Math.min(Math.max(px, SIDEBAR_MIN_PX), Math.max(maxPx, SIDEBAR_MIN_PX));
+}
+
 export default function DesignerScreen({ projectId, initialName, userId = null }) {
   const [state, dispatch] = useReducer(designerReducer, undefined, () => createInitialState());
+  // Tool-palette (left sidebar) width in px, or null for the default.
+  // Restored after mount (never a lazy initializer) for the same hydration
+  // reason as the shape library below: localStorage is client-only.
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(null);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+      const n = Number.parseInt(raw, 10);
+      if (Number.isFinite(n)) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of a value from an external store (localStorage) on mount.
+        setSidebarWidthPx(clampSidebarWidth(n));
+      }
+    } catch {
+      // Storage may be unavailable (private mode, quota); the default width stands.
+    }
+  }, []);
+  const sidebarWidthMountedRef = useRef(false);
+  useEffect(() => {
+    if (!sidebarWidthMountedRef.current) {
+      sidebarWidthMountedRef.current = true;
+      return;
+    }
+    try {
+      if (sidebarWidthPx == null) window.localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+      else window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthPx));
+    } catch {
+      // Storage may be unavailable; the in-memory width still works.
+    }
+  }, [sidebarWidthPx]);
+  // Drag the handle on the palette's right edge to resize. Pointer capture
+  // on the handle keeps the drag alive outside its hit area; the canvas
+  // reflows because the palette is shrink-0 in the flex row.
+  const startSidebarResize = (e) => {
+    const handle = e.currentTarget;
+    const paletteEl = handle.previousElementSibling;
+    if (!paletteEl) return;
+    e.preventDefault();
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // Older browsers: the window-level listeners below still track the drag.
+    }
+    const startX = e.clientX;
+    const startWidth = paletteEl.getBoundingClientRect().width;
+    const onMove = (ev) => {
+      setSidebarWidthPx(clampSidebarWidth(Math.round(startWidth + (ev.clientX - startX))));
+    };
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      handle.removeEventListener("pointercancel", onUp);
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  };
   // Personal custom-shape library: local-only, per signed-in user (keyed by
   // `userId` in localStorage), not part of the design document (a shape
   // belongs to the DESIGNER, not to any one plan). Starter favorites are
@@ -1037,6 +1104,21 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
             setMobileDrawer((d) => toggleExclusiveDrawer(d, "tools"));
             setHousePlansOpen(false);
           }}
+          // Desktop (md+): the palette is width-adjustable via the handle
+          // below; the width persists in localStorage.
+          widthPx={sidebarWidthPx}
+        />
+        {/* tool-palette resize handle: desktop only. Drag to resize the
+            left sidebar between 240px and half the viewport; double-click
+            resets to the default width. */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize tool panel"
+          title="Drag to resize the tool panel · double-click to reset"
+          onPointerDown={startSidebarResize}
+          onDoubleClick={() => setSidebarWidthPx(null)}
+          className="hidden w-2 shrink-0 cursor-ew-resize touch-none bg-transparent hover:bg-emerald-600/50 active:bg-emerald-600/70 md:block"
         />
 
         {/* canvas */}
