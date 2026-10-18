@@ -87,6 +87,9 @@ import {
   doorSwingOf,
 } from "@/domains/roomDesigner/designerHandles";
 import {
+  setDesignMode,
+} from "@/domains/roomDesigner/designerModes";
+import {
   DUPLICATE_OFFSET_IN,
   copyScope,
   deleteScope,
@@ -200,6 +203,9 @@ export function documentSlice(state, action) {
 
     case "RENAME":
       return touch(state, renameDesign(state.design, action.name));
+
+    case "SET_MODE":
+      return touch(state, setDesignMode(state.design, action.mode));
 
     case "UPDATE_SETTINGS":
       return touch(state, updateDesignSettings(state.design, action.settings));

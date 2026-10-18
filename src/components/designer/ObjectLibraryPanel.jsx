@@ -38,10 +38,11 @@ function categoryOptionGroups(set, categories) {
   return runs;
 }
 
-function availableDomains() {
+function availableDomains(allowedDomains = null) {
   const order = new Map(LIBRARY_DOMAINS.map((domain, i) => [domain, i]));
   return listSymbolSets()
     .filter((set) => order.has(set.domain))
+    .filter((set) => !allowedDomains || allowedDomains.includes(set.domain))
     .sort((a, b) => order.get(a.domain) - order.get(b.domain));
 }
 
@@ -53,14 +54,17 @@ export default function ObjectLibraryPanel({
   pendingCatalogId,
   pendingSymbol,
   initialDomain = "furniture",
+  // Optional allow-list of symbol-domain ids (the designer Home/Industrial
+  // mode config). Null/undefined keeps the historical full domain list.
+  domains = null,
 }) {
-  const domains = availableDomains();
+  const available = availableDomains(domains);
   const startDomain =
-    domains.find((s) => s.domain === pendingSymbol?.domain) ||
-    domains.find((s) => s.domain === initialDomain) ||
-    domains[0];
+    available.find((s) => s.domain === pendingSymbol?.domain) ||
+    available.find((s) => s.domain === initialDomain) ||
+    available[0];
   const [domainId, setDomainId] = useState(startDomain?.domain);
-  const activeSet = domains.find((s) => s.domain === domainId) || domains[0];
+  const activeSet = available.find((s) => s.domain === domainId) || available[0];
   const categories = categoriesOf(activeSet);
   const [category, setCategory] = useState(categories[0]);
 
@@ -71,7 +75,7 @@ export default function ObjectLibraryPanel({
 
   const selectDomain = (nextDomain) => {
     setDomainId(nextDomain);
-    setCategory(categoriesOf(domains.find((s) => s.domain === nextDomain))[0]);
+    setCategory(categoriesOf(available.find((s) => s.domain === nextDomain))[0]);
   };
 
   // Furniture keeps its EXISTING placement contract (SET_PENDING_CATALOG ->
@@ -104,7 +108,7 @@ export default function ObjectLibraryPanel({
           onChange={(e) => selectDomain(e.target.value)}
           className={`${selectClass} mt-1`}
         >
-          {domains.map((s) => (
+          {available.map((s) => (
             <option key={s.domain} value={s.domain}>
               {s.title}
             </option>

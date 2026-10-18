@@ -109,6 +109,7 @@ export function createEmptyDesign(name = "Untitled design") {
     decks: [], // plan rectangles, top dropIn below the threshold; see addDeck
     cameraViews: [], // saved 3D camera angles { id, name, pose }; see namedCameraViews.js
     annotations: [], // VSDX import: read-only generic paths/labels { id, kind: "path"|"label", points, closed?, text?, strokeWidthIn?, source? }
+    mode: "home", // designer workspace mode: "home" | "industrial" (see designerModes.js)
   };
 }
 
