@@ -3,6 +3,22 @@
 -- All seeded terms are provider-published on the lender's own site;
 -- marked provider-claimed per DSCR-SCOPE-002/004.
 
+-- Durable correction (2026-10-16): the seed below uses
+-- ON CONFLICT (nmls_number), which requires a UNIQUE constraint on
+-- public.dscr_lenders(nmls_number). The original migration never created it,
+-- so fresh installs failed at seed time (production received the constraint
+-- manually as uq_dscr_lenders_nmls). Create it first, guarded so already-
+-- migrated databases are unaffected.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_dscr_lenders_nmls'
+  ) THEN
+    ALTER TABLE public.dscr_lenders
+      ADD CONSTRAINT uq_dscr_lenders_nmls UNIQUE (nmls_number);
+  END IF;
+END $$;
+
 INSERT INTO public.dscr_lenders (
   company_name, nmls_number, nmls_consumer_access_url,
   identity_review_status, status,
