@@ -1505,6 +1505,24 @@ export default function DesignerViewport3D({
         group.add(eGroup);
         register(highlightRegistryKey("symbol", eq.id), eGroup);
       }
+
+      // site/outdoor symbols (deck, patio, driveway, walkway, fence, shed,
+      // garden bed, pool): flat slabs at grade or low boxes — selectable
+      // like the other symbol placements.
+      for (const so of built.siteOutdoor || []) {
+        const mesh = shadowed(
+          new THREE.Mesh(
+            new THREE.BoxGeometry(so.widthIn, so.heightIn, so.depthIn),
+            stdMaterial({ color: so.color, roughness: 0.85 }),
+          ),
+        );
+        mesh.position.set(so.x, so.baseYIn + so.heightIn / 2, so.z);
+        mesh.rotation.y = so.rotY;
+        mesh.userData.entityKind = "symbol";
+        mesh.userData.entityId = so.id;
+        group.add(mesh);
+        register(highlightRegistryKey("symbol", so.id), mesh);
+      }
       // Labels are hidden by default; re-apply the toggle state after every
       // rebuild (new sprites are born hidden).
       group.traverse((o) => { if (o.isSprite && o.userData.isTagLabel) o.visible = showLabelsRef.current; });

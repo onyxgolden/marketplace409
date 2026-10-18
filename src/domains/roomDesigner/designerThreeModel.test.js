@@ -5,6 +5,7 @@ import {
   highlightKeysForSelection,
   highlightRegistryKey,
   pickWallAt,
+  siteOutdoorDescriptors,
   splitWallByOpenings,
   stairsDescriptors,
 } from "./designerThreeModel";
@@ -120,6 +121,61 @@ describe("designerThreeModel — buildThreeScene", () => {
 
   it("throws on a non-document", () => {
     expect(() => buildThreeScene(null)).toThrow(/document/);
+  });
+});
+
+describe("designerThreeModel — siteOutdoorDescriptors", () => {
+  it("emits a deck symbol as a flat slab descriptor at grade", () => {
+    let d = createEmptyDesign();
+    d = placeSymbol(d, "siteOutdoor", "deck", 300, 200);
+    const descs = siteOutdoorDescriptors(d);
+    expect(descs).toHaveLength(1);
+    const [deck] = descs;
+    expect(deck.kind).toBe("siteOutdoor");
+    expect(deck.symbolId).toBe("deck");
+    expect(deck.category).toBe("surfaces");
+    expect(deck.x).toBe(300);
+    expect(deck.z).toBe(200);
+    // catalog nominal footprint: 144 x 120 in
+    expect(deck.widthIn).toBe(144);
+    expect(deck.depthIn).toBe(120);
+    // flat slab at grade: 4 in thick, base at 0
+    expect(deck.heightIn).toBe(4);
+    expect(deck.baseYIn).toBe(0);
+    expect(deck.color).toBe("#a3835b");
+  });
+
+  it("renders structures and landscape as low boxes; the pool is recessed", () => {
+    let d = createEmptyDesign();
+    d = placeSymbol(d, "siteOutdoor", "shed", 0, 0);
+    d = placeSymbol(d, "siteOutdoor", "pool-rect", 500, 0);
+    const descs = siteOutdoorDescriptors(d);
+    expect(descs).toHaveLength(2);
+    const shed = descs.find((s) => s.symbolId === "shed");
+    expect(shed.heightIn).toBe(96);
+    expect(shed.baseYIn).toBe(0);
+    const pool = descs.find((s) => s.symbolId === "pool-rect");
+    expect(pool.heightIn).toBe(24);
+    expect(pool.baseYIn).toBe(-24);
+  });
+
+  it("ignores symbols from other domains", () => {
+    let d = createEmptyDesign();
+    d = placeSymbol(d, "siteOutdoor", "patio", 100, 100);
+    d = placeFurniture(d, "bed-queen", 72, 72);
+    expect(siteOutdoorDescriptors(d)).toHaveLength(1);
+  });
+
+  it("buildThreeScene includes siteOutdoor and extends the floor bounds", () => {
+    let d = createEmptyDesign();
+    d = addWall(d, { x: 0, y: 0 }, { x: 144, y: 0 });
+    d = placeSymbol(d, "siteOutdoor", "deck", 300, 200);
+    const scene = buildThreeScene(d);
+    expect(scene.siteOutdoor).toHaveLength(1);
+    expect(scene.siteOutdoor[0].symbolId).toBe("deck");
+    // deck footprint 144x120 centered at (300,200) must be inside the floor
+    expect(scene.floor.minX).toBeLessThan(300 - 72);
+    expect(scene.floor.maxX).toBeGreaterThan(300 + 72);
   });
 });
 
