@@ -215,7 +215,9 @@ function oEvaluate(docs, claims, registry) {
  * report(1) + coverage(1) + summary(1 when REPORT_READY and population
  * verified with no quarantine/span-mismatch) + per claim: claim(1) +
  * atom(1) + origin(1) [+ origin citation(1) + source_ref(1) + span(1)
- * when faithful] + per corroboration resource entry (all five classes):
+ * when faithful] + corroboration record(1) per claim — the claim's public
+ * corroboration object itself (RA652-004) — + per corroboration resource
+ * entry (all five classes):
  * entry(1) + citation(1) + source_ref(1) + span(1) + per contradiction:
  * conflict(1) + citation(1) + source_ref(1) + span(1) + top-level
  * source_ref(1) + diagnostics(n) + quarantined(n).
@@ -227,6 +229,7 @@ function oNaturalRecords(evalSummary) {
   for (const cr of claimResults) {
     n += 3; // claim + atom + origin
     if (cr.faithful) n += 3; // origin citation + source_ref + span
+    n += 1; // corroboration record itself (RA652-004)
     const resources = cr.classCounts.independent + cr.classCounts.same_group + cr.classCounts.unregistered +
       cr.classCounts.derivation_linked + cr.classCounts.cycle_defeated;
     n += resources * 4; // entry + citation + source_ref + span
@@ -635,7 +638,7 @@ const budNatural = oNaturalRecords((() => {
   const { claimResults, quarantined, spanMismatch } = oEvaluate(docs, [mkClaim("c1", [REV()], C_ALPH)], reg);
   return { claimResults, quarantined, spanMismatch, popVerified: true, hasSummary: true, diagCount: 0 };
 })());
-if (budNatural !== 10) throw new Error(`bud-006/007 taxonomy drift: natural=${budNatural}, expected 10`);
+if (budNatural !== 11) throw new Error(`bud-006/007 taxonomy drift: natural=${budNatural}, expected 11`);
 addEval("bud-006-output-prefill-256", "budget_replay", "single-passage",
   [mkClaim("c1", [REV()], C_ALPH)], {}, { test_hooks: { prefill_output_records: 256 - budNatural } });
 addCase("bud-007-output-prefill-257", "budget_replay", "single-passage",

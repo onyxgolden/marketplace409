@@ -201,20 +201,52 @@ test("RA652-002: bootstrap refuses an unlisted helper file (nested executable)",
   }
 });
 
-test("RA652-002: bootstrap refuses an npm lifecycle hook in package.json", () => {
+test("RA652-002: official host command refuses a package.json with an npm lifecycle hook", () => {
+  // Fix round 2: the official acceptance entrypoint is the host-owned
+  // direct bootstrap invocation (npm scripts removed from package.json
+  // entirely — see below). A tampered package.json carrying a lifecycle
+  // hook must refuse (exit 3) before any candidate byte runs, and the
+  // hook's canary must never execute.
   if (!APPROVED_ROOT) { console.log("skip: no RESEARCH_APPROVED_ROOT"); return; }
   const tmp = mkdtempSync(join(tmpdir(), "research-trust-pretest-"));
   try {
     cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
     const pkg = JSON.parse(readFileSync(join(tmp, "package.json"), "utf8"));
-    pkg.scripts.pretest = "node -e \"console.log(1)\"";
+    pkg.scripts = { pretest: "node -e \"console.error('NPM_LIFECYCLE_CANARY_EXECUTED')\"" };
     writeFileSync(join(tmp, "package.json"), JSON.stringify(pkg, null, 2));
     const r = runViaBootstrap(tmp, "tests");
     assert.equal(r.status, 3, "lifecycle hook must refuse");
+    assert.ok(!r.stdout.includes("NPM_LIFECYCLE_CANARY_EXECUTED"), "hook canary must not execute");
+    assert.ok(!r.stderr.includes("NPM_LIFECYCLE_CANARY_EXECUTED"), "hook canary must not execute (stderr)");
     assert.ok(
-      r.stderr.includes("lifecycle hook") || r.stderr.includes("hash mismatch"),
-      `must refuse the hook (stderr: ${r.stderr.slice(0, 200)})`
+      r.stderr.includes("npm scripts present") || r.stderr.includes("hash mismatch") || r.stderr.includes("lifecycle hook"),
+      `must refuse the tampered metadata (stderr: ${r.stderr.slice(0, 200)})`
     );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("RA652-002: npm itself cannot dispatch a lifecycle hook — no scripts ship", () => {
+  // Empirical proof of the fix-round-2 design: package.json ships with
+  // NO scripts object at all, so `npm test` errors ("Missing script")
+  // without executing a planted pretest hook. This is the path the
+  // prior review flagged: npm parsing candidate-controlled package.json
+  // and dispatching lifecycle metadata before the bootstrap could run.
+  const tmp = mkdtempSync(join(tmpdir(), "research-trust-npm-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const pkg = JSON.parse(readFileSync(join(tmp, "package.json"), "utf8"));
+    assert.ok(!pkg.scripts, "shipped package.json must have no scripts");
+    pkg.scripts = { pretest: "node -e \"console.error('NPM_LIFECYCLE_CANARY_EXECUTED')\"" };
+    writeFileSync(join(tmp, "package.json"), JSON.stringify(pkg, null, 2));
+    const r = spawnSync("npm", ["test"], {
+      cwd: tmp, encoding: "utf8", timeout: 60000,
+      env: { ...process.env, RESEARCH_APPROVED_ROOT: "x".repeat(64) },
+    });
+    const combined = (r.stdout || "") + (r.stderr || "");
+    assert.ok(!combined.includes("NPM_LIFECYCLE_CANARY_EXECUTED"), "npm must not execute the pretest hook");
+    assert.notEqual(r.status, 0, "npm test must fail without a test script");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

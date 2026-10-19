@@ -151,28 +151,38 @@ node corpus/make-battery.js
 node corpus/freeze-corpus.js   # writes manifest.json + corpus_digest.txt
 
 # Scored runs (need the externally supplied approval root).
-# The npm scripts invoke the separately trusted bootstrap at
-# /home/hatch/workspace/research-prototype-trust/bootstrap.js, which
+# RA652-002 (fix round 2): the package ships with ZERO npm scripts by
+# design — there is no npm entrypoint at all, so npm can never parse
+# and dispatch candidate-controlled lifecycle metadata (pretest, etc.)
+# before authentication. `npm test` simply errors ("Missing script").
+# The ONLY official authenticated acceptance entrypoint is the
+# host-owned command below, which invokes the separately trusted
+# bootstrap directly (never through npm). The bootstrap lives at
+# /home/hatch/workspace/research-prototype-trust/bootstrap.js and
 # authenticates every byte (and the manifest itself) against the
-# approved root BEFORE any candidate byte executes. Direct invocation:
+# approved root BEFORE any candidate byte executes. Its bytes and the
+# approved root are pinned in the separately reviewable receipt:
+# forge-ai-drop results/muse/research-agent-phase2-slice1-bootstrap-receipt-2026-10-19.md.
 #   RESEARCH_APPROVED_ROOT=<digest> node /home/hatch/workspace/research-prototype-trust/bootstrap.js <repo-dir> tests
-RESEARCH_APPROVED_ROOT=<digest> npm test
-RESEARCH_APPROVED_ROOT=<digest> npm run battery
+RESEARCH_APPROVED_ROOT=<digest> node /home/hatch/workspace/research-prototype-trust/bootstrap.js <repo-dir> tests
+RESEARCH_APPROVED_ROOT=<digest> node /home/hatch/workspace/research-prototype-trust/bootstrap.js <repo-dir> battery
 ```
 
 ## Trust chain
 
-`npm test` / `npm run battery` never execute in-repo bytes first: the
-package scripts invoke the small builtins-only bootstrap in the
-separately trusted directory
-`/home/hatch/workspace/research-prototype-trust/` (outside the repo,
-never modified by the PR). The bootstrap pins the approved root from
-its own `approved-root.txt` (must match `RESEARCH_APPROVED_ROOT`),
+There is no npm entrypoint: `package.json` ships with no `scripts`
+object, so `npm test` / `npm run battery` error out without executing
+anything. The only official acceptance entrypoint is the host-owned
+direct command `node /home/hatch/workspace/research-prototype-trust/bootstrap.js
+<repo-dir> <tests|battery|manual>` with `RESEARCH_APPROVED_ROOT` set.
+That small builtins-only bootstrap (separately trusted directory,
+outside the repo, never modified by the PR) pins the approved root
+from its own `approved-root.txt` (must match `RESEARCH_APPROVED_ROOT`),
 authenticates every manifest-listed byte, rejects unlisted files,
 nested helpers and symlinks, authenticates the manifest digest itself,
-rejects npm lifecycle hooks, and only then spawns the in-repo
-launcher. Prepend/top-of-file marker canaries against both official
-entrypoints and the runtime/watchdog chain are covered by
+refuses any npm scripts in `package.json`, and only then spawns the
+in-repo launcher. Prepend/top-of-file marker canaries against both
+official entrypoints and the runtime/watchdog chain are covered by
 `tests/trust.test.js`.
 
 ## Grant before bytes

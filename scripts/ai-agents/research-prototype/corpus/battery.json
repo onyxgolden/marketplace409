@@ -12647,7 +12647,7 @@
         }
       },
       "test_hooks": {
-        "prefill_output_records": 246
+        "prefill_output_records": 245
       }
     },
     "expected": {
@@ -12743,7 +12743,7 @@
         }
       },
       "test_hooks": {
-        "prefill_output_records": 247
+        "prefill_output_records": 246
       }
     },
     "expected": {

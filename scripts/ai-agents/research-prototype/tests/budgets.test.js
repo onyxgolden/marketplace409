@@ -117,9 +117,9 @@ test("RA652-004: final-envelope walk counts every public record per the taxonomy
   // Hand-derived for the single-passage 1-claim REPORT_READY envelope:
   // report(1) + coverage(1) + summary(1) + claim(1) + atom(1) +
   // origin(1) + origin.citation(1) + citation.source_ref(1) +
-  // citation.span(1) + top-level source_refs[0](1) = 10.
+  // citation.span(1) + corroboration(1) + top-level source_refs[0](1) = 11.
   // The old hand-maintained field list counted 2.
-  assert.equal(n, 10, `walk must count 10 public records (got ${n})`);
+  assert.equal(n, 11, `walk must count 11 public records (got ${n})`);
   assert.equal(c.corroboration.evidence.length, 0);
 });
 
@@ -136,9 +136,9 @@ test("RA652-004: walk counts nested evidence/contradiction records", () => {
   assert.equal(c.contradictions.length, 1);
   // report(1) + coverage(1) + claim(1) + atom(1) + origin(1) +
   // origin.citation(1) + cit.source_ref(1) + cit.span(1) +
-  // contradiction(1) + k.citation(1) + k.source_ref(1) + k.span(1) +
-  // top-level source_refs[0](1) = 13. (PARTIAL => summary null.)
-  assert.equal(n, 13, `walk must count 13 public records (got ${n})`);
+  // corroboration(1) + contradiction(1) + k.citation(1) + k.source_ref(1) + k.span(1) +
+  // top-level source_refs[0](1) = 14. (PARTIAL => summary null.)
+  assert.equal(n, 14, `walk must count 14 public records (got ${n})`);
   // Scalars/arrays are not records: the walk of a refusal (report null)
   // counts zero.
   assert.equal(countFinalEnvelopeRecords({ report: null, source_refs: [], diagnostics: [], quarantined_sources: [] }), 0);

@@ -152,6 +152,8 @@ function emptyReport() {
  *                                         same-group / unregistered /
  *                                         derivation-linked /
  *                                         cycle-defeated entry
+ *   corroboration records ................ each claim's corroboration
+ *                                         object itself (RA652-004)
  *   conflict records ................... each contradictions[] entry
  *   completeness record ................ coverage
  *   summary record ..................... summary (when non-null)
@@ -197,6 +199,8 @@ export function countFinalEnvelopeRecords(env) {
       walkCitation(og.citation);
     });
     obj(o.corroboration, (cor) => {
+      rec(); // corroboration record itself (RA652-004): the claim's
+             // corroboration object is a public emitted occurrence
       for (const e of cor.evidence ?? []) walkResourceEntry(e);
       for (const e of cor.same_group_occurrences ?? []) walkResourceEntry(e);
       for (const e of cor.unregistered_candidates ?? []) walkResourceEntry(e);
