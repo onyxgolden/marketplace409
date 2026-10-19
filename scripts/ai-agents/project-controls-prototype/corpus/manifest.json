@@ -1,0 +1,20 @@
+{
+  "version": "1",
+  "files": {
+    "README.md": "4692214a348b7eb264d3d7a3436e3075b5b3ea117eb0f15d8e39f19d915054a6",
+    "corpus/battery.json": "db20674d41ba233c2a4fd9f90dbcb48902ecce525adaf76a9df45251cdb86404",
+    "corpus/make-battery.js": "1447d9fd8756f4b0873ab158dbc0831a0c139d8765a56766b9105879a3b06228",
+    "fixtures/keymap.json": "cbd297c129f0ff56708f6b9257ac63c5159dbe5a218d0cc9384273a4b9595e91",
+    "fixtures/make-fixtures.js": "d8d28ce7c25ff82e22bdbcc58cafe4e87269ce36aad842c8f2f5943eecff3223",
+    "fixtures/store.json": "70af17815c3cd08dade564220f9bdf8422443c9c03bb82b475b58faeffb4c696",
+    "package.json": "737dddfafcb9a7351c1aee0107edf3210c4f580b7427051603288a71f9bc0367",
+    "runner/run-manual.js": "8f0db6602c1644daa2cf3f97033b999546a2d41f923d6caf61d420cfe58f5545",
+    "tests/canonical.test.js": "41e4cf7b851a671482f605599a921c91c0278a43b3d0f655ef7b6bbca9f0e0e8",
+    "tests/controls.test.js": "9bb7fc22874fd33b0b1d374f4997646d0c253fe771846e770fd9076b2c6635c5",
+    "tests/determinism.test.js": "2d08043389930471f6d68a64fe1e397012aa6df1e414440e93a566dafb606156",
+    "tests/injection.test.js": "ba0f438897e27f31dfb8763bdbb894eadf92916a2de454acf66369b8e250fac2",
+    "tests/resolver.test.js": "ce8d4bdabde557b50a8477555bcbe9ee1668dc52244bf8b27bdfa168a0040356",
+    "tests/run-battery.js": "d424e3e0e1f33d3ad4186094f02c9589bd58c6aa879ea64993aba4f671fcde9f",
+    "tests/schemas.test.js": "71bff4e972b3d056a5ce57560e85e3d9489bcb42852c08b29026c7234b8d0459"
+  }
+}
