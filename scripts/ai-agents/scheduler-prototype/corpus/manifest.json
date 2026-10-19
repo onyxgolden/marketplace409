@@ -34,7 +34,7 @@
     },
     {
       "path": "runner/run-guarded.js",
-      "sha256": "f23954d7e1366cbb5241cddb93d1ab6e67b024b9902c110fffea3eef92492f93"
+      "sha256": "eb99aed319cf678472f7c2fa9fc40ee95ddc6d3f410f2ef1c3ddc51471f82a25"
     },
     {
       "path": "runner/run-manual.js",
@@ -62,7 +62,7 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "fc12b31152025f0b485e781dfaf2b1ed24ec9ddc81105e9235ee1e87da5feb1a"
+      "sha256": "149550cd5e0b217cc555b401f5d33e380c1d82ecac450f0f19184094e6e3a199"
     },
     {
       "path": "tests/battery.test.js",
