@@ -63,13 +63,27 @@ const sha256File = (absPath) => {
   return createHash('sha256').update(readFileSync(absPath)).digest('hex');
 };
 
-// PM651-008 (fix round 7): pre-delegation unlisted-helper preflight.
-// Before ANY test discovery or spawn, inventory every .js file in tests/
-// and require each to be pinned in the authenticated manifest with a
-// matching hash. An unlisted helper must refuse before delegation.
-const allJsFiles = readdirSync(TESTS_DIR)
-  .filter((f) => f.endsWith('.js'))
-  .sort();
+// PM651-008 (fix round 8): recursive pre-delegation unlisted-helper preflight.
+// Before ANY test discovery or spawn, recursively inventory every .js file
+// under tests/ (including subdirectories) and require each to be pinned in
+// the authenticated manifest with a matching hash. An unlisted helper must
+// refuse before delegation. Directories containing .js files that are not
+// inventoried are also rejected.
+function collectJsFilesRecursive(dir, base = '') {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const rel = base ? `${base}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...collectJsFilesRecursive(join(dir, entry.name), rel));
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      files.push(rel);
+    }
+    // Non-.js files and other entry types are ignored (not executable).
+  }
+  return files.sort();
+}
+const allJsFiles = collectJsFilesRecursive(TESTS_DIR);
 for (const f of allJsFiles) {
   const relPath = `tests/${f}`;
   const expectedHash = manifestMap.get(relPath);

@@ -282,8 +282,19 @@ function runInner(task, context, started) {
       if (Array.isArray(arr)) {
         for (let i = 0; i < arr.length; i++) {
           resolver.chargeOutputRecord();
+          // PM651-003 (fix round 8): charge the per-finding source_ref citation
+          // record and its nested span. Each finding carries a source_ref object
+          // (a public record); many carry a nested span (another public record).
+          // These were previously uncharged.
+          const rec = arr[i];
+          if (rec && rec.source_ref && typeof rec.source_ref === 'object') {
+            resolver.chargeOutputRecord();
+            if (rec.source_ref.span && typeof rec.source_ref.span === 'object') {
+              resolver.chargeOutputRecord();
+            }
+          }
           // Charge nested conflicts within each resource.
-          const conflicts = arr[i] && arr[i].conflicts;
+          const conflicts = rec && rec.conflicts;
           if (Array.isArray(conflicts)) {
             for (let j = 0; j < conflicts.length; j++) {
               resolver.chargeOutputRecord();
@@ -295,6 +306,15 @@ function runInner(task, context, started) {
     // Charge completion and header records if present.
     if (analysis.completion) resolver.chargeOutputRecord();
     if (analysis.header) resolver.chargeOutputRecord();
+    // PM651-003 (fix round 8): charge the report-level citation object.
+    // Each report carries p.citation as a public record; it was previously
+    // uncharged. Charge its nested span as well if present.
+    if (p.citation && typeof p.citation === 'object') {
+      resolver.chargeOutputRecord();
+      if (p.citation.span && typeof p.citation.span === 'object') {
+        resolver.chargeOutputRecord();
+      }
+    }
   }
 
   // 4. Draft summary (inert, no approval/tasking language).

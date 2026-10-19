@@ -49,7 +49,7 @@
   },
   {
     "path": "src/index.js",
-    "sha256": "c052473144461c009dc2ed2b0840bb6032ab0523f51b3a7df91a533e17ab735f"
+    "sha256": "8ba75dba1153c683a05060fd1e86f027e9bdc95c0414021d449add13b03ede73"
   },
   {
     "path": "src/injection.js",
@@ -81,7 +81,7 @@
   },
   {
     "path": "tests/pm651.test.js",
-    "sha256": "1c155d3799114bd8e22d42552a84cbb35e656c1ad7d91bcec5681851f6ea9309"
+    "sha256": "37a2f2960052102229c8a678cc9859a6e15155106302e4d103f388abc63fc944"
   },
   {
     "path": "tests/run-battery.js",
@@ -89,7 +89,7 @@
   },
   {
     "path": "tests/run-tests.js",
-    "sha256": "bcb9ec9b6a7824a9af03504d41ea9e890e0f25c6a281b5fc291f867b25fcb03f"
+    "sha256": "34c1f591a1aba37b10b76f86bfaa7b1b9fdb0be0d98bf65ba1a5f7cd2d64a991"
   },
   {
     "path": "tests/run-verified.js",
