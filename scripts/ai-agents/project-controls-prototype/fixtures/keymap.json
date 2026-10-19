@@ -1,0 +1,60 @@
+{
+  "pkg-aczero-01": [
+    "fx-03-pkg-aczero-01"
+  ],
+  "pkg-basic-01": [
+    "fx-00-pkg-basic-01",
+    "fx-17-pkg-basic-01"
+  ],
+  "pkg-complete-01": [
+    "fx-15-pkg-complete-01"
+  ],
+  "pkg-cont-over-01": [
+    "fx-05-pkg-cont-over-01"
+  ],
+  "pkg-cont-zero-01": [
+    "fx-06-pkg-cont-zero-01"
+  ],
+  "pkg-dupline-01": [
+    "fx-18-pkg-dupline-01"
+  ],
+  "pkg-eur-01": [
+    "fx-14-pkg-eur-01"
+  ],
+  "pkg-evidenced-01": [
+    "fx-01-pkg-evidenced-01"
+  ],
+  "pkg-fraction-01": [
+    "fx-13-pkg-fraction-01"
+  ],
+  "pkg-header-forged-01": [
+    "fx-08-pkg-header-forged-01"
+  ],
+  "pkg-header-ok-01": [
+    "fx-07-pkg-header-ok-01"
+  ],
+  "pkg-inject-01": [
+    "fx-09-pkg-inject-01"
+  ],
+  "pkg-inject-02": [
+    "fx-10-pkg-inject-02"
+  ],
+  "pkg-inject-03": [
+    "fx-11-pkg-inject-03"
+  ],
+  "pkg-inject-04": [
+    "fx-12-pkg-inject-04"
+  ],
+  "pkg-malformed-01": [
+    "fx-19-pkg-malformed-01"
+  ],
+  "pkg-negadj-01": [
+    "fx-04-pkg-negadj-01"
+  ],
+  "pkg-nopv-01": [
+    "fx-02-pkg-nopv-01"
+  ],
+  "pkg-zero-01": [
+    "fx-16-pkg-zero-01"
+  ]
+}
