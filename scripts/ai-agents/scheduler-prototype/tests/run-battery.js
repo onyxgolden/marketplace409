@@ -109,8 +109,11 @@ for (const c of CASES) {
   const exp = c.expected;
   // Three consecutive runs must be byte-identical. Each runs under the
   // external watchdog; a hung case settles as EXECUTION_TIMEOUT, not a
-  // hung battery.
-  const runs = [await runGuarded(c.task, c.context), await runGuarded(c.task, c.context), await runGuarded(c.task, c.context)];
+  // hung battery. S648A-006: the guarded transport takes serialized JSON
+  // strings (inert); stringify once per case.
+  const taskJson = JSON.stringify(c.task);
+  const contextJson = JSON.stringify(c.context);
+  const runs = [await runGuarded(taskJson, contextJson), await runGuarded(taskJson, contextJson), await runGuarded(taskJson, contextJson)];
   const bytes = runs.map((r) => canonicalJson(r));
   let ok = check(c.case_id, bytes[0] === bytes[1] && bytes[1] === bytes[2], "three runs byte-identical", false);
   const result = runs[0];

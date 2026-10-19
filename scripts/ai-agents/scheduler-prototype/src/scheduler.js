@@ -319,13 +319,54 @@ export function analyzeComponent(args) {
 
   // S648-005: complete calculation basis. Each activity row cites not
   // only its own record but the predecessor ties driving its ES, the
-  // calendar record mapping ticks to civil dates, and the applicable
-  // task constraints (task input — explicit unavailable span state).
+  // SUCCESSOR ties driving its LS (reverse pass), the component deadline
+  // (explicit or implicit max-EF derivation), the calendar record mapping
+  // ticks to civil dates, and the applicable task constraints (task input
+  // — explicit unavailable span state). The anchor date and horizon are
+  // task-input rule values with explicit unavailable citations, not bare
+  // plain values.
   const calendarCitation = citationOf(cal);
+  const unavailableTaskInput = (reason) => ({
+    quoted_span: null,
+    span: null,
+    verification: "unavailable",
+    reason,
+  });
+  // S648-005: implicit deadline derivation. When no explicit deadline is
+  // set, D = maxEF; identify the contributing max-EF activity.
+  let implicitDeadlineSource = null;
+  if (deadlineTick === null || deadlineTick === undefined) {
+    let maxId = null;
+    for (const id of ids) {
+      if (maxId === null || EF.get(id) > EF.get(maxId)) maxId = id;
+    }
+    implicitDeadlineSource = maxId;
+  }
+  const deadlineBasis = (deadlineTick !== null && deadlineTick !== undefined)
+    ? {
+        tick: deadlineTick,
+        derivation: "explicit",
+        citation: unavailableTaskInput("explicit deadline from task input; no bundle source span"),
+      }
+    : {
+        tick: D,
+        derivation: "implicit_max_ef",
+        citation: implicitDeadlineSource !== null
+          ? {
+              quoted_span: null,
+              span: null,
+              verification: "derived",
+              reason: `implicit deadline D=maxEF=${D} from activity '${implicitDeadlineSource}'`,
+              contributing_activity: implicitDeadlineSource,
+              contributing_citation: citationOf(actById.get(implicitDeadlineSource)),
+            }
+          : unavailableTaskInput("implicit deadline; no activities"),
+      };
   const activityRows = ids.map((id) => {
     const a = actById.get(id);
     const es = ES.get(id);
     const ef = EF.get(id);
+    const ls = LS.get(id);
     const drivingTies = [];
     for (const p of preds.get(id)) {
       for (const t of tieByPair.get(`${p}|${id}`) ?? []) {
@@ -333,6 +374,22 @@ export function analyzeComponent(args) {
           drivingTies.push({
             tie_id: t.id,
             predecessor: p,
+            weight: weights.get(t.id),
+            citation: citationOf(t),
+          });
+        }
+      }
+    }
+    // S648-005: reverse-pass driving ties. LS(id) is the minimum over
+    // upper bounds and LS(succ)-w; identify the successor ties that
+    // achieve the minimum.
+    const drivingSuccessorTies = [];
+    for (const s of succs.get(id)) {
+      for (const t of tieByPair.get(`${id}|${s}`) ?? []) {
+        if (ls === LS.get(s) - weights.get(t.id)) {
+          drivingSuccessorTies.push({
+            tie_id: t.id,
+            successor: s,
             weight: weights.get(t.id),
             citation: citationOf(t),
           });
@@ -367,8 +424,21 @@ export function analyzeComponent(args) {
       citation: citationOf(a),
       calculation_basis: {
         predecessor_ties: drivingTies,
+        successor_ties: drivingSuccessorTies,
+        deadline: deadlineBasis,
         calendar: calendarCitation,
-        anchor_date: anchorDate,
+        anchor: {
+          date: anchorDate,
+          citation: unavailableTaskInput("anchor date from task input; no bundle source span"),
+        },
+        horizon: {
+          days: horizonDays,
+          citation: unavailableTaskInput("horizon_days rule value from task input; no bundle source span"),
+        },
+        release_tick: {
+          tick: a.release_tick,
+          citation: citationOf(a),
+        },
         applicable_constraints: applicableConstraints,
       },
     };

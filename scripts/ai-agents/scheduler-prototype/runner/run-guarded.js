@@ -17,16 +17,32 @@
  * - Worker-construction and clone failures return a bounded named refusal
  *   (TRANSPORT_REFUSED), never a thrown ReferenceError.
  *
+ * Hardening (fourth fix round — S648A-006 residual):
+ * - BOUNDED INERT SERIALIZED TRANSPORT. The parent thread must not
+ *   reflectively inspect attacker-controlled objects: Object.getOwnPropertyNames
+ *   and getOwnPropertyDescriptor trigger Proxy traps (e.g. ownKeys), so a
+ *   Proxy-wrapped argument hangs the parent BEFORE the watchdog timer
+ *   exists. There is no trap-free way to inspect a Proxy.
+ * - runGuarded now accepts ONLY JSON strings (typeof check is
+ *   non-executing — safe against any Proxy trap). Byte-bounded (256KiB).
+ *   Strings are inert: workerData cloning cannot execute code. The worker
+ *   parses, admits, and executes under the supervised timer.
+ * - Callers (battery, manual runner, tests) JSON.stringify first.
+ * - The factorySource path is unchanged: the factory string is evaluated
+ *   INSIDE the worker, so the parent never touches the constructed objects.
+ *
  * Usage: import { runGuarded, GUARD_TIMEOUT_MS } from "./runner/run-guarded.js";
- *   const result = await runGuarded(task, context); // always settles
+ *   const result = await runGuarded(JSON.stringify(task), JSON.stringify(context));
  */
 
 import { Worker } from "node:worker_threads";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertDeepNoAccessors } from "../src/schemas.js";
 
 export const GUARD_TIMEOUT_MS = 5000;
+// S648A-006: transport byte cap. Serialized inputs exceeding this refuse
+// before worker creation.
+export const GUARD_MAX_TRANSPORT_BYTES = 262144;
 
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "guarded-worker.js");
 
@@ -87,12 +103,18 @@ function transportEnvelope(code, reason) {
  * the worker's result, a worker error envelope, a transport refusal, or
  * the timeout envelope.
  *
- * task/context must be plain data. Descriptor-safe admission rejects
- * accessor properties before the parent thread clones anything; hang
- * probes construct malicious inputs inside the worker via `factorySource`
- * so the parent never touches them.
+ * S648A-006 (fourth fix round): taskJson/contextJson must be JSON strings
+ * — a bounded inert serialized transport. The typeof check is
+ * non-executing and cannot trigger Proxy traps; a Proxy (or any
+ * non-string) refuses with TRANSPORT_REFUSED before any reflective
+ * inspection. Byte-bounded at 256KiB. The worker parses and admits under
+ * the supervised timer.
+ *
+ * factorySource path: the factory string is evaluated INSIDE the worker,
+ * so the parent never touches the constructed objects. taskJson and
+ * contextJson are ignored (may be null) when factorySource is set.
  */
-export function runGuarded(task, context, timeoutMs = GUARD_TIMEOUT_MS, factorySource = null) {
+export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS, factorySource = null) {
   return new Promise((resolve) => {
     let settled = false;
     // S648A-006: settlement state initialized BEFORE any fallible
@@ -107,23 +129,36 @@ export function runGuarded(task, context, timeoutMs = GUARD_TIMEOUT_MS, factoryS
       }
     };
 
-    // S648A-006: descriptor-safe transport admission. structured-clone of
-    // workerData executes on the PARENT thread; without this gate, an
-    // enumerable getter (e.g. {get clock(){while(true){}}}) would run
-    // before the watchdog timer exists. Rejected here as bounded refusal.
+    // S648A-006: inert serialized transport admission. This typeof check
+    // is the non-executing admission primitive — it cannot trigger Proxy
+    // traps, unlike Object.getOwnPropertyNames/getOwnPropertyDescriptor.
+    // Non-strings (including Proxies) refuse here, before any reflection.
+    let workerDataPayload = null;
     if (!factorySource) {
-      try {
-        assertDeepNoAccessors(task, "transport.task");
-        assertDeepNoAccessors(context, "transport.context");
-      } catch (err) {
+      if (typeof taskJson !== "string" || typeof contextJson !== "string") {
         finish(
           transportEnvelope(
             "TRANSPORT_REFUSED",
-            `transport admission refused: ${String(err?.message ?? err).slice(0, 300)}`
+            "guarded transport requires serialized JSON strings; non-string (possibly Proxy) input refused before reflective inspection"
           )
         );
         return;
       }
+      if (
+        Buffer.byteLength(taskJson, "utf8") > GUARD_MAX_TRANSPORT_BYTES ||
+        Buffer.byteLength(contextJson, "utf8") > GUARD_MAX_TRANSPORT_BYTES
+      ) {
+        finish(
+          transportEnvelope(
+            "TRANSPORT_REFUSED",
+            `serialized transport exceeds ${GUARD_MAX_TRANSPORT_BYTES} bytes; refusing before worker creation`
+          )
+        );
+        return;
+      }
+      // Strings are inert: structured-clone of workerData cannot execute
+      // code. Parsing and admission happen inside the supervised worker.
+      workerDataPayload = { taskJson, contextJson };
     }
 
     let worker = null;
@@ -141,7 +176,7 @@ export function runGuarded(task, context, timeoutMs = GUARD_TIMEOUT_MS, factoryS
              }`,
             { eval: true }
           )
-        : new Worker(WORKER_PATH, { workerData: { task, context } });
+        : new Worker(WORKER_PATH, { workerData: workerDataPayload });
     } catch (err) {
       // S648A-006: construction/clone failure is a bounded named refusal,
       // never a thrown TDZ ReferenceError.

@@ -43,6 +43,11 @@ export class ResolutionError extends Error {
  *  payload byte is charged, incrementally, before inspection. */
 export function makeBudget() {
   const used = { objects: 0, spans: 0, payloadBytes: 0 };
+  // S648-006: idempotent object charging. The budget-integrated admission
+  // walk and the schema validators share one monotonic counter; each
+  // distinct object is charged exactly once no matter how many times it
+  // is visited. The WeakSet never invokes user code.
+  const chargedObjects = new WeakSet();
   return {
     used,
     countPayload(bytes, what) {
@@ -52,6 +57,22 @@ export function makeBudget() {
       }
     },
     countObject(what) {
+      used.objects += 1;
+      if (used.objects > BUDGET_LIMITS.maxObjects) {
+        throw new BudgetError("BUDGET_EXCEEDED", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}${what ? ` (at ${what})` : ""}`);
+      }
+    },
+    /**
+     * S648-006: charge a distinct object once. The FIRST call for a given
+     * object identity increments the counter (and refuses at #65); later
+     * calls for the same identity are free. This lets the admission walk
+     * and the validators share one counter without double-counting.
+     * Primitives are never charged.
+     */
+    chargeObjectOnce(obj, what) {
+      if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) return;
+      if (chargedObjects.has(obj)) return;
+      chargedObjects.add(obj);
       used.objects += 1;
       if (used.objects > BUDGET_LIMITS.maxObjects) {
         throw new BudgetError("BUDGET_EXCEEDED", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}${what ? ` (at ${what})` : ""}`);

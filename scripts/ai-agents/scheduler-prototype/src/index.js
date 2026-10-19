@@ -18,7 +18,7 @@
  */
 
 import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
-import { validateTask, validateContext, validateNetworkRecord, splitTopLevelArray, assertDeepNoAccessors, SchemaError } from "./schemas.js";
+import { validateTask, validateContext, validateNetworkRecord, splitTopLevelArray, admitGraph, assertDeepNoAccessors, SchemaError } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
 import { analyzeComponent } from "./scheduler.js";
@@ -35,11 +35,18 @@ export const SCHEMA_VERSION = "1";
  * (typeof check, then read) invoked an enumerable getter twice on the
  * refusal path; a nonenumerable getter bypassed detection entirely.
  * getOwnPropertyDescriptor never invokes accessors.
+ *
+ * S648-006: the echoed ID is byte-bounded. A 300KB task_id must not
+ * become a 300KB refusal envelope; oversized IDs get a documented
+ * bounded marker instead of the raw value.
  */
 function requestTaskId(task) {
   if (task !== null && typeof task === "object") {
     const desc = Object.getOwnPropertyDescriptor(task, "task_id");
     if (desc && typeof desc.get !== "function" && typeof desc.set !== "function" && typeof desc.value === "string") {
+      if (Buffer.byteLength(desc.value, "utf8") > 256) {
+        return "[task-id-exceeds-256-bytes]";
+      }
       return desc.value;
     }
   }
@@ -105,6 +112,31 @@ function refused(taskId, code, severity, reason, extra = {}) {
   });
 }
 
+/**
+ * S648-006: byte-bounded refusal. Every exit path — including early
+ * structural refusals — must respect the exact output byte cap. If the
+ * refusal envelope itself would exceed maxOutputBytes (e.g. an
+ * oversized task_id echoed raw), fall back to a minimal bounded
+ * envelope with a truncated reason. Ordinary refusals pass through
+ * unchanged.
+ */
+function boundedRefused(taskId, code, severity, reason, extra = {}) {
+  const env = refused(taskId, code, severity, reason, extra);
+  if (canonicalByteLength(env) <= BUDGET_LIMITS.maxOutputBytes) return env;
+  // Oversized: rebuild with a bounded marker ID and truncated reason.
+  const minimal = refused(
+    "[refusal-exceeds-output-cap]",
+    code,
+    severity,
+    String(reason).slice(0, 500)
+  );
+  // If even the minimal envelope exceeds (pathological), truncate further.
+  if (canonicalByteLength(minimal) > BUDGET_LIMITS.maxOutputBytes) {
+    minimal.diagnostics[0].reason = String(reason).slice(0, 100);
+  }
+  return minimal;
+}
+
 function emptyReport() {
   return {
     components: [],
@@ -116,31 +148,44 @@ function emptyReport() {
 }
 
 export function run(task, context) {
-  // S648A-001: descriptor-safe closed admission FIRST, before the budget
-  // exists and before any field is read. Rejects accessor properties at
-  // any depth (enumerable or not); after this passes, no getter can fire
-  // during validation, cloning, or serialization.
+  // S648-001: the monotonic object budget exists BEFORE any admission or
+  // validation. S648-006: descriptor-safe admission is integrated with
+  // this budget — admitGraph charges each distinct object BEFORE its
+  // descriptor fields are examined, so candidate #65 refuses with
+  // BUDGET_EXCEEDED without touching that candidate at all. The old
+  // pre-budget full-graph sweep is gone; it defeated the cap by visiting
+  // every candidate for free.
+  const budget = makeBudget();
   try {
-    assertDeepNoAccessors(task, "task");
-    assertDeepNoAccessors(context, "context");
+    admitGraph(task, "task", budget);
+    admitGraph(context, "context", budget);
   } catch (e) {
-    if (e instanceof SchemaError) return refused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
+    if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);
+    if (e instanceof SchemaError) return boundedRefused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
     throw e;
   }
 
-  const clockRaw = context && typeof context === "object" ? context.clock : undefined;
-  if (!Number.isFinite(clockRaw)) return refused(requestTaskId(task), "INVALID_INPUT", "error", "context.clock must be a finite number");
+  // S648A-001: clock must be an own data property; validateContext
+  // enforces this, but the early gate must not read through a prototype
+  // either. A missing/inherited clock refuses here.
+  const clockDesc = context !== null && typeof context === "object"
+    ? Object.getOwnPropertyDescriptor(context, "clock")
+    : undefined;
+  const clockRaw = clockDesc && typeof clockDesc.get !== "function" && typeof clockDesc.set !== "function"
+    ? clockDesc.value
+    : undefined;
+  if (!Number.isFinite(clockRaw)) return boundedRefused(requestTaskId(task), "INVALID_INPUT", "error", "context.clock must be a finite number");
 
-  // S648-001: the monotonic object budget exists BEFORE task validation.
-  // validateTask charges each task/control candidate before reading its
-  // fields, under the same counter as context and network records.
-  const budget = makeBudget();
+  // S648-001: validateTask charges each task/control candidate before
+  // reading its fields, under the same counter as context and network
+  // records (idempotent via chargeObjectOnce — admission already charged
+  // these objects, so validation charges are free).
   let validatedTask;
   try {
     validatedTask = validateTask(task, budget);
   } catch (e) {
-    if (e instanceof BudgetError) return refused(requestTaskId(task), e.code, "error", e.message);
-    if (e instanceof SchemaError) return refused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
+    if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);
+    if (e instanceof SchemaError) return boundedRefused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
     throw e;
   }
   const taskId = validatedTask.task_id;
@@ -148,12 +193,12 @@ export function run(task, context) {
   try {
     budget.countPayload(canonicalJson(task), "task payload");
   } catch (e) {
-    if (e instanceof BudgetError) return refused(taskId, e.code, "error", e.message);
+    if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
     throw e;
   }
 
   if (validatedTask.kind === "prohibited") {
-    return refused(
+    return boundedRefused(
       taskId,
       "ACTION_DENIED",
       "critical",
@@ -165,7 +210,7 @@ export function run(task, context) {
   // unsupported in slice 1 — refuse before any math, no silent defaults.
   for (const c of validatedTask.constraints) {
     if (c.kind === "ALAP") {
-      return refused(taskId, "UNSUPPORTED_CONSTRAINT", "error", `constraint kind 'ALAP' on activity '${c.activity_id}' is explicitly unsupported in slice 1; no undocumented default applied`);
+      return boundedRefused(taskId, "UNSUPPORTED_CONSTRAINT", "error", `constraint kind 'ALAP' on activity '${c.activity_id}' is explicitly unsupported in slice 1; no undocumented default applied`);
     }
   }
 
@@ -173,36 +218,36 @@ export function run(task, context) {
   try {
     ctx = validateContext(context, budget);
   } catch (e) {
-    if (e instanceof BudgetError) return refused(taskId, e.code, "error", e.message);
-    if (e instanceof SchemaError) return refused(taskId, "INVALID_INPUT", "error", `context: ${e.message}`);
+    if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
+    if (e instanceof SchemaError) return boundedRefused(taskId, "INVALID_INPUT", "error", `context: ${e.message}`);
     throw e;
   }
 
   // Authenticated request authority: Jason or his registered Muse relay.
   if (ctx.principal.revoked) {
-    return refused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
+    return boundedRefused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
   }
   const validFrom = Date.parse(ctx.principal.valid_from);
   const expiresAt = Date.parse(ctx.principal.expires_at);
   if (!(validFrom <= ctx.clock && ctx.clock <= expiresAt)) {
-    return refused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
+    return boundedRefused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
   }
 
   // Horizon policy: host criteria caps the requested horizon.
   if (validatedTask.horizon_days > ctx.criteria.max_horizon_days) {
-    return refused(taskId, "INVALID_INPUT", "error", `horizon_days ${validatedTask.horizon_days} exceeds host policy max ${ctx.criteria.max_horizon_days}`);
+    return boundedRefused(taskId, "INVALID_INPUT", "error", `horizon_days ${validatedTask.horizon_days} exceeds host policy max ${ctx.criteria.max_horizon_days}`);
   }
 
   // Resolve the network bundle.
   if (!hasReadGrant(validatedTask.network_bundle_ref, ctx.readGrants)) {
-    return refused(taskId, "READ_DENIED", "error", `read grant missing for network bundle ${validatedTask.network_bundle_ref.repo}/${validatedTask.network_bundle_ref.path}`);
+    return boundedRefused(taskId, "READ_DENIED", "error", `read grant missing for network bundle ${validatedTask.network_bundle_ref.repo}/${validatedTask.network_bundle_ref.path}`);
   }
   let bundleResolved;
   try {
     bundleResolved = resolveSourceRef(validatedTask.network_bundle_ref, ctx.sources, budget, "network bundle source");
   } catch (e) {
-    if (e instanceof ResolutionError) return refused(taskId, e.code, "error", `network bundle: ${e.message}`);
-    if (e instanceof BudgetError) return refused(taskId, e.code, "error", e.message);
+    if (e instanceof ResolutionError) return boundedRefused(taskId, e.code, "error", `network bundle: ${e.message}`);
+    if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
     throw e;
   }
 
@@ -211,7 +256,7 @@ export function run(task, context) {
   try {
     spans = splitTopLevelArray(bundleResolved.text, "network bundle");
   } catch (e) {
-    if (e instanceof SchemaError) return refused(taskId, "INVALID_INPUT", "error", e.message);
+    if (e instanceof SchemaError) return boundedRefused(taskId, "INVALID_INPUT", "error", e.message);
     throw e;
   }
 
@@ -237,7 +282,7 @@ export function run(task, context) {
       verifyRecordSpan(bundleBytes, spans[i].startByte, spans[i].endByte, spanText, budget, `network[${i}] span`);
     } catch (e) {
       if (e instanceof ResolutionError) {
-        return refused(taskId, "SPAN_MISMATCH", "error", `network bundle entry ${i} span verification failed: ${e.message}`);
+        return boundedRefused(taskId, "SPAN_MISMATCH", "error", `network bundle entry ${i} span verification failed: ${e.message}`);
       }
       if (e instanceof BudgetError) {
         budgetExceeded = true;
@@ -249,14 +294,14 @@ export function run(task, context) {
     try {
       raw = JSON.parse(spanText);
     } catch {
-      return refused(taskId, "INVALID_INPUT", "error", `network bundle entry ${i} is not valid JSON`);
+      return boundedRefused(taskId, "INVALID_INPUT", "error", `network bundle entry ${i} is not valid JSON`);
     }
     let rec;
     try {
       rec = validateNetworkRecord(raw, `network bundle[${i}]`);
     } catch (e) {
       if (e instanceof SchemaError) {
-        return refused(taskId, "INVALID_INPUT", "error", `malformed network record at index ${i}: ${e.message}`);
+        return boundedRefused(taskId, "INVALID_INPUT", "error", `malformed network record at index ${i}: ${e.message}`);
       }
       throw e;
     }
@@ -269,7 +314,7 @@ export function run(task, context) {
   }
 
   if (budgetExceeded) {
-    return refused(taskId, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining records`);
+    return boundedRefused(taskId, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining records`);
   }
 
   // Duplicate IDs are rejected outright — no first-wins, no dedup.
@@ -280,7 +325,7 @@ export function run(task, context) {
     if (r.record === "calendar") continue;
     const id = r.id;
     if (seenIds.has(id)) {
-      return refused(taskId, "INVALID_INPUT", "error", `duplicate ${r.record} id '${id}'; duplicates are rejected outright`);
+      return boundedRefused(taskId, "INVALID_INPUT", "error", `duplicate ${r.record} id '${id}'; duplicates are rejected outright`);
     }
     seenIds.set(id, r.record);
   }
@@ -304,6 +349,9 @@ export function run(task, context) {
         source_ref: null,
         record_id: qid,
         reason: `record '${qid}' note carries a seeded directive family; quarantined and excluded from the network`,
+        // S648-005: material findings carry evidence states.
+        evidence_state: "verified",
+        evidence: { record_id: qid, citation: r._citation ?? null },
       });
     } else {
       admitted.push(r);
@@ -425,7 +473,7 @@ export function run(task, context) {
     } else {
       const explicitDeadline = validatedTask.deadlines[componentId] ?? null;
       if (explicitDeadline !== null) {
-        return refused(
+        return boundedRefused(
           taskId,
           "DISCONNECTED_COMPONENT",
           "error",
@@ -451,7 +499,7 @@ export function run(task, context) {
   const knownActivityIds = new Set(admitted.filter((r) => r.record === "activity").map((r) => r.id));
   for (const c of validatedTask.constraints) {
     if (!knownActivityIds.has(c.activity_id)) {
-      return refused(
+      return boundedRefused(
         taskId,
         "UNKNOWN_CONSTRAINT_REFERENCE",
         "error",
@@ -505,6 +553,9 @@ export function run(task, context) {
         source_ref: null,
         record_id: grp.componentId,
         reason: failed.reason,
+        // S648-005: material findings carry evidence states.
+        evidence_state: "verified",
+        evidence: { tie_id: dt.tie.id, citation: dt.tie._citation ?? null },
       });
       continue;
     }
@@ -528,6 +579,9 @@ export function run(task, context) {
         source_ref: null,
         record_id: grp.componentId,
         reason: result.reason,
+        // S648-005: material findings carry evidence states.
+        evidence_state: result.detail ? "verified" : "unavailable",
+        evidence: result.detail ?? null,
       });
     }
   }
@@ -578,6 +632,12 @@ export function run(task, context) {
         source_ref: null,
         record_id: id,
         reason: `claimed ${mismatches.map((f) => `${f}=${claimed[f]}`).join(", ")} vs computed ${mismatches.map((f) => `${f}=${c[f]}`).join(", ")} for activity '${id}'; both preserved, claim not verified`,
+        // S648-005: material findings carry evidence states.
+        evidence_state: "mismatch",
+        evidence: {
+          claimed_citation: unavailableCitation("claimed values from task input; no bundle source span"),
+          computed_citation: c.citation ?? null,
+        },
       });
     }
   }
@@ -638,6 +698,12 @@ export function run(task, context) {
         source_ref: null,
         record_id: null,
         reason: `claimed critical path for '${compId}' is not a directed chain of tight critical edges (breaks at ${JSON.stringify(badStep)}); computed subgraph preserved`,
+        // S648-005: material findings carry evidence states.
+        evidence_state: "mismatch",
+        evidence: {
+          claimed_citation: unavailableCitation("claimed path from task input; no bundle source span"),
+          computed_citation: comp.critical_subgraph.citation ?? null,
+        },
       });
     }
   }
@@ -699,7 +765,7 @@ export function run(task, context) {
     result.source_refs.length +
     result.report.components.reduce((n, c) => n + c.activities.length + c.edges.length, 0);
   if (outputRecords > BUDGET_LIMITS.maxOutputRecords || canonicalByteLength(result) > BUDGET_LIMITS.maxOutputBytes) {
-    return refused(taskId, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
+    return boundedRefused(taskId, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
   }
   return result;
 }

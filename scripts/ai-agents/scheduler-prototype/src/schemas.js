@@ -103,14 +103,79 @@ export function assertNoAccessors(obj, where) {
 }
 
 /**
+ * S648-006 / S648A-001: budget-integrated descriptor-safe admission.
+ * Replaces the pre-budget full-graph sweep. Walks the object graph with
+ * getOwnPropertyDescriptor (never invoking accessors), charging each
+ * distinct object against the live monotonic budget BEFORE any of its
+ * descriptor fields are examined. Candidate #65 refuses with
+ * BUDGET_EXCEEDED without touching that candidate at all — preserving
+ * the "candidate65 and later untouched" semantics the old sweep defeated.
+ *
+ * Also rejects: accessor properties, function/symbol values, symbol keys,
+ * objects whose prototype is not Object.prototype/Array.prototype/null
+ * (inherited controls like a prototype clock getter are unsupported),
+ * and graphs deeper than 32 (the contract depth, not 64).
+ *
+ * The walk is deterministic: depth-first, Object.getOwnPropertyNames
+ * order. Primitives are not charged. Shared/cyclic references are
+ * visited once (WeakSet).
+ */
+export function admitGraph(value, where, budget, maxDepth = 32) {
+  if (!budget || typeof budget.chargeObjectOnce !== "function") {
+    fail(where, "internal: admitGraph requires a live budget");
+  }
+  const seen = new WeakSet();
+  const walk = (v, path, depth) => {
+    if (v === null || typeof v !== "object") return;
+    if (depth > maxDepth) {
+      fail(where, `object graph exceeds max depth ${maxDepth} at '${path}'; refusing`);
+    }
+    if (seen.has(v)) return;
+    seen.add(v);
+    // S648-006: charge BEFORE examining this candidate's descriptors.
+    // The 65th distinct object throws here; its fields are never read.
+    budget.chargeObjectOnce(v, path);
+    // S648A-001: reject inherited controls. Only plain objects/arrays
+    // (Object.prototype, Array.prototype, or null prototype) are
+    // admitted; a custom prototype could carry inherited getters.
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) {
+      fail(where, `unsupported prototype at '${path}'; inherited controls are not plain data; refusing`);
+    }
+    for (const k of Object.getOwnPropertyNames(v)) {
+      const desc = Object.getOwnPropertyDescriptor(v, k);
+      if (!desc) continue;
+      if (typeof desc.get === "function" || typeof desc.set === "function") {
+        fail(where, `accessor property '${path}.${k}' is not plain data; refusing`);
+      }
+      if (typeof desc.value === "function") {
+        fail(where, `function property '${path}.${k}' is not plain data; refusing`);
+      }
+      if (typeof desc.value === "symbol") {
+        fail(where, `symbol property '${path}.${k}' is not plain data; refusing`);
+      }
+      walk(desc.value, `${path}.${String(k)}`, depth + 1);
+    }
+    for (const s of Object.getOwnPropertySymbols(v)) {
+      fail(where, `symbol-keyed property '${path}.${String(s)}' is not plain data; refusing`);
+    }
+  };
+  walk(value, where, 0);
+}
+
+/**
  * S648A-001 / S648A-006: deep descriptor-safe admission sweep. Walks the
  * entire object graph with getOwnPropertyDescriptor (never invoking
  * accessors), rejecting accessor properties, function values, and
  * symbol-keyed properties at any depth. Depth-bounded and cycle-safe.
  * This is the pre-transport and pre-validation gate: after it passes,
  * structured-clone and field reads cannot execute request-supplied code.
+ *
+ * DEPRECATED for the run() path: use admitGraph() which integrates with
+ * the live budget. Kept for backward compatibility; defaults to the
+ * contract depth of 32.
  */
-export function assertDeepNoAccessors(value, where, maxDepth = 64) {
+export function assertDeepNoAccessors(value, where, maxDepth = 32) {
   const seen = new WeakSet();
   const walk = (v, path, depth) => {
     if (v === null || typeof v !== "object") return;
@@ -215,34 +280,48 @@ export function validateReadGrant(value, where) {
 }
 
 export function validateContext(context, budget) {
-  if (!budget || typeof budget.countObject !== "function") fail("context", "internal: validateContext requires a live budget");
+  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateContext requires a live budget");
+  // S648-006: idempotent charging shared with the admission walk.
+  const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   // S648-006: the context root itself is a consulted candidate.
-  budget.countObject("context");
+  charge(context, "context");
   if (!isPlainObject(context)) fail("context", "must be an object");
   assertNoAccessors(context, "context");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria"], "context");
-  const clock = context.clock;
+  // S648A-001: clock must be an OWN data property. An inherited getter
+  // (prototype clock) is an unsupported control and refuses; the old
+  // direct read accepted it and invoked it.
+  const clockDesc = Object.getOwnPropertyDescriptor(context, "clock");
+  if (!clockDesc || typeof clockDesc.get === "function" || typeof clockDesc.set === "function") {
+    fail("context", "clock must be an own data property; inherited accessors are not plain data; refusing");
+  }
+  const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
   // S648-006: the sources container is consulted (key enumeration).
-  budget.countObject("context.sources");
+  charge(context.sources, "context.sources");
   assertNoAccessors(context.sources, "context.sources");
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
   for (const sk of sourceKeys) {
-    budget.countObject(`context.sources[${sk}]`);
     const entry = context.sources[sk];
+    charge(entry, `context.sources[${sk}]`);
     if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
     assertNoAccessors(entry, `context.sources[${sk}]`);
     const revs = entry.revisions;
     if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+    charge(revs, `context.sources[${sk}].revisions`);
     assertNoAccessors(revs, `context.sources[${sk}].revisions`);
     for (const commit of Object.keys(revs)) {
-      budget.countObject(`context.sources[${sk}]@${commit}`);
       const rev = revs[commit];
+      charge(rev, `context.sources[${sk}]@${commit}`);
       if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
       assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
+      // S648-006: closed registration schema. Unknown metadata fields are
+      // refused outright instead of retaining unbounded registry bytes
+      // (the 300KB unrecognized-string probe).
+      exactKeys(rev, ["text", "blob", "label", "expected_records"], `context.sources[${sk}]@${commit}`);
       // S648A-002: grants precede bytes. The revision TEXT is not read,
       // payload-charged, or inspected here — only its descriptor is
       // checked (data property, string-typed, no accessor invocation).
@@ -279,19 +358,20 @@ export function validateContext(context, budget) {
   // before its callback runs; an index loop with an own-descriptor check
   // charges and reads each grant safely. Sparse arrays refuse structurally.
   assertDenseArray(context.readGrants, "context.readGrants");
+  charge(context.readGrants, "context.readGrants");
   const readGrants = [];
   for (let i = 0; i < context.readGrants.length; i++) {
     const desc = Object.getOwnPropertyDescriptor(context.readGrants, i);
     if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
       fail("context", `readGrants[${i}] must be a plain data property; refusing`);
     }
-    budget.countObject(`context.readGrants[${i}]`);
+    charge(desc.value, `context.readGrants[${i}]`);
     readGrants.push(validateReadGrant(desc.value, `context.readGrants[${i}]`));
   }
 
-  budget.countObject("context.principal");
+  charge(context.principal, "context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
-  budget.countObject("context.criteria");
+  charge(context.criteria, "context.criteria");
   const criteria = validateCriteria(context.criteria, "context.criteria", budget);
 
   return { clock, sources: context.sources, readGrants, principal, criteria };
@@ -366,8 +446,11 @@ export function validateNetworkRecord(value, where) {
  * unchanged.
  */
 export function validateTask(task, budget = null) {
-  const charge = (what) => { if (budget) budget.countObject(what); };
-  charge("task");
+  // S648-006: idempotent charging. The budget-integrated admission walk
+  // (admitGraph) charges each distinct object first; these calls are
+  // no-ops for already-admitted objects, keeping one monotonic counter.
+  const charge = (obj, what) => { if (budget) budget.chargeObjectOnce(obj, what); };
+  charge(task, "task");
   if (!isPlainObject(task)) fail("task", "must be an object");
   assertNoAccessors(task, "task");
   exactKeys(task, ["schema_version", "task_id", "operation", "fixture_refs", "options"], "task");
@@ -377,18 +460,18 @@ export function validateTask(task, budget = null) {
 
   if (!isPlainObject(task.fixture_refs)) fail("task", "fixture_refs must be an object");
   // S648-006: consulted containers are charged.
-  charge("task.fixture_refs");
+  charge(task.fixture_refs, "task.fixture_refs");
   exactKeys(task.fixture_refs, ["network_bundle"], "task.fixture_refs");
-  charge("task.fixture_refs.network_bundle");
+  charge(task.fixture_refs.network_bundle, "task.fixture_refs.network_bundle");
   const network_bundle_ref = validateSourceRef(task.fixture_refs.network_bundle, "task.fixture_refs.network_bundle");
 
   if (!isPlainObject(task.options)) fail("task", "options must be an object");
-  charge("task.options");
+  charge(task.options, "task.options");
   exactKeys(task.options, ["population", "anchors", "horizon_days", "deadlines", "constraints", "claimed"], "task.options");
 
   const pop = task.options.population;
   if (!isPlainObject(pop)) fail("task.options.population", "must be an object");
-  charge("task.options.population");
+  charge(pop, "task.options.population");
   exactKeys(pop, ["declared_total", "complete"], "task.options.population");
   if (!Number.isInteger(pop.declared_total) || pop.declared_total < 0) fail("task.options.population", "declared_total must be a nonnegative integer");
   if (typeof pop.complete !== "boolean") fail("task.options.population", "complete must be a boolean");
@@ -396,12 +479,11 @@ export function validateTask(task, budget = null) {
   const anchors = task.options.anchors;
   if (!isPlainObject(anchors)) fail("task.options.anchors", "must be an object");
   // S648-006: the anchors container is consulted (key enumeration).
-  charge("task.options.anchors");
+  charge(anchors, "task.options.anchors");
   const anchorKeys = Object.keys(anchors);
   if (anchorKeys.length === 0 || anchorKeys.length > 16) fail("task.options.anchors", "must have 1..16 component anchors");
   const anchorsOut = {};
   for (const c of anchorKeys) {
-    charge(`task.options.anchors[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.anchors", `invalid component '${c}'`);
     const dv = anchors[c];
     if (typeof dv !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dv) || !isRealDate(dv)) {
@@ -415,10 +497,9 @@ export function validateTask(task, budget = null) {
   const deadlinesIn = task.options.deadlines === undefined ? {} : task.options.deadlines;
   if (!isPlainObject(deadlinesIn)) fail("task.options.deadlines", "must be an object");
   // S648-006: the deadlines container is consulted (key enumeration).
-  charge("task.options.deadlines");
+  charge(deadlinesIn, "task.options.deadlines");
   const deadlines = {};
   for (const c of Object.keys(deadlinesIn)) {
-    charge(`task.options.deadlines[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.deadlines", `invalid component '${c}'`);
     const v = deadlinesIn[c];
     if (!Number.isInteger(v) || v < 0 || v > ABS_TICK_LIMIT) fail("task.options.deadlines", `deadline for '${c}' must be an integer 0..366`);
@@ -432,13 +513,14 @@ export function validateTask(task, budget = null) {
   // own-descriptor check charges candidate65 BEFORE its fields are read.
   // Sparse arrays refuse structurally.
   assertDenseArray(constraintsIn, "task.options.constraints");
+  charge(constraintsIn, "task.options.constraints");
   const constraints = [];
   for (let i = 0; i < constraintsIn.length; i++) {
     const desc = Object.getOwnPropertyDescriptor(constraintsIn, i);
     if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
       fail("task.options.constraints", `slot ${i} must be a plain data property; refusing`);
     }
-    charge(`task.options.constraints[${i}]`);
+    charge(desc.value, `task.options.constraints[${i}]`);
     const c = desc.value;
     const where = `task.options.constraints[${i}]`;
     if (!isPlainObject(c)) fail(where, "must be an object");
@@ -455,24 +537,23 @@ export function validateTask(task, budget = null) {
   const claimedIn = task.options.claimed === undefined ? {} : task.options.claimed;
   if (!isPlainObject(claimedIn)) fail("task.options.claimed", "must be an object");
   // S648-006: the claimed containers are consulted (key enumeration).
-  charge("task.options.claimed");
+  charge(claimedIn, "task.options.claimed");
   exactKeys(claimedIn, ["activities", "critical_paths"], "task.options.claimed");
   const claimedActivitiesIn = claimedIn.activities === undefined ? {} : claimedIn.activities;
   if (!isPlainObject(claimedActivitiesIn)) fail("task.options.claimed.activities", "must be an object");
-  charge("task.options.claimed.activities");
+  charge(claimedActivitiesIn, "task.options.claimed.activities");
   const claimedActivities = {};
   for (const id of Object.keys(claimedActivitiesIn)) {
-    charge(`task.options.claimed.activities[${id}]`);
-    const where = `task.options.claimed.activities.${id}`;
     if (!RECORD_ID_RE.test(id)) fail("task.options.claimed.activities", `invalid activity id '${id}'`);
     const v = claimedActivitiesIn[id];
-    if (!isPlainObject(v)) fail(where, "must be an object");
-    assertNoAccessors(v, where);
-    exactKeys(v, ["es", "ef", "ls", "lf", "total_float"], where);
+    if (!isPlainObject(v)) fail(`task.options.claimed.activities.${id}`, "must be an object");
+    charge(v, `task.options.claimed.activities[${id}]`);
+    assertNoAccessors(v, `task.options.claimed.activities.${id}`);
+    exactKeys(v, ["es", "ef", "ls", "lf", "total_float"], `task.options.claimed.activities.${id}`);
     const out = {};
     for (const k of ["es", "ef", "ls", "lf", "total_float"]) {
       const n = v[k];
-      if (!Number.isInteger(n) || n < -ABS_TICK_LIMIT || n > ABS_TICK_LIMIT) fail(where, `'${k}' must be an integer -366..366`);
+      if (!Number.isInteger(n) || n < -ABS_TICK_LIMIT || n > ABS_TICK_LIMIT) fail(`task.options.claimed.activities.${id}`, `'${k}' must be an integer -366..366`);
       out[k] = n;
     }
     claimedActivities[id] = out;
@@ -480,15 +561,15 @@ export function validateTask(task, budget = null) {
   const claimedPathsIn = claimedIn.critical_paths === undefined ? {} : claimedIn.critical_paths;
   if (!isPlainObject(claimedPathsIn)) fail("task.options.claimed.critical_paths", "must be an object");
   // S648-006: the critical_paths container is consulted (key enumeration).
-  charge("task.options.claimed.critical_paths");
+  charge(claimedPathsIn, "task.options.claimed.critical_paths");
   const claimedPaths = {};
   for (const c of Object.keys(claimedPathsIn)) {
-    charge(`task.options.claimed.critical_paths[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.claimed.critical_paths", `invalid component '${c}'`);
     const p = claimedPathsIn[c];
     if (!Array.isArray(p) || p.length === 0 || p.length > 256) fail("task.options.claimed.critical_paths", `path for '${c}' must be a non-empty array of at most 256 activity ids`);
     // S648A-001: sparse path arrays refuse structurally.
     assertDenseArray(p, `task.options.claimed.critical_paths[${c}]`);
+    charge(p, `task.options.claimed.critical_paths[${c}]`);
     for (const id of p) {
       if (typeof id !== "string" || !RECORD_ID_RE.test(id)) fail("task.options.claimed.critical_paths", `invalid activity id in path for '${c}'`);
     }

@@ -44,21 +44,22 @@ test("100-record bundle refuses BUDGET_EXCEEDED (no truncation)", () => {
   assert.deepEqual(r.report.components, []);
 });
 
-test("45 records fit exactly at the 64-object cap (new taxonomy)", () => {
-  // S648-006: complete candidate taxonomy.
+test("43 records fit exactly at the 64-object cap (new taxonomy)", () => {
+  // S648-006 (fourth fix round): complete candidate taxonomy with
+  // budget-integrated admission.
   // Task(11): task, fixture_refs, fixture_refs.network_bundle, options,
-  //   population, anchors, anchors[c1], deadlines, claimed,
+  //   population, anchors, deadlines, constraints[], claimed,
   //   claimed.activities, claimed.critical_paths
-  // Context(7): context, sources, sources[key], sources[key]@commit,
-  //   readGrants[0], principal, criteria
-  // Resolve(1) + 45 records = 64
-  const r = run(taskFor("boundary-45", 45), ctxFor("boundary-45"));
+  // Context(9): context, sources, sources[key], revisions, revision,
+  //   readGrants[], readGrants[0], principal, criteria
+  // Resolve(1) + 43 records = 64
+  const r = run(taskFor("boundary-43", 43), ctxFor("boundary-43"));
   assert.equal(r.status, "REPORT_READY");
 });
 
-test("54 records refuse over budget with container charges", () => {
-  // 11 + 7 + 1 + 54 = 73 > 64 -> BUDGET_EXCEEDED
-  const r = run(taskFor("boundary-54", 54), ctxFor("boundary-54"));
+test("44 records refuse over budget with container charges", () => {
+  // 11 + 9 + 1 + 44 = 65 > 64 -> BUDGET_EXCEEDED
+  const r = run(taskFor("boundary-44", 44), ctxFor("boundary-44"));
   assert.equal(r.status, "REFUSED");
   assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));
 });
@@ -106,19 +107,23 @@ function taskWithConstraints(n, { invalidFrom = -1 } = {}) {
   };
 }
 
-test("task-side: 43 constraints fit exactly via full run (new taxonomy)", () => {
-  // S648-006: task(11 + 43 constraints) + context(7) + resolve(1) + 2 records = 64
+test("task-side: 41 constraints fit exactly via full run (new taxonomy)", () => {
+  // S648-006 (fourth fix round): task(11 + 41 constraints) + context(9) +
+  // resolve(1) + 2 records = 64.
   // Task: task, fixture_refs, fixture_refs.network_bundle, options,
-  //   population, anchors, anchors[c1], deadlines, claimed,
-  //   claimed.activities, claimed.critical_paths (11) + 43 constraints
-  const r = run(taskWithConstraints(43), ctxFor("single-activity"));
+  //   population, anchors, deadlines, constraints[], claimed,
+  //   claimed.activities, claimed.critical_paths (11) + 41 constraints
+  // Context: context, sources, sources[key], revisions, revision,
+  //   readGrants[], readGrants[0], principal, criteria (9)
+  const r = run(taskWithConstraints(41), ctxFor("single-activity"));
   assert.equal(r.status, "REPORT_READY");
 });
 
 test("task-side: 61st constraint refuses BEFORE inspection (sentinels untouched)", () => {
-  // 61 constraints; the 61st (index 60) is an invalid sentinel. Task base
-  // is 4, so charging constraint[60] is attempt 65 -> BUDGET_EXCEEDED
-  // during validateTask, before the sentinel's fields are ever read.
+  // 61 constraints; the 61st (index 60) is an invalid sentinel. Admission
+  // charges constraints[0] as #9, so constraints[56] is #65 ->
+  // BUDGET_EXCEEDED during admission, before the sentinel's fields are
+  // ever read.
   const r = run(taskWithConstraints(61, { invalidFrom: 60 }), ctxFor("single-activity"));
   assert.equal(r.status, "REFUSED");
   assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));

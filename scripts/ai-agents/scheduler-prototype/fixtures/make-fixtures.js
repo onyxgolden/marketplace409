@@ -298,6 +298,30 @@ for (let i = 0; i < 54; i++) {
 sent.push({ record: "activity", id: "BAD ID WITH SPACES AND !!!", component: "c1", duration_workdays: 1, release_tick: 0 });
 addNetwork("sentinel-55", sent);
 
+// S648-006 (fourth fix round): corrected candidate taxonomy with
+// budget-integrated admission.
+// Task(11): task, fixture_refs, network_bundle, options, population,
+//   anchors, deadlines, constraints[], claimed, claimed.activities,
+//   claimed.critical_paths
+// Context(9): context, sources, sources[key], revisions, revision,
+//   readGrants[], readGrants[0], principal, criteria
+// Resolve(1) + N records <= 64 => N=43 fits exactly, 44 over.
+// 43-record boundary: 11 + 9 + 1 + 43 = 64.
+const b43 = [];
+for (let i = 0; i < 42; i++) {
+  b43.push(act(`act-b43-${String(i).padStart(2, "0")}`, 1));
+}
+b43.push(cal("c1", WEEKDAYS_5));
+addNetwork("boundary-43", b43);
+
+// 44 records: 11 + 9 + 1 + 44 = 65 > 64 -> BUDGET_EXCEEDED.
+const b44 = [];
+for (let i = 0; i < 43; i++) {
+  b44.push(act(`act-b44-${String(i).padStart(2, "0")}`, 1));
+}
+b44.push(cal("c1", WEEKDAYS_5));
+addNetwork("boundary-44", b44);
+
 // Partial mix: c1 healthy single activity, c2 has a directed cycle
 addNetwork("partial-mixed", [
   act("A", 3, { component: "c1" }),
@@ -356,7 +380,18 @@ NETWORKS["bad-json-entry"] = networkRaw("bad-json-entry", `[{"record": "activity
 const sources = {};const bundleRefs = {};
 for (const [name, n] of Object.entries(NETWORKS)) {
   const key = `${n.ref.repo}|${n.ref.path}`;
-  sources[key] = { revisions: { [n.ref.commit]: { text: n.text, blob: n.ref.blob } } };
+  // S648A-002/003: revision label binding and host-established population.
+  // The label must match the task's SourceRef revision; expected_records
+  // is the host-declared record count for population verification.
+  // Raw-text bundles (not valid JSON arrays) get no expected_records.
+  let recordCount;
+  try {
+    const parsed = JSON.parse(n.text);
+    if (Array.isArray(parsed)) recordCount = parsed.length;
+  } catch { /* not a JSON array; no expected_records */ }
+  const revEntry = { text: n.text, blob: n.ref.blob, label: n.ref.revision };
+  if (recordCount !== undefined) revEntry.expected_records = recordCount;
+  sources[key] = { revisions: { [n.ref.commit]: revEntry } };
   bundleRefs[name] = n.ref;
 }
 

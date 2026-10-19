@@ -51,7 +51,7 @@ const context = {
   criteria: store.criteriaPresets.standard,
 };
 
-const result = await runGuarded(task, context);
+const result = await runGuarded(JSON.stringify(task), JSON.stringify(context));
 const out = join(outdir, `${networkName}-report.json`);
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(`status=${result.status} report -> ${out}`);

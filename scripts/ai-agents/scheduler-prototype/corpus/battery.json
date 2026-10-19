@@ -52761,7 +52761,7 @@
     "expected": {
       "status": "REFUSED",
       "diagnostic_codes": [
-        "BUDGET_EXCEEDED"
+        "TRANSPORT_REFUSED"
       ],
       "components": [],
       "claimed_states": [],
