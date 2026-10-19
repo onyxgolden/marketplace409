@@ -1,4 +1,5 @@
 // index.test.js — envelope, budget-first, task_id preservation, refusals.
+import './bootstrap.js'; // PM651-008: trust gate FIRST
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { run } from '../src/index.js';
@@ -122,7 +123,12 @@ test('findings carry source citations', () => {
   assert.ok(f.source_ref && f.source_ref.path === 'fixtures/plan-cycle.json');
   assert.ok(f.source_ref.blob && /^[0-9a-f]{40}$/.test(f.source_ref.blob));
   assert.equal(f.source_ref.algorithm, 'git-sha1');
-  assert.equal(f.evidence_state, 'verified');
+  // PM651-002: aggregate findings (no record_id) get the whole-fixture
+  // verified span with an explicit aggregate basis.
+  assert.equal(f.evidence_state, 'verified-aggregate');
+  assert.equal(f.source_ref.verification, 'VERIFIED');
+  assert.ok(f.source_ref.quoted_span);
+  assert.ok(f.source_ref.span);
 });
 
 test('PM651-001: missing principal entirely -> REFUSED', () => {

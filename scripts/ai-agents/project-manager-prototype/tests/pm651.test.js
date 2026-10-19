@@ -1,5 +1,6 @@
 // pm651.test.js — regression tests for ChatGPT NEEDS CHANGES findings PM651-001..010.
 // Every probe from the verdict is reproduced here through the public run().
+import './bootstrap.js'; // PM651-008: trust gate FIRST
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { run } from '../src/index.js';
@@ -55,7 +56,10 @@ test('PM651-002: exact span quote equals byte slice', () => {
   const r = new Resolver(fixtures);
   const span = r.verifySpan(bytes, 0, 10);
   assert.equal(span.quoted_text, Buffer.from(bytes, 'utf8').subarray(0, 10).toString('utf8'));
-  assert.equal(span.verification, 'VERIFIED');
+  // PM651-002: verification lives at the Citation level, not nested in span.
+  assert.equal(span.verification, undefined);
+  assert.equal(span.start_byte, 0);
+  assert.equal(span.end_byte, 10);
 });
 
 test('PM651-002: span splitting UTF-8 is rejected', () => {
@@ -252,4 +256,187 @@ test('PM651-010: cycle witness excludes downstream nodes', () => {
   // Witness must be a -> b -> a, not including c as a node.
   assert.ok(f.reason.includes('a -> b -> a'));
   assert.ok(!f.reason.includes('-> c') && !f.reason.includes('c ->'));
+});
+
+// ---- PM651-001 (round 2): relay identity and scope ----
+
+test('PM651-001: wrong relay_id -> denied, zero byte reads', () => {
+  const c = ctx('muse-relay', fixtures, 'relay-op');
+  c.principal = { principal_id: 'relay-op', kind: 'relay' };
+  c.relay = { relay_id: 'not-muse', delegate_principal_id: 'relay-op', valid: true, scope: 'read-fixtures' };
+  c.grants = [{ grant_id: 'g1', principal_id: 'relay-op', action: 'read', resource: { fixture_id: '*' } }];
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTH_UNVERIFIED'));
+});
+
+test('PM651-001: write-only scope -> denied', () => {
+  const c = ctx('muse-relay', fixtures, 'relay-op');
+  c.principal = { principal_id: 'relay-op', kind: 'relay' };
+  c.relay = { relay_id: 'muse-relay', delegate_principal_id: 'relay-op', valid: true, scope: 'write-only' };
+  c.grants = [{ grant_id: 'g1', principal_id: 'relay-op', action: 'read', resource: { fixture_id: '*' } }];
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTHZ_DENIED'));
+});
+
+test('PM651-001: correct relay_id and read scope -> allowed', () => {
+  const c = ctx('muse-relay', fixtures, 'relay-op');
+  c.principal = { principal_id: 'relay-op', kind: 'relay' };
+  c.relay = { relay_id: 'muse-relay', delegate_principal_id: 'relay-op', valid: true, scope: 'read-fixtures' };
+  c.grants = [{ grant_id: 'g1', principal_id: 'relay-op', action: 'read', resource: { fixture_id: '*' } }];
+  const r = run(task(), c);
+  assert.equal(r.status, 'REPORT_READY');
+});
+
+// ---- PM651-002 (round 2): byte-exact spans ----
+
+test('PM651-002: findRecordSpan uses byte offsets with Unicode before record', () => {
+  // Literal é (2 bytes in UTF-8, 1 char in JS) before the record.
+  // Character index != byte offset; the span must be byte-exact.
+  const bytes = '{"plan_id":"p caf\u00e9","tasks":[{"task_id":"t1","x":1}]}';
+  const r = new Resolver({});
+  const span = r.findRecordSpan(bytes, 'task_id', 't1');
+  assert.ok(span, 'span should be found');
+  const [start, end] = span;
+  const buf = Buffer.from(bytes, 'utf8');
+  const slice = buf.subarray(start, end).toString('utf8');
+  // The slice must be valid JSON containing the task_id.
+  const obj = JSON.parse(slice);
+  assert.equal(obj.task_id, 't1');
+  // Byte offsets must round-trip: the slice byte length equals end-start.
+  assert.equal(Buffer.byteLength(slice, 'utf8'), end - start);
+});
+
+test('PM651-002: quoted_span equals span.quoted_text (no truncation)', () => {
+  const r = run(task({ fixture_refs: ['plan-linear'] }), ctx());
+  const plan = r.report.plans[0];
+  // Whole-fixture citation
+  const cite = plan.citation;
+  assert.ok(cite.quoted_span);
+  assert.ok(cite.span);
+  assert.equal(cite.quoted_span, cite.span.quoted_text);
+  assert.equal(cite.verification, 'VERIFIED');
+  // Per-finding citation
+  const f = plan.findings.find((x) => x.record_id);
+  if (f) {
+    assert.equal(f.source_ref.quoted_span, f.source_ref.span.quoted_text);
+    assert.equal(f.source_ref.verification, 'VERIFIED');
+  }
+});
+
+// ---- PM651-003 (round 2): pre-admission getters ----
+
+test('PM651-003: task_id getter never executes (admission before serialization)', () => {
+  let calls = 0;
+  const t = task();
+  Object.defineProperty(t, 'task_id', {
+    get() { calls++; return 'req-123'; },
+    enumerable: true, configurable: true,
+  });
+  const r = run(t, ctx());
+  assert.equal(r.status, 'REFUSED');
+  assert.equal(calls, 0, `task_id getter executed ${calls} times`);
+});
+
+test('PM651-003: oversized context metadata is charged', () => {
+  const c = ctx();
+  c.clock = { unused: 'x'.repeat(300000) }; // 300KB > 256KiB budget
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'INPUT_LIMIT' || d.code === 'BUDGET_EXCEEDED'));
+});
+
+// ---- PM651-005 (round 2): exact tick arithmetic ----
+
+test('PM651-005: MAX_SAFE_INTEGER start+duration refuses (no rounding)', () => {
+  const p = pkg({
+    plan_id: 'big', project_start_tick: 9007199254740991,
+    tasks: [t('a', 2, { declared: 9007199254740991 })],
+  });
+  const r = new Resolver({});
+  const analysis = analyzePlan(p, r, JSON.stringify(p), null, null);
+  // 9007199254740991 + 2 = 9007199254740993 (exact), which exceeds MAX_SAFE_INTEGER.
+  // Must refuse, not emit the rounded 9007199254740992.
+  const unsafe = analysis.findings.find((f) => f.code === 'UNSAFE_TICK_ARITHMETIC');
+  assert.ok(unsafe, 'should flag unsafe tick arithmetic');
+  assert.equal(analysis.status, 'PARTIAL');
+  assert.equal(analysis.math, null);
+});
+
+// ---- PM651-006 (round 2): population contract ----
+
+test('PM651-006: no population declaration -> verified:false', () => {
+  const p = pkg({
+    plan_id: 'p1', project_start_tick: 0,
+    tasks: [t('a', 1, { status: 'COMPLETE', declared: 0 })],
+    milestones: [M('m1', ['a'], 1)],
+  });
+  const r = new Resolver({});
+  const analysis = analyzePlan(p, r, JSON.stringify(p), null, null);
+  assert.equal(analysis.completion.verified, false);
+  assert.equal(analysis.completion.population_matches, false);
+});
+
+test('PM651-006: matching population declaration -> verified:true', () => {
+  const p = pkg({
+    plan_id: 'p1', project_start_tick: 0,
+    tasks: [t('a', 1, { status: 'COMPLETE', declared: 0 })],
+    milestones: [M('m1', ['a'], 1)],
+  });
+  const r = new Resolver({});
+  const analysis = analyzePlan(p, r, JSON.stringify(p), null, { expected_tasks: 1 });
+  assert.equal(analysis.completion.verified, true);
+  assert.equal(analysis.completion.population_matches, true);
+});
+
+test('PM651-006: mismatched population -> verified:false', () => {
+  const p = pkg({
+    plan_id: 'p1', project_start_tick: 0,
+    tasks: [t('a', 1, { status: 'COMPLETE', declared: 0 })],
+    milestones: [M('m1', ['a'], 1)],
+  });
+  const r = new Resolver({});
+  const analysis = analyzePlan(p, r, JSON.stringify(p), null, { expected_tasks: 5 });
+  assert.equal(analysis.completion.verified, false);
+  assert.equal(analysis.completion.population_matches, false);
+});
+
+// ---- PM651-007 (round 2): schema gaps ----
+
+test('PM651-007: missing workstream_id -> refused', () => {
+  const badTask = t('a', 1);
+  delete badTask.workstream_id;
+  const p = pkg({ plan_id: 'p', project_start_tick: 0, tasks: [badTask] });
+  const r = new Resolver({});
+  const result = checkPlanPackage(p, r);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors[0].includes('workstream_id'));
+});
+
+test('PM651-007: non-finite claimed_completion_pct (1e999) -> refused', () => {
+  // 1e999 parses to Infinity. Must be structurally refused.
+  const p = {
+    plan_id: 'p', project_start_tick: 0, tasks: [], edges: [],
+    milestones: [], capacity_windows: [],
+    header_claims: { claimed_completion_pct: 1e999 },
+  };
+  const r = new Resolver({});
+  const result = checkPlanPackage(p, r);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors[0].includes('finite'));
+});
+
+test('PM651-007: unknown field in capacity rational -> refused', () => {
+  const p = pkg({
+    plan_id: 'p', project_start_tick: 0, tasks: [],
+    capacity_windows: [{
+      window_id: 'w1', resource_id: 'r1', start_tick: 0, end_tick: 10,
+      capacity: { num: 5, den: 1, evil: true },
+    }],
+  });
+  const r = new Resolver({});
+  const result = checkPlanPackage(p, r);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors[0].includes('unknown fields'));
 });

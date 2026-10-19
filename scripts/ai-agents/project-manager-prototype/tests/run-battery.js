@@ -1,7 +1,9 @@
 // run-battery.js — executes the frozen battery against src/index.js.
-// Verifies the pinned manifest + every constituent hash BEFORE importing
-// the candidate or executing. Reports pass/fail per case.
-// Usage: node tests/run-battery.js [--battery corpus/battery.json]
+// PM651-008: Authenticates the manifest digest against a separately supplied
+// host approval BEFORE importing the candidate or executing. The host root
+// comes from --trust-root <sha256> or the PM_TRUST_ROOT env var. Absent or
+// mismatched root refuses to run. The local corpus_digest.txt is NOT trusted.
+// Usage: node tests/run-battery.js [--battery corpus/battery.json] [--trust-root <sha256>]
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -9,10 +11,36 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sha256File = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+const sha256Str = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 
-// 1. Manifest verification first.
-const manifest = JSON.parse(readFileSync(join(root, 'corpus', 'manifest.json'), 'utf8'));
-const manifestDigest = readFileSync(join(root, 'corpus', 'corpus_digest.txt'), 'utf8').trim();
+// 0. Host trust root (PM651-008). Must be supplied separately; the repo's
+// own corpus_digest.txt is replaceable and is not an approval.
+const args = process.argv.slice(2);
+const trustIdx = args.indexOf('--trust-root');
+const hostRoot = trustIdx >= 0 ? args[trustIdx + 1] : process.env.PM_TRUST_ROOT;
+if (!hostRoot || !/^[0-9a-f]{64}$/.test(hostRoot)) {
+  console.error('TRUST-BOOTSTRAP FAILED: no host trust root supplied (use --trust-root <sha256> or PM_TRUST_ROOT)');
+  process.exit(2);
+}
+
+// 1. Manifest verification: digest must match the host-approved root.
+const manifestRaw = readFileSync(join(root, 'corpus', 'manifest.json'), 'utf8');
+const manifest = JSON.parse(manifestRaw);
+// Canonical digest (same as freeze-corpus.js).
+function canon(v) {
+  if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  if (v !== null && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+const manifestDigest = sha256Str(canon(manifest));
+if (manifestDigest !== hostRoot) {
+  console.error(`TRUST-BOOTSTRAP FAILED: manifest digest ${manifestDigest} != host-approved root`);
+  process.exit(2);
+}
+
+// 2. Every listed file hash verified.
 const manifestEntries = Array.isArray(manifest) ? manifest : Object.entries(manifest.files || {}).map(([path, sha256]) => ({ path, sha256 }));
 for (const e of manifestEntries) {
   const actual = sha256File(join(root, e.path));
@@ -21,7 +49,7 @@ for (const e of manifestEntries) {
     process.exit(2);
   }
 }
-console.log(`manifest verified (${manifestEntries.length} files)`);
+console.log(`manifest verified (${manifestEntries.length} files, root ${hostRoot.slice(0, 12)}…)`);
 
 // 2. Import candidate only after verification.
 const { run } = await import('../src/index.js');

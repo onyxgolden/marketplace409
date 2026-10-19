@@ -46,8 +46,11 @@ function cmpRat(a, b, c, d) {
  * milestones, resources, completion, header }.
  * resolver: budget-charging resolver. bytes: original fixture bytes for
  * span citations. citation: verified SourceRef for the package.
+ * population: optional host-established { expected_tasks } — completion is
+ * verified ONLY if the declaration matches the admitted task count
+ * (PM651-006). Absent/unknown coverage never yields verified:true.
  */
-export function analyzePlan(pkg, resolver, bytes, citation) {
+export function analyzePlan(pkg, resolver, bytes, citation, population) {
   const findings = [];
   const charge = () => resolver.chargeObject();
 
@@ -133,20 +136,46 @@ export function analyzePlan(pkg, resolver, bytes, citation) {
 
   for (const id of order) {
     const t = tasks.get(id);
-    let start = pkg.project_start_tick;
+    // PM651-005: exact tick arithmetic via BigInt. Number addition loses
+    // precision above MAX_SAFE_INTEGER (e.g. 9007199254740991+2). We compute
+    // in BigInt and refuse if the exact result is not a safe integer.
+    let start = BigInt(pkg.project_start_tick);
     if (t.release_tick !== null && t.release_tick !== undefined) {
-      start = Math.max(start, t.release_tick);
+      const rt = BigInt(t.release_tick);
+      if (rt > start) start = rt;
     }
     for (const p of preds.get(id)) {
-      start = Math.max(start, ef.get(p.from) + p.lag);
+      const cand = BigInt(ef.get(p.from)) + BigInt(p.lag);
+      if (cand > start) start = cand;
     }
-    es.set(id, start);
-    ef.set(id, start + t.duration_ticks);
+    const end = start + BigInt(t.duration_ticks);
+    // Refuse before an unsafe derived sum.
+    if (start > BigInt(Number.MAX_SAFE_INTEGER) || end > BigInt(Number.MAX_SAFE_INTEGER)) {
+      findings.push(diag('UNSAFE_TICK_ARITHMETIC', SEVERITY.BLOCKING_MATH, id,
+        `derived tick exceeds MAX_SAFE_INTEGER: start=${start}, end=${end}`, 'task_id'));
+      return {
+        status: 'PARTIAL', math: null, findings,
+        orphans: [], milestones: [], resources: [], completion: null, header: null,
+      };
+    }
+    const startNum = Number(start);
+    const endNum = Number(end);
+    es.set(id, startNum);
+    ef.set(id, endNum);
     if (t.declared_start_tick !== null && t.declared_start_tick !== undefined) {
-      let minStart = pkg.project_start_tick;
-      if (t.release_tick !== null && t.release_tick !== undefined) minStart = Math.max(minStart, t.release_tick);
-      for (const p of preds.get(id)) minStart = Math.max(minStart, ef.get(p.from) + p.lag);
-      if (t.declared_start_tick < minStart) {
+      let minStart = BigInt(pkg.project_start_tick);
+      if (t.release_tick !== null && t.release_tick !== undefined) {
+        const rt = BigInt(t.release_tick);
+        if (rt > minStart) minStart = rt;
+      }
+      for (const p of preds.get(id)) {
+        const cand = BigInt(ef.get(p.from)) + BigInt(p.lag);
+        if (cand > minStart) minStart = cand;
+      }
+      const minStartNum = minStart > BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number.MAX_SAFE_INTEGER + 1 // forces violation below; already refused above if end unsafe
+        : Number(minStart);
+      if (t.declared_start_tick < minStartNum) {
         findings.push(diag('CLAIMED_START_VIOLATION', SEVERITY.MISMATCH, id,
           `declared_start_tick ${t.declared_start_tick} < earliest feasible ${minStart}`, 'task_id'));
       }
@@ -248,9 +277,18 @@ export function analyzePlan(pkg, resolver, bytes, citation) {
         continue;
       }
       if (!demandsByRes.has(d.resource_id)) demandsByRes.set(d.resource_id, []);
+      // PM651-005: exact declared interval end via BigInt. Refuse the
+      // demand if the exact end exceeds MAX_SAFE_INTEGER.
+      const declEnd = BigInt(t.declared_start_tick) + BigInt(t.duration_ticks);
+      if (declEnd > BigInt(Number.MAX_SAFE_INTEGER)) {
+        findings.push(diag('UNSAFE_TICK_ARITHMETIC', SEVERITY.BLOCKING_MATH, id,
+          `declared interval end exceeds MAX_SAFE_INTEGER: ${declEnd}`, 'task_id'));
+        unverifiableResources.add(d.resource_id);
+        continue;
+      }
       demandsByRes.get(d.resource_id).push({
         start: t.declared_start_tick,
-        end: t.declared_start_tick + t.duration_ticks,
+        end: Number(declEnd),
         num: BigInt(d.amount_num), den: BigInt(d.amount_den), task_id: id,
       });
     }
@@ -344,18 +382,25 @@ export function analyzePlan(pkg, resolver, bytes, citation) {
     }
   }
 
-  // ---- 6. completion (PM651-006: verified only) ----
+  // ---- 6. completion (PM651-006: verified only with host population) ----
   let completeCount = 0;
   for (const t of tasks.values()) if (t.status === 'COMPLETE') completeCount++;
-  // Completion is verified only if the population is host-established.
-  // Without a population contract, ratio is computed but NOT verified.
+  // Completion is verified ONLY if the host separately established the
+  // population (expected_tasks matches the admitted task count) AND there
+  // are no unverifiable findings. Absence of unrelated findings does not
+  // prove the task list is the entire plan.
   const hasUnverifiable = findings.some((f) => f.severity === SEVERITY.UNVERIFIABLE);
+  const popExpected = population && typeof population.expected_tasks === 'number'
+    ? population.expected_tasks : null;
+  const popMatches = popExpected !== null && popExpected === tasks.size;
   const completion = {
     complete: completeCount,
     total: tasks.size,
     ratio: tasks.size === 0 ? null : completeCount / tasks.size,
     ratio_defined: tasks.size !== 0,
-    verified: !hasUnverifiable && tasks.size > 0,
+    verified: popMatches && !hasUnverifiable && tasks.size > 0,
+    population_declared: popExpected,
+    population_matches: popMatches,
   };
   let header = null;
   if (pkg.header_claims && pkg.header_claims.claimed_completion_pct !== undefined && pkg.header_claims.claimed_completion_pct !== null) {

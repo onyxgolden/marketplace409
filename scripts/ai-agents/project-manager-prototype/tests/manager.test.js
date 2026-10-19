@@ -1,4 +1,5 @@
 // manager.test.js — focused domain-rule tests.
+import './bootstrap.js'; // PM651-008: trust gate FIRST
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzePlan } from '../src/manager.js';

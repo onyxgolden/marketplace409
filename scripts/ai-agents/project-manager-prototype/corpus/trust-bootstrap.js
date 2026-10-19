@@ -26,15 +26,43 @@ function fail(msg) {
   process.exit(1);
 }
 
-/** Verify manifest + all listed files. Returns the manifest. */
-export function verify() {
+/** Verify manifest + all listed files. Returns the manifest.
+ * PM651-008: the manifest digest is compared against a separately supplied
+ * host approval (PM_TRUST_ROOT env var). The local corpus_digest.txt is
+ * NOT trusted — it is replaceable. Absent or mismatched root fails closed
+ * before any agent code is imported.
+ */
+export function verify(expectedRoot) {
+  const hostRoot = expectedRoot || process.env.PM_TRUST_ROOT;
+  if (!hostRoot || typeof hostRoot !== 'string' || !/^[0-9a-f]{64}$/.test(hostRoot)) {
+    fail('no host trust root supplied (set PM_TRUST_ROOT to the approved 64-hex manifest digest)');
+  }
   let manifest;
+  let manifestRaw;
   try {
-    manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+    manifestRaw = readFileSync(MANIFEST_PATH, 'utf8');
+    manifest = JSON.parse(manifestRaw);
   } catch (e) {
     fail(`cannot read manifest: ${e.message}`);
   }
   if (!Array.isArray(manifest)) fail('manifest is not an array');
+
+  // Authenticate the manifest itself against the host root BEFORE trusting
+  // any entry in it. The digest is sha256(canonical JSON of manifest),
+  // computed with the same key-sorted canonicalization as freeze-corpus.js.
+  // Implemented inline to keep the bootstrap builtins-only (no agent imports
+  // before authentication).
+  function canon(v) {
+    if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+    if (v !== null && typeof v === 'object') {
+      return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+    }
+    return JSON.stringify(v);
+  }
+  const actualDigest = sha256Hex(canon(manifest));
+  if (actualDigest !== hostRoot) {
+    fail(`manifest digest ${actualDigest} does not match host-approved root`);
+  }
 
   const seen = new Set();
   for (const entry of manifest) {

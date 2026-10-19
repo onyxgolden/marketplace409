@@ -7,7 +7,7 @@
 
 import { canonicalStringify, utf8Length } from './canonical.js';
 import { checkTask, checkContext, checkPlanPackage, safeGet } from './schemas.js';
-import { Resolver, BudgetExceeded, InputLimit, AuthError, LIMITS } from './resolver.js';
+import { Resolver, BudgetExceeded, InputLimit, AuthError, LIMITS, admitGraph } from './resolver.js';
 import { scanPackageText } from './injection.js';
 import { analyzePlan } from './manager.js';
 
@@ -36,10 +36,32 @@ export function run(task, context) {
 
 function runInner(task, context, started) {
   // 0. Budget FIRST — before any validation inspects candidates.
+  // PM651-003: bounded own-data-descriptor admission of the task and
+  // context graphs BEFORE serialization or any field read. Getters are
+  // rejected here with zero invocations; every admitted object is charged.
+  // The host-trusted fixtureStore subtree is not deep-charged (it is large
+  // and not task-controlled); its top-level descriptor is still checked.
+  const resolver = new Resolver(null);
+  try {
+    if (task !== undefined && task !== null) admitGraph(task, resolver, 'task');
+    if (context !== undefined && context !== null) {
+      admitGraph(context, resolver, 'context', (path) => path === 'fixtureStore');
+      // Shallow accessor check on fixtureStore itself (not deep-charged).
+      const fsDesc = Object.getOwnPropertyDescriptor(context, 'fixtureStore');
+      if (fsDesc && (typeof fsDesc.get === 'function' || typeof fsDesc.set === 'function')) {
+        const e = new Error('ACCESSOR_REJECTED: context.fixtureStore is a getter/setter');
+        e.code = 'ACCESSOR_REJECTED';
+        throw e;
+      }
+    }
+  } catch (e) {
+    // Admission failures (accessor, budget, depth) fail closed.
+    throw e;
+  }
   const store = (context && typeof context === 'object' && !Array.isArray(context))
     ? safeGet(context, 'fixtureStore', 'context').value || {}
     : {};
-  const resolver = new Resolver(store);
+  resolver.store = store;
 
   // Pre-flight: bound fixture_refs length via descriptor-safe length read
   // (does not trigger element getters) before serialization.
@@ -60,9 +82,13 @@ function runInner(task, context, started) {
   }
 
   // Serialized task/context bytes are charged as input (PM651-003).
-  // Bounded preflight: measure without walking uncharged candidates.
+  // Both graphs are already admitted (accessors rejected, objects charged)
+  // so serialization cannot invoke getters. Context metadata counts against
+  // the same 256KiB input budget as the task.
   const taskBytes = canonicalStringify(task === undefined ? null : task);
   resolver.chargeInputBytes(utf8Length(taskBytes));
+  const contextBytes = canonicalStringify(context === undefined ? null : context);
+  resolver.chargeInputBytes(utf8Length(contextBytes));
 
   // 1. Validate task + context envelopes (charged, descriptor-safe).
   let tc;
@@ -141,11 +167,14 @@ function runInner(task, context, started) {
     }
     // Exact citation: whole-fixture span, verified under the span budget.
     // Quarantined records are cited with explicit exclusion.
+    // PM651-002: quoted_span equals span.quoted_text exactly (no truncation);
+    // verification lives at the Citation level per the brief contract.
     const span = resolver.verifySpan(resolved.bytes, 0, Buffer.byteLength(resolved.bytes, 'utf8'));
     const sourceRef = {
       ...resolved.source_ref,
-      quoted_span: span.quoted_text.slice(0, 120),
+      quoted_span: span.quoted_text,
       span,
+      verification: 'VERIFIED',
     };
     sourceRefs.push(stripSpanForList(sourceRef));
     packages.push({ ref, pkg, citation: sourceRef, bytes: resolved.bytes, quarantinedIds });
@@ -154,28 +183,54 @@ function runInner(task, context, started) {
 
   // 3. Analyze each admitted package.
   const reports = [];
+  // PM651-006: host-established population (if declared in context).
+  const population = (() => {
+    try {
+      const p = safeGet(context, 'population', 'context').value;
+      return (p && typeof p === 'object') ? p : null;
+    } catch { return null; }
+  })();
   for (const p of packages) {
-    const analysis = analyzePlan(p.pkg, resolver, p.bytes, p.citation);
+    const analysis = analyzePlan(p.pkg, resolver, p.bytes, p.citation, population);
     // Attach exact per-finding citations (PM651-002); quarantined records
     // get explicit exclusion instead of support.
+    // PM651-002: quoted_span equals span.quoted_text exactly (no truncation);
+    // verification at the Citation level. Aggregate findings (no record_id)
+    // get the whole-fixture verified span as their basis, not a bare
+    // 'verified' claim.
+    const baseCite = stripSpanForList(p.citation);
     for (const f of analysis.findings) {
       if (f.record_id && p.quarantinedIds.has(f.record_id)) {
-        f.source_ref = { ...stripSpanForList(p.citation), excluded: 'quarantined' };
+        f.source_ref = { ...baseCite, excluded: 'quarantined' };
         f.evidence_state = 'unavailable-quarantined';
       } else if (f.record_id) {
         const recSpan = resolver.findRecordSpan(p.bytes, f.record_key || 'task_id', f.record_id);
         if (recSpan) {
           const vs = resolver.verifySpan(p.bytes, recSpan[0], recSpan[1]);
-          f.source_ref = { ...stripSpanForList(p.citation), quoted_span: vs.quoted_text.slice(0, 120), span: vs };
+          f.source_ref = {
+            ...baseCite,
+            quoted_span: vs.quoted_text,
+            span: vs,
+            verification: 'VERIFIED',
+          };
+          f.evidence_state = 'verified';
         } else {
-          f.source_ref = { ...stripSpanForList(p.citation), evidence_state: 'unavailable-record-span' };
+          f.source_ref = { ...baseCite, evidence_state: 'unavailable-record-span' };
+          f.evidence_state = 'unavailable-record-span';
         }
       } else {
-        f.source_ref = stripSpanForList(p.citation);
+        // Aggregate finding: whole-fixture span is the verified basis.
+        f.source_ref = {
+          ...baseCite,
+          quoted_span: p.citation.quoted_span,
+          span: p.citation.span,
+          verification: 'VERIFIED',
+        };
+        f.evidence_state = 'verified-aggregate';
       }
       if (!f.evidence_state) f.evidence_state = 'verified';
     }
-    reports.push({ plan_id: p.pkg.plan_id, citation: stripSpanForList(p.citation), ...analysis });
+    reports.push({ plan_id: p.pkg.plan_id, citation: p.citation, ...analysis });
     if (analysis.status === 'PARTIAL') partial = true;
     resolver.chargeOutputRecord();
   }

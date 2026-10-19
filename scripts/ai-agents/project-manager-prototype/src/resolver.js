@@ -60,19 +60,27 @@ const SOURCEREF_FIELDS = ['repo', 'path', 'commit', 'blob', 'algorithm', 'revisi
 const HEX40 = /^[0-9a-f]{40}$/;
 
 function checkSourceRef(ref, fixtureId) {
+  // PM651-003: descriptor-safe reads only. Direct field access would invoke
+  // getters (e.g. a source_ref.blob getter) before admission.
   const errors = [];
   if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return ['source_ref must be an object'];
   for (const k of Object.keys(ref)) {
     if (!SOURCEREF_FIELDS.includes(k)) errors.push(`unknown source_ref field: ${k}`);
   }
-  if (typeof ref.repo !== 'string' || !ref.repo) errors.push('source_ref.repo required');
-  if (typeof ref.path !== 'string' || !ref.path || ref.path.includes('..') || ref.path.startsWith('/')) {
+  const repo = safeGet(ref, 'repo', 'source_ref').value;
+  const path = safeGet(ref, 'path', 'source_ref').value;
+  const commit = safeGet(ref, 'commit', 'source_ref').value;
+  const blob = safeGet(ref, 'blob', 'source_ref').value;
+  const algorithm = safeGet(ref, 'algorithm', 'source_ref').value;
+  const revision = safeGet(ref, 'revision', 'source_ref').value;
+  if (typeof repo !== 'string' || !repo) errors.push('source_ref.repo required');
+  if (typeof path !== 'string' || !path || path.includes('..') || path.startsWith('/')) {
     errors.push('source_ref.path must be a relative allowlisted path');
   }
-  if (typeof ref.commit !== 'string' || !HEX40.test(ref.commit)) errors.push('source_ref.commit must be 40-hex');
-  if (typeof ref.blob !== 'string' || !HEX40.test(ref.blob)) errors.push('source_ref.blob must be 40-hex');
-  if (ref.algorithm !== 'git-sha1') errors.push('source_ref.algorithm must be "git-sha1"');
-  if (typeof ref.revision !== 'string' || !ref.revision) errors.push('source_ref.revision required');
+  if (typeof commit !== 'string' || !HEX40.test(commit)) errors.push('source_ref.commit must be 40-hex');
+  if (typeof blob !== 'string' || !HEX40.test(blob)) errors.push('source_ref.blob must be 40-hex');
+  if (algorithm !== 'git-sha1') errors.push('source_ref.algorithm must be "git-sha1"');
+  if (typeof revision !== 'string' || !revision) errors.push('source_ref.revision required');
   return errors;
 }
 
@@ -131,6 +139,10 @@ export class Resolver {
       throw new AuthError('AUTH_UNVERIFIED', 'principal_id invalid');
     }
     // Request authority must match principal or be a valid relay.
+    // PM651-001: the relay's registered identity (relay_id) and its scope
+    // must be validated against the requested read capability. A valid/
+    // delegate pair alone is not sufficient.
+    const REGISTERED_RELAY_ID = 'muse-relay';
     const ra = context.request_authority;
     if (ra === 'muse-relay') {
       const relay = safeGet(context, 'relay', 'context').value;
@@ -139,8 +151,18 @@ export class Resolver {
       }
       const valid = safeGet(relay, 'valid', 'relay').value;
       const delegate = safeGet(relay, 'delegate_principal_id', 'relay').value;
+      const relayId = safeGet(relay, 'relay_id', 'relay').value;
+      const scope = safeGet(relay, 'scope', 'relay').value;
       if (valid !== true || delegate !== pid) {
         throw new AuthError('AUTH_UNVERIFIED', 'relay invalid or not delegating to principal');
+      }
+      // Independently registered relay identity must match.
+      if (relayId !== REGISTERED_RELAY_ID) {
+        throw new AuthError('AUTH_UNVERIFIED', `relay_id ${relayId} is not the registered relay`);
+      }
+      // Scope must authorize fixture reads.
+      if (typeof scope !== 'string' || !scope.includes('read')) {
+        throw new AuthError('AUTHZ_DENIED', `relay scope "${scope}" does not authorize reads`);
       }
     } else if (ra !== pid) {
       throw new AuthError('AUTH_UNVERIFIED', 'request_authority does not match principal');
@@ -237,8 +259,10 @@ export class Resolver {
   /**
    * Verify an exact half-open UTF-8 byte span [start, end) of the given
    * bytes. Charges the span budget. Returns { start_byte, end_byte,
-   * quoted_text, verification: 'VERIFIED' } where quoted_text equals the
-   * exact slice. Throws on out-of-range or non-UTF-8-boundary offsets.
+   * quoted_text } where quoted_text equals the exact slice. The caller
+   * attaches `verification: 'VERIFIED'` at the Citation level (per the
+   * brief's Citation contract), not nested inside the span. Throws on
+   * out-of-range or non-UTF-8-boundary offsets.
    */
   verifySpan(bytes, start, end) {
     this.chargeSpan();
@@ -255,51 +279,70 @@ export class Resolver {
       e.code = 'SPAN_INVALID';
       throw e;
     }
-    return { start_byte: start, end_byte: end, quoted_text: slice, verification: 'VERIFIED' };
+    return { start_byte: start, end_byte: end, quoted_text: slice };
   }
 
   /**
-   * Locate the exact byte span of a JSON object record within fixture
-   * bytes by its key/id. Returns [start, end) or null if not found.
-   * Used to build exact citations for findings.
+   * Locate the exact UTF-8 BYTE span of a JSON object record within fixture
+   * bytes by its key/id. Returns [startByte, endByte) or null if not found.
+   * PM651-002: operates on the Buffer (bytes), not the JS string, so
+   * character indices are never misinterpreted as byte offsets. A literal
+   * é (2 bytes) before the record shifts byte positions correctly.
    */
   findRecordSpan(bytes, idKey, id) {
-    // Find `"idKey":"id"` or `"idKey": "id"` (exact JSON string match).
-    const needle1 = `"${idKey}":"${id}"`;
-    const needle2 = `"${idKey}": "${id}"`;
-    let idx = bytes.indexOf(needle1);
-    let needleLen = needle1.length;
-    if (idx === -1) {
-      idx = bytes.indexOf(needle2);
-      needleLen = needle2.length;
-    }
+    const buf = Buffer.from(bytes, 'utf8');
+    // Find `"idKey":"id"` or `"idKey": "id"` as UTF-8 bytes.
+    const needle1 = Buffer.from(`"${idKey}":"${id}"`, 'utf8');
+    const needle2 = Buffer.from(`"${idKey}": "${id}"`, 'utf8');
+    let idx = buf.indexOf(needle1);
+    if (idx === -1) idx = buf.indexOf(needle2);
     if (idx === -1) return null;
-    // Walk back to the enclosing object's opening brace.
+    // Walk back (in bytes) to the enclosing object's opening brace.
+    // Track string/escape state so braces inside strings don't confuse us.
     let depth = 0;
     let objStart = -1;
-    for (let i = idx; i >= 0; i--) {
-      const ch = bytes[i];
-      if (ch === '}') depth++;
-      else if (ch === '{') {
+    let inStr = false;
+    let esc = false;
+    // First, determine string state at idx by scanning forward from 0.
+    // Simpler: walk back counting braces, but skip if inside a string.
+    // We scan from 0 to idx to establish whether idx is inside a string.
+    inStr = false; esc = false;
+    for (let i = 0; i < idx; i++) {
+      const b = buf[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (b === 0x5C) esc = true; // backslash
+        else if (b === 0x22) inStr = false; // quote
+      } else if (b === 0x22) {
+        inStr = true;
+      }
+    }
+    if (inStr) return null; // needle is inside a string value, not a key
+    // Walk back to the enclosing '{', tracking depth.
+    depth = 0;
+    for (let i = idx - 1; i >= 0; i--) {
+      const b = buf[i];
+      if (b === 0x7D) depth++; // }
+      else if (b === 0x7B) { // {
         if (depth === 0) { objStart = i; break; }
         depth--;
       }
     }
     if (objStart === -1) return null;
-    // Balance forward to the matching close brace.
+    // Balance forward (in bytes) to the matching close brace.
     depth = 0;
-    let inStr = false;
-    let esc = false;
-    for (let i = objStart; i < bytes.length; i++) {
-      const ch = bytes[i];
+    inStr = false;
+    esc = false;
+    for (let i = objStart; i < buf.length; i++) {
+      const b = buf[i];
       if (inStr) {
         if (esc) esc = false;
-        else if (ch === '\\') esc = true;
-        else if (ch === '"') inStr = false;
+        else if (b === 0x5C) esc = true;
+        else if (b === 0x22) inStr = false;
       } else {
-        if (ch === '"') inStr = true;
-        else if (ch === '{') depth++;
-        else if (ch === '}') {
+        if (b === 0x22) inStr = true;
+        else if (b === 0x7B) depth++;
+        else if (b === 0x7D) {
           depth--;
           if (depth === 0) return [objStart, i + 1];
         }
@@ -337,6 +380,67 @@ function checkDepth(v, depth) {
       checkDepth(v[k], depth + 1);
     }
   }
+}
+
+/**
+ * Bounded own-data-descriptor admission (PM651-003). Walks an object graph
+ * using ONLY Object.getOwnPropertyDescriptor — never invoking getters —
+ * rejects accessors, enforces the depth bound, and charges each distinct
+ * object against the resolver's object budget. Must run BEFORE any
+ * serialization (canonicalStringify) or direct field reads. Returns the
+ * count of admitted objects.
+ *
+ * The `skipSubtree` predicate, when provided, prevents recursing into a
+ * subtree (e.g. the host-trusted fixtureStore, which is large and not
+ * task-controlled). The skipped subtree's top-level descriptor is still
+ * checked for accessors.
+ */
+export function admitGraph(root, resolver, label, skipSubtree) {
+  const seen = new Set();
+  let count = 0;
+  function walk(v, depth, path) {
+    if (depth > LIMITS.maxDepth) {
+      const e = new Error(`INVALID_INPUT: ${label} nesting depth exceeds ${LIMITS.maxDepth}`);
+      e.code = 'INVALID_INPUT';
+      throw e;
+    }
+    if (v === null || typeof v !== 'object') return;
+    if (seen.has(v)) return; // DAG-safe; already admitted
+    seen.add(v);
+    // Check if this subtree should be skipped (e.g. fixtureStore).
+    if (skipSubtree && skipSubtree(path, v)) {
+      return; // Do not charge or recurse; top-level descriptor already checked by caller.
+    }
+    resolver.chargeObject();
+    count++;
+    if (Array.isArray(v)) {
+      const lenDesc = Object.getOwnPropertyDescriptor(v, 'length');
+      const len = lenDesc && typeof lenDesc.value === 'number' ? lenDesc.value : 0;
+      for (let i = 0; i < len; i++) {
+        const desc = Object.getOwnPropertyDescriptor(v, String(i));
+        if (!desc) continue; // sparse hole; not a candidate
+        if (typeof desc.get === 'function' || typeof desc.set === 'function') {
+          const e = new Error(`ACCESSOR_REJECTED: ${label}[${i}] is a getter/setter`);
+          e.code = 'ACCESSOR_REJECTED';
+          throw e;
+        }
+        if ('value' in desc) walk(desc.value, depth + 1, `${path}[${i}]`);
+      }
+    } else {
+      for (const k of Object.keys(v)) {
+        const desc = Object.getOwnPropertyDescriptor(v, k);
+        if (!desc) continue;
+        if (typeof desc.get === 'function' || typeof desc.set === 'function') {
+          const e = new Error(`ACCESSOR_REJECTED: ${label}.${k} is a getter/setter`);
+          e.code = 'ACCESSOR_REJECTED';
+          throw e;
+        }
+        if ('value' in desc) walk(desc.value, depth + 1, path ? `${path}.${k}` : k);
+      }
+    }
+  }
+  walk(root, 0, '');
+  return count;
 }
 
 export { checkDepth };

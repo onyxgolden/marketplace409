@@ -6,7 +6,8 @@
 // fields, wrong types, bad enums, duplicate IDs, unsafe numbers, reserved keys.
 
 const TASK_FIELDS = ['schema_version', 'task_id', 'operation', 'fixture_refs', 'options'];
-const CONTEXT_FIELDS = ['clock', 'criteria_version', 'principal', 'grants', 'request_authority', 'relay', 'fixtureStore'];
+const CONTEXT_FIELDS = ['clock', 'criteria_version', 'principal', 'grants', 'request_authority', 'relay', 'fixtureStore', 'population'];
+const POPULATION_FIELDS = ['expected_tasks', 'scope'];
 const OPTION_FIELDS = ['include_draft_summary'];
 const PRINCIPAL_FIELDS = ['principal_id', 'kind'];
 const GRANT_FIELDS = ['grant_id', 'principal_id', 'action', 'resource'];
@@ -160,6 +161,27 @@ export function checkContext(ctx, budget) {
     if (store !== undefined && (typeof store !== 'object' || store === null || Array.isArray(store))) {
       err(errors, 'fixtureStore must be an object');
     }
+
+    // PM651-006: host-established population coverage (optional). If present,
+    // it must declare the expected task count; completion.verified requires
+    // the declaration to match the admitted population. Absent/unknown
+    // coverage never yields a verified plan-wide percentage.
+    const pop = safeGet(ctx, 'population', 'context').value;
+    if (pop !== undefined && pop !== null) {
+      if (typeof pop !== 'object' || Array.isArray(pop)) {
+        err(errors, 'population must be an object');
+      } else {
+        charge(budget); // population candidate
+        const up = unknownFields(pop, POPULATION_FIELDS);
+        if (up.length) err(errors, `unknown population fields: ${up.join(',')}`);
+        const et = safeGet(pop, 'expected_tasks', 'context.population').value;
+        if (!isNonNegSafeInt(et)) err(errors, 'population.expected_tasks must be a non-negative safe integer');
+        const scope = safeGet(pop, 'scope', 'context.population').value;
+        if (scope !== undefined && scope !== null && (typeof scope !== 'string' || !scope)) {
+          err(errors, 'population.scope must be a non-empty string if present');
+        }
+      }
+    }
   } catch (e) {
     if (e.code === 'ACCESSOR_REJECTED' || e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT') throw e;
     err(errors, `context validation error: ${e.message}`);
@@ -219,8 +241,15 @@ export function checkPlanPackage(pkg, budget) {
       const u = unknownFields(hc, HEADER_FIELDS);
       if (u.length) return fail(`header_claims unknown fields: ${u.join(',')}`);
       const ccp = safeGet(hc, 'claimed_completion_pct', 'pkg.header_claims').value;
-      if (ccp !== undefined && ccp !== null && typeof ccp !== 'number') {
-        return fail('header_claims.claimed_completion_pct must be a number');
+      // PM651-007: must be a finite number in [0,100]. Raw JSON 1e999 parses
+      // to Infinity; serialization would turn it into null. Refuse structurally.
+      if (ccp !== undefined && ccp !== null) {
+        if (typeof ccp !== 'number' || !Number.isFinite(ccp)) {
+          return fail('header_claims.claimed_completion_pct must be a finite number');
+        }
+        if (ccp < 0 || ccp > 100) {
+          return fail('header_claims.claimed_completion_pct must be in [0,100]');
+        }
       }
     }
 
@@ -235,8 +264,9 @@ export function checkPlanPackage(pkg, budget) {
       const rt = safeGet(t, 'release_tick', `task[${i}]`).value;
       if (rt !== undefined && rt !== null && !isSafeInt(rt)) return fail(`task[${i}].release_tick must be safe integer or null`);
       if (!TASK_STATUSES.includes(safeGet(t, 'status', `task[${i}]`).value)) return fail(`task[${i}].status invalid`);
+      // PM651-007: workstream_id is a required field per the brief.
       const wsid = safeGet(t, 'workstream_id', `task[${i}]`).value;
-      if (wsid !== undefined && wsid !== null && (typeof wsid !== 'string' || !isSafeKey(wsid))) return fail(`task[${i}].workstream_id invalid`);
+      if (typeof wsid !== 'string' || !wsid || !isSafeKey(wsid)) return fail(`task[${i}].workstream_id is required`);
       const notes = safeGet(t, 'notes', `task[${i}]`).value;
       if (notes !== undefined && notes !== null && typeof notes !== 'string') return fail(`task[${i}].notes must be a string`);
       const demands = safeGet(t, 'resource_demands', `task[${i}]`).value;
@@ -296,6 +326,11 @@ export function checkPlanPackage(pkg, budget) {
       if (typeof cap === 'number') {
         if (!isFiniteNum(cap) || cap < 0 || !isSafeInt(cap)) return fail(`capacity_windows[${i}].capacity must be a safe non-negative integer`);
       } else if (cap && typeof cap === 'object') {
+        // PM651-007: nested rational capacity is a closed schema; unknown
+        // control fields are refused, and the object is charged.
+        charge(budget);
+        const u = unknownFields(cap, ['num', 'den']);
+        if (u.length) return fail(`capacity_windows[${i}].capacity unknown fields: ${u.join(',')}`);
         const cn = safeGet(cap, 'num', `window[${i}].cap`).value;
         const cd = safeGet(cap, 'den', `window[${i}].cap`).value;
         if (!isSafeInt(cn) || !isSafeInt(cd) || cd <= 0 || cn < 0) return fail(`capacity_windows[${i}].capacity rational invalid`);
