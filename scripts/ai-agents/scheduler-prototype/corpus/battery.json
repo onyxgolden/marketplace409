@@ -10373,25 +10373,25 @@
     }
   },
   {
-    "case_id": "bud-002-boundary-58",
+    "case_id": "bud-002-boundary-54",
     "category": "budget_replay",
     "task": {
       "schema_version": "1",
-      "task_id": "battery-bud-002-boundary-58",
+      "task_id": "battery-bud-002-boundary-54",
       "operation": "analyze",
       "fixture_refs": {
         "network_bundle": {
           "repo": "sched-sources",
-          "path": "networks/boundary-58.json",
-          "commit": "9de8ace50e0de4883edf9a3321d3384af0d17c89",
-          "blob": "ed27644d89a2a2007bed79cc556a257fa3c82659",
+          "path": "networks/boundary-54.json",
+          "commit": "e918a984272df41c2a064eb6045961db90e1f770",
+          "blob": "506574214d3c576f1c297aef2540a8e6a08c9745",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 58,
+          "declared_total": 54,
           "complete": true
         },
         "anchors": {
@@ -10406,11 +10406,11 @@
     "context": {
       "clock": 1780315200000,
       "sources": {
-        "sched-sources|networks/boundary-58.json": {
+        "sched-sources|networks/boundary-54.json": {
           "revisions": {
-            "9de8ace50e0de4883edf9a3321d3384af0d17c89": {
-              "text": "[{\"record\":\"activity\",\"id\":\"act-b58-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-54\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-55\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-56\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
-              "blob": "ed27644d89a2a2007bed79cc556a257fa3c82659"
+            "e918a984272df41c2a064eb6045961db90e1f770": {
+              "text": "[{\"record\":\"activity\",\"id\":\"act-b54-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b54-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
+              "blob": "506574214d3c576f1c297aef2540a8e6a08c9745"
             }
           }
         }
@@ -10418,7 +10418,7 @@
       "readGrants": [
         {
           "repo": "sched-sources",
-          "path": "networks/boundary-58.json"
+          "path": "networks/boundary-54.json"
         }
       ],
       "principal": {
@@ -10445,7 +10445,7 @@
           "detail": null,
           "activities": [
             {
-              "id": "act-b58-00",
+              "id": "act-b54-00",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10456,7 +10456,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-01",
+              "id": "act-b54-01",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10467,7 +10467,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-02",
+              "id": "act-b54-02",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10478,7 +10478,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-03",
+              "id": "act-b54-03",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10489,7 +10489,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-04",
+              "id": "act-b54-04",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10500,7 +10500,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-05",
+              "id": "act-b54-05",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10511,7 +10511,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-06",
+              "id": "act-b54-06",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10522,7 +10522,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-07",
+              "id": "act-b54-07",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10533,7 +10533,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-08",
+              "id": "act-b54-08",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10544,7 +10544,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-09",
+              "id": "act-b54-09",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10555,7 +10555,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-10",
+              "id": "act-b54-10",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10566,7 +10566,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-11",
+              "id": "act-b54-11",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10577,7 +10577,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-12",
+              "id": "act-b54-12",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10588,7 +10588,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-13",
+              "id": "act-b54-13",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10599,7 +10599,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-14",
+              "id": "act-b54-14",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10610,7 +10610,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-15",
+              "id": "act-b54-15",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10621,7 +10621,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-16",
+              "id": "act-b54-16",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10632,7 +10632,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-17",
+              "id": "act-b54-17",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10643,7 +10643,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-18",
+              "id": "act-b54-18",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10654,7 +10654,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-19",
+              "id": "act-b54-19",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10665,7 +10665,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-20",
+              "id": "act-b54-20",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10676,7 +10676,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-21",
+              "id": "act-b54-21",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10687,7 +10687,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-22",
+              "id": "act-b54-22",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10698,7 +10698,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-23",
+              "id": "act-b54-23",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10709,7 +10709,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-24",
+              "id": "act-b54-24",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10720,7 +10720,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-25",
+              "id": "act-b54-25",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10731,7 +10731,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-26",
+              "id": "act-b54-26",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10742,7 +10742,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-27",
+              "id": "act-b54-27",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10753,7 +10753,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-28",
+              "id": "act-b54-28",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10764,7 +10764,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-29",
+              "id": "act-b54-29",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10775,7 +10775,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-30",
+              "id": "act-b54-30",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10786,7 +10786,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-31",
+              "id": "act-b54-31",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10797,7 +10797,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-32",
+              "id": "act-b54-32",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10808,7 +10808,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-33",
+              "id": "act-b54-33",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10819,7 +10819,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-34",
+              "id": "act-b54-34",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10830,7 +10830,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-35",
+              "id": "act-b54-35",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10841,7 +10841,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-36",
+              "id": "act-b54-36",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10852,7 +10852,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-37",
+              "id": "act-b54-37",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10863,7 +10863,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-38",
+              "id": "act-b54-38",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10874,7 +10874,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-39",
+              "id": "act-b54-39",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10885,7 +10885,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-40",
+              "id": "act-b54-40",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10896,7 +10896,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-41",
+              "id": "act-b54-41",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10907,7 +10907,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-42",
+              "id": "act-b54-42",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10918,7 +10918,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-43",
+              "id": "act-b54-43",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10929,7 +10929,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-44",
+              "id": "act-b54-44",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10940,7 +10940,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-45",
+              "id": "act-b54-45",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10951,7 +10951,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-46",
+              "id": "act-b54-46",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10962,7 +10962,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-47",
+              "id": "act-b54-47",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10973,7 +10973,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-48",
+              "id": "act-b54-48",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10984,7 +10984,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-49",
+              "id": "act-b54-49",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -10995,7 +10995,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-50",
+              "id": "act-b54-50",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -11006,7 +11006,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-51",
+              "id": "act-b54-51",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -11017,51 +11017,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-52",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-53",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-54",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-55",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-56",
+              "id": "act-b54-52",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -11073,63 +11029,59 @@
             }
           ],
           "critical_activities": [
-            "act-b58-00",
-            "act-b58-01",
-            "act-b58-02",
-            "act-b58-03",
-            "act-b58-04",
-            "act-b58-05",
-            "act-b58-06",
-            "act-b58-07",
-            "act-b58-08",
-            "act-b58-09",
-            "act-b58-10",
-            "act-b58-11",
-            "act-b58-12",
-            "act-b58-13",
-            "act-b58-14",
-            "act-b58-15",
-            "act-b58-16",
-            "act-b58-17",
-            "act-b58-18",
-            "act-b58-19",
-            "act-b58-20",
-            "act-b58-21",
-            "act-b58-22",
-            "act-b58-23",
-            "act-b58-24",
-            "act-b58-25",
-            "act-b58-26",
-            "act-b58-27",
-            "act-b58-28",
-            "act-b58-29",
-            "act-b58-30",
-            "act-b58-31",
-            "act-b58-32",
-            "act-b58-33",
-            "act-b58-34",
-            "act-b58-35",
-            "act-b58-36",
-            "act-b58-37",
-            "act-b58-38",
-            "act-b58-39",
-            "act-b58-40",
-            "act-b58-41",
-            "act-b58-42",
-            "act-b58-43",
-            "act-b58-44",
-            "act-b58-45",
-            "act-b58-46",
-            "act-b58-47",
-            "act-b58-48",
-            "act-b58-49",
-            "act-b58-50",
-            "act-b58-51",
-            "act-b58-52",
-            "act-b58-53",
-            "act-b58-54",
-            "act-b58-55",
-            "act-b58-56"
+            "act-b54-00",
+            "act-b54-01",
+            "act-b54-02",
+            "act-b54-03",
+            "act-b54-04",
+            "act-b54-05",
+            "act-b54-06",
+            "act-b54-07",
+            "act-b54-08",
+            "act-b54-09",
+            "act-b54-10",
+            "act-b54-11",
+            "act-b54-12",
+            "act-b54-13",
+            "act-b54-14",
+            "act-b54-15",
+            "act-b54-16",
+            "act-b54-17",
+            "act-b54-18",
+            "act-b54-19",
+            "act-b54-20",
+            "act-b54-21",
+            "act-b54-22",
+            "act-b54-23",
+            "act-b54-24",
+            "act-b54-25",
+            "act-b54-26",
+            "act-b54-27",
+            "act-b54-28",
+            "act-b54-29",
+            "act-b54-30",
+            "act-b54-31",
+            "act-b54-32",
+            "act-b54-33",
+            "act-b54-34",
+            "act-b54-35",
+            "act-b54-36",
+            "act-b54-37",
+            "act-b54-38",
+            "act-b54-39",
+            "act-b54-40",
+            "act-b54-41",
+            "act-b54-42",
+            "act-b54-43",
+            "act-b54-44",
+            "act-b54-45",
+            "act-b54-46",
+            "act-b54-47",
+            "act-b54-48",
+            "act-b54-49",
+            "act-b54-50",
+            "act-b54-51",
+            "act-b54-52"
           ],
           "critical_edges": []
         }
@@ -11140,25 +11092,25 @@
     }
   },
   {
-    "case_id": "bud-003-boundary-59",
+    "case_id": "bud-003-boundary-55",
     "category": "budget_replay",
     "task": {
       "schema_version": "1",
-      "task_id": "battery-bud-003-boundary-59",
+      "task_id": "battery-bud-003-boundary-55",
       "operation": "analyze",
       "fixture_refs": {
         "network_bundle": {
           "repo": "sched-sources",
-          "path": "networks/boundary-59.json",
-          "commit": "7b51791f6c80fdd0f05eba48fcf36b2a493d909b",
-          "blob": "66346b613fa134d70097eecb3d01668deb87dfa4",
+          "path": "networks/boundary-55.json",
+          "commit": "e10b4cc11b5739a084f56fd5e9503e717f4dcdab",
+          "blob": "5547a51831876eae7f80755485578c5e445f600f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 59,
+          "declared_total": 55,
           "complete": true
         },
         "anchors": {
@@ -11173,11 +11125,11 @@
     "context": {
       "clock": 1780315200000,
       "sources": {
-        "sched-sources|networks/boundary-59.json": {
+        "sched-sources|networks/boundary-55.json": {
           "revisions": {
-            "7b51791f6c80fdd0f05eba48fcf36b2a493d909b": {
-              "text": "[{\"record\":\"activity\",\"id\":\"act-b59-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-54\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-55\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-56\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-57\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
-              "blob": "66346b613fa134d70097eecb3d01668deb87dfa4"
+            "e10b4cc11b5739a084f56fd5e9503e717f4dcdab": {
+              "text": "[{\"record\":\"activity\",\"id\":\"act-b55-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
+              "blob": "5547a51831876eae7f80755485578c5e445f600f"
             }
           }
         }
@@ -11185,7 +11137,7 @@
       "readGrants": [
         {
           "repo": "sched-sources",
-          "path": "networks/boundary-59.json"
+          "path": "networks/boundary-55.json"
         }
       ],
       "principal": {
@@ -53280,7 +53232,7 @@
     "expected": {
       "status": "REFUSED",
       "diagnostic_codes": [
-        "INPUT_LIMIT"
+        "BUDGET_EXCEEDED"
       ],
       "components": [],
       "claimed_states": [],
@@ -53289,25 +53241,25 @@
     }
   },
   {
-    "case_id": "bud-005-sentinel-59",
+    "case_id": "bud-005-sentinel-55",
     "category": "budget_replay",
     "task": {
       "schema_version": "1",
-      "task_id": "battery-bud-005-sentinel-59",
+      "task_id": "battery-bud-005-sentinel-55",
       "operation": "analyze",
       "fixture_refs": {
         "network_bundle": {
           "repo": "sched-sources",
-          "path": "networks/sentinel-59.json",
-          "commit": "205d80ca822f4cb31dbe07108b11590d6fa8a7e9",
-          "blob": "b815d804a98499eb2e4c11855f4bd539f7e9766a",
+          "path": "networks/sentinel-55.json",
+          "commit": "4ed011f708b6e3202199e22e8e61b15bc03c09c6",
+          "blob": "3e0031c5d2f11b54f1dbc597ff2bd81769007777",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 59,
+          "declared_total": 55,
           "complete": true
         },
         "anchors": {
@@ -53322,11 +53274,11 @@
     "context": {
       "clock": 1780315200000,
       "sources": {
-        "sched-sources|networks/sentinel-59.json": {
+        "sched-sources|networks/sentinel-55.json": {
           "revisions": {
-            "205d80ca822f4cb31dbe07108b11590d6fa8a7e9": {
-              "text": "[{\"record\":\"activity\",\"id\":\"act-sen-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-54\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-55\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-56\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-57\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"BAD ID WITH SPACES AND !!!\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0}]",
-              "blob": "b815d804a98499eb2e4c11855f4bd539f7e9766a"
+            "4ed011f708b6e3202199e22e8e61b15bc03c09c6": {
+              "text": "[{\"record\":\"activity\",\"id\":\"act-sen-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-sen-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"BAD ID WITH SPACES AND !!!\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0}]",
+              "blob": "3e0031c5d2f11b54f1dbc597ff2bd81769007777"
             }
           }
         }
@@ -53334,7 +53286,7 @@
       "readGrants": [
         {
           "repo": "sched-sources",
-          "path": "networks/sentinel-59.json"
+          "path": "networks/sentinel-55.json"
         }
       ],
       "principal": {
@@ -53617,25 +53569,25 @@
     }
   },
   {
-    "case_id": "bud-008-boundary-58-with-claims",
+    "case_id": "bud-008-boundary-53-with-claims",
     "category": "budget_replay",
     "task": {
       "schema_version": "1",
-      "task_id": "battery-bud-008-boundary-58-with-claims",
+      "task_id": "battery-bud-008-boundary-53-with-claims",
       "operation": "analyze",
       "fixture_refs": {
         "network_bundle": {
           "repo": "sched-sources",
-          "path": "networks/boundary-58.json",
-          "commit": "9de8ace50e0de4883edf9a3321d3384af0d17c89",
-          "blob": "ed27644d89a2a2007bed79cc556a257fa3c82659",
+          "path": "networks/boundary-53.json",
+          "commit": "bba4fff0a94f5624348ad3c6d76e677316a9ae70",
+          "blob": "024e5265b36283b2833bc701faeefd51c6cc7b75",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 58,
+          "declared_total": 53,
           "complete": true
         },
         "anchors": {
@@ -53646,7 +53598,7 @@
         "constraints": [],
         "claimed": {
           "activities": {
-            "act-b58-00": {
+            "act-b53-00": {
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53660,11 +53612,11 @@
     "context": {
       "clock": 1780315200000,
       "sources": {
-        "sched-sources|networks/boundary-58.json": {
+        "sched-sources|networks/boundary-53.json": {
           "revisions": {
-            "9de8ace50e0de4883edf9a3321d3384af0d17c89": {
-              "text": "[{\"record\":\"activity\",\"id\":\"act-b58-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-54\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-55\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b58-56\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
-              "blob": "ed27644d89a2a2007bed79cc556a257fa3c82659"
+            "bba4fff0a94f5624348ad3c6d76e677316a9ae70": {
+              "text": "[{\"record\":\"activity\",\"id\":\"act-b53-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b53-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
+              "blob": "024e5265b36283b2833bc701faeefd51c6cc7b75"
             }
           }
         }
@@ -53672,7 +53624,7 @@
       "readGrants": [
         {
           "repo": "sched-sources",
-          "path": "networks/boundary-58.json"
+          "path": "networks/boundary-53.json"
         }
       ],
       "principal": {
@@ -53699,7 +53651,7 @@
           "detail": null,
           "activities": [
             {
-              "id": "act-b58-00",
+              "id": "act-b53-00",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53710,7 +53662,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-01",
+              "id": "act-b53-01",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53721,7 +53673,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-02",
+              "id": "act-b53-02",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53732,7 +53684,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-03",
+              "id": "act-b53-03",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53743,7 +53695,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-04",
+              "id": "act-b53-04",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53754,7 +53706,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-05",
+              "id": "act-b53-05",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53765,7 +53717,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-06",
+              "id": "act-b53-06",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53776,7 +53728,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-07",
+              "id": "act-b53-07",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53787,7 +53739,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-08",
+              "id": "act-b53-08",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53798,7 +53750,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-09",
+              "id": "act-b53-09",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53809,7 +53761,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-10",
+              "id": "act-b53-10",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53820,7 +53772,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-11",
+              "id": "act-b53-11",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53831,7 +53783,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-12",
+              "id": "act-b53-12",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53842,7 +53794,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-13",
+              "id": "act-b53-13",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53853,7 +53805,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-14",
+              "id": "act-b53-14",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53864,7 +53816,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-15",
+              "id": "act-b53-15",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53875,7 +53827,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-16",
+              "id": "act-b53-16",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53886,7 +53838,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-17",
+              "id": "act-b53-17",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53897,7 +53849,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-18",
+              "id": "act-b53-18",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53908,7 +53860,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-19",
+              "id": "act-b53-19",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53919,7 +53871,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-20",
+              "id": "act-b53-20",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53930,7 +53882,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-21",
+              "id": "act-b53-21",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53941,7 +53893,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-22",
+              "id": "act-b53-22",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53952,7 +53904,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-23",
+              "id": "act-b53-23",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53963,7 +53915,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-24",
+              "id": "act-b53-24",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53974,7 +53926,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-25",
+              "id": "act-b53-25",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53985,7 +53937,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-26",
+              "id": "act-b53-26",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -53996,7 +53948,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-27",
+              "id": "act-b53-27",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54007,7 +53959,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-28",
+              "id": "act-b53-28",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54018,7 +53970,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-29",
+              "id": "act-b53-29",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54029,7 +53981,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-30",
+              "id": "act-b53-30",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54040,7 +53992,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-31",
+              "id": "act-b53-31",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54051,7 +54003,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-32",
+              "id": "act-b53-32",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54062,7 +54014,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-33",
+              "id": "act-b53-33",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54073,7 +54025,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-34",
+              "id": "act-b53-34",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54084,7 +54036,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-35",
+              "id": "act-b53-35",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54095,7 +54047,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-36",
+              "id": "act-b53-36",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54106,7 +54058,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-37",
+              "id": "act-b53-37",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54117,7 +54069,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-38",
+              "id": "act-b53-38",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54128,7 +54080,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-39",
+              "id": "act-b53-39",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54139,7 +54091,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-40",
+              "id": "act-b53-40",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54150,7 +54102,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-41",
+              "id": "act-b53-41",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54161,7 +54113,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-42",
+              "id": "act-b53-42",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54172,7 +54124,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-43",
+              "id": "act-b53-43",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54183,7 +54135,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-44",
+              "id": "act-b53-44",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54194,7 +54146,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-45",
+              "id": "act-b53-45",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54205,7 +54157,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-46",
+              "id": "act-b53-46",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54216,7 +54168,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-47",
+              "id": "act-b53-47",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54227,7 +54179,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-48",
+              "id": "act-b53-48",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54238,7 +54190,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-49",
+              "id": "act-b53-49",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54249,7 +54201,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-50",
+              "id": "act-b53-50",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54260,62 +54212,7 @@
               "civil_finish_boundary": "2026-01-06"
             },
             {
-              "id": "act-b58-51",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-52",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-53",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-54",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-55",
-              "es": 0,
-              "ef": 1,
-              "ls": 0,
-              "lf": 1,
-              "total_float": 0,
-              "critical": true,
-              "civil_start": "2026-01-05",
-              "civil_finish_boundary": "2026-01-06"
-            },
-            {
-              "id": "act-b58-56",
+              "id": "act-b53-51",
               "es": 0,
               "ef": 1,
               "ls": 0,
@@ -54327,63 +54224,58 @@
             }
           ],
           "critical_activities": [
-            "act-b58-00",
-            "act-b58-01",
-            "act-b58-02",
-            "act-b58-03",
-            "act-b58-04",
-            "act-b58-05",
-            "act-b58-06",
-            "act-b58-07",
-            "act-b58-08",
-            "act-b58-09",
-            "act-b58-10",
-            "act-b58-11",
-            "act-b58-12",
-            "act-b58-13",
-            "act-b58-14",
-            "act-b58-15",
-            "act-b58-16",
-            "act-b58-17",
-            "act-b58-18",
-            "act-b58-19",
-            "act-b58-20",
-            "act-b58-21",
-            "act-b58-22",
-            "act-b58-23",
-            "act-b58-24",
-            "act-b58-25",
-            "act-b58-26",
-            "act-b58-27",
-            "act-b58-28",
-            "act-b58-29",
-            "act-b58-30",
-            "act-b58-31",
-            "act-b58-32",
-            "act-b58-33",
-            "act-b58-34",
-            "act-b58-35",
-            "act-b58-36",
-            "act-b58-37",
-            "act-b58-38",
-            "act-b58-39",
-            "act-b58-40",
-            "act-b58-41",
-            "act-b58-42",
-            "act-b58-43",
-            "act-b58-44",
-            "act-b58-45",
-            "act-b58-46",
-            "act-b58-47",
-            "act-b58-48",
-            "act-b58-49",
-            "act-b58-50",
-            "act-b58-51",
-            "act-b58-52",
-            "act-b58-53",
-            "act-b58-54",
-            "act-b58-55",
-            "act-b58-56"
+            "act-b53-00",
+            "act-b53-01",
+            "act-b53-02",
+            "act-b53-03",
+            "act-b53-04",
+            "act-b53-05",
+            "act-b53-06",
+            "act-b53-07",
+            "act-b53-08",
+            "act-b53-09",
+            "act-b53-10",
+            "act-b53-11",
+            "act-b53-12",
+            "act-b53-13",
+            "act-b53-14",
+            "act-b53-15",
+            "act-b53-16",
+            "act-b53-17",
+            "act-b53-18",
+            "act-b53-19",
+            "act-b53-20",
+            "act-b53-21",
+            "act-b53-22",
+            "act-b53-23",
+            "act-b53-24",
+            "act-b53-25",
+            "act-b53-26",
+            "act-b53-27",
+            "act-b53-28",
+            "act-b53-29",
+            "act-b53-30",
+            "act-b53-31",
+            "act-b53-32",
+            "act-b53-33",
+            "act-b53-34",
+            "act-b53-35",
+            "act-b53-36",
+            "act-b53-37",
+            "act-b53-38",
+            "act-b53-39",
+            "act-b53-40",
+            "act-b53-41",
+            "act-b53-42",
+            "act-b53-43",
+            "act-b53-44",
+            "act-b53-45",
+            "act-b53-46",
+            "act-b53-47",
+            "act-b53-48",
+            "act-b53-49",
+            "act-b53-50",
+            "act-b53-51"
           ],
           "critical_edges": []
         }
@@ -54478,16 +54370,16 @@
       "fixture_refs": {
         "network_bundle": {
           "repo": "sched-sources",
-          "path": "networks/boundary-59.json",
-          "commit": "7b51791f6c80fdd0f05eba48fcf36b2a493d909b",
-          "blob": "66346b613fa134d70097eecb3d01668deb87dfa4",
+          "path": "networks/boundary-55.json",
+          "commit": "e10b4cc11b5739a084f56fd5e9503e717f4dcdab",
+          "blob": "5547a51831876eae7f80755485578c5e445f600f",
           "algorithm": "git-sha1",
           "revision": "v1"
         }
       },
       "options": {
         "population": {
-          "declared_total": 59,
+          "declared_total": 55,
           "complete": true
         },
         "anchors": {
@@ -54502,11 +54394,11 @@
     "context": {
       "clock": 1780315200000,
       "sources": {
-        "sched-sources|networks/boundary-59.json": {
+        "sched-sources|networks/boundary-55.json": {
           "revisions": {
-            "7b51791f6c80fdd0f05eba48fcf36b2a493d909b": {
-              "text": "[{\"record\":\"activity\",\"id\":\"act-b59-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-54\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-55\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-56\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b59-57\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
-              "blob": "66346b613fa134d70097eecb3d01668deb87dfa4"
+            "e10b4cc11b5739a084f56fd5e9503e717f4dcdab": {
+              "text": "[{\"record\":\"activity\",\"id\":\"act-b55-00\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-01\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-02\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-03\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-04\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-05\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-06\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-07\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-08\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-09\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-10\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-11\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-12\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-13\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-14\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-15\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-16\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-17\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-18\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-19\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-20\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-21\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-22\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-23\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-24\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-25\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-26\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-27\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-28\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-29\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-30\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-31\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-32\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-33\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-34\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-35\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-36\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-37\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-38\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-39\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-40\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-41\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-42\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-43\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-44\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-45\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-46\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-47\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-48\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-49\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-50\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-51\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-52\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"activity\",\"id\":\"act-b55-53\",\"component\":\"c1\",\"duration_workdays\":1,\"release_tick\":0},{\"record\":\"calendar\",\"component\":\"c1\",\"working_weekdays\":[1,2,3,4,5],\"excluded_dates\":[]}]",
+              "blob": "5547a51831876eae7f80755485578c5e445f600f"
             }
           }
         }
@@ -54514,7 +54406,7 @@
       "readGrants": [
         {
           "repo": "sched-sources",
-          "path": "networks/boundary-59.json"
+          "path": "networks/boundary-55.json"
         }
       ],
       "principal": {

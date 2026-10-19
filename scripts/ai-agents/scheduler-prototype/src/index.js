@@ -26,19 +26,55 @@ import { analyzeComponent } from "./scheduler.js";
 export const AGENT_ID = "scheduler-agent";
 export const SCHEMA_VERSION = "1";
 
-function taskIdOf(task) {
-  try {
-    return `sched-${sha256HexUtf8(canonicalJson(task)).slice(0, 16)}`;
-  } catch {
-    return "sched-invalid-task";
+/**
+ * S648-004: pre-validation task_id fallback. Preserves the caller's raw
+ * task_id when it is a string; otherwise the documented "unavailable"
+ * marker. Never hash-derived, never replaces a valid caller ID.
+ */
+function requestTaskId(task) {
+  if (task && typeof task === "object" && typeof task.task_id === "string") {
+    return task.task_id;
   }
+  return "unavailable";
 }
 
-function envelope(task, { status, complete, source_refs = [], diagnostics = [], quarantined_sources = [], routing_flags = [], report = null }) {
+/**
+ * Explicit unavailable citation for values that carry no bundle source
+ * span (task-input claims, constraint diagnostics). The brief permits an
+ * explicit unavailable state where no verified span exists.
+ */
+function unavailableCitation(reason) {
+  return {
+    quoted_span: null,
+    span: null,
+    verification: "unavailable",
+    reason,
+  };
+}
+
+/**
+ * S648-002: positional span verification under the live span budget.
+ * Charges one span, then proves bytes[startByte:endByte] decode to exactly
+ * the expected span text. Throws ResolutionError (SPAN_MISMATCH) on any
+ * divergence, BudgetError when the span budget is exhausted.
+ */
+export function verifyRecordSpan(bytes, startByte, endByte, expectedText, budget, what) {
+  budget.countSpan(what);
+  if (!Number.isInteger(startByte) || !Number.isInteger(endByte) || startByte < 0 || endByte < startByte || endByte > bytes.length) {
+    throw new ResolutionError("SPAN_MISMATCH", `span byte range [${startByte}, ${endByte}) is outside the source bytes`);
+  }
+  const slice = bytes.subarray(startByte, endByte).toString("utf8");
+  if (slice !== expectedText) {
+    throw new ResolutionError("SPAN_MISMATCH", "span bytes do not decode to the expected span text");
+  }
+  return { start_byte: startByte, end_byte: endByte, quoted_text: expectedText };
+}
+
+function envelope(taskId, { status, complete, source_refs = [], diagnostics = [], quarantined_sources = [], routing_flags = [], report = null }) {
   return {
     schema_version: SCHEMA_VERSION,
     agent: AGENT_ID,
-    task_id: taskIdOf(task),
+    task_id: taskId,
     status,
     advisory: true,
     fixture_only: true,
@@ -52,8 +88,8 @@ function envelope(task, { status, complete, source_refs = [], diagnostics = [], 
   };
 }
 
-function refused(task, code, severity, reason, extra = {}) {
-  return envelope(task, {
+function refused(taskId, code, severity, reason, extra = {}) {
+  return envelope(taskId, {
     status: "REFUSED",
     complete: false,
     diagnostics: [{ code, severity, source_ref: null, record_id: null, reason }],
@@ -73,27 +109,32 @@ function emptyReport() {
 
 export function run(task, context) {
   const clockRaw = context && typeof context === "object" ? context.clock : undefined;
-  if (!Number.isFinite(clockRaw)) return refused(task, "INVALID_INPUT", "error", "context.clock must be a finite number");
+  if (!Number.isFinite(clockRaw)) return refused(requestTaskId(task), "INVALID_INPUT", "error", "context.clock must be a finite number");
 
+  // S648-001: the monotonic object budget exists BEFORE task validation.
+  // validateTask charges each task/control candidate before reading its
+  // fields, under the same counter as context and network records.
+  const budget = makeBudget();
   let validatedTask;
   try {
-    validatedTask = validateTask(task);
+    validatedTask = validateTask(task, budget);
   } catch (e) {
-    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+    if (e instanceof BudgetError) return refused(requestTaskId(task), e.code, "error", e.message);
+    if (e instanceof SchemaError) return refused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
     throw e;
   }
+  const taskId = validatedTask.task_id;
 
-  const budget = makeBudget();
   try {
     budget.countPayload(canonicalJson(task), "task payload");
   } catch (e) {
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    if (e instanceof BudgetError) return refused(taskId, e.code, "error", e.message);
     throw e;
   }
 
   if (validatedTask.kind === "prohibited") {
     return refused(
-      task,
+      taskId,
       "ACTION_DENIED",
       "critical",
       `prohibited operation '${validatedTask.operation}': this agent only supports 'analyze' (read a fixture-only network and return an advisory recomputation); it cannot approve schedules, commit dates, publish, or mutate any record`
@@ -104,7 +145,7 @@ export function run(task, context) {
   // unsupported in slice 1 — refuse before any math, no silent defaults.
   for (const c of validatedTask.constraints) {
     if (c.kind === "ALAP") {
-      return refused(task, "UNSUPPORTED_CONSTRAINT", "error", `constraint kind 'ALAP' on activity '${c.activity_id}' is explicitly unsupported in slice 1; no undocumented default applied`);
+      return refused(taskId, "UNSUPPORTED_CONSTRAINT", "error", `constraint kind 'ALAP' on activity '${c.activity_id}' is explicitly unsupported in slice 1; no undocumented default applied`);
     }
   }
 
@@ -112,36 +153,36 @@ export function run(task, context) {
   try {
     ctx = validateContext(context, budget);
   } catch (e) {
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
-    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", `context: ${e.message}`);
+    if (e instanceof BudgetError) return refused(taskId, e.code, "error", e.message);
+    if (e instanceof SchemaError) return refused(taskId, "INVALID_INPUT", "error", `context: ${e.message}`);
     throw e;
   }
 
   // Authenticated request authority: Jason or his registered Muse relay.
   if (ctx.principal.revoked) {
-    return refused(task, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
+    return refused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
   }
   const validFrom = Date.parse(ctx.principal.valid_from);
   const expiresAt = Date.parse(ctx.principal.expires_at);
   if (!(validFrom <= ctx.clock && ctx.clock <= expiresAt)) {
-    return refused(task, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
+    return refused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
   }
 
   // Horizon policy: host criteria caps the requested horizon.
   if (validatedTask.horizon_days > ctx.criteria.max_horizon_days) {
-    return refused(task, "INVALID_INPUT", "error", `horizon_days ${validatedTask.horizon_days} exceeds host policy max ${ctx.criteria.max_horizon_days}`);
+    return refused(taskId, "INVALID_INPUT", "error", `horizon_days ${validatedTask.horizon_days} exceeds host policy max ${ctx.criteria.max_horizon_days}`);
   }
 
   // Resolve the network bundle.
   if (!hasReadGrant(validatedTask.network_bundle_ref, ctx.readGrants)) {
-    return refused(task, "READ_DENIED", "error", `read grant missing for network bundle ${validatedTask.network_bundle_ref.repo}/${validatedTask.network_bundle_ref.path}`);
+    return refused(taskId, "READ_DENIED", "error", `read grant missing for network bundle ${validatedTask.network_bundle_ref.repo}/${validatedTask.network_bundle_ref.path}`);
   }
   let bundleResolved;
   try {
     bundleResolved = resolveSourceRef(validatedTask.network_bundle_ref, ctx.sources, budget, "network bundle source");
   } catch (e) {
-    if (e instanceof ResolutionError) return refused(task, e.code, "error", `network bundle: ${e.message}`);
-    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    if (e instanceof ResolutionError) return refused(taskId, e.code, "error", `network bundle: ${e.message}`);
+    if (e instanceof BudgetError) return refused(taskId, e.code, "error", e.message);
     throw e;
   }
 
@@ -150,12 +191,15 @@ export function run(task, context) {
   try {
     spans = splitTopLevelArray(bundleResolved.text, "network bundle");
   } catch (e) {
-    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+    if (e instanceof SchemaError) return refused(taskId, "INVALID_INPUT", "error", e.message);
     throw e;
   }
 
   // ---- Charged pass: one countObject() per record, strictly before
   // that candidate's span is decoded or any of its fields read. ----
+  // S648-002: each admitted record's original UTF-8 byte range is
+  // preserved and verified under the live span budget before decoding.
+  const bundleBytes = bundleResolved.bytes;
   const provisional = [];
   let budgetExceeded = false;
   for (let i = 0; i < spans.length; i++) {
@@ -168,26 +212,44 @@ export function run(task, context) {
       }
       throw e;
     }
+    const spanText = spans[i].text;
+    try {
+      verifyRecordSpan(bundleBytes, spans[i].startByte, spans[i].endByte, spanText, budget, `network[${i}] span`);
+    } catch (e) {
+      if (e instanceof ResolutionError) {
+        return refused(taskId, "SPAN_MISMATCH", "error", `network bundle entry ${i} span verification failed: ${e.message}`);
+      }
+      if (e instanceof BudgetError) {
+        budgetExceeded = true;
+        break;
+      }
+      throw e;
+    }
     let raw;
     try {
-      raw = JSON.parse(spans[i]);
+      raw = JSON.parse(spanText);
     } catch {
-      return refused(task, "INVALID_INPUT", "error", `network bundle entry ${i} is not valid JSON`);
+      return refused(taskId, "INVALID_INPUT", "error", `network bundle entry ${i} is not valid JSON`);
     }
     let rec;
     try {
       rec = validateNetworkRecord(raw, `network bundle[${i}]`);
     } catch (e) {
       if (e instanceof SchemaError) {
-        return refused(task, "INVALID_INPUT", "error", `malformed network record at index ${i}: ${e.message}`);
+        return refused(taskId, "INVALID_INPUT", "error", `malformed network record at index ${i}: ${e.message}`);
       }
       throw e;
     }
+    rec._citation = {
+      quoted_span: spanText,
+      span: { start_byte: spans[i].startByte, end_byte: spans[i].endByte, quoted_text: spanText },
+      verification: "verified",
+    };
     provisional.push(rec);
   }
 
   if (budgetExceeded) {
-    return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining records`);
+    return refused(taskId, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining records`);
   }
 
   // Duplicate IDs are rejected outright — no first-wins, no dedup.
@@ -198,7 +260,7 @@ export function run(task, context) {
     if (r.record === "calendar") continue;
     const id = r.id;
     if (seenIds.has(id)) {
-      return refused(task, "INVALID_INPUT", "error", `duplicate ${r.record} id '${id}'; duplicates are rejected outright`);
+      return refused(taskId, "INVALID_INPUT", "error", `duplicate ${r.record} id '${id}'; duplicates are rejected outright`);
     }
     seenIds.set(id, r.record);
   }
@@ -240,7 +302,7 @@ export function run(task, context) {
       admitted_count: 0,
       excluded_count: excludedCount,
     };
-    return envelope(task, {
+    return envelope(taskId, {
       status: "EMPTY",
       complete: true,
       source_refs: [sourceRefOut(validatedTask.network_bundle_ref)],
@@ -271,6 +333,7 @@ export function run(task, context) {
         severity: "warning",
         record_id: c.activity_id,
         reason: `constraint '${c.kind}' references unknown activity '${c.activity_id}'; ignored`,
+        citation: unavailableCitation("constraint from task input; no bundle source span"),
       });
     } else {
       usableConstraints.push(c);
@@ -324,7 +387,9 @@ export function run(task, context) {
         evidence_state: "unverifiable",
         reason: `no computed dates for activity '${id}'; claim cannot be checked`,
         claimed,
+        claimed_citation: unavailableCitation("claimed values from task input; no bundle source span"),
         computed: null,
+        computed_citation: null,
       });
       continue;
     }
@@ -338,7 +403,9 @@ export function run(task, context) {
       evidence_state: mismatches.length === 0 ? "verified" : "mismatch",
       mismatched_fields: mismatches,
       claimed,
+      claimed_citation: unavailableCitation("claimed values from task input; no bundle source span"),
       computed: { es: c.es, ef: c.ef, ls: c.ls, lf: c.lf, total_float: c.total_float },
+      computed_citation: c.citation ?? null,
     });
     if (mismatches.length > 0) {
       diagnostics.push({
@@ -360,7 +427,9 @@ export function run(task, context) {
         evidence_state: "unverifiable",
         reason: `component '${compId}' has no feasible computed schedule; claimed path cannot be checked`,
         claimed_path: path,
+        claimed_citation: unavailableCitation("claimed path from task input; no bundle source span"),
         computed_critical_subgraph: null,
+        computed_citation: null,
       });
       continue;
     }
@@ -394,7 +463,9 @@ export function run(task, context) {
       evidence_state: ok ? "verified" : "mismatch",
       reason: ok ? `claimed path matches directed tight critical edges` : `claimed path breaks at ${JSON.stringify(badStep)}: not a directed chain of tight critical edges`,
       claimed_path: path,
+      claimed_citation: unavailableCitation("claimed path from task input; no bundle source span"),
       computed_critical_subgraph: comp.critical_subgraph,
+      computed_citation: comp.critical_subgraph.citation ?? null,
     });
     if (!ok) {
       diagnostics.push({
@@ -440,7 +511,7 @@ export function run(task, context) {
     summary,
   };
 
-  const result = envelope(task, {
+  const result = envelope(taskId, {
     status,
     complete: true,
     source_refs: [sourceRefOut(validatedTask.network_bundle_ref)],
@@ -459,7 +530,7 @@ export function run(task, context) {
     result.source_refs.length +
     result.report.components.reduce((n, c) => n + c.activities.length + c.edges.length, 0);
   if (outputRecords > BUDGET_LIMITS.maxOutputRecords || canonicalByteLength(result) > BUDGET_LIMITS.maxOutputBytes) {
-    return refused(task, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
+    return refused(taskId, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
   }
   return result;
 }

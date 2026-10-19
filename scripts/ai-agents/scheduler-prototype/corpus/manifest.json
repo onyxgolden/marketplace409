@@ -6,7 +6,7 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "5d83204455e279e906400df11031cf4bd451f5ebca3386a2ec225c7cdd0318f0"
+      "sha256": "1ac236be1cb3e4b5a5033a35b71b3334944b836d084780d3ed2ced2c86024785"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -14,15 +14,15 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "61136fc515261bd91cd96912911ba7da37749ab80a79eb619fe31dd493cca8a5"
+      "sha256": "c8f79c17e562cfc1a0dfa52cef750f2671e4e118b3af8bcf8d9ad109f63671d7"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "2b0cce3ae0665de748216dd6b3f3fc05ce632fc0059a67158440ce2aa81af365"
+      "sha256": "1e3cad51163d0d6fadf087934b42c7f54b7864964282dc074786470f4d0dd5d4"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "58b857224d5ea65e7ec9fa1c6178cc57d9e56a6c61bb7b8bd7ee2ddf3116504b"
+      "sha256": "3d1d40f2b4b6171b71badcb556c4ece491c220ed561d4f42fed6522ad0295577"
     },
     {
       "path": "package.json",
@@ -38,7 +38,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "329832f483e0ac4ada2cbda82ce145f6be5ceb85e06991059d872614d68999aa"
+      "sha256": "91749a82bd72e3e773320cc73981815c5b855b8e449b7d60d81547f3d01ce80a"
     },
     {
       "path": "src/injection.js",
@@ -50,11 +50,11 @@
     },
     {
       "path": "src/scheduler.js",
-      "sha256": "af4fb23046915b7b0b6366264d0d6568bedd00311d5f0989067f3028c19fff78"
+      "sha256": "6ddfb1baaa7c6926ca9406c1ff79cfdf8bf85eb0da31dd6329ae3f51ba19e37b"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "d391cc3dc57f795d2eb80091ab7c24161c2fc3c6c9e0b4bc0ff69d1c68afa7b0"
+      "sha256": "7b3948bf02a3d99db3668dac4502d9d46c2d0b94a0618594e79a37d3fae37808"
     },
     {
       "path": "tests/battery.test.js",
@@ -62,7 +62,7 @@
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "f973648c2fd9c971e6b77f069eb1e0cb16c3b74bc2172a83fe165c1a0b611acc"
+      "sha256": "9b85e59aad4479d3ae2eb25d3f9de5d42c5f6a27903193ceffe6b756e74bf286"
     },
     {
       "path": "tests/canonical.test.js",
@@ -78,7 +78,7 @@
     },
     {
       "path": "tests/resolver.test.js",
-      "sha256": "0e12f820f2d00def165c8adf7c6f3d6b8c15f73ed55d19692656c184d17dccdd"
+      "sha256": "06882f845daef0391aafb05122ac82d077b81b96a4ece00a467d159ac0778f9e"
     },
     {
       "path": "tests/run-battery.js",
@@ -90,11 +90,11 @@
     },
     {
       "path": "tests/scheduler.test.js",
-      "sha256": "eee86da8db3f261278add73fb23b8388979a71a1b87eaa0f0f20c0a1a3b184e2"
+      "sha256": "bdf58addf137d18f4647d44716eccf706ef59b275bd43e258fb9cbafac6eaf2b"
     },
     {
       "path": "tests/schemas.test.js",
-      "sha256": "06db8383e21af2d8fbc523075c5c652553da8e0651349f1073bc6400cdd5fd04"
+      "sha256": "c250d4b7e6b278ebf2c874c7342f3b07fe013a55745d8a40614d306307bad1c8"
     }
   ]
 }

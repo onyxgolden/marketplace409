@@ -44,13 +44,14 @@ test("100-record bundle refuses BUDGET_EXCEEDED (no truncation)", () => {
   assert.deepEqual(r.report.components, []);
 });
 
-test("58 records fit exactly at the 64-object cap", () => {
-  const r = run(taskFor("boundary-58", 58), ctxFor("boundary-58"));
+test("54 records fit exactly at the 64-object cap", () => {
+  // task(4) + context(5) + resolve(1) + 54 records = 64
+  const r = run(taskFor("boundary-54", 54), ctxFor("boundary-54"));
   assert.equal(r.status, "REPORT_READY");
 });
 
-test("59th record refuses before inspection (sentinel: invalid tail never decoded)", () => {
-  const r = run(taskFor("sentinel-59", 59), ctxFor("sentinel-59"));
+test("55th record refuses before inspection (sentinel: invalid tail never decoded)", () => {
+  const r = run(taskFor("sentinel-55", 55), ctxFor("sentinel-55"));
   assert.equal(r.status, "REFUSED");
   assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));
   assert.ok(!diagCode(r).includes("INVALID_INPUT"), "must not report INVALID_INPUT for the uninspected tail");
@@ -66,4 +67,87 @@ test("span budget primitive refuses at 513", () => {
   const b = makeBudget();
   for (let i = 0; i < 512; i++) b.countSpan(`s${i}`);
   assert.throws(() => b.countSpan("s512"), (e) => e instanceof Error && e.code === "BUDGET_EXCEEDED");
+});
+
+// ---- S648-001: task-side candidates are budget-charged before inspection.
+
+function taskWithConstraints(n, { invalidFrom = -1 } = {}) {
+  const ref = store.bundleRefs["single-activity"];
+  const constraints = [];
+  for (let i = 0; i < n; i++) {
+    if (invalidFrom >= 0 && i >= invalidFrom) {
+      // Sentinel: schema-invalid; must never be inspected.
+      constraints.push({ activity_id: "BAD ID !!!", kind: "NOPE", tick: "nan" });
+    } else {
+      constraints.push({ activity_id: "A", kind: "START_NO_EARLIER_THAN", tick: i % 10 });
+    }
+  }
+  return {
+    schema_version: "1", task_id: "bud-task-side", operation: "analyze",
+    fixture_refs: { network_bundle: ref },
+    options: {
+      population: { declared_total: 2, complete: true },
+      anchors: { c1: "2026-01-05" }, horizon_days: 60,
+      deadlines: {}, constraints, claimed: {},
+    },
+  };
+}
+
+test("task-side: 52 constraints fit exactly via full run (4+52+5+1+2=64)", () => {
+  const r = run(taskWithConstraints(52), ctxFor("single-activity"));
+  assert.equal(r.status, "REPORT_READY");
+});
+
+test("task-side: 61st constraint refuses BEFORE inspection (sentinels untouched)", () => {
+  // 61 constraints; the 61st (index 60) is an invalid sentinel. Task base
+  // is 4, so charging constraint[60] is attempt 65 -> BUDGET_EXCEEDED
+  // during validateTask, before the sentinel's fields are ever read.
+  const r = run(taskWithConstraints(61, { invalidFrom: 60 }), ctxFor("single-activity"));
+  assert.equal(r.status, "REFUSED");
+  assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));
+  assert.ok(!diagCode(r).includes("INVALID_INPUT"), "sentinel constraints must not be inspected");
+});
+
+test("task-side: claimed activities are charged before inspection", () => {
+  const ref = store.bundleRefs["single-activity"];
+  const claimed = {};
+  for (let i = 0; i < 60; i++) claimed[`c${i}`] = { es: 0, ef: 1, ls: 0, lf: 1, total_float: 0 };
+  // 61st claimed activity is an invalid sentinel (bad id + bad fields).
+  claimed["BAD ID !!!"] = { es: "nan" };
+  const task = {
+    schema_version: "1", task_id: "bud-claim-side", operation: "analyze",
+    fixture_refs: { network_bundle: ref },
+    options: {
+      population: { declared_total: 2, complete: true },
+      anchors: { c1: "2026-01-05" }, horizon_days: 60,
+      deadlines: {}, constraints: [],
+      claimed: { activities: claimed },
+    },
+  };
+  const r = run(task, ctxFor("single-activity"));
+  assert.equal(r.status, "REFUSED");
+  assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));
+  assert.ok(!diagCode(r).includes("INVALID_INPUT"), "sentinel claimed activity must not be inspected");
+});
+
+test("task-side: claimed critical paths are charged before inspection", () => {
+  const ref = store.bundleRefs["single-activity"];
+  const paths = {};
+  for (let i = 0; i < 60; i++) paths[`c${i}`] = ["A"];
+  // 61st path is an invalid sentinel (empty path).
+  paths["c-bad"] = [];
+  const task = {
+    schema_version: "1", task_id: "bud-path-side", operation: "analyze",
+    fixture_refs: { network_bundle: ref },
+    options: {
+      population: { declared_total: 2, complete: true },
+      anchors: { c1: "2026-01-05" }, horizon_days: 60,
+      deadlines: {}, constraints: [],
+      claimed: { activities: {}, critical_paths: paths },
+    },
+  };
+  const r = run(task, ctxFor("single-activity"));
+  assert.equal(r.status, "REFUSED");
+  assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));
+  assert.ok(!diagCode(r).includes("INVALID_INPUT"), "sentinel claimed path must not be inspected");
 });

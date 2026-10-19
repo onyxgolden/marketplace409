@@ -263,30 +263,40 @@ for (let i = 0; i < 100; i++) {
 big.push(cal("c1", WEEKDAYS_5));
 addNetwork("over-budget-100", big);
 
-// Budget boundary: context(5) + resolve(1) + N records <= 64 => N=58 ok, 59 over
-const b58 = [];
-for (let i = 0; i < 57; i++) {
-  b58.push(act(`act-b58-${String(i).padStart(2, "0")}`, 1));
+// Budget boundary: task(4: root+bundle+population+1 anchor) + context(5) +
+// resolve(1) + N records <= 64 => N=54 ok, 55 over
+const b54 = [];
+for (let i = 0; i < 53; i++) {
+  b54.push(act(`act-b54-${String(i).padStart(2, "0")}`, 1));
 }
-b58.push(cal("c1", WEEKDAYS_5));
-addNetwork("boundary-58", b58);
+b54.push(cal("c1", WEEKDAYS_5));
+addNetwork("boundary-54", b54);
 
-const b59 = [];
-for (let i = 0; i < 58; i++) {
-  b59.push(act(`act-b59-${String(i).padStart(2, "0")}`, 1));
+// 53-record variant leaves exactly one object of headroom for a single
+// task-side claimed candidate (bud-008).
+const b53 = [];
+for (let i = 0; i < 52; i++) {
+  b53.push(act(`act-b53-${String(i).padStart(2, "0")}`, 1));
 }
-b59.push(cal("c1", WEEKDAYS_5));
-addNetwork("boundary-59", b59);
+b53.push(cal("c1", WEEKDAYS_5));
+addNetwork("boundary-53", b53);
 
-// Sentinel: 59th candidate (index 58) is schema-invalid; the budget must
+const b55 = [];
+for (let i = 0; i < 54; i++) {
+  b55.push(act(`act-b55-${String(i).padStart(2, "0")}`, 1));
+}
+b55.push(cal("c1", WEEKDAYS_5));
+addNetwork("boundary-55", b55);
+
+// Sentinel: 55th candidate (index 54) is schema-invalid; the budget must
 // refuse BUDGET_EXCEEDED before that candidate is ever inspected — never
 // INVALID_INPUT for the malformed record.
 const sent = [];
-for (let i = 0; i < 58; i++) {
+for (let i = 0; i < 54; i++) {
   sent.push(act(`act-sen-${String(i).padStart(2, "0")}`, 1));
 }
 sent.push({ record: "activity", id: "BAD ID WITH SPACES AND !!!", component: "c1", duration_workdays: 1, release_tick: 0 });
-addNetwork("sentinel-59", sent);
+addNetwork("sentinel-55", sent);
 
 // Partial mix: c1 healthy single activity, c2 has a directed cycle
 addNetwork("partial-mixed", [

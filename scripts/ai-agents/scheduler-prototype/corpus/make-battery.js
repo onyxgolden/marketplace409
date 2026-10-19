@@ -460,19 +460,19 @@ addCase("sch-020-task-id-missing", "schema_provenance", "fs-chain", { taskMutate
 
 // ---------- 10 budget / replay / mutation ----------
 addCase("bud-001-over-budget", "budget_replay", "over-budget-100", {}, {}, expRefused("BUDGET_EXCEEDED"));
-addCase("bud-002-boundary-58", "budget_replay", "boundary-58", {}, {}, expReady("boundary-58", {}));
-addCase("bud-003-boundary-59", "budget_replay", "boundary-59", {}, {}, expRefused("BUDGET_EXCEEDED"));
+addCase("bud-002-boundary-54", "budget_replay", "boundary-54", {}, {}, expReady("boundary-54", {}));
+addCase("bud-003-boundary-55", "budget_replay", "boundary-55", {}, {}, expRefused("BUDGET_EXCEEDED"));
 addCase("bud-004-input-limit", "budget_replay", "fs-chain", { taskMutate: (t) => {
   const acts = {};
   for (let i = 0; i < 6000; i++) acts[`claim-${i}`] = { es: 0, ef: 1, ls: 0, lf: 1, total_float: 0 };
   t.options.claimed = { activities: acts };
-} }, {}, expRefused("INPUT_LIMIT"));
-addCase("bud-005-sentinel-59", "budget_replay", "sentinel-59", {}, {}, expRefused("BUDGET_EXCEEDED"));
+} }, {}, expRefused("BUDGET_EXCEEDED"));
+addCase("bud-005-sentinel-55", "budget_replay", "sentinel-55", {}, {}, expRefused("BUDGET_EXCEEDED"));
 addCase("bud-006-replay-fs", "budget_replay", "fs-chain", {}, {}, expReady("fs-chain", {}));
 addCase("bud-007-replay-diamond", "budget_replay", "diamond", {}, {}, expReady("diamond", {}));
-addCase("bud-008-boundary-58-with-claims", "budget_replay", "boundary-58", { claimed: { activities: { "act-b58-00": { es: 0, ef: 1, ls: 0, lf: 1, total_float: 0 } } } }, {}, expReady("boundary-58", {}, { claimed_states: ["verified"] }));
+addCase("bud-008-boundary-53-with-claims", "budget_replay", "boundary-53", { claimed: { activities: { "act-b53-00": { es: 0, ef: 1, ls: 0, lf: 1, total_float: 0 } } } }, {}, expReady("boundary-53", {}, { claimed_states: ["verified"] }));
 addCase("bud-009-over-budget-declared-mismatch", "budget_replay", "over-budget-100", { declared: 5 }, {}, expRefused("BUDGET_EXCEEDED"));
-addCase("bud-010-sentinel-valid-tail", "budget_replay", "boundary-59", {}, {}, expRefused("BUDGET_EXCEEDED"));
+addCase("bud-010-sentinel-valid-tail", "budget_replay", "boundary-55", {}, {}, expRefused("BUDGET_EXCEEDED"));
 
 // ================= Write battery.json =================
 if (CASES.length !== 120) {

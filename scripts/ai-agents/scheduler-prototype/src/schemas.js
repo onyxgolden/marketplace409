@@ -228,8 +228,22 @@ export function validateNetworkRecord(value, where) {
   return { record: "calendar", component, working_weekdays: [...ww].sort((a, b) => a - b), excluded_dates, note };
 }
 
-/** Task input schema. kind: "analyze" | "prohibited". */
-export function validateTask(task) {
+/** Task input schema. kind: "analyze" | "prohibited".
+ *
+ * Budget discipline (S648-001): when a live `budget` is supplied, every
+ * task/control candidate is charged with budget.countObject() BEFORE any
+ * of its own fields are read, under the same monotonic 64-object counter
+ * as context and network records. A bounded preflight may inspect
+ * containers/lengths, but attempt 65 refuses before that candidate (or
+ * any later one) is inspected at all. Candidates charged: task root,
+ * fixture_refs.network_bundle, options.population, each anchor, each
+ * deadline entry, each constraint, each claimed activity, each claimed
+ * critical path. Without a budget (legacy direct calls), validation is
+ * unchanged.
+ */
+export function validateTask(task, budget = null) {
+  const charge = (what) => { if (budget) budget.countObject(what); };
+  charge("task");
   if (!isPlainObject(task)) fail("task", "must be an object");
   exactKeys(task, ["schema_version", "task_id", "operation", "fixture_refs", "options"], "task");
   if (task.schema_version !== "1") fail("task", "schema_version must be '1'");
@@ -238,6 +252,7 @@ export function validateTask(task) {
 
   if (!isPlainObject(task.fixture_refs)) fail("task", "fixture_refs must be an object");
   exactKeys(task.fixture_refs, ["network_bundle"], "task.fixture_refs");
+  charge("task.fixture_refs.network_bundle");
   const network_bundle_ref = validateSourceRef(task.fixture_refs.network_bundle, "task.fixture_refs.network_bundle");
 
   if (!isPlainObject(task.options)) fail("task", "options must be an object");
@@ -245,6 +260,7 @@ export function validateTask(task) {
 
   const pop = task.options.population;
   if (!isPlainObject(pop)) fail("task.options.population", "must be an object");
+  charge("task.options.population");
   exactKeys(pop, ["declared_total", "complete"], "task.options.population");
   if (!Number.isInteger(pop.declared_total) || pop.declared_total < 0) fail("task.options.population", "declared_total must be a nonnegative integer");
   if (typeof pop.complete !== "boolean") fail("task.options.population", "complete must be a boolean");
@@ -255,6 +271,7 @@ export function validateTask(task) {
   if (anchorKeys.length === 0 || anchorKeys.length > 16) fail("task.options.anchors", "must have 1..16 component anchors");
   const anchorsOut = {};
   for (const c of anchorKeys) {
+    charge(`task.options.anchors[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.anchors", `invalid component '${c}'`);
     const dv = anchors[c];
     if (typeof dv !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dv) || !isRealDate(dv)) {
@@ -269,6 +286,7 @@ export function validateTask(task) {
   if (!isPlainObject(deadlinesIn)) fail("task.options.deadlines", "must be an object");
   const deadlines = {};
   for (const c of Object.keys(deadlinesIn)) {
+    charge(`task.options.deadlines[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.deadlines", `invalid component '${c}'`);
     const v = deadlinesIn[c];
     if (!Number.isInteger(v) || v < 0 || v > ABS_TICK_LIMIT) fail("task.options.deadlines", `deadline for '${c}' must be an integer 0..366`);
@@ -278,6 +296,7 @@ export function validateTask(task) {
   const constraintsIn = task.options.constraints === undefined ? [] : task.options.constraints;
   if (!Array.isArray(constraintsIn) || constraintsIn.length > 256) fail("task.options.constraints", "must be an array of at most 256 constraints");
   const constraints = constraintsIn.map((c, i) => {
+    charge(`task.options.constraints[${i}]`);
     const where = `task.options.constraints[${i}]`;
     if (!isPlainObject(c)) fail(where, "must be an object");
     exactKeys(c, ["activity_id", "kind", "tick"], where);
@@ -296,6 +315,7 @@ export function validateTask(task) {
   if (!isPlainObject(claimedActivitiesIn)) fail("task.options.claimed.activities", "must be an object");
   const claimedActivities = {};
   for (const id of Object.keys(claimedActivitiesIn)) {
+    charge(`task.options.claimed.activities[${id}]`);
     const where = `task.options.claimed.activities.${id}`;
     if (!RECORD_ID_RE.test(id)) fail("task.options.claimed.activities", `invalid activity id '${id}'`);
     const v = claimedActivitiesIn[id];
@@ -313,6 +333,7 @@ export function validateTask(task) {
   if (!isPlainObject(claimedPathsIn)) fail("task.options.claimed.critical_paths", "must be an object");
   const claimedPaths = {};
   for (const c of Object.keys(claimedPathsIn)) {
+    charge(`task.options.claimed.critical_paths[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.claimed.critical_paths", `invalid component '${c}'`);
     const p = claimedPathsIn[c];
     if (!Array.isArray(p) || p.length === 0 || p.length > 256) fail("task.options.claimed.critical_paths", `path for '${c}' must be a non-empty array of at most 256 activity ids`);
@@ -399,8 +420,11 @@ function scanComposite(text, i, where) {
 /**
  * splitTopLevelArray(text, where) — bounded-container preflight for the
  * network bundle. Returns raw per-element source spans WITHOUT decoding
- * any candidate's fields. The caller must budget.countObject() each
- * candidate FIRST, then JSON.parse only that candidate's span.
+ * any candidate's fields. Each entry is {text, startByte, endByte} where
+ * the byte offsets are half-open UTF-8 ranges into the source text, so the
+ * caller can preserve and verify exact byte spans under the span budget.
+ * The caller must budget.countObject() each candidate FIRST, then verify
+ * its span, then JSON.parse only that candidate's span text.
  */
 export function splitTopLevelArray(text, where) {
   if (typeof text !== "string") fail(where, "network bundle must be a JSON array");
@@ -409,14 +433,28 @@ export function splitTopLevelArray(text, where) {
   while (i < n && WS_CHARS.has(text[i])) i++;
   if (i >= n || text[i] !== "[") fail(where, "network bundle must be a JSON array");
   i++;
+  // Byte offset tracker: spans are sequential, so accumulate UTF-8 bytes.
+  let bytePos = Buffer.byteLength(text.slice(0, i), "utf8");
+  const spanAt = (startChar, endChar) => {
+    const spanText = text.slice(startChar, endChar);
+    const startByte = bytePos;
+    const endByte = startByte + Buffer.byteLength(spanText, "utf8");
+    return { text: spanText, startByte, endByte, _nextBytePos: endByte };
+  };
+  const advance = (fromChar, toChar) => {
+    bytePos += Buffer.byteLength(text.slice(fromChar, toChar), "utf8");
+  };
   const spans = [];
   let afterComma = false;
   for (;;) {
+    const wsStart = i;
     while (i < n && WS_CHARS.has(text[i])) i++;
+    advance(wsStart, i);
     if (i >= n) fail(where, "network bundle is not a valid JSON array");
     if (text[i] === "]") {
       if (afterComma || spans.length > 0) fail(where, "network bundle is not a valid JSON array");
       i++;
+      const trailStart = i;
       while (i < n && WS_CHARS.has(text[i])) i++;
       if (i !== n) fail(where, "network bundle has trailing content");
       return spans;
@@ -429,15 +467,20 @@ export function splitTopLevelArray(text, where) {
     } else {
       fail(where, "network bundle is not a valid JSON array");
     }
-    spans.push(text.slice(start, i));
+    const s = spanAt(start, i);
+    bytePos = s._nextBytePos;
+    spans.push({ text: s.text, startByte: s.startByte, endByte: s.endByte });
     if (spans.length > MAX_RECORDS_PER_BUNDLE_SCHEMA) fail(where, `network bundle exceeds ${MAX_RECORDS_PER_BUNDLE_SCHEMA} entries`);
     afterComma = false;
+    const wsStart2 = i;
     while (i < n && WS_CHARS.has(text[i])) i++;
+    advance(wsStart2, i);
     if (i >= n) fail(where, "network bundle is not a valid JSON array");
     const sep = text[i];
-    if (sep === ",") { i++; afterComma = true; continue; }
+    if (sep === ",") { i++; bytePos += 1; afterComma = true; continue; }
     if (sep === "]") {
-      i++;
+      i++; bytePos += 1;
+      const trailStart = i;
       while (i < n && WS_CHARS.has(text[i])) i++;
       if (i !== n) fail(where, "network bundle has trailing content");
       return spans;

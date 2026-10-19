@@ -54,3 +54,60 @@ test("hasReadGrant is exact repo+path", () => {
   assert.equal(hasReadGrant(ref, [{ repo: "sched-sources", path: "networks/" }]), false);
   assert.equal(hasReadGrant(ref, []), false);
 });
+
+// ---- S648-002: runtime span verification (verifyRecordSpan) ----
+// verifyRecordSpan is exported from src/index.js (runtime entrypoint).
+import { verifyRecordSpan } from "../src/index.js";
+
+test("verifyRecordSpan verifies exact UTF-8 byte ranges", () => {
+  const text = `[{"n":"é"},{"n":"x"}]`; // é = 2 bytes; total 22 bytes
+  const bytes = Buffer.from(text, "utf8");
+  const b = makeBudget();
+  const r0 = verifyRecordSpan(bytes, 1, 11, `{"n":"é"}`, b, "r0");
+  assert.equal(r0.start_byte, 1);
+  assert.equal(r0.end_byte, 11);
+  assert.equal(r0.quoted_text, `{"n":"é"}`);
+  // Second record starts right after the comma at byte 11.
+  const r1 = verifyRecordSpan(bytes, 12, 21, `{"n":"x"}`, b, "r1");
+  assert.equal(r1.quoted_text, `{"n":"x"}`);
+});
+
+test("verifyRecordSpan refuses at the 513th span (runtime, not just primitive)", () => {
+  const bytes = Buffer.from(`[1]`, "utf8");
+  const b = makeBudget();
+  for (let i = 0; i < 512; i++) verifyRecordSpan(bytes, 1, 2, `1`, b, `s${i}`);
+  assert.throws(
+    () => verifyRecordSpan(bytes, 1, 2, `1`, b, "s512"),
+    (e) => e instanceof BudgetError && e.code === "BUDGET_EXCEEDED"
+  );
+});
+
+test("verifyRecordSpan later spans untouched after 513th refusal", () => {
+  const bytes = Buffer.from(`[1,2]`, "utf8");
+  const b = makeBudget();
+  for (let i = 0; i < 512; i++) verifyRecordSpan(bytes, 1, 2, `1`, b, `s${i}`);
+  // 513rd refuses...
+  assert.throws(() => verifyRecordSpan(bytes, 1, 2, `1`, b, "s512"), BudgetError);
+  // ...and a sentinel proves no further span was checked: if the 514th
+  // were attempted, countSpan would throw BUDGET_EXCEEDED, not reach the
+  // byte-range check. We verify the budget state directly.
+  assert.equal(b.used.spans, 513);
+});
+
+test("verifyRecordSpan throws SPAN_MISMATCH on tampered bytes", () => {
+  const bytes = Buffer.from(`[{"n":"x"}]`, "utf8");
+  const b = makeBudget();
+  assert.throws(
+    () => verifyRecordSpan(bytes, 1, 10, `{"n":"y"}`, b, "tampered"),
+    (e) => e instanceof ResolutionError && e.code === "SPAN_MISMATCH"
+  );
+});
+
+test("verifyRecordSpan throws SPAN_MISMATCH on out-of-range bytes", () => {
+  const bytes = Buffer.from(`[1]`, "utf8");
+  const b = makeBudget();
+  assert.throws(
+    () => verifyRecordSpan(bytes, 0, 100, `1`, b, "oor"),
+    (e) => e instanceof ResolutionError && e.code === "SPAN_MISMATCH"
+  );
+});

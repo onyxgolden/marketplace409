@@ -8,6 +8,28 @@
 
 import { dayNumberOf, civilOfDayNumber, isoWeekdayOf } from "./canonical.js";
 
+/**
+ * S648-002: extract the verified source citation preserved on an admitted
+ * network record by the runtime (index.js). Records that never carried a
+ * span (synthetic unit-test inputs) get an explicit unavailable state.
+ */
+function citationOf(record) {
+  if (record && record._citation && typeof record._citation === "object") {
+    const c = record._citation;
+    return {
+      quoted_span: c.quoted_span ?? null,
+      span: c.span ?? null,
+      verification: c.verification ?? "unavailable",
+    };
+  }
+  return {
+    quoted_span: null,
+    span: null,
+    verification: "unavailable",
+    reason: "no source span preserved for this record",
+  };
+}
+
 /** Edge weight w for the inequality start(succ) >= start(pred) + w. */
 export function edgeWeight(type, dPred, dSucc, lag) {
   switch (type) {
@@ -251,8 +273,25 @@ export function analyzeComponent(args) {
           critical: false,
           civil_start: null,
           civil_finish_boundary: null,
+          citation: citationOf(actById.get(x)),
         })),
       };
+    }
+  }
+
+  // S648-003: every exposed ES/EF/LS/LF boundary must map to a real
+  // calendar boundary. An explicit deadline or upper constraint can push
+  // LS/LF past the horizon while ES/EF stay in range; that is
+  // CALENDAR_HORIZON_EXCEEDED, never a READY with unmapped dates.
+  for (const id of ids) {
+    for (const [label, tick] of [["ES", ES.get(id)], ["EF", EF.get(id)], ["LS", LS.get(id)], ["LF", LF.get(id)]]) {
+      if (!Number.isInteger(tick) || tick < 0 || tick >= working.length) {
+        return fail(
+          "CALENDAR_HORIZON_EXCEEDED",
+          `component '${componentId}' activity '${id}' ${label}=${tick} has no calendar boundary (only ${working.length} working days in the horizon); no dates guessed`,
+          { activity_id: id, boundary: label, tick, available_ticks: working.length }
+        );
+      }
     }
   }
 
@@ -284,6 +323,7 @@ export function analyzeComponent(args) {
       // occupied slot; zero-duration milestones start/finish at the same
       // boundary.
       civil_finish_boundary: a.duration_workdays === 0 ? working[es] : working[ef],
+      citation: citationOf(a),
     };
   });
 
@@ -297,6 +337,7 @@ export function analyzeComponent(args) {
     tight: tightTieIds.has(t.id),
     critical: criticalTieIds.has(t.id),
     driving: tightTieIds.has(t.id),
+    citation: citationOf(t),
   }));
 
   return {

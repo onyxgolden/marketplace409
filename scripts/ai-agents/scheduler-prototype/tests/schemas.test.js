@@ -53,8 +53,24 @@ test("unknown properties rejected", () => {
 test("splitTopLevelArray yields raw spans without decoding", () => {
   const spans = splitTopLevelArray(`[ {"a": 1}, {"b": "x}"} ]`, "t");
   assert.equal(spans.length, 2);
-  assert.equal(spans[0], `{"a": 1}`);
-  assert.equal(spans[1], `{"b": "x}"}`);
+  assert.equal(spans[0].text, `{"a": 1}`);
+  assert.equal(spans[1].text, `{"b": "x}"}`);
+  // Byte offsets are half-open UTF-8 ranges into the source text.
+  const src = `[ {"a": 1}, {"b": "x}"} ]`;
+  const buf = Buffer.from(src, "utf8");
+  assert.equal(buf.subarray(spans[0].startByte, spans[0].endByte).toString("utf8"), spans[0].text);
+  assert.equal(buf.subarray(spans[1].startByte, spans[1].endByte).toString("utf8"), spans[1].text);
+});
+
+test("splitTopLevelArray byte offsets count UTF-8 bytes, not chars", () => {
+  // "é" is 2 bytes in UTF-8; a char-index offset would be wrong.
+  const src = `[{"n":"é"},{"n":"x"}]`;
+  const spans = splitTopLevelArray(src, "t");
+  assert.equal(spans.length, 2);
+  const buf = Buffer.from(src, "utf8");
+  assert.equal(buf.subarray(spans[0].startByte, spans[0].endByte).toString("utf8"), `{"n":"é"}`);
+  assert.equal(buf.subarray(spans[1].startByte, spans[1].endByte).toString("utf8"), `{"n":"x"}`);
+  assert.equal(spans[1].startByte - spans[0].endByte, 1); // the comma
 });
 
 test("splitTopLevelArray rejects malformed structure", () => {

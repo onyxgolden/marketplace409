@@ -161,3 +161,47 @@ test("topoOrder respects dependencies", () => {
   const succs = new Map([["A", ["B"]], ["B", ["C"]], ["C", []]]);
   assert.deepEqual(topoOrder(["A", "B", "C"], preds, succs), ["A", "B", "C"]);
 });
+
+// ---- S648-003: late-date horizon validation ----
+
+function horizonComponent({ deadlineTick = null, constraints = [], horizonDays = 10 }) {
+  // One 1-day activity. Anchor 2026-01-05 (Monday), horizonDays=10 calendar
+  // days -> 8 working days (Mon-Fri, no exclusions). Valid tick indices
+  // are 0..7; working.length = 8.
+  return analyzeComponent({
+    componentId: "c1",
+    activities: [{ id: "A", duration_workdays: 1, release_tick: 0 }],
+    ties: [],
+    calendars: [{ working_weekdays: [1, 2, 3, 4, 5], excluded_dates: [] }],
+    anchorDate: "2026-01-05",
+    horizonDays,
+    deadlineTick,
+    constraints,
+  });
+}
+
+test("S648-003: loose explicit deadline within horizon stays READY", () => {
+  // working.length=8; deadline D=7 -> LS=6, LF=7, all in [0,8).
+  const r = horizonComponent({ deadlineTick: 7 });
+  assert.equal(r.status, "READY");
+  assert.equal(r.activities[0].lf, 7);
+});
+
+test("S648-003: explicit deadline at working.length refuses (exact boundary)", () => {
+  // D=8 -> LF=8 needs working[8], but valid indices are 0..7.
+  const r = horizonComponent({ deadlineTick: 8 });
+  assert.equal(r.status, "CALENDAR_HORIZON_EXCEEDED");
+  assert.match(r.reason, /LF=8/);
+});
+
+test("S648-003: explicit deadline past horizon (+1) refuses", () => {
+  const r = horizonComponent({ deadlineTick: 9 });
+  assert.equal(r.status, "CALENDAR_HORIZON_EXCEEDED");
+});
+
+test("S648-003: in-range ES/EF with out-of-range LS/LF refuses (verdict example)", () => {
+  // One-day activity, short horizon, much later permitted deadline.
+  // ES=0, EF=1 in range; LS/LF pushed past working.length by the deadline.
+  const r = horizonComponent({ deadlineTick: 50, horizonDays: 10 });
+  assert.equal(r.status, "CALENDAR_HORIZON_EXCEEDED");
+});
