@@ -38,7 +38,7 @@ test('bootstrap refuses tampered package.json', () => {
   const pkgPath = join(root, 'package.json');
   const orig = readFileSync(pkgPath, 'utf8');
   try {
-    writeFileSync(pkgPath, orig.replace('"version": "1.0.0"', '"version": "9.9.9"'));
+    writeFileSync(pkgPath, orig.replace('"version":"1.0.0"', '"version":"9.9.9"'));
     const r = runBootstrap(['--unit']);
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /REFUSAL/);

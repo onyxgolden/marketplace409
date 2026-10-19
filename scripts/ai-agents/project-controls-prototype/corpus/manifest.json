@@ -22,7 +22,7 @@
     "src/spans.js": "c854d74771dafdd1edc0aca5aa4616b2f7da6dc44b8381583e340add2ef41780",
     "tests/admission.test.js": "52f52cb1f3c4d661a349dd2ca234a3d528e165e90da623a1f41157d6ae3868dd",
     "tests/bootstrap.js": "170de4d52f5b7893675e645cd6e59a199009d8f062356a20775c03d08d0701b2",
-    "tests/bootstrap.test.js": "dae3ad90737653d8743f4df8aa44d0576b94c611b6de8faf2f76cd8d5d1c8971",
+    "tests/bootstrap.test.js": "18834c61171e92d8b427451e7bd4099bd96164e68e933eace777d94a5a8d05d9",
     "tests/canonical.test.js": "41e4cf7b851a671482f605599a921c91c0278a43b3d0f655ef7b6bbca9f0e0e8",
     "tests/controls.test.js": "1cc77621ed8a1c9de4f4aa9d57a7f51482ca7a40fc0599245a679b892d17c211",
     "tests/determinism.test.js": "2d08043389930471f6d68a64fe1e397012aa6df1e414440e93a566dafb606156",
