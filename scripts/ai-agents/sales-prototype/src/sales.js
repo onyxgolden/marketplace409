@@ -9,7 +9,7 @@
  * half-away-from-zero, after summing. No cross-currency aggregation.
  */
 
-import { FITS } from "./schemas.js";
+import { FITS, instantStartMs, instantEndMs } from "./schemas.js";
 
 /**
  * Fit classification precedence (binding, Oct 19 clarification):
@@ -228,17 +228,34 @@ export function computePipelineMetrics(classified, options) {
     }
 
     if (OPEN_STAGES.includes(lead.stage)) {
+      // S653-003: an open row carrying a closed_at is inconsistent state —
+      // the affected metrics are unverifiable, not silently counted.
+      if (lead.closed_at !== null) {
+        g.unverifiable = true;
+        g.unverifiable_reasons.push(`open stage with closed_at for lead ${lead.lead_id}`);
+        continue;
+      }
       g.open_gross_strs.push(lead.amount_minor);
       g.open_weighted_rationals.push(weightedRational(lead.amount_minor, lead.probability_num, lead.probability_den));
       g.stage_ages.push({ lead_id: lead.lead_id, stage_age_minutes: minutesBetween(lead.stage_entered_at, as_of) });
     } else if (lead.stage === "CLOSED_WON" || lead.stage === "CLOSED_LOST") {
-      // Win-rate denominator: closed_at within the inclusive report interval.
-      if (lead.closed_at !== null) {
-        const closedDay = lead.closed_at.slice(0, 10);
-        if (closedDay >= report_interval_start.slice(0, 10) && closedDay <= report_interval_end.slice(0, 10)) {
-          if (lead.stage === "CLOSED_WON") g.closed_won += 1;
-          else g.closed_lost += 1;
-        }
+      // S653-003: a closed row WITHOUT closed_at is missing outcome
+      // evidence — the win-rate metric is unverifiable. This is not a
+      // verified empty denominator (UNDEFINED is only for zero closed
+      // rows with all other closed rows fully evidenced).
+      if (lead.closed_at === null) {
+        g.unverifiable = true;
+        g.unverifiable_reasons.push(`closed stage without closed_at for lead ${lead.lead_id}`);
+        continue;
+      }
+      // Win-rate denominator: closed_at within the report interval,
+      // compared as normalized full UTC instants (S653-003). Date-only
+      // endpoints use the inclusive civil-date treatment: start at
+      // 00:00:00Z, end at 23:59:59Z. No ten-character slicing.
+      const closedMs = instantStartMs(lead.closed_at);
+      if (closedMs >= instantStartMs(report_interval_start) && closedMs <= instantEndMs(report_interval_end)) {
+        if (lead.stage === "CLOSED_WON") g.closed_won += 1;
+        else g.closed_lost += 1;
       }
     }
   }
@@ -265,19 +282,31 @@ export function computePipelineMetrics(classified, options) {
 
 /**
  * Compare header claims against exact recomputation.
- * Returns {match: boolean, claimed, computed, currency}.
- * A mismatch suppresses the definitive pipeline summary (summary:null).
+ * Returns {checked, match, claimed, computed, currency, interval_match}.
+ * A mismatch — or a header whose interval does not describe the same
+ * calculation period as the task options — suppresses the definitive
+ * pipeline summary (summary:null). The comparison evidence is retained.
+ * Header values are claims about the recomputation, never inputs to it.
  */
-export function compareHeaderClaims(headerClaims, metrics) {
+export function compareHeaderClaims(headerClaims, metrics, options) {
   if (!headerClaims) return { checked: false };
+  // S653-003: the header must describe the same population/period as the
+  // task's report interval; otherwise the claim is not applicable to this
+  // recomputation and the summary is suppressed.
+  const interval_match =
+    !!options &&
+    headerClaims.report_interval_start === options.report_interval_start &&
+    headerClaims.report_interval_end === options.report_interval_end;
   const group = metrics.find((m) => m.currency === headerClaims.currency);
   const computed = group ? group.open_gross_minor : "0";
-  const match = computed === headerClaims.open_gross_minor;
+  const match = interval_match && computed === headerClaims.open_gross_minor;
   return {
     checked: true,
     match,
+    interval_match,
     claimed: headerClaims.open_gross_minor,
     computed,
     currency: headerClaims.currency,
+    evidence: "computed-recomputation (not source bytes; no byte citation available)",
   };
 }

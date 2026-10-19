@@ -2,11 +2,11 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "da7c87d50d03b62b36723da746ecd2a87ac91be60509f93d64fea4b52ea8b1d9"
+      "sha256": "73581c771aec071a9bee1aea62a6212265ca618f2ab03fa5821e25b8128c52c6"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "37fe3af076922ccc6fd08bd1b24ef70c7567acc47da0120464077cd90cdcb35b"
+      "sha256": "b12528900d2ebc852f57529afcacca5516707004ed1070ecd68f49fe6e44acf1"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -14,31 +14,31 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "7f156a2c58fd46aa96732f3b9028833ae365297d59e9da2b37d6dc170ebb6ee2"
+      "sha256": "faf7d1ec4e6f91e6ec88c14a29eed5f4612393668fd669eaac6678c264325a6a"
     },
     {
       "path": "fixtures/make-fixtures.js",
-      "sha256": "b33af555987809cd18534196e27829aefbfb62a4811f9a6a92cfc0fc6b6c67fb"
+      "sha256": "6e43d70ec8cbe769f12e2fb6e7ec61456a3eb905465ff04ac3edfe4be9a85315"
     },
     {
       "path": "fixtures/store.json",
-      "sha256": "89339b3033c04f94a6262f12d49daebde2f257e07b0c0aafb526d9987865d793"
+      "sha256": "4dc276db8a04a64f2600fb94fc37c3d41873efa9f1492d9e25d8237a07dbbf09"
     },
     {
       "path": "package.json",
-      "sha256": "8b41a0f4e02bb13a1699164a72875df0f5c754a36d94cbf30f9e3b19c6f0a158"
+      "sha256": "70cd2ebd9f98b4436531a3cd2126ee45b7f75c4fd9727a3f13cec44d23657897"
     },
     {
       "path": "runner/guarded-worker.js",
-      "sha256": "b40829b0624d22465a7772381662fa47bb30e4056060fd8d411b60c47247b849"
+      "sha256": "0a9f4f317efd96742fb287bc0aa60a5595d129bea30820bbecb5ec748c1cd743"
     },
     {
       "path": "runner/run-guarded.js",
-      "sha256": "99d46fd62e29c546e9f7c267a88ee2e0655fc9ba4cc9e2115968b1eae6a435e2"
+      "sha256": "e2882e1c57d492391a53a01d16aafc236fe1033e4c242a971b81423780b10587"
     },
     {
       "path": "runner/run-manual.js",
-      "sha256": "9ed798dc64c45f6f20c09beda7478c221cda34961b72e40d0ec8579ae0e69a54"
+      "sha256": "956b6ab79fb2fe8a0059bfcbf5802da895a892b16881ca9826d7799861f8b9da"
     },
     {
       "path": "src/canonical.js",
@@ -46,7 +46,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "d3696be8fe892c80488c915c63f8e0b7898cdbd715ba35592d5e7eac58ffd0c5"
+      "sha256": "2588ed5a7afb511a9137aaadd6f2624b24158619aa96c61d42941e9e1664fd55"
     },
     {
       "path": "src/injection.js",
@@ -54,19 +54,19 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "e9d4754e5e263f50956ce970f6dd77e0bfb7459b55d95980839f136fe6dbf489"
+      "sha256": "70b4501cf0eada2c14bad38a09c636452a224a080332492b166f0b47cbe122d8"
     },
     {
       "path": "src/sales.js",
-      "sha256": "9a023103228fd0c607431459161e22fe2dd8d5e09b444ebee0884436db13ff3a"
+      "sha256": "127001d650739e7b13d43a768e9ae0cc4c22e3283ab0ee4e67d3a642f28ee303"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "256a6195f266835827a9308f7d885b2aff5e78f8a6ca6feeaddcbf36a04d96f1"
+      "sha256": "131fce543a938c60b94713aa2bb00169855f76f669feccff06a93c9e4159c33b"
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "7e16c8784877bdbb7687f64593032f362de8cbb7d9a80e0aa1e806ad6f1e2361"
+      "sha256": "c7643f77c42bb91e0bf299e0a759580f118b7d480a8889903cba9f44a7cdb924"
     },
     {
       "path": "tests/canonical.test.js",
@@ -78,11 +78,15 @@
     },
     {
       "path": "tests/execution-addendum.test.js",
-      "sha256": "c1040316ca2740d0ea08b2ead6bbf2aadc108abbd6ec613fff3105c8b39230a0"
+      "sha256": "d16913d558095486ca174a1fd8be7bd04edd0a3955342c9d1ba2cfdaa4a287bd"
+    },
+    {
+      "path": "tests/hang-worker.js",
+      "sha256": "baa72229d1a0f28371f7b8b32e0e7b084b570a267d2e68e9c5500e2ee55ae912"
     },
     {
       "path": "tests/helpers.js",
-      "sha256": "c6fd315edeef785d5fe2e6c8e959d26738e9f4554ff24aedea65a730e630932a"
+      "sha256": "a3afdcd385cef7dab8be67a7fe84ca8bca00fd5eb73d71d798d803c7368519ee"
     },
     {
       "path": "tests/injection.test.js",
@@ -94,27 +98,27 @@
     },
     {
       "path": "tests/run-battery.js",
-      "sha256": "5df1bd40e0aac4ab7047b128a68af8df582be0836f41d6ad1e3a656658537893"
+      "sha256": "ec658a979ad1be5738d5a2adc047903526da4b2a352b02549edc3a68298f5ad8"
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "d58e507153a416a13c74a50d65d24716487c1d82244973d6427071d794838194"
+      "sha256": "77dae793f67972605a60f514e0e0eab400655658430126782e896bbd8af5866e"
     },
     {
       "path": "tests/sales.test.js",
-      "sha256": "0d105a7115d4d4a4f68bed89e32d70f3f66428bc9aac71a8e8de336bb87ae788"
+      "sha256": "74d7b45d2fc5762d2f4e8dc10e81b0ba9565c93479cdd7996c5cf01a50446a00"
     },
     {
       "path": "tests/schemas.test.js",
-      "sha256": "1095424ba8f0e5f6f7d137c277a588e77b431f5a03f05cdf018d8aea9f3ce44a"
+      "sha256": "40a665b08d4cc42a9e86bb6bbad31baa7c086c25a567668ab1e3178b43e76eea"
     },
     {
       "path": "tests/trust.test.js",
-      "sha256": "8da42f2861441b07b77671fa0cff853130d55e72142a8eac9c4012d6e03cf049"
+      "sha256": "7e86a5ff87785bc7ced27d0d735932492f0b0fb7125fde4a0f3b6c77d687328a"
     },
     {
       "path": "tests/watchdog.test.js",
-      "sha256": "aab558c6eee1c77d7d21a6fbd213edb347006ee7a960d6feb87376c58e51e7bc"
+      "sha256": "fe81c5bced977c75c7199004135474b92e12362ade64628e5a23616704da952f"
     }
   ]
 }

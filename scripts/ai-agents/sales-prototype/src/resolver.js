@@ -137,7 +137,9 @@ export function resolveSourceRef(ref, sources, budget, what) {
   // identity. Undefined when the host declares no expected count (unknown
   // coverage — never verified complete).
   const expected_records = rev.expected_records;
-  return { bytes, text: rev.text, expected_records };
+  // S653-001: host-registered dataset identity travels with the resolved
+  // source so population declarations can bind to it.
+  return { bytes, text: rev.text, expected_records, dataset_id: rev.dataset_id, dataset_version: rev.dataset_version };
 }
 
 /** Exact read-grant check: grants are exact repo+path, never prefixes. */

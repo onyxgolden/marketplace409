@@ -3,10 +3,13 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { runGuarded, GUARD_TIMEOUT_MS } from "../runner/run-guarded.js";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runGuarded, runGuardedWithWorker, GUARD_TIMEOUT_MS } from "../runner/run-guarded.js";
 import { loadStore, makeStandard } from "./helpers.js";
 
 const store = loadStore();
+const HANG_WORKER = join(dirname(fileURLToPath(import.meta.url)), "hang-worker.js");
 
 describe("runGuarded", () => {
   it("timeout is 5000ms", () => {
@@ -30,5 +33,25 @@ describe("runGuarded", () => {
     const r = await runGuarded(big, "{}");
     assert.equal(r.status, "REFUSED");
     assert.ok(r.diagnostics[0].code.includes("TRANSPORT") || r.diagnostics[0].code === "INPUT_LIMIT");
+  });
+
+  it("a hung worker is terminated by the external watchdog (bounded, report:null)", async () => {
+    // S653-008: hang coverage uses the fixed, manifest-authenticated
+    // tests/hang-worker.js — never eval, never a factory string.
+    const t0 = Date.now();
+    const r = await runGuardedWithWorker("{}", "{}", 1500, HANG_WORKER);
+    const elapsed = Date.now() - t0;
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "EXECUTION_TIMEOUT");
+    assert.equal(r.report, null);
+    assert.equal(r.complete, false);
+    assert.ok(elapsed < 10000, `watchdog must terminate promptly (took ${elapsed}ms)`);
+  });
+
+  it("malformed JSON transport refuses with report:null", async () => {
+    // S653-008: the refusal contract — no Research-shaped artifact.
+    const r = await runGuarded("{not json", "{}");
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.report, null);
   });
 });

@@ -53,6 +53,30 @@ export const PRINCIPAL = {
   revoked: false,
 };
 
+// S653-001: the host-registered dataset identity (mirrors
+// fixtures/store.json revisions). Population completeness declarations
+// must bind to this; caller claims alone never establish coverage.
+export const DATASET = {
+  dataset_id: "sales-fixtures",
+  dataset_version: "2026-10-19",
+};
+
+/** Population declaration bound to the registered dataset identity. */
+export function boundPopulation(store, bundleName, ids) {
+  const ref = store.bundleRefs[bundleName];
+  const key = `${ref.repo}|${ref.path}`;
+  const rev = store.sources[key].revisions[ref.commit];
+  const text = rev.text;
+  const leads = JSON.parse(text);
+  return {
+    declared_complete: true,
+    dataset_id: rev.dataset_id,
+    dataset_version: rev.dataset_version,
+    expected_lead_ids: ids ?? leads.map((l) => l.lead_id),
+    expected_count: leads.length,
+  };
+}
+
 /**
  * Build a context. opts: {bundleNames, criteria, productRegistry,
  * principal, extraSources, testHooks}.

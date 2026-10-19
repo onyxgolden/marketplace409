@@ -916,8 +916,8 @@
     },
     "population": {
       "declared_complete": true,
-      "dataset_id": "e",
-      "dataset_version": "v1",
+      "dataset_id": "sales-fixtures",
+      "dataset_version": "2026-10-19",
       "expected_lead_ids": [],
       "expected_count": 0
     },

@@ -12,6 +12,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { run } from "../src/index.js";
 
 function failEnvelope(code, reason) {
+  // S653-008: refusal contract — report:null, never a shaped artifact.
   return {
     schema_version: "1",
     agent: "sales-agent",
@@ -25,11 +26,7 @@ function failEnvelope(code, reason) {
     diagnostics: [{ code, severity: "critical", source_ref: null, record_id: null, reason }],
     quarantined_sources: [],
     routing_flags: [],
-    report: {
-      claims: [],
-      coverage: { state: "UNKNOWN", admitted_count: 0, excluded_count: 0 },
-      summary: null,
-    },
+    report: null,
   };
 }
 

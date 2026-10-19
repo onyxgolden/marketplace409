@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import {
   SchemaError, validateLeadRecord, validateTask, validateContext,
   validateCriteria, validateSourceRef, admitGraph, assertNoAccessors,
-  assertDenseArray, splitTopLevelArray,
+  assertDenseArray, assertNotProxy, splitTopLevelArray,
+  principalWindowLive, instantStartMs, instantEndMs,
 } from "../src/schemas.js";
 import { makeBudget } from "../src/resolver.js";
 import { loadStore, makeTask, makeContext, CRITERIA } from "./helpers.js";
@@ -195,5 +196,91 @@ describe("splitTopLevelArray", () => {
     const { spans, bytes } = splitTopLevelArray(text, "t");
     const slice = bytes.subarray(spans[0].start_byte, spans[0].end_byte).toString("utf8");
     assert.ok(slice.includes("caf"));
+  });
+});
+
+describe("S653 fix-round: admission hardening", () => {
+  it("assertNotProxy refuses a Proxy via the trap-free native check", () => {
+    let touched = false;
+    const p = new Proxy({ a: 1 }, {
+      get(t, k) { touched = true; return t[k]; },
+      getOwnPropertyDescriptor(t, k) { touched = true; return Object.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { touched = true; return Object.getPrototypeOf(t); },
+      ownKeys(t) { touched = true; return Object.getOwnPropertyNames(t); },
+    });
+    assert.throws(() => assertNotProxy(p, "t"), SchemaError);
+    assert.equal(touched, false, "native Proxy detection must not fire any trap");
+  });
+
+  it("admitGraph refuses a nested Proxy with zero trap invocations", () => {
+    let touched = false;
+    const nested = new Proxy({ x: 1 }, {
+      get(t, k) { touched = true; return t[k]; },
+      getOwnPropertyDescriptor(t, k) { touched = true; return Object.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { touched = true; return Object.getPrototypeOf(t); },
+      ownKeys(t) { touched = true; return Object.getOwnPropertyNames(t); },
+    });
+    assert.throws(() => admitGraph({ ok: 1, bad: nested }, "t", makeBudget()), SchemaError);
+    assert.equal(touched, false, "nested proxy must be refused before reflection");
+  });
+
+  it("admitGraph charges string bytes against the aggregate input budget", () => {
+    const b = makeBudget();
+    // ~300KiB of string payload must trip INPUT_LIMIT during admission.
+    assert.throws(
+      () => admitGraph({ task_id: "t", blob: "x".repeat(300000) }, "t", b),
+      (e) => e.code === "INPUT_LIMIT"
+    );
+  });
+
+  it("validatePrincipal rejects an inverted validity window", () => {
+    const c = makeContext(store);
+    c.principal = { principal_id: "x", role: "JASON", registered_by: "h", valid_from: "2027-01-01", expires_at: "2026-01-01", revoked: false };
+    assert.throws(() => validateContext(c, makeBudget()), SchemaError);
+  });
+
+  it("principalWindowLive enforces the window against the host clock", () => {
+    const p = { valid_from: "2026-01-01", expires_at: "2026-12-31" };
+    const clock = Date.parse("2026-10-19T12:00:00Z");
+    assert.equal(principalWindowLive(p, clock), true);
+    assert.equal(principalWindowLive(p, Date.parse("2027-01-01T00:00:00Z")), false);
+    assert.equal(principalWindowLive(p, Date.parse("2025-12-31T23:59:59Z")), false);
+    // Boundary-inclusive: exactly at the edges is live.
+    assert.equal(principalWindowLive(p, Date.parse("2026-01-01T00:00:00Z")), true);
+    assert.equal(principalWindowLive(p, Date.parse("2026-12-31T23:59:59Z")), true);
+  });
+
+  it("instantStartMs/instantEndMs use inclusive civil-date treatment", () => {
+    assert.equal(instantStartMs("2026-10-01"), Date.parse("2026-10-01T00:00:00Z"));
+    assert.equal(instantEndMs("2026-10-31"), Date.parse("2026-10-31T23:59:59Z"));
+    assert.equal(instantStartMs("2026-10-01T12:00:00Z"), Date.parse("2026-10-01T12:00:00Z"));
+  });
+
+  it("validateTaskOptions rejects a reversed report interval", () => {
+    const t = makeTask(store);
+    t.options.report_interval_start = "2026-10-31";
+    t.options.report_interval_end = "2026-10-01";
+    assert.throws(() => validateTask(t, makeBudget()), SchemaError);
+  });
+
+  it("expected_lead_ids entries are consulted: 100 ids refuse BUDGET_EXCEEDED", () => {
+    const t = makeTask(store);
+    t.population = {
+      declared_complete: true, dataset_id: "x", dataset_version: "v1",
+      expected_lead_ids: Array.from({ length: 100 }, (_, i) => `id-${i}`),
+      expected_count: 100,
+    };
+    assert.throws(() => validateTask(t, makeBudget()), (e) => e.code === "BUDGET_EXCEEDED");
+  });
+
+  it("expected_lead_ids over 4096 entries refuses at the reference-list bound", () => {
+    const t = makeTask(store);
+    // The brief requires the bounded length to be inspected FIRST, so an
+    // over-cap list refuses INVALID_INPUT before per-entry charging.
+    t.population = {
+      declared_complete: true, dataset_id: "x", dataset_version: "v1",
+      expected_lead_ids: Array.from({ length: 50000 }, (_, i) => `id-${i}`),
+    };
+    assert.throws(() => validateTask(t, makeBudget()), SchemaError);
   });
 });

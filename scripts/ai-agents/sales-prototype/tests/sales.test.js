@@ -11,7 +11,7 @@ import {
   weightedRational, addRationals, roundRationalHalfAway, sumWeightedRounded,
   sumMinorExact, computePipelineMetrics, compareHeaderClaims,
 } from "../src/sales.js";
-import { loadStore, makeStandard, makeTask, makeContext, CRITERIA, PRODUCT_REGISTRY } from "./helpers.js";
+import { loadStore, makeStandard, makeTask, makeContext, boundPopulation, CRITERIA, PRODUCT_REGISTRY } from "./helpers.js";
 
 const store = loadStore();
 
@@ -199,25 +199,46 @@ describe("run() end-to-end domain", () => {
     assert.ok(r.diagnostics.some((d) => d.code === "HEADER_MISMATCH"));
   });
 
-  it("header match keeps the summary", () => {
+  it("header match keeps the comparison; summary still needs trusted population", () => {
     const { task, context } = makeStandard(store);
     const t2 = makeTask(store, {
       headerClaims: { open_gross_minor: "1810001", currency: "USD", report_interval_start: "2026-10-01", report_interval_end: "2026-10-31" },
     });
     const r = run(t2, context);
-    // summary is null here only because quarantines exist in the main bundle
     assert.equal(r.report.header_comparison.match, true);
+    // S653-001: no population declaration -> no trusted coverage -> no
+    // definitive summary, even with a matching header and clean metrics.
+    assert.equal(r.report.summary, null);
+    assert.equal(r.complete, false);
+  });
+
+  it("header match plus bound population yields a definitive summary", () => {
+    // Empty bundle: verified zero pipeline. Matching header + trusted
+    // population completeness -> definitive summary, REPORT_READY.
+    const { context } = makeStandard(store, { bundleNames: ["empty"] }, { bundleNames: ["empty"] });
+    const t2 = makeTask(store, {
+      bundleNames: ["empty"],
+      population: boundPopulation(store, "empty"),
+      headerClaims: { open_gross_minor: "0", currency: "USD", report_interval_start: "2026-10-01", report_interval_end: "2026-10-31" },
+    });
+    const r = run(t2, context);
+    assert.equal(r.report.population.complete, true);
+    assert.equal(r.report.header_comparison.match, true);
+    assert.ok(r.report.summary !== null);
+    assert.equal(r.status, "REPORT_READY");
+    assert.equal(r.complete, true);
   });
 
   it("empty bundle with declared-complete population: verified zero pipeline", () => {
     const { task, context } = makeStandard(store, { bundleNames: ["empty"] }, { bundleNames: ["empty"] });
     const t2 = makeTask(store, {
       bundleNames: ["empty"],
-      population: { declared_complete: true, dataset_id: "empty-set", dataset_version: "v1", expected_lead_ids: [], expected_count: 0 },
+      population: boundPopulation(store, "empty"),
     });
     const r = run(t2, context);
     assert.equal(r.report.classifications.length, 0);
     assert.equal(r.report.population.complete, true);
+    assert.equal(r.status, "REPORT_READY");
   });
 
   it("unknown completeness -> no verified whole-pipeline totals", () => {
@@ -242,7 +263,7 @@ describe("run() end-to-end domain", () => {
     const commit = "a".repeat(40);
     const header = Buffer.from(`blob ${Buffer.byteLength(text, "utf8")}\0`, "utf8");
     const blob = nodeCreateHash("sha1").update(Buffer.concat([header, Buffer.from(text, "utf8")])).digest("hex");
-    store2.sources[key] = { revisions: { [commit]: { text, blob, label: "x", expected_records: 1 } } };
+    store2.sources[key] = { revisions: { [commit]: { text, blob, label: "x", expected_records: 1, dataset_id: "sales-fixtures", dataset_version: "2026-10-19" } } };
     store2.bundleRefs["bad-prob"] = { repo: "sales-fixtures", path: "leads/bad-prob.json", commit };
     const { task, context } = makeStandard(store2, { bundleNames: ["bad-prob"] }, { bundleNames: ["bad-prob"] });
     const r = run(task, context);
@@ -264,13 +285,112 @@ describe("run() end-to-end domain", () => {
 });
 
 describe("compareHeaderClaims", () => {
+  const OPTS = { report_interval_start: "2026-10-01", report_interval_end: "2026-10-31" };
   it("no header claims -> not checked", () => {
-    assert.deepEqual(compareHeaderClaims(undefined, []), { checked: false });
+    assert.deepEqual(compareHeaderClaims(undefined, [], OPTS), { checked: false });
   });
   it("missing currency group -> computed 0", () => {
     const hc = { open_gross_minor: "0", currency: "JPY", report_interval_start: "2026-10-01", report_interval_end: "2026-10-31" };
-    const r = compareHeaderClaims(hc, []);
+    const r = compareHeaderClaims(hc, [], OPTS);
     assert.equal(r.match, true);
+    assert.equal(r.interval_match, true);
     assert.equal(r.computed, "0");
+  });
+  it("header interval mismatch -> not applicable, match false", () => {
+    const hc = { open_gross_minor: "0", currency: "JPY", report_interval_start: "2020-01-01", report_interval_end: "2020-01-31" };
+    const r = compareHeaderClaims(hc, [], OPTS);
+    assert.equal(r.checked, true);
+    assert.equal(r.interval_match, false);
+    assert.equal(r.match, false);
+  });
+  it("equal amounts on a wrong period do not match", () => {
+    const metrics = [{ currency: "USD", open_gross_minor: "500" }];
+    const hc = { open_gross_minor: "500", currency: "USD", report_interval_start: "2020-01-01", report_interval_end: "2020-12-31" };
+    const r = compareHeaderClaims(hc, metrics, OPTS);
+    assert.equal(r.match, false, "same amount, different period must not match");
+  });
+});
+
+describe("S653-003 time applicability", () => {
+  function customStore(leads, name) {
+    const text = JSON.stringify(leads);
+    const s2 = JSON.parse(JSON.stringify(store));
+    const key = `sales-fixtures|leads/${name}.json`;
+    const commit = "b".repeat(40);
+    const header = Buffer.from(`blob ${Buffer.byteLength(text, "utf8")}\0`, "utf8");
+    const blob = nodeCreateHash("sha1").update(Buffer.concat([header, Buffer.from(text, "utf8")])).digest("hex");
+    s2.sources[key] = { revisions: { [commit]: { text, blob, label: name, expected_records: leads.length, dataset_id: "sales-fixtures", dataset_version: "2026-10-19" } } };
+    s2.bundleRefs[name] = { repo: "sales-fixtures", path: `leads/${name}.json`, commit };
+    return s2;
+  }
+  function wonLead(id, closed_at) {
+    return {
+      lead_id: id, opportunity_id: `${id}-opp`, need_match: true, budget_match: true,
+      timing_days: 10, do_not_contact: false, stage: "CLOSED_WON", amount_minor: "1000",
+      currency: "USD", probability_num: 1, probability_den: 1,
+      created_at: "2026-09-01", stage_entered_at: "2026-09-15", closed_at,
+      fixture_product_id: "crm-starter", display_name: id, notes: "",
+    };
+  }
+
+  it("sub-day win-rate boundaries use full UTC instants", () => {
+    // Closed at 01:00Z is NOT inside the 12:00Z-13:00Z instant interval.
+    const s2 = customStore([wonLead("w1", "2026-10-19T01:00:00Z")], "wsub");
+    const { task, context } = makeStandard(s2, { bundleNames: ["wsub"], options: { report_interval_start: "2026-10-19T12:00:00Z", report_interval_end: "2026-10-19T13:00:00Z" } }, { bundleNames: ["wsub"] });
+    const r = run(task, context);
+    const m = r.report.metrics.find((x) => x.currency === "USD");
+    assert.equal(m.win_rate.state, "UNDEFINED", "01:00Z close must not count in a 12:00Z-13:00Z interval");
+  });
+
+  it("instant close inside an instant interval counts", () => {
+    const s2 = customStore([wonLead("w1", "2026-10-19T12:30:00Z")], "wsub2");
+    const { task, context } = makeStandard(s2, { bundleNames: ["wsub2"], options: { report_interval_start: "2026-10-19T12:00:00Z", report_interval_end: "2026-10-19T13:00:00Z", as_of: "2026-10-20" } }, { bundleNames: ["wsub2"] });
+    const r = run(task, context);
+    const m = r.report.metrics.find((x) => x.currency === "USD");
+    assert.equal(m.win_rate.state, "DEFINED");
+    assert.equal(m.win_rate.won, 1);
+  });
+
+  it("closed row without closed_at makes metrics unverifiable (not UNDEFINED)", () => {
+    const s2 = customStore([wonLead("w1", null)], "wnoclose");
+    const { task, context } = makeStandard(s2, { bundleNames: ["wnoclose"] }, { bundleNames: ["wnoclose"] });
+    const r = run(task, context);
+    const m = r.report.metrics.find((x) => x.currency === "USD");
+    assert.equal(m.unverifiable, true);
+    assert.ok(m.unverifiable_reasons.some((x) => x.includes("without closed_at")));
+    assert.equal(r.report.summary, null);
+  });
+
+  it("open stage carrying closed_at is inconsistent -> unverifiable", () => {
+    const lead = wonLead("w1", "2026-10-05");
+    lead.stage = "NEW";
+    const s2 = customStore([lead], "wopen");
+    const { task, context } = makeStandard(s2, { bundleNames: ["wopen"] }, { bundleNames: ["wopen"] });
+    const r = run(task, context);
+    const m = r.report.metrics.find((x) => x.currency === "USD");
+    assert.equal(m.unverifiable, true);
+  });
+
+  it("reversed report interval refuses at validation", () => {
+    const { task, context } = makeStandard(store);
+    task.options.report_interval_start = "2026-10-31";
+    task.options.report_interval_end = "2026-10-01";
+    const r = run(task, context);
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "INVALID_INPUT");
+  });
+
+  it("header on a different period suppresses the summary", () => {
+    const { context } = makeStandard(store, { bundleNames: ["empty"] }, { bundleNames: ["empty"] });
+    const t2 = makeTask(store, {
+      bundleNames: ["empty"],
+      population: boundPopulation(store, "empty"),
+      headerClaims: { open_gross_minor: "0", currency: "USD", report_interval_start: "2020-01-01", report_interval_end: "2020-12-31" },
+    });
+    const r = run(t2, context);
+    assert.equal(r.report.header_comparison.match, false);
+    assert.equal(r.report.header_comparison.interval_match, false);
+    assert.equal(r.report.summary, null);
+    assert.ok(r.diagnostics.some((d) => d.code === "HEADER_MISMATCH"));
   });
 });

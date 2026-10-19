@@ -110,6 +110,11 @@ const bundles = {
 };
 
 const REPO = "sales-fixtures";
+// Host-registered dataset identity, bound to every revision. Population
+// completeness declarations must match this identity; a caller claim
+// alone never establishes coverage (S653-001).
+const DATASET_ID = "sales-fixtures";
+const DATASET_VERSION = "2026-10-19";
 const store = { bundleRefs: {}, sources: {} };
 
 for (const [name, leads] of Object.entries(bundles)) {
@@ -121,7 +126,7 @@ for (const [name, leads] of Object.entries(bundles)) {
   store.bundleRefs[name] = { repo: REPO, path, commit };
   store.sources[key] = {
     revisions: {
-      [commit]: { text, blob, label: `sales-fixtures/${name}@v1`, expected_records: leads.length },
+      [commit]: { text, blob, label: `sales-fixtures/${name}@v1`, expected_records: leads.length, dataset_id: DATASET_ID, dataset_version: DATASET_VERSION },
     },
   };
 }

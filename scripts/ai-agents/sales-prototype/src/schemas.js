@@ -9,6 +9,19 @@
  */
 
 import { HEX40, isRealDate, isRealInstant } from "./canonical.js";
+import { types } from "node:util";
+
+/**
+ * Trap-free native Proxy detection. types.isProxy is a V8 intrinsic: it
+ * reports Proxy-ness WITHOUT invoking any user trap (get, getOwnPropertyDescriptor,
+ * ownKeys, getPrototypeOf). Every other reflective check fires traps, so this
+ * is the only safe first gate (S653-006).
+ */
+export function assertNotProxy(value, where) {
+  if (types.isProxy(value)) {
+    fail(where, "proxy input refused before inspection; proxies are not plain data");
+  }
+}
 
 /** Real calendar date (YYYY-MM-DD) or full UTC instant. Throws on invalid. */
 function validateDate(value, where) {
@@ -94,7 +107,15 @@ export function assertNoAccessors(obj, where) {
  * against the live monotonic budget BEFORE any of its descriptor fields
  * are examined. Candidate #65 refuses with BUDGET_EXCEEDED without touching
  * that candidate at all. Rejects accessors, functions, symbols,
- * non-plain prototypes, and graphs deeper than 32.
+ * non-plain prototypes, Proxies (via trap-free native detection), and
+ * graphs deeper than 32.
+ *
+ * S653-005: the walk also charges every reachable string's UTF-8 bytes
+ * (values AND property names) against the aggregate 256-KiB input budget.
+ * There is one invocation-wide byte budget covering task + context +
+ * selected source bytes; metadata that never appears in output cannot
+ * escape it. S653-006: types.isProxy is checked before ANY reflective
+ * call, so a Proxy-wrapped input is refused with zero trap invocations.
  */
 export function admitGraph(value, where, budget, maxDepth = 32) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") {
@@ -102,7 +123,13 @@ export function admitGraph(value, where, budget, maxDepth = 32) {
   }
   const seen = new WeakSet();
   const walk = (v, path, depth) => {
-    if (v === null || typeof v !== "object") return;
+    if (v === null || typeof v !== "object") {
+      if (typeof v === "string") budget.countPayload(v, `string at '${path}'`);
+      return;
+    }
+    // S653-006: native Proxy rejection before any reflection. This check
+    // is trap-free; everything below would fire user traps on a Proxy.
+    assertNotProxy(v, path);
     if (depth > maxDepth) {
       fail(where, `object graph exceeds max depth ${maxDepth} at '${path}'; refusing`);
     }
@@ -114,6 +141,7 @@ export function admitGraph(value, where, budget, maxDepth = 32) {
       fail(where, `unsupported prototype at '${path}'; inherited controls are not plain data; refusing`);
     }
     for (const k of Object.getOwnPropertyNames(v)) {
+      budget.countPayload(k, `property name at '${path}'`);
       const desc = Object.getOwnPropertyDescriptor(v, k);
       if (!desc) continue;
       if (typeof desc.get === "function" || typeof desc.set === "function") {
@@ -209,7 +237,38 @@ export function validatePrincipal(value, where) {
   validateDate(value.expires_at, `${where}.expires_at`);
   if (typeof value.revoked !== "boolean") fail(where, "revoked must be a boolean");
   if (value.revoked) fail(where, "principal is revoked; refusing");
+  // S653-004: the validity window itself must be non-inverted; the live
+  // clock check against this window happens in run() (index.js).
+  if (instantStartMs(value.valid_from) > instantEndMs(value.expires_at)) {
+    fail(where, "principal validity window is inverted (valid_from after expires_at); refusing");
+  }
   return { principal_id, role: value.role, registered_by: value.registered_by, valid_from: value.valid_from, expires_at: value.expires_at, revoked: false };
+}
+
+/**
+ * Normalize a validated civil date or UTC instant to a millisecond
+ * timestamp. Date-only values are treated as civil dates: valid_from /
+ * interval starts normalize to 00:00:00Z; valid_to / interval ends
+ * normalize to the END of the civil day (23:59:59Z), inclusive.
+ * Exported for run() (principal window) and sales.js (report intervals).
+ */
+export function instantStartMs(value) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return Date.parse(`${value}T00:00:00Z`);
+  return Date.parse(value);
+}
+
+export function instantEndMs(value) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return Date.parse(`${value}T23:59:59Z`);
+  return Date.parse(value);
+}
+
+/**
+ * S653-004: is the principal's authorization window live at the injected
+ * host clock (ms)? Inclusive on both ends under civil-date semantics.
+ */
+export function principalWindowLive(principal, clockMs) {
+  if (!Number.isFinite(clockMs)) return false;
+  return instantStartMs(principal.valid_from) <= clockMs && clockMs <= instantEndMs(principal.expires_at);
 }
 
 export function validateReadGrant(value, where, budget) {
@@ -262,8 +321,12 @@ export function validateCriteria(value, where, budget) {
  * probability is a rational probability_num/probability_den in [0,1].
  * do_not_contact is a validated boolean, never defaulted.
  */
-export function validateLeadRecord(value, where, budget = null) {
-  const charge = (obj, w) => { if (budget) budget.chargeObjectOnce(obj, w); };
+export function validateLeadRecord(value, where, budget = null, preCharged = false) {
+  // S653-005: when the caller already charged this record's object slot
+  // BEFORE decoding (charge-before-parse), the top-level charge is skipped
+  // to avoid double-counting the same candidate. Direct callers keep the
+  // default behavior.
+  const charge = (obj, w) => { if (budget && !preCharged) budget.chargeObjectOnce(obj, w); };
   if (!isPlainObject(value)) fail(where, "lead record must be an object");
   charge(value, where);
   assertNoAccessors(value, where);
@@ -362,9 +425,71 @@ export function splitTopLevelArray(text, where) {
   return { spans, bytes };
 }
 
-export function validateContext(context, budget) {
-  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateContext requires a live budget");
+/**
+ * Validate ONE source entry's revisions without touching any other source.
+ * Used after the read-grant check so denied/unselected source metadata
+ * stays untouched (S653-006). Returns the normalized entry.
+ */
+export function validateSourceEntry(entry, key, where, budget) {
+  const charge = (obj, w) => { if (budget) budget.chargeObjectOnce(obj, w); };
+  assertNotProxy(entry, where);
+  charge(entry, where);
+  if (!isPlainObject(entry)) fail(where, "source entry must be an object");
+  assertNoAccessors(entry, where);
+  exactKeys(entry, ["revisions"], where);
+  const revs = entry.revisions;
+  if (!isPlainObject(revs)) fail(where, "revisions must be an object");
+  charge(revs, `${where}.revisions`);
+  assertNoAccessors(revs, `${where}.revisions`);
+  const out = {};
+  for (const commit of Object.keys(revs)) {
+    if (!HEX40.test(commit)) fail(where, `revision key '${commit}' must be a 40-hex commit id`);
+    const rev = revs[commit];
+    assertNotProxy(rev, `${where}@${commit}`);
+    charge(rev, `${where}@${commit}`);
+    if (budget) budget.countPayload(commit, `${where} commit key`);
+    if (!isPlainObject(rev)) fail(where, `revision '${commit}' must be an object`);
+    assertNoAccessors(rev, `${where}@${commit}`);
+    exactKeys(rev, ["text", "blob", "label", "expected_records", "dataset_id", "dataset_version"], `${where}@${commit}`);
+    const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
+    if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
+      fail(where, `revision '${commit}' text must be a plain data property`);
+    }
+    if (typeof textDesc.value !== "string") fail(where, `revision '${commit}' text must be a string`);
+    if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail(where, `revision '${commit}' blob must be a 40-hex Git object ID`);
+    if (typeof rev.label !== "string" || rev.label.length === 0) {
+      fail(where, `revision '${commit}' must carry a registered label`);
+    }
+    if (budget) budget.countPayload(rev.label, `${where}@${commit} label`);
+    if (rev.expected_records !== undefined) {
+      if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
+        fail(where, `revision '${commit}' expected_records must be a nonnegative integer`);
+      }
+    }
+    // S653-001: host-registered dataset identity. Population completeness
+    // declarations bind to this; caller claims alone never establish it.
+    const dataset_id = reqStr(rev, "dataset_id", `${where}@${commit}`, { maxBytes: 128 });
+    const dataset_version = reqStr(rev, "dataset_version", `${where}@${commit}`, { maxBytes: 128 });
+    out[commit] = {
+      text: textDesc.value, blob: rev.blob, label: rev.label,
+      expected_records: rev.expected_records, dataset_id, dataset_version,
+    };
+  }
+  return { revisions: out };
+}
+
+/**
+ * Admit + validate the context CONTROL plane only: clock, readGrants,
+ * principal, criteria, product_registry, test_hooks — and the sources
+ * CONTAINER (charged, accessor-checked, but never walked into). Source
+ * entries are admitted individually AFTER the grant check (S653-006).
+ * Returns {clock, readGrants, principal, criteria, product_registry,
+ * test_hooks, sources}.
+ */
+export function validateContextControl(context, budget) {
+  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateContextControl requires a live budget");
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
+  assertNotProxy(context, "context");
   charge(context, "context");
   if (!isPlainObject(context)) fail("context", "must be an object");
   assertNoAccessors(context, "context");
@@ -376,45 +501,19 @@ export function validateContext(context, budget) {
   const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
-  if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
-  charge(context.sources, "context.sources");
-  assertNoAccessors(context.sources, "context.sources");
-  const sourceKeys = Object.keys(context.sources);
-  if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
-  for (const sk of sourceKeys) {
-    const entry = context.sources[sk];
-    charge(entry, `context.sources[${sk}]`);
-    budget.countPayload(sk, `context.sources key`);
-    if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
-    assertNoAccessors(entry, `context.sources[${sk}]`);
-    const revs = entry.revisions;
-    if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
-    charge(revs, `context.sources[${sk}].revisions`);
-    assertNoAccessors(revs, `context.sources[${sk}].revisions`);
-    for (const commit of Object.keys(revs)) {
-      const rev = revs[commit];
-      charge(rev, `context.sources[${sk}]@${commit}`);
-      budget.countPayload(commit, `context.sources[${sk}] commit`);
-      if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
-      assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
-      exactKeys(rev, ["text", "blob", "label", "expected_records"], `context.sources[${sk}]@${commit}`);
-      const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
-      if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
-        fail("context", `source '${sk}' revision '${commit}' text must be a plain data property`);
-      }
-      if (typeof textDesc.value !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
-      if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
-      if (typeof rev.label !== "string" || rev.label.length === 0) {
-        fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
-      }
-      budget.countPayload(rev.label, `context.sources[${sk}]@${commit} label`);
-      if (rev.expected_records !== undefined) {
-        if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
-          fail("context", `source '${sk}' revision '${commit}' expected_records must be a nonnegative integer`);
-        }
-      }
-    }
+  // Sources container: charged and descriptor-checked, but NOT walked.
+  // Entries are admitted per granted ref, after the grant check.
+  const sourcesDesc = Object.getOwnPropertyDescriptor(context, "sources");
+  if (!sourcesDesc || typeof sourcesDesc.get === "function" || typeof sourcesDesc.set === "function") {
+    fail("context", "sources must be an own data property; refusing");
   }
+  const sources = sourcesDesc.value;
+  assertNotProxy(sources, "context.sources");
+  charge(sources, "context.sources");
+  if (!isPlainObject(sources)) fail("context", "sources must be an object");
+  assertNoAccessors(sources, "context.sources");
+  const sourceKeys = Object.keys(sources);
+  if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
 
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
   assertDenseArray(context.readGrants, "context.readGrants");
@@ -425,18 +524,22 @@ export function validateContext(context, budget) {
     if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
       fail("context", `readGrants[${i}] must be a plain data property; refusing`);
     }
+    assertNotProxy(desc.value, `context.readGrants[${i}]`);
     charge(desc.value, `context.readGrants[${i}]`);
     readGrants.push(validateReadGrant(desc.value, `context.readGrants[${i}]`, budget));
   }
 
   charge(context.principal, "context.principal");
+  assertNotProxy(context.principal, "context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
   charge(context.criteria, "context.criteria");
+  assertNotProxy(context.criteria, "context.criteria");
   const criteria = validateCriteria(context.criteria, "context.criteria", budget);
 
   // Product registry: host-registered fixture product/benefit metadata.
   // Every entry is a consulted candidate, charged before its fields are read.
   const regIn = context.product_registry;
+  assertNotProxy(regIn, "context.product_registry");
   if (!isPlainObject(regIn)) fail("context", "product_registry must be an object");
   charge(regIn, "context.product_registry");
   assertNoAccessors(regIn, "context.product_registry");
@@ -447,13 +550,28 @@ export function validateContext(context, budget) {
     if (!PRODUCT_ID_RE.test(rk)) fail("context", `invalid product registry key '${rk}'`);
     budget.countPayload(rk, "context.product_registry key");
     const entry = regIn[rk];
+    assertNotProxy(entry, `context.product_registry[${rk}]`);
     charge(entry, `context.product_registry[${rk}]`);
     product_registry[rk] = validateProductEntry(entry, `context.product_registry[${rk}]`, budget, criteria);
   }
 
   const test_hooks = validateTestHooks(context.test_hooks, "context.test_hooks", budget);
 
-  return { clock, sources: context.sources, readGrants, principal, criteria, product_registry, test_hooks };
+  return { clock, sources, readGrants, principal, criteria, product_registry, test_hooks };
+}
+
+/**
+ * Full context validation (control plane + every source entry). Kept for
+ * direct unit-test use; the run() path uses validateContextControl plus
+ * per-granted-ref validateSourceEntry so denied sources stay untouched.
+ */
+export function validateContext(context, budget) {
+  const c = validateContextControl(context, budget);
+  const sources = {};
+  for (const sk of Object.keys(c.sources)) {
+    sources[sk] = validateSourceEntry(c.sources[sk], sk, `context.sources[${sk}]`, budget);
+  }
+  return { ...c, sources };
 }
 
 function validateProductEntry(value, where, budget, criteria) {
@@ -532,8 +650,16 @@ export function validateTask(task, budget = null) {
     if (task.population.expected_lead_ids !== undefined) {
       if (!Array.isArray(task.population.expected_lead_ids)) fail("task.population", "expected_lead_ids must be an array");
       assertDenseArray(task.population.expected_lead_ids, "task.population.expected_lead_ids");
+      // S653-005: primitive reference lists are consulted candidates too.
+      // Bound the raw length first, then charge each entry; a 50,000-id
+      // list trips BUDGET_EXCEEDED rather than reaching a population
+      // verdict. No dedup refunds: each entry occurrence is charged.
+      if (task.population.expected_lead_ids.length > 4096) {
+        fail("task.population", "expected_lead_ids exceeds the 4096-entry reference-list bound; refusing");
+      }
       expected_lead_ids = [];
       for (let i = 0; i < task.population.expected_lead_ids.length; i++) {
+        if (budget) budget.countObject(`task.population.expected_lead_ids[${i}]`);
         const v = task.population.expected_lead_ids[i];
         if (typeof v !== "string" || !LEAD_ID_RE.test(v)) fail("task.population", `expected_lead_ids[${i}] invalid`);
         expected_lead_ids.push(v);
@@ -581,6 +707,12 @@ function validateTaskOptions(value, where, budget) {
   validateDate(value.report_interval_start, `${where}.report_interval_start`);
   validateDate(value.report_interval_end, `${where}.report_interval_end`);
   validateDate(value.as_of, `${where}.as_of`);
+  // S653-003: a reversed report interval is a structural error, not an
+  // empty result. Civil-date endpoints compare under the documented
+  // inclusive civil-date treatment.
+  if (instantStartMs(value.report_interval_start) > instantEndMs(value.report_interval_end)) {
+    fail(where, "report_interval_start is after report_interval_end; refusing");
+  }
   return {
     include_drafts: value.include_drafts,
     report_interval_start: value.report_interval_start,

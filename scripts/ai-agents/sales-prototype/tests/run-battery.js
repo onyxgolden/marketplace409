@@ -1,90 +1,20 @@
 #!/usr/bin/env node
 /**
- * run-battery.js — `npm run battery` entrypoint: builtins-only trust
- * authentication BEFORE any scored battery case is executed.
+ * run-battery.js — `npm run battery` implementation (NOT the trust boundary).
  *
- * The separately trusted approval root is a host input (SALES_APPROVED_ROOT
- * env). The full corpus digest is recomputed with node:fs / node:crypto
- * ONLY and authenticated against that root BEFORE the battery runs.
- * Refuse (exit 3) on mismatch.
- *
- * Each case in corpus/battery.json carries a probe describing the
- * expectation. The runner executes the real run() (via the guarded
- * worker path) and checks the probe. Any failure exits nonzero with
- * the failing case_id.
+ * S653-009: trust authentication now lives in ../bootstrap.mjs, the
+ * host-pinned entrypoint, which authenticates the corpus BEFORE importing
+ * this file. This file only executes the 120-case battery. Running it
+ * directly still works, but the supported (reviewed) path is
+ * `node bootstrap.mjs battery`.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
-import { normalize } from "node:path/posix";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-
-const APPROVED_ROOT = process.env.SALES_APPROVED_ROOT;
-if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) {
-  console.error("bootstrap: missing separately trusted approval root (SALES_APPROVED_ROOT) — refusing to run");
-  process.exit(3);
-}
-
-// ---- trust authentication (builtins only; same scheme as run-tests.js) ----
-{
-  const sha = (b) => createHash("sha256").update(b).digest("hex");
-  let bad = null;
-  let manifest = null;
-  try {
-    manifest = JSON.parse(readFileSync(join(ROOT, "corpus", "manifest.json"), "utf8"));
-  } catch {
-    bad = "corpus/manifest.json unreadable";
-  }
-  const files = manifest?.files ?? [];
-  const seen = new Set();
-  if (!bad) {
-    for (const e of files) {
-      const p = e?.path;
-      if (
-        typeof p !== "string" || p.length === 0 || p.startsWith("/") || p.includes("\\") ||
-        normalize(p) !== p || p.startsWith("..") || p.includes("../") || seen.has(p)
-      ) { bad = `bad manifest entry: ${String(p)}`; break; }
-      seen.add(p);
-      let bytes;
-      try { bytes = readFileSync(join(ROOT, p)); } catch { bad = `missing pinned file: ${p}`; break; }
-      if (sha(bytes) !== e.sha256) { bad = `hash mismatch: ${p}`; break; }
-    }
-  }
-  if (!bad) {
-    const walk = (dir, out = []) => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, e.name);
-        if (e.isDirectory()) walk(p, out);
-        else out.push(p);
-      }
-      return out;
-    };
-    for (const sub of ["src", "tests", "runner", "fixtures", "corpus"]) {
-      for (const p of walk(join(ROOT, sub))) {
-        const rel = p.slice(ROOT.length + 1).replace(/\\/g, "/");
-        if (rel === "corpus/manifest.json" || rel === "corpus/corpus_digest.txt") continue;
-        if (!seen.has(rel)) { bad = `unlisted file: ${rel}`; break; }
-      }
-      if (bad) break;
-    }
-    for (const f of ["package.json", "README.md"]) {
-      if (!seen.has(f)) { bad = `unlisted file: ${f}`; break; }
-    }
-  }
-  if (!bad) {
-    const digest = sha(JSON.stringify(manifest));
-    if (digest !== APPROVED_ROOT) bad = `corpus digest mismatch: recomputed ${digest.slice(0, 16)}… vs approved ${APPROVED_ROOT.slice(0, 16)}…`;
-  }
-  if (bad) {
-    console.error(`bootstrap: trust authentication failed — ${bad} — refusing to run`);
-    process.exit(3);
-  }
-  console.log("bootstrap: trust authentication passed");
-}
 
 // ---- battery execution ----
 const cases = JSON.parse(readFileSync(join(ROOT, "corpus", "battery.json"), "utf8"));
@@ -139,7 +69,7 @@ function customBundle(leads, name) {
   const blob = createHash("sha1").update(Buffer.concat([header, Buffer.from(text, "utf8")])).digest("hex");
   const s2 = JSON.parse(JSON.stringify(store));
   const key = `sales-fixtures|leads/${name}.json`;
-  s2.sources[key] = { revisions: { [commit]: { text, blob, label: "custom", expected_records: leads.length } } };
+  s2.sources[key] = { revisions: { [commit]: { text, blob, label: "custom", expected_records: leads.length, dataset_id: "sales-fixtures", dataset_version: "2026-10-19" } } };
   s2.bundleRefs[name] = { repo: "sales-fixtures", path: `leads/${name}.json`, commit };
   return s2;
 }
@@ -295,12 +225,18 @@ async function checkProbe(c, raw) {
       break;
     }
     case "candidate-65": {
-      // 70 distinct pad sources push admission over 64; run must refuse safely.
-      const t2 = helpers.makeTask(store, { bundleNames: ["main"], taskId: c.case_id });
-      const ctx2 = helpers.makeContext(store, { bundleNames: ["main"] });
-      for (let i = 0; i < 70; i++) ctx2.sources[`x|pad-${i}.json`] = { revisions: {} };
+      // S653-005: record slots are charged BEFORE decode. With the standard
+      // test context the fixed admission overhead is 23 objects, so 41
+      // records fit exactly (64/64) and the 42nd record — the 65th
+      // candidate — refuses BUDGET_EXCEEDED before JSON.parse runs.
+      const leads = [];
+      for (let i = 0; i < 42; i++) leads.push(goodLead(`c65-${String(i).padStart(2, "0")}`, { do_not_contact: true }));
+      const s2 = customBundle(leads, "c65");
+      const t2 = helpers.makeTask(s2, { bundleNames: ["c65"], taskId: c.case_id });
+      const ctx2 = helpers.makeContext(s2, { bundleNames: ["c65"] });
       const r2 = await runGuarded(JSON.stringify(t2), JSON.stringify(ctx2));
-      check(["REFUSED", "PARTIAL", "REPORT_READY"].includes(r2.status), "candidate-65 run crashed");
+      check(r2.status === "REFUSED" && r2.diagnostics[0].code === "BUDGET_EXCEEDED", `candidate-65: got ${r2.status}/${r2.diagnostics[0]?.code}`);
+      check(r2.report === null, "candidate-65 refusal must have null report");
       break;
     }
     case "transport-oversize": {

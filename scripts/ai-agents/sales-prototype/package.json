@@ -1,1 +1,10 @@
-{"description":"Sales Agent Phase 2 slice 1 synthetic prototype — deterministic lead classification, do_not_contact suppression, inert outreach drafts, and exact BigInt/integer-rational pipeline-health arithmetic over invented fixture leads. Pure Node 24 ESM, zero runtime dependencies, offline, fixture-only.","name":"sales-agent-prototype","scripts":{"battery":"node tests/run-battery.js","test":"node tests/run-tests.js"},"type":"module","version":"1.0.0"}
+{
+  "description": "Sales Agent Phase 2 slice 1 synthetic prototype \u2014 deterministic lead classification, do_not_contact suppression, inert outreach drafts, and exact BigInt/integer-rational pipeline-health arithmetic over invented fixture leads. Pure Node 24 ESM, zero runtime dependencies, offline, fixture-only.",
+  "name": "sales-agent-prototype",
+  "scripts": {
+    "battery": "node bootstrap.mjs battery",
+    "test": "node bootstrap.mjs test"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}
