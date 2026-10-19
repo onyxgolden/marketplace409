@@ -50,11 +50,31 @@ export class Resolver {
     this.spansCharged = 0;
     this.inputBytesCharged = 0;
     this.outputRecordsCharged = 0;
+    // PC650-001: track distinct objects to make charging idempotent.
+    // The 64-object budget counts DISTINCT candidate objects; re-visiting
+    // an already-charged object (e.g., during validation after admission)
+    // does not consume budget again.
+    this._chargedObjects = new WeakSet();
   }
 
-  /** Charge one consulted object; throws BudgetExceeded at 65. */
-  chargeObject() {
-    this.objectsCharged += 1;
+  /**
+   * Charge one consulted object; throws BudgetExceeded at 65.
+   * Idempotent: charging the same object twice counts once.
+   * Only objects/arrays/functions are counted; primitives are ignored.
+   * If obj is undefined, counts unconditionally (for synthetic candidates).
+   */
+  chargeObject(obj) {
+    if (obj === undefined) {
+      // Synthetic candidate (e.g., array slot): count unconditionally
+      this.objectsCharged += 1;
+    } else if (obj !== null && (typeof obj === 'object' || typeof obj === 'function')) {
+      if (this._chargedObjects.has(obj)) return;
+      this._chargedObjects.add(obj);
+      this.objectsCharged += 1;
+    } else {
+      // Primitive: not a candidate, do not count
+      return;
+    }
     if (this.objectsCharged > LIMITS.maxObjects) {
       throw new BudgetExceeded(`object ${this.objectsCharged} exceeds ${LIMITS.maxObjects}`);
     }
@@ -92,13 +112,20 @@ export class Resolver {
    * {code: READ_DENIED|HASH_MISMATCH}.
    */
   resolve(fixtureId) {
-    this.chargeObject();
+    // PC650-001: charge the registry entry candidate BEFORE reading its fields.
+    // The entry object is charged idempotently (distinct objects); repeated
+    // resolutions of the same fixture do not consume additional budget.
+    // The per-ref budget is enforced during task admission (checkTask charges
+    // each fixture_ref), so 65 refs refuse before resolution begins.
     const entry = this.store[fixtureId];
     if (!entry) {
+      // Charge a synthetic candidate for the failed lookup
+      this.chargeObject();
       const e = new Error(`READ_DENIED: unknown fixture ${fixtureId}`);
       e.code = 'READ_DENIED';
       throw e;
     }
+    this.chargeObject(entry);
     this.chargeInputBytes(utf8Length(entry.bytes));
     const actual = sha256Hex(entry.bytes);
     if (actual !== entry.sha256) {
@@ -135,14 +162,22 @@ function checkDepth(v, depth) {
 /** Verify a SourceRef pin against the resolver store (synthetic repo).
  *  The pin's blob is the git blob SHA-1 of the canonical record WITHOUT the
  *  source_ref itself (avoids self-reference); commit is the fixed synthetic id.
+ *  PC650-001: charges the parsed record candidates before inspection.
  */
 export function verifySourceRef(ref, resolver) {
   const entry = resolver.store[ref.path];
   if (!entry) return { ok: false, reason: 'unknown fixture path' };
+  // Charge the registry entry before reading its bytes
+  resolver.chargeObject(entry);
   let record;
   try { record = JSON.parse(entry.bytes); } catch { return { ok: false, reason: 'unparseable bytes' }; }
+  // Charge the parsed record and its top-level structure before walking.
+  // The parsed object is a new candidate distinct from the entry.
+  resolver.chargeObject(record);
   const { source_ref, ...rest } = record;
   void source_ref;
+  // Charge the rest object before canonicalization reads it
+  resolver.chargeObject(rest);
   const blob = gitBlobSha1(canonicalOf(rest));
   if (blob !== ref.blob) return { ok: false, reason: 'blob mismatch' };
   if (ref.commit !== SYNTHETIC_COMMIT) return { ok: false, reason: 'commit mismatch' };

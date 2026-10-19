@@ -18,11 +18,33 @@ test('resolve returns parsed record and charges one object', () => {
   assert.equal(r.objectsCharged, 1);
 });
 
-test('65th object throws BUDGET_EXCEEDED before inspection', () => {
+test('65th distinct object throws BUDGET_EXCEEDED before inspection', () => {
+  // PC650-001: the budget counts DISTINCT objects. Resolving the same
+  // fixture repeatedly charges its entry once (idempotent).
   const r = new Resolver(storeOf({ a: 1 }));
-  for (let i = 0; i < 64; i++) r.resolve('fx1');
-  assert.throws(() => r.resolve('fx1'), (e) => e.code === 'BUDGET_EXCEEDED');
-  assert.equal(r.objectsCharged, 65);
+  for (let i = 0; i < 10; i++) r.resolve('fx1');
+  assert.equal(r.objectsCharged, 1); // same entry, charged once
+
+  // 65 distinct objects refuse on the 65th
+  const r2 = new Resolver({});
+  const objs = [];
+  for (let i = 0; i < 64; i++) {
+    const o = { idx: i };
+    objs.push(o);
+    r2.chargeObject(o);
+  }
+  assert.equal(r2.objectsCharged, 64);
+  assert.throws(() => r2.chargeObject({ idx: 64 }), (e) => e.code === 'BUDGET_EXCEEDED');
+  assert.equal(r2.objectsCharged, 65);
+});
+
+test('re-charging the same object is idempotent', () => {
+  const r = new Resolver(storeOf({ a: 1 }));
+  const o = { x: 1 };
+  r.chargeObject(o);
+  r.chargeObject(o);
+  r.chargeObject(o);
+  assert.equal(r.objectsCharged, 1);
 });
 
 test('unknown fixture throws READ_DENIED', () => {

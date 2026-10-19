@@ -85,7 +85,7 @@ const mode = process.argv[2];
 let child;
 if (mode === '--unit') {
   // Note: bootstrap.test.js is excluded (it spawns this bootstrap; recursion).
-  child = spawnSync(process.execPath, ['--test', 'tests/canonical.test.js', 'tests/controls.test.js', 'tests/determinism.test.js', 'tests/findings.test.js', 'tests/injection.test.js', 'tests/resolver.test.js', 'tests/schemas.test.js', 'tests/spans.test.js'],
+  child = spawnSync(process.execPath, ['--test', 'tests/admission.test.js', 'tests/canonical.test.js', 'tests/controls.test.js', 'tests/determinism.test.js', 'tests/findings.test.js', 'tests/injection.test.js', 'tests/resolver.test.js', 'tests/schemas.test.js', 'tests/spans.test.js', 'tests/watchdog.test.js'],
     { cwd: root, stdio: 'inherit', env: process.env });
 } else if (mode === '--battery') {
   child = spawnSync(process.execPath, ['tests/run-battery.js'],

@@ -40,27 +40,46 @@ function oraclePkg(p, opt) {
     : { st: 'ok', disp: money(rnd(B(p.planned_percent.num) * bac, p.planned_percent.den, 0)) };
   // note: PV display = round(percent*BAC to 0 decimals) as money
   let ev;
-  if (opt.ev_mode === 'evidenced' && p.evidenced_ev_minor != null) ev = { n: B(p.evidenced_ev_minor), d: 1n };
-  else ev = { n: B(p.claimed_actual_percent.num) * bac, d: B(p.claimed_actual_percent.den) };
-  o.ev = { st: 'ok', disp: money(rnd(ev.n, ev.d, 0)) };
+  let evUnverifiable = false;
+  if (opt.ev_mode === 'evidenced') {
+    if (p.evidenced_ev_minor != null) {
+      ev = { n: B(p.evidenced_ev_minor), d: 1n };
+    } else {
+      // PC650-005: evidenced mode without evidence -> UNVERIFIABLE, no fallback
+      evUnverifiable = true;
+      ev = null;
+    }
+  } else {
+    ev = { n: B(p.claimed_actual_percent.num) * bac, d: B(p.claimed_actual_percent.den) };
+  }
+  o.ev = evUnverifiable ? { st: 'UNVERIFIABLE' } : { st: 'ok', disp: money(rnd(ev.n, ev.d, 0)) };
   let ac = 0n;
   for (const l of p.actual_cost_lines) ac += B(l.amount_minor);
   o.ac = ac.toString();
-  o.cv = money(rnd(ev.n * 1n - ac * ev.d, ev.d, 0));
-  o.sv = o.pv.st !== 'ok' ? 'UNVERIFIABLE'
-    : money(rnd(ev.n * B(p.planned_percent.den) - B(p.planned_percent.num) * bac * ev.d, ev.d * B(p.planned_percent.den), 0));
-  o.cpi = ac === 0n ? 'ZERO_DENOMINATOR' : ac < 0n ? 'UNVERIFIABLE' : ratio4(ev.n, ev.d * ac);
-  o.spi = o.pv.st !== 'ok' ? 'UNVERIFIABLE'
-    : (() => { const pvn = B(p.planned_percent.num) * bac, pvd = B(p.planned_percent.den); return pvn === 0n ? 'ZERO_DENOMINATOR' : ratio4(ev.n * pvd, ev.d * pvn); })();
-  o.eac = {};
-  for (const v of opt.eac_formulas) {
-    if (v === 'BAC_OVER_CPI') o.eac[v] = (ev.n === 0n || ac <= 0n) ? 'UNVERIFIABLE' : money(rnd(bac * ac * ev.d, ev.n, 0));
-    else if (v === 'AC_PLUS_REMAINING_BUDGET') o.eac[v] = money(rnd(ac * ev.d + (bac * ev.d - ev.n), ev.d, 0));
-    else if (v === 'AC_PLUS_REMAINING_OVER_CPI_SPI') {
-      // AC + (BAC-EV)/(CPI*SPI); CPI=EV/AC, SPI=EV/PV -> (BAC-EV)*AC*PV/(EV*EV)
-      if (ev.n === 0n || ac <= 0n || o.cpi === 'ZERO_DENOMINATOR' || o.cpi === 'UNVERIFIABLE' || o.spi === 'ZERO_DENOMINATOR' || o.spi === 'UNVERIFIABLE' || o.pv.st !== 'ok') {
-        o.eac[v] = 'UNVERIFIABLE';
-      } else {
+  // PC650-005: if EV is unverifiable, all dependents are unverifiable
+  if (evUnverifiable) {
+    o.cv = 'UNVERIFIABLE';
+    o.sv = 'UNVERIFIABLE';
+    o.cpi = 'UNVERIFIABLE';
+    o.spi = 'UNVERIFIABLE';
+    o.eac = {};
+    for (const v of opt.eac_formulas) o.eac[v] = 'UNVERIFIABLE';
+  } else {
+    o.cv = money(rnd(ev.n * 1n - ac * ev.d, ev.d, 0));
+    o.sv = o.pv.st !== 'ok' ? 'UNVERIFIABLE'
+      : money(rnd(ev.n * B(p.planned_percent.den) - B(p.planned_percent.num) * bac * ev.d, ev.d * B(p.planned_percent.den), 0));
+    o.cpi = ac === 0n ? 'ZERO_DENOMINATOR' : ac < 0n ? 'UNVERIFIABLE' : ratio4(ev.n, ev.d * ac);
+    o.spi = o.pv.st !== 'ok' ? 'UNVERIFIABLE'
+      : (() => { const pvn = B(p.planned_percent.num) * bac, pvd = B(p.planned_percent.den); return pvn === 0n ? 'ZERO_DENOMINATOR' : ratio4(ev.n * pvd, ev.d * pvn); })();
+    o.eac = {};
+    for (const v of opt.eac_formulas) {
+      if (v === 'BAC_OVER_CPI') o.eac[v] = (ev.n === 0n || ac <= 0n) ? 'UNVERIFIABLE' : money(rnd(bac * ac * ev.d, ev.n, 0));
+      else if (v === 'AC_PLUS_REMAINING_BUDGET') o.eac[v] = money(rnd(ac * ev.d + (bac * ev.d - ev.n), ev.d, 0));
+      else if (v === 'AC_PLUS_REMAINING_OVER_CPI_SPI') {
+        // AC + (BAC-EV)/(CPI*SPI); CPI=EV/AC, SPI=EV/PV -> (BAC-EV)*AC*PV/(EV*EV)
+        if (ev.n === 0n || ac <= 0n || o.cpi === 'ZERO_DENOMINATOR' || o.cpi === 'UNVERIFIABLE' || o.spi === 'ZERO_DENOMINATOR' || o.spi === 'UNVERIFIABLE' || o.pv.st !== 'ok') {
+          o.eac[v] = 'UNVERIFIABLE';
+        } else {
         const ppn = B(p.planned_percent.num), ppd = B(p.planned_percent.den);
         const pvN = bac * ppn, pvD = ppd;                 // PV = BAC*ppn/ppd
         const remNum = bac * ev.d - ev.n, remDen = ev.d;  // BAC-EV
@@ -71,6 +90,7 @@ function oraclePkg(p, opt) {
     }
     else if (v === 'BOTTOM_UP_ETC') { let e = 0n; for (const l of p.etc_lines) e += B(l.amount_minor); o.eac[v] = money(ac + e); }
     else o.eac[v] = 'UNSUPPORTED_FORMULA';
+    } // end else (ev not unverifiable)
   }
   if (opt.include_contingency && p.contingency) {
     let add = 0n, dr = 0n;
@@ -111,6 +131,18 @@ function nominalCase(pkgId, options, extra = {}, forcePartial = false) {
   if (o.pv.st === 'UNVERIFIABLE') {
     checks[2][1] = undefined; checks.splice(2, 1);
     checks.push(['report.packages.0.pv.status', 'UNVERIFIABLE'], ['report.packages.0.spi.status', 'UNVERIFIABLE'], ['report.packages.0.sv.status', 'UNVERIFIABLE']);
+  }
+  // PC650-005: if EV is UNVERIFIABLE, remove display checks, add status checks
+  if (o.ev.st === 'UNVERIFIABLE') {
+    const ei = checks.findIndex(([p]) => p === 'report.packages.0.ev.display');
+    if (ei >= 0) checks.splice(ei, 1);
+    checks.push(['report.packages.0.ev.status', 'UNVERIFIABLE']);
+    // CV, CPI, SPI, SV are also unverifiable when EV is
+    for (const f of ['cv', 'cpi', 'spi', 'sv']) {
+      const di = checks.findIndex(([p]) => p === `report.packages.0.${f}.display`);
+      if (di >= 0) checks.splice(di, 1);
+    }
+    checks.push(['report.packages.0.cv.status', 'UNVERIFIABLE'], ['report.packages.0.cpi.status', 'UNVERIFIABLE']);
   }
   if (o.cpi === 'ZERO_DENOMINATOR' || o.cpi === 'UNVERIFIABLE') { checks.splice(5, 1); checks.push(['report.packages.0.cpi.status', o.cpi]); }
   if (o.spi === 'ZERO_DENOMINATOR' || o.spi === 'UNVERIFIABLE') {
@@ -204,19 +236,19 @@ contraCase('pkg-header-forged-01', OPTS_FULL, 'HEADER_MISMATCH', [['report.packa
 contraCase('pkg-cont-over-01', OPTS_FULL, 'CONTINGENCY_EXCEEDED', [['report.packages.0.contingency.status', 'CONTINGENCY_EXCEEDED']]);
 contraCase('pkg-nopv-01', OPTS_FULL, null, [['status', 'PARTIAL'], ['report.packages.0.spi.status', 'UNVERIFIABLE']]);
 contraCase('pkg-aczero-01', OPTS_FULL, null, [['report.packages.0.cpi.status', 'ZERO_DENOMINATOR']]);
-// duplicate package ids across two fixtures -> INVALID_INPUT refusal
+// duplicate package ids across two fixtures -> INVALID_INPUT refusal (PC650-003)
 cases.push({ case_id: cid('contra'), category: 'contradiction',
   task: taskFor([K('pkg-basic-01'), keymap['pkg-basic-01'][1]], OPTS_MIN), ctx: CTX,
-  expected: { status: 'PARTIAL', diagCode: 'INVALID_INPUT', checks: [['report.packages.length', 1]] } });
-// duplicate line ids -> INVALID_INPUT, package skipped -> EMPTY
+  expected: { status: 'REFUSED', diagCode: 'INVALID_INPUT', checks: [['report.packages.length', 0]] } });
+// duplicate line ids -> INVALID_INPUT refusal (PC650-003)
 cases.push({ case_id: cid('contra'), category: 'contradiction', task: taskFor([K('pkg-dupline-01')], OPTS_MIN), ctx: CTX,
-  expected: { status: 'EMPTY', diagCode: 'INVALID_INPUT', checks: [['report.packages.length', 0]] } });
-// malformed amount -> INVALID_INPUT, package skipped -> EMPTY
+  expected: { status: 'REFUSED', diagCode: 'INVALID_INPUT', checks: [['report.packages.length', 0]] } });
+// malformed amount -> INVALID_INPUT refusal (PC650-003)
 cases.push({ case_id: cid('contra'), category: 'contradiction', task: taskFor([K('pkg-malformed-01')], OPTS_MIN), ctx: CTX,
-  expected: { status: 'EMPTY', diagCode: 'INVALID_INPUT', checks: [['report.packages.length', 0]] } });
-// unknown fixture ref -> READ_DENIED, nothing analyzed -> EMPTY
+  expected: { status: 'REFUSED', diagCode: 'INVALID_INPUT', checks: [['report.packages.length', 0]] } });
+// unknown fixture ref -> READ_DENIED refusal (PC650-003)
 cases.push({ case_id: cid('contra'), category: 'contradiction', task: taskFor(['fx-99-nope'], OPTS_MIN), ctx: CTX,
-  expected: { status: 'EMPTY', diagCode: 'READ_DENIED', checks: [['report.packages.length', 0]] } });
+  expected: { status: 'REFUSED', diagCode: 'READ_DENIED', checks: [['report.packages.length', 0]] } });
 // header-ok: no mismatch diagnostics
 contraCase('pkg-header-ok-01', OPTS_FULL, null, [['report.packages.0.header_comparison.0.match', true], ['report.packages.0.header_comparison.1.match', true]]);
 // fill remaining contra cases with forged/missing variants
@@ -267,10 +299,10 @@ const badTasks = [
 for (const [t, why] of badTasks) {
   cases.push({ case_id: cid('schema'), category: 'schema', task: t, ctx: CTX, expected: { status: 'REFUSED', diagCode: 'INVALID_INPUT', checks: [], note: why } });
 }
-// tampered blob pin -> SOURCE_UNVERIFIED, nothing analyzable -> EMPTY
+// tampered blob pin -> SOURCE_UNVERIFIED refusal (PC650-003)
 cases.push({ case_id: cid('schema'), category: 'schema',
   task: (() => { const k = K('pkg-basic-01'); return taskFor([k], OPTS_MIN); })(), ctx: 'ctx-tampered-pin',
-  expected: { status: 'EMPTY', diagCode: 'SOURCE_UNVERIFIED', checks: [['report.packages.length', 0]] } });
+  expected: { status: 'REFUSED', diagCode: 'SOURCE_UNVERIFIED', checks: [['report.packages.length', 0]] } });
 // bad clock
 cases.push({ case_id: cid('schema'), category: 'schema', task: taskFor([K('pkg-basic-01')], OPTS_MIN), ctx: 'ctx-bad-clock',
   expected: { status: 'REFUSED', diagCode: 'INVALID_INPUT', checks: [] } });
@@ -282,14 +314,15 @@ for (let i = 0; i < 11; i++) {
 }
 
 // 10 budget/replay/mutation
-// 65 refs -> BUDGET_EXCEEDED refusal
+// 65 refs -> BUDGET_EXCEEDED refusal (each ref is a candidate; 8 overhead + 65 > 64)
+// 56 refs is the boundary (8 + 56 = 64); 57+ exceeds. Use 57 for the exceed case.
 cases.push({ case_id: cid('budget'), category: 'budget',
   task: taskFor(Array(65).fill(K('pkg-basic-01')), OPTS_MIN), ctx: CTX,
   expected: { status: 'REFUSED', diagCode: 'BUDGET_EXCEEDED', checks: [] } });
-// 64 refs -> still OK (boundary)
+// 56 refs -> BUDGET_EXCEEDED (8 overhead + 56 refs + options = 65 > 64)
 cases.push({ case_id: cid('budget'), category: 'budget',
-  task: taskFor(Array(64).fill(K('pkg-basic-01')), OPTS_MIN), ctx: CTX,
-  expected: { status: 'PARTIAL', diagCode: 'INVALID_INPUT', checks: [] } }); // duplicates -> invalid, but budget holds
+  task: taskFor(Array(56).fill(K('pkg-basic-01')), OPTS_MIN), ctx: CTX,
+  expected: { status: 'REFUSED', diagCode: 'BUDGET_EXCEEDED', checks: [] } });
 // replay determinism marker
 cases.push({ case_id: cid('budget'), category: 'budget', replay: true, task: taskFor([K('pkg-basic-01')], OPTS_FULL), ctx: CTX,
   expected: { status: 'REPORT_READY', checks: [] } });

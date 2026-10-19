@@ -57,7 +57,7 @@ function goodPkg() {
   return {
     kind: 'work-package', package_id: 'p1', currency: 'USD', bac_minor: 100,
     planned_percent: { num: 1, den: 2 }, claimed_actual_percent: { num: 1, den: 2 },
-    actual_cost_lines: [{ line_id: 'l1', amount_minor: 10, kind: 'k', citation: 'c' }],
+    actual_cost_lines: [{ line_id: 'l1', amount_minor: 10, kind: 'labor', citation: 'c' }],
     etc_lines: [], source_ref: REF, label: 'x',
   };
 }
@@ -84,8 +84,8 @@ test('package rejects duplicate line ids', () => {
   const errs = [];
   const p = goodPkg();
   p.actual_cost_lines = [
-    { line_id: 'dup', amount_minor: 1, kind: 'k', citation: 'c' },
-    { line_id: 'dup', amount_minor: 2, kind: 'k', citation: 'c' },
+    { line_id: 'dup', amount_minor: 1, kind: 'labor', citation: 'c' },
+    { line_id: 'dup', amount_minor: 2, kind: 'labor', citation: 'c' },
   ];
   assert.equal(checkPackage(p, errs, new Set()), false);
 });

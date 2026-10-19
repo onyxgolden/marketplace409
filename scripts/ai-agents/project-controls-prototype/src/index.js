@@ -6,6 +6,7 @@ import { checkTask, checkContext, checkPackage, checkSourceRef } from './schemas
 import { Resolver, BudgetExceeded, InputLimit, LIMITS, verifySourceRef } from './resolver.js';
 import { recognizeInjections } from './injection.js';
 import { analyzePackage, poolByCurrency } from './controls.js';
+import { measureInputBytes, getOwnData } from './admission.js';
 
 export const AGENT = 'project-controls';
 export const SCHEMA_VERSION = '1';
@@ -27,13 +28,26 @@ export function run(task, context) {
 
 function runInner(task, context, started) {
   // 0. Invocation-wide budget BEFORE any traversal (PC650-001). Every
-  // candidate below is charged before inspection under one monotonic counter.
+  // candidate is charged before inspection under one monotonic counter.
+  // measureInputBytes performs descriptor-safe charged admission: it walks
+  // the task/context with the budget, charging each object BEFORE reading
+  // its fields. If the 65th distinct object is reached, BudgetExceeded is
+  // thrown BEFORE that object is read. Getters are rejected, not executed.
   const resolver = new Resolver(context.fixtureStore || {});
-  resolver.chargeInputBytes(utf8Length(canonicalStringify(task)));
+  measureInputBytes(task, resolver);
   // context metadata bytes (fixtureStore bytes are charged per resolve)
-  const { fixtureStore, ...ctxMeta } = context || {};
-  void fixtureStore;
-  resolver.chargeInputBytes(utf8Length(canonicalStringify(ctxMeta)));
+  // Use descriptor-safe read to separate fixtureStore from metadata.
+  const ctxMeta = {};
+  if (context && typeof context === 'object') {
+    for (const k of Object.keys(context)) {
+      if (k === 'fixtureStore') continue;
+      const slot = getOwnData(context, k);
+      if (slot.present && !slot.isAccessor) {
+        ctxMeta[k] = slot.value;
+      }
+    }
+  }
+  measureInputBytes(ctxMeta, resolver);
 
   // 1. Validate task + context envelopes (charged per candidate).
   const tc = checkTask(task, resolver);
@@ -55,6 +69,10 @@ function runInner(task, context, started) {
 
   // 2. Resolve + validate each fixture ref (charged before inspection).
   const seenPkgIds = new Set();
+  // PC650-006: invocation-wide line-identity registry. The same bare line_id
+  // cannot appear in two packages, even in different populations. This
+  // enforces cross-package identity separation.
+  const lineRegistry = new Set();
   for (const ref of task.fixture_refs) {
     let resolved;
     try {
@@ -73,8 +91,11 @@ function runInner(task, context, started) {
       throw e;
     }
 
-    // 3. Injection scan over textual fields (one span per package sweep).
-    const texts = collectTexts(rec);
+    // 3. Injection scan over textual fields (charged traversal).
+    // PC650-001: collectTexts now charges each object before reading it,
+    // using the same budget. The scan happens after resolve() but the
+    // objects are charged during the walk.
+    const texts = collectTexts(rec, resolver);
     resolver.chargeSpan();
     let qHits = [];
     for (const t of texts) {
@@ -92,9 +113,9 @@ function runInner(task, context, started) {
 
     // 4. Schema validation of the package record (charged per candidate).
     // PC650-003: structural corruption refuses; never a partial domain payload.
-    // PC650-006: package-wide line-identity registry across populations.
+    // PC650-006: invocation-wide line-identity registry across populations
+    // (defined outside the loop) prevents cross-package line_id reuse.
     const errs = [];
-    const lineRegistry = new Set();
     if (!checkPackage(rec, errs, seenPkgIds, resolver, lineRegistry)) {
       const e = new Error(`INVALID_INPUT: package ${rec.package_id || ref}: ${errs.join('; ')}`);
       e.code = 'INVALID_INPUT';
@@ -186,19 +207,53 @@ function runInner(task, context, started) {
   return envelope;
 }
 
-function collectTexts(rec) {
+function collectTexts(rec, budget) {
+  // PC650-001: charged traversal for injection scanning. Each object/array
+  // is charged BEFORE its contents are read. Uses descriptor-safe reads to
+  // avoid invoking getters.
   const out = [];
-  const walk = (v) => {
-    if (typeof v === 'string') out.push(v);
-    else if (Array.isArray(v)) v.forEach(walk);
-    else if (v !== null && typeof v === 'object') Object.values(v).forEach(walk);
+  const walk = (v, depth) => {
+    if (depth > 32) {
+      const e = new Error('INVALID_INPUT: nesting depth exceeds 32 in collectTexts');
+      e.code = 'INVALID_INPUT';
+      throw e;
+    }
+    if (typeof v === 'string') {
+      out.push(v);
+      return;
+    }
+    if (Array.isArray(v)) {
+      if (budget) budget.chargeObject(v);
+      for (let i = 0; i < v.length; i++) {
+        const slot = getOwnData(v, i);
+        if (!slot.present || slot.isAccessor) continue; // sparse/accessor: skip, validation will reject
+        walk(slot.value, depth + 1);
+      }
+      return;
+    }
+    if (v !== null && typeof v === 'object') {
+      if (budget) budget.chargeObject(v);
+      for (const k of Object.keys(v)) {
+        const slot = getOwnData(v, k);
+        if (!slot.present || slot.isAccessor) continue;
+        walk(slot.value, depth + 1);
+      }
+    }
   };
-  walk(rec);
+  walk(rec, 0);
   return out;
 }
 
-function mkdiag(code, severity, record_id, reason) {
-  return { code, severity, record_id, source_ref: null, reason };
+function mkdiag(code, severity, record_id, reason, citation) {
+  // PC650-004: diagnostics carry an explicit citation state, never a bare null.
+  return {
+    code,
+    severity,
+    record_id,
+    source_ref: null, // legacy field; use citation instead
+    citation: citation || { status: 'UNAVAILABLE', reason: 'no citation bound to this diagnostic' },
+    reason,
+  };
 }
 
 function stableDiagnostics(ds) {

@@ -35,7 +35,12 @@ function percentOf(pct, minor) { return { n: BigInt(pct.num) * BigInt(minor), d:
 export function analyzePackage(pkg, ctx) {
   const diagnostics = [];
   const R = { package_id: pkg.package_id, currency: pkg.currency };
-  const srcBytes = ctx.sourceBytes || '';
+  // Finding 2 (local review): spans are UTF-8 BYTE offsets; slicing a JS string
+  // uses UTF-16 code units. Convert to Buffer once so byte offsets are exact
+  // for non-ASCII content.
+  const srcBuf = Buffer.isBuffer(ctx.sourceBytes)
+    ? ctx.sourceBytes
+    : Buffer.from(ctx.sourceBytes || '', 'utf8');
   const srcRef = ctx.sourceRef || null;
 
   // Helper: derive and verify a money line's citation from source byte spans.
@@ -47,15 +52,54 @@ export function analyzePackage(pkg, ctx) {
     const span = ctx.sourceSpans ? ctx.sourceSpans.get(spanPath) : undefined;
     if (!span) {
       diagnostics.push(diag('CITATION_UNVERIFIED', 'high', pkg.package_id,
-        `${field} ${ln.line_id}: no byte span for ${spanPath}`));
+        `${field} ${ln.line_id}: no byte span for ${spanPath}`,
+        { status: 'UNAVAILABLE', reason: 'missing byte span' }));
       return { status: 'UNAVAILABLE', reason: 'missing byte span' };
     }
     const expected = String(ln.amount_minor);
-    const actual = srcBytes.slice(span.start, span.end).toString('utf8');
+    const actual = srcBuf.toString('utf8', span.start, span.end);
     if (actual !== expected) {
       diagnostics.push(diag('CITATION_UNVERIFIED', 'high', pkg.package_id,
-        `${field} ${ln.line_id}: byte slice ${JSON.stringify(actual)} != amount ${expected}`));
+        `${field} ${ln.line_id}: byte slice ${JSON.stringify(actual)} != amount ${expected}`,
+        { status: 'UNAVAILABLE', reason: 'span/amount mismatch' }));
       return { status: 'UNAVAILABLE', reason: 'span/amount mismatch' };
+    }
+    return {
+      status: 'VERIFIED',
+      span: { start_byte: span.start, end_byte: span.end, quoted_text: actual },
+      source_ref: srcRef,
+      verification: 'BYTE_SLICE_VERIFIED',
+    };
+  };
+
+  // PC650-004: cite scalar operands (bac, percents, evidenced EV, contingency
+  // original, header claims). Each operand gets a verified Citation bound to
+  // the source byte span, or an explicit UNAVAILABLE state. Charges the span
+  // budget exactly once per operand.
+  const citeOperand = (fieldName, spanPath, expectedValue) => {
+    ctx.chargeSpan();
+    const span = ctx.sourceSpans ? ctx.sourceSpans.get(spanPath) : undefined;
+    if (!span) {
+      const unavailable = { status: 'UNAVAILABLE', reason: `missing byte span for ${spanPath}` };
+      diagnostics.push(diag('CITATION_UNVERIFIED', 'high', pkg.package_id,
+        `${fieldName}: no byte span for ${spanPath}`, unavailable));
+      return unavailable;
+    }
+    const actual = srcBuf.toString('utf8', span.start, span.end);
+    // For objects (percents), compare parsed values; for primitives, compare strings
+    let matches = false;
+    try {
+      const parsedActual = JSON.parse(actual);
+      matches = JSON.stringify(parsedActual) === JSON.stringify(expectedValue);
+    } catch {
+      matches = actual === String(expectedValue);
+    }
+    if (!matches) {
+      const unavailable = { status: 'UNAVAILABLE', reason: `span/value mismatch for ${spanPath}` };
+      diagnostics.push(diag('CITATION_UNVERIFIED', 'high', pkg.package_id,
+        `${fieldName}: byte slice ${JSON.stringify(actual)} != expected ${JSON.stringify(expectedValue)}`,
+        unavailable));
+      return unavailable;
     }
     return {
       status: 'VERIFIED',
@@ -73,36 +117,55 @@ export function analyzePackage(pkg, ctx) {
     ev: ctx.evMode === 'evidenced' && pkg.evidenced_ev_minor != null ? 'evidenced' : 'derived-from-claim',
     note: 'All forecast values are SYNTHETIC ARITHMETIC EXERCISE — not a project forecast.',
   };
-  R.citations = { package: pkg.source_ref, lines: [] };
+  // PC650-004: cite the BAC operand
+  R.citations = {
+    package: {
+      status: 'VERIFIED',
+      source_ref: srcRef,
+      verification: 'SOURCE_REF_PIN_VERIFIED',
+      note: 'package identity bound to verified source_ref pin',
+    },
+    bac_minor: citeOperand('bac_minor', '$.bac_minor', pkg.bac_minor),
+    lines: [],
+  };
 
-  // PV
+  // PV — PC650-004: cite the planned_percent operand
   if (pkg.planned_percent == null) {
     R.pv = { status: 'UNVERIFIABLE', reason: 'planned_percent not declared' };
-    diagnostics.push(diag('PV_UNVERIFIABLE', 'medium', pkg.package_id, 'planned_percent not declared; PV/SPI/SV unavailable'));
+    R.citations.planned_percent = { status: 'UNAVAILABLE', reason: 'planned_percent not declared' };
+    diagnostics.push(diag('PV_UNVERIFIABLE', 'medium', pkg.package_id, 'planned_percent not declared; PV/SPI/SV unavailable',
+      R.citations.planned_percent));
   } else {
     const pv = percentOf(pkg.planned_percent, pkg.bac_minor);
     R.pv = { status: 'ok', n: pv.n.toString(), d: pv.d.toString(), display: formatMinor(roundRational(pv.n, pv.d, 0)) };
+    R.citations.planned_percent = citeOperand('planned_percent', '$.planned_percent', pkg.planned_percent);
   }
 
   // EV — PC650-005: evidenced mode without cited evidence yields typed
   // UNVERIFIABLE for EV and all dependents; the claimed percent is preserved
   // as a separate unverified claim, never a computational fallback.
+  // PC650-004: cite the EV operand (claimed percent or evidenced EV).
   let ev = null;
   let evUnavailable = false;
   if (ctx.evMode === 'evidenced') {
     if (pkg.evidenced_ev_minor != null) {
       ev = ratFromInt(pkg.evidenced_ev_minor);
       R.ev_mode = 'evidenced';
+      R.citations.evidenced_ev_minor = citeOperand('evidenced_ev_minor', '$.evidenced_ev_minor', pkg.evidenced_ev_minor);
     } else {
       evUnavailable = true;
       R.ev_mode = 'evidenced';
       R.ev = { status: 'UNVERIFIABLE', reason: 'evidenced EV mode selected but no evidenced_ev_minor supplied; no fallback to claimed percent' };
       R.claimed_actual_percent_unverified = { ...pkg.claimed_actual_percent, note: 'claim preserved, not used computationally' };
-      diagnostics.push(diag('EV_UNVERIFIABLE', 'high', pkg.package_id, 'evidenced EV mode selected but no evidenced_ev_minor supplied; EV and dependents unavailable'));
+      R.citations.evidenced_ev_minor = { status: 'UNAVAILABLE', reason: 'evidenced_ev_minor not supplied' };
+      R.citations.claimed_actual_percent = citeOperand('claimed_actual_percent', '$.claimed_actual_percent', pkg.claimed_actual_percent);
+      diagnostics.push(diag('EV_UNVERIFIABLE', 'high', pkg.package_id, 'evidenced EV mode selected but no evidenced_ev_minor supplied; EV and dependents unavailable',
+        R.citations.evidenced_ev_minor));
     }
   } else {
     ev = percentOf(pkg.claimed_actual_percent, pkg.bac_minor);
     R.ev_mode = 'claimed';
+    R.citations.claimed_actual_percent = citeOperand('claimed_actual_percent', '$.claimed_actual_percent', pkg.claimed_actual_percent);
   }
   if (!evUnavailable) {
     R.ev = { status: 'ok', n: ev.n.toString(), d: ev.d.toString(), display: formatMinor(roundRational(ev.n, ev.d, 0)) };
@@ -116,7 +179,7 @@ export function analyzePackage(pkg, ctx) {
   let acUnavailable = false;
   for (let i = 0; i < pkg.actual_cost_lines.length; i++) {
     const ln = pkg.actual_cost_lines[i];
-    ctx.chargeSpan();
+    // PC650-004: citeLine charges the span; do not double-charge here.
     const c = citeLine(ln, 'actual_cost_lines', `$.actual_cost_lines[${i}].amount_minor`);
     lineCitations.push({ line_id: ln.line_id, citation: c });
     if (c.status !== 'VERIFIED') {
@@ -185,7 +248,7 @@ export function analyzePackage(pkg, ctx) {
     pv: R.pv.status === 'ok' ? rat(BigInt(R.pv.n), BigInt(R.pv.d)) : null,
     cpi: R.cpi, spi: R.spi, etcLines: pkg.etc_lines,
     chargeSpan: ctx.chargeSpan, packageId: pkg.package_id, diagnostics,
-    citeLine, srcBytes,
+    citeLine, srcBytes: srcBuf,
   };
   for (const variant of ctx.eacFormulas) {
     R.eac[variant] = computeEac(variant, eacBase);
@@ -193,13 +256,25 @@ export function analyzePackage(pkg, ctx) {
 
   // Contingency (citations verified per line)
   if (ctx.includeContingency && pkg.contingency) {
-    R.contingency = analyzeContingency(pkg.contingency, { ...ctx, citeLine }, pkg.package_id, diagnostics);
+    R.contingency = analyzeContingency(pkg.contingency, { ...ctx, citeLine, citeOperand }, pkg.package_id, diagnostics);
   }
 
   // Header comparison — exact rational compare, no display tolerance
+  // PC650-004: each header claim gets a verified citation
   R.header_comparison = [];
+  R.citations.header_claims = {};
   if (ctx.compareHeaders && pkg.header_claims) {
     const h = pkg.header_claims;
+    for (const field of ['cpi', 'spi']) {
+      if (h[field] != null) {
+        R.citations.header_claims[field] = citeOperand(`header_claims.${field}`, `$.header_claims.${field}`, h[field]);
+      }
+    }
+    for (const field of ['cv_minor', 'sv_minor', 'eac_minor']) {
+      if (h[field] != null) {
+        R.citations.header_claims[field] = citeOperand(`header_claims.${field}`, `$.header_claims.${field}`, h[field]);
+      }
+    }
     compareHeaderRatio(R, h, 'cpi', R.cpi, pkg.package_id, diagnostics);
     compareHeaderRatio(R, h, 'spi', R.spi, pkg.package_id, diagnostics);
     compareHeaderMoney(R, h, 'cv_minor', R.cv, pkg.package_id, diagnostics);
@@ -281,7 +356,7 @@ function computeEac(variant, p) {
       let etcUnavailable = false;
       for (let i = 0; i < etcLines.length; i++) {
         const ln = etcLines[i];
-        p.chargeSpan();
+        // PC650-004: citeLine charges the span; do not double-charge here.
         const c = p.citeLine(ln, 'etc_lines', `$.etc_lines[${i}].amount_minor`);
         if (c.status !== 'VERIFIED') {
           etcUnavailable = true;
@@ -299,19 +374,22 @@ function computeEac(variant, p) {
 }
 
 function analyzeContingency(c, ctx, packageId, diagnostics) {
+  // PC650-004: cite the original_minor operand
+  const originalCitation = ctx.citeOperand ? ctx.citeOperand('contingency.original_minor', '$.contingency.original_minor', c.original_minor) : { status: 'UNAVAILABLE', reason: 'citeOperand not available' };
   let additions = 0n;
   let draws = 0n;
   let contUnavailable = false;
+  if (originalCitation.status !== 'VERIFIED') contUnavailable = true;
   for (let i = 0; i < c.additions.length; i++) {
     const a = c.additions[i];
-    ctx.chargeSpan();
+    // PC650-004: citeLine charges the span; do not double-charge here.
     const ci = ctx.citeLine(a, 'contingency.additions', `$.contingency.additions[${i}].amount_minor`);
     if (ci.status !== 'VERIFIED') contUnavailable = true;
     else additions += BigInt(a.amount_minor);
   }
   for (let i = 0; i < c.draws.length; i++) {
     const d = c.draws[i];
-    ctx.chargeSpan();
+    // PC650-004: citeLine charges the span; do not double-charge here.
     const ci = ctx.citeLine(d, 'contingency.draws', `$.contingency.draws[${i}].amount_minor`);
     if (ci.status !== 'VERIFIED') contUnavailable = true;
     else draws += BigInt(d.amount_minor);
@@ -324,6 +402,7 @@ function analyzeContingency(c, ctx, packageId, diagnostics) {
   const remaining = original + additions - draws;
   const out = {
     original_minor: original.toString(),
+    original_citation: originalCitation,
     additions_minor: additions.toString(),
     draws_minor: draws.toString(),
     remaining_minor: remaining.toString(),
@@ -345,8 +424,17 @@ function analyzeContingency(c, ctx, packageId, diagnostics) {
   return out;
 }
 
-function diag(code, severity, record_id, reason) {
-  return { code, severity, record_id, source_ref: null, reason };
+function diag(code, severity, record_id, reason, citation) {
+  // PC650-004: diagnostics carry an explicit citation state, never a bare null.
+  // If no citation is provided, the state is explicitly UNAVAILABLE.
+  return {
+    code,
+    severity,
+    record_id,
+    source_ref: null, // legacy field; use citation instead
+    citation: citation || { status: 'UNAVAILABLE', reason: 'no citation bound to this diagnostic' },
+    reason,
+  };
 }
 
 /**
@@ -365,9 +453,27 @@ export function poolByCurrency(pkgResults, ctx) {
     ctx.chargeSpan();
     let bac = 0n, pvN = 0n, pvD = 1n, evN = 0n, evD = 1n, ac = 0n;
     let pvOk = true;
+    let acOk = true;
+    // PC650-004: collect contributing member citations for the pooled basis
+    const contributingCitations = [];
     for (const m of members) {
       bac += BigInt(m.bac_minor);
-      ac += BigInt(m.ac_minor);
+      // Finding 1 (local review): AC may be UNVERIFIABLE (no ac_minor field).
+      // Guard instead of BigInt(undefined); mark the pool AC unavailable.
+      if (typeof m.ac_minor === 'string') {
+        ac += BigInt(m.ac_minor);
+      } else {
+        acOk = false;
+        diagnostics.push(diag('AC_UNVERIFIABLE', 'high', m.package_id,
+          'member AC unavailable; pooled AC unverifiable'));
+      }
+      // Each member's BAC citation contributes to the pool
+      if (m.citations && m.citations.bac_minor) {
+        contributingCitations.push({
+          package_id: m.package_id,
+          bac_citation: m.citations.bac_minor,
+        });
+      }
       if (m.pv.status === 'ok') {
         const t = ratAdd(rat(pvN, pvD), rat(BigInt(m.pv.n), BigInt(m.pv.d)));
         pvN = t.n; pvD = t.d;
@@ -377,9 +483,23 @@ export function poolByCurrency(pkgResults, ctx) {
         evN = t.n; evD = t.d;
       }
     }
-    const pool = { currency, member_count: members.length, bac_minor: bac.toString(), ac_minor: ac.toString() };
+    const pool = {
+      currency,
+      member_count: members.length,
+      bac_minor: bac.toString(),
+      ac: acOk ? { status: 'ok', minor: ac.toString() } : { status: 'UNVERIFIABLE', reason: 'a member AC is unavailable' },
+      // PC650-004: pooled totals expose their contributing citation basis
+      citation_basis: {
+        status: contributingCitations.length === members.length ? 'VERIFIED' : 'PARTIAL',
+        members: contributingCitations,
+        note: `${contributingCitations.length}/${members.length} members contributed verified BAC citations`,
+      },
+    };
+    // Keep ac_minor for backward compatibility when available.
+    if (acOk) pool.ac_minor = ac.toString();
     const evR = rat(evN, evD);
-    if (ac === 0n) pool.cpi = { status: 'ZERO_DENOMINATOR', reason: 'pooled AC is zero' };
+    if (!acOk) pool.cpi = { status: 'UNVERIFIABLE', reason: 'pooled AC unavailable' };
+    else if (ac === 0n) pool.cpi = { status: 'ZERO_DENOMINATOR', reason: 'pooled AC is zero' };
     else if (ac < 0n) pool.cpi = { status: 'UNVERIFIABLE', reason: 'nonpositive pooled AC' };
     else { const c = ratDiv(evR, ratFromInt(ac)); pool.cpi = { status: 'ok', display: formatRatio(c.n, c.d) }; }
     if (!pvOk) pool.spi = { status: 'UNVERIFIABLE', reason: 'a member lacks PV' };

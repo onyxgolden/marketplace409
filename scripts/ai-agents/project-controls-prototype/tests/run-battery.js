@@ -40,7 +40,8 @@ for (const [rel, pinned] of Object.entries(manifest.files)) {
 console.log(`manifest verified (${Object.keys(manifest.files).length} files, digest ${manifestDigest.slice(0, 12)}…)`);
 
 // 2. Import candidate only after verification.
-const { run } = await import('../src/index.js');
+// PC650-007: all execution goes through the external 5s watchdog.
+const { runGuarded } = await import('../runner/run-guarded.js');
 const store = JSON.parse(readFileSync(join(root, 'fixtures', 'store.json'), 'utf8'));
 
 function baseContext() {
@@ -101,11 +102,11 @@ const failures = [];
 for (const c of battery) {
   const label = c.case_id;
   try {
-    const runOnce = () => run(JSON.parse(JSON.stringify(c.task)), contextFor(c));
-    const out1 = runOnce();
+    const runOnce = async () => runGuarded(JSON.parse(JSON.stringify(c.task)), contextFor(c));
+    const out1 = await runOnce();
     if (c.replay) {
-      const out2 = runOnce();
-      const out3 = runOnce();
+      const out2 = await runOnce();
+      const out3 = await runOnce();
       const s1 = JSON.stringify(out1), s2 = JSON.stringify(out2), s3 = JSON.stringify(out3);
       if (s1 !== s2 || s2 !== s3) throw new Error('replay not byte-identical');
     }
