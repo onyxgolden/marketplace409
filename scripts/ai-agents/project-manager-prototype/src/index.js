@@ -260,6 +260,25 @@ function runInner(task, context, started) {
     reports.push({ plan_id: p.pkg.plan_id, citation: p.citation, ...analysis });
     if (analysis.status === 'PARTIAL') partial = true;
     resolver.chargeOutputRecord();
+    // PM651-003 (fix round 5): charge every nested public output record.
+    // The 256-record budget applies to all returned records, not just
+    // the top-level report wrappers.
+    const nestedArrays = [
+      analysis.findings,
+      analysis.orphans,
+      analysis.milestones,
+      analysis.resourceAssessments,
+      analysis.resourceConflicts,
+      analysis.citations,
+      analysis.diagnostics,
+    ];
+    for (const arr of nestedArrays) {
+      if (Array.isArray(arr)) {
+        for (let i = 0; i < arr.length; i++) {
+          resolver.chargeOutputRecord();
+        }
+      }
+    }
   }
 
   // 4. Draft summary (inert, no approval/tasking language).

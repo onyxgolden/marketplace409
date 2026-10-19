@@ -130,6 +130,25 @@ async function main() {
   const taskId = task && typeof task.task_id === 'string' ? task.task_id : null;
 
   // Verify trust BEFORE spawning the worker (PM651-008/009).
+  // PM651-008 (fix round 5): builtins-only pre-import verification.
+  // The dynamic import below would execute the helper's top-level code;
+  // verify its bytes against the manifest BEFORE importing.
+  {
+    const { createHash } = await import('node:crypto');
+    const manifestRaw = readFileSync(join(ROOT, 'corpus', 'manifest.json'), 'utf8');
+    const manifestEntries = JSON.parse(manifestRaw);
+    const bootstrapEntry = manifestEntries.find((e) => e.path === 'corpus/trust-bootstrap.js');
+    if (!bootstrapEntry) {
+      console.error('TRUST-BOOTSTRAP FAILED: bootstrap helper not pinned in manifest');
+      process.exit(2);
+    }
+    const bootstrapBytes = readFileSync(join(ROOT, 'corpus', 'trust-bootstrap.js'));
+    const bootstrapHash = createHash('sha256').update(bootstrapBytes).digest('hex');
+    if (bootstrapHash !== bootstrapEntry.sha256) {
+      console.error('TRUST-BOOTSTRAP FAILED: bootstrap helper hash mismatch — refusing before import');
+      process.exit(2);
+    }
+  }
   const { verify } = await import(BOOTSTRAP_URL);
   try {
     verify();

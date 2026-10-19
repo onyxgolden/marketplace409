@@ -232,11 +232,19 @@ export class Resolver {
       e.code = 'SOURCE_REF_INVALID';
       throw e;
     }
-    // PM651-003 (fourth fix round): byte-count consulted source_ref metadata.
-    // The repo/path/revision strings are consulted and must be charged.
-    this.chargeInputBytes(utf8Length(sref.repo));
-    this.chargeInputBytes(utf8Length(sref.path));
-    this.chargeInputBytes(utf8Length(sref.revision));
+    // PM651-003 (fix round 5): complete serialized metadata accounting.
+    // Count ALL consulted source_ref fields using serialized JSON bytes
+    // (not raw UTF-8) — JSON escaping changes the byte count (e.g. NUL
+    // becomes \u0000 = 6 bytes, not 1). Use descriptor-safe reads.
+    const srefJson = JSON.stringify({
+      repo: sref.repo,
+      path: sref.path,
+      commit: sref.commit,
+      blob: sref.blob,
+      algorithm: sref.algorithm,
+      revision: sref.revision,
+    });
+    this.chargeInputBytes(Buffer.byteLength(srefJson, 'utf8'));
     // Read bytes ONLY after authority + source_ref shape are confirmed.
     const bytes = safeGet(entry, 'bytes', 'entry').value;
     if (typeof bytes !== 'string') {
@@ -254,6 +262,11 @@ export class Resolver {
     }
     // SHA-256 integrity as well (artifact bytes).
     const sha256 = safeGet(entry, 'sha256', 'entry').value;
+    if (sha256) {
+      // PM651-003 (fix round 5): the consulted sha256 metadata must be
+      // byte-counted using serialized JSON bytes.
+      this.chargeInputBytes(Buffer.byteLength(JSON.stringify(sha256), 'utf8'));
+    }
     if (sha256 && sha256Hex(bytes) !== sha256) {
       const e = new Error(`HASH_MISMATCH: fixture ${fixtureId}`);
       e.code = 'HASH_MISMATCH';
