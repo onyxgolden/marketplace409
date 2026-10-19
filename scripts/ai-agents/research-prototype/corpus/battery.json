@@ -12565,11 +12565,11 @@
     }
   },
   {
-    "case_id": "bud-006-output-prefill-254",
+    "case_id": "bud-006-output-prefill-256",
     "category": "budget_replay",
     "task": {
       "schema_version": "1",
-      "task_id": "battery-bud-006-output-prefill-254",
+      "task_id": "battery-bud-006-output-prefill-256",
       "operation": "analyze",
       "fixture_refs": {
         "evidence_bundle": {
@@ -12647,7 +12647,7 @@
         }
       },
       "test_hooks": {
-        "prefill_output_records": 254
+        "prefill_output_records": 246
       }
     },
     "expected": {
@@ -12661,11 +12661,11 @@
     }
   },
   {
-    "case_id": "bud-007-output-prefill-255",
+    "case_id": "bud-007-output-prefill-257",
     "category": "budget_replay",
     "task": {
       "schema_version": "1",
-      "task_id": "battery-bud-007-output-prefill-255",
+      "task_id": "battery-bud-007-output-prefill-257",
       "operation": "analyze",
       "fixture_refs": {
         "evidence_bundle": {
@@ -12743,7 +12743,7 @@
         }
       },
       "test_hooks": {
-        "prefill_output_records": 255
+        "prefill_output_records": 247
       }
     },
     "expected": {

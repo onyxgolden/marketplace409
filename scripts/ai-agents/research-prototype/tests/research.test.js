@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { run } from "../src/index.js";
-import { sameAssertion, assertsConflict, classifyCorroboration, detectCitationCycles, verifyAssertionSpan } from "../src/research.js";
+import { sameAssertion, assertsConflict, classifyCorroboration, detectCitationCycles, verifyAssertionSpan, evaluateAtom, derivationClosure, citationCycleDefeats } from "../src/research.js";
 import { renderAssertionText } from "../src/schemas.js";
 import { makeBudget } from "../src/resolver.js";
 import { readFileSync } from "node:fs";
@@ -237,4 +237,177 @@ test("quarantined origin cannot support a claim", () => {
   const c = r.report.claims[0];
   assert.equal(c.fidelity, "NOT_FAITHFUL");
   assert.ok(r.diagnostics.some((d) => d.code === "EVIDENCE_WITHHELD"));
+});
+
+// ---- RA652-005: bounded provenance closure + citation-cycle defeat ----
+// These probes fail on the old head (direct-edge-only classification):
+// a transitive copy chain or a same-assertion citation cycle used to
+// count as independent corroboration.
+
+const ATOM_X = { subject: "SYN-CO", predicate: "q1-metric", value: 42, value_type: "number", scope: "s1", polarity: "positive" };
+
+function xEntry(docId, passageId, atom = ATOM_X) {
+  return {
+    doc_id: docId, passage_id: passageId, assertion_id: `a-${docId}-${passageId}`,
+    atom: { ...atom },
+    span: { start_byte: 0, end_byte: 1, quoted_text: "x" },
+    quoted_text: "x",
+    citation: {
+      source_ref: { repo: "r", path: "p.json", commit: "0".repeat(40), blob: "1".repeat(40), algorithm: "git-sha1", revision: "v1" },
+      quoted_span: "x",
+      span: { start_byte: 0, end_byte: 1, quoted_text: "x" },
+      verification: "verified",
+    },
+  };
+}
+const xReg = (entries) => {
+  const reg = {};
+  for (const [doc, passage, group, links] of entries) {
+    reg[`${doc}|${passage}`] = { provenance_group_id: group, derivation_links: links };
+  }
+  return reg;
+};
+const xGraph = (edges) => {
+  const m = new Map();
+  for (const [from, tos] of edges) m.set(from, new Set(tos));
+  return m;
+};
+
+test("RA652-005: positive control — truly independent passage corroborates", () => {
+  const reg = xReg([
+    ["da", "p1", "g1", []],
+    ["db", "p1", "g2", []],
+  ]);
+  const idx = [xEntry("da", "p1"), xEntry("db", "p1")];
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, new Set(), new Map());
+  assert.equal(r.fidelity, "FAITHFUL");
+  assert.equal(r.corroboration.state, "CORROBORATED");
+  assert.equal(r.corroboration.evidence.length, 1);
+  assert.equal(r.corroboration.evidence[0].doc_id, "db");
+  assert.equal(r.research_status, "supported");
+});
+
+test("RA652-005: transitive copy chain A->B->C defeats C's corroboration", () => {
+  // Old head: only a DIRECT derivation edge defeated; C looked
+  // independent of A and the claim came back "supported". Now the
+  // bounded closure defeats it.
+  const reg = xReg([
+    ["da", "p1", "g1", []],
+    ["db", "p1", "g2", [{ from_doc: "da", from_passage: "p1", kind: "copy" }]],
+    ["dc", "p1", "g3", [{ from_doc: "db", from_passage: "p1", kind: "copy" }]],
+  ]);
+  const idx = [xEntry("da", "p1"), xEntry("db", "p1"), xEntry("dc", "p1")];
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, new Set(), new Map());
+  assert.equal(r.corroboration.evidence.length, 0, "no independent evidence may survive a copy chain");
+  assert.equal(r.corroboration.derivation_linked_candidates.length, 2);
+  assert.ok(r.corroboration.derivation_linked_candidates.some((c) => c.doc_id === "dc"), "transitive C must be defeated");
+  assert.equal(r.research_status, "attributed-only");
+});
+
+test("RA652-005: derivation cycle terminates and defeats both directions", () => {
+  const reg = xReg([
+    ["da", "p1", "g1", [{ from_doc: "db", from_passage: "p1", kind: "copy" }]],
+    ["db", "p1", "g2", [{ from_doc: "da", from_passage: "p1", kind: "copy" }]],
+  ]);
+  const idx = [xEntry("da", "p1"), xEntry("db", "p1")];
+  const start = Date.now();
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, new Set(), new Map());
+  assert.ok(Date.now() - start < 5000, "derivation cycle must not hang the traversal");
+  assert.equal(r.corroboration.evidence.length, 0);
+  assert.equal(r.corroboration.derivation_linked_candidates.length, 1);
+  assert.equal(r.research_status, "attributed-only");
+});
+
+test("RA652-005: same-assertion citation cycle defeats corroboration", () => {
+  // da and db cite each other and carry the same assertion in different
+  // groups. Old head: db counted as independent corroboration
+  // ("supported"). Now: cycle_defeated, zero corroboration.
+  const reg = xReg([
+    ["da", "p1", "g1", []],
+    ["db", "p1", "g2", []],
+  ]);
+  const graph = xGraph([["da", ["db"]], ["db", ["da"]]]);
+  const cycles = detectCitationCycles(graph);
+  assert.ok(cycles.has("da") && cycles.has("db"));
+  const idx = [xEntry("da", "p1"), xEntry("db", "p1")];
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, cycles, graph);
+  assert.equal(r.corroboration.evidence.length, 0, "cycle-derived passage contributes zero corroboration");
+  assert.equal(r.corroboration.cycle_defeated_candidates.length, 1);
+  assert.equal(r.corroboration.cycle_defeated_candidates[0].doc_id, "db");
+  assert.equal(r.research_status, "attributed-only");
+});
+
+test("RA652-005: unrelated citation cycle does not defeat independence", () => {
+  // The cycle (dx<->dy) is disconnected from the origin/candidate pair
+  // (da, db): the cycle is not relevant, so db still corroborates.
+  const reg = xReg([
+    ["da", "p1", "g1", []],
+    ["db", "p1", "g2", []],
+    ["dx", "p1", "g9", []],
+    ["dy", "p1", "g8", []],
+  ]);
+  const graph = xGraph([["da", []], ["db", []], ["dx", ["dy"]], ["dy", ["dx"]]]);
+  const cycles = detectCitationCycles(graph);
+  const idx = [xEntry("da", "p1"), xEntry("db", "p1")];
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, cycles, graph);
+  assert.equal(r.corroboration.evidence.length, 1);
+  assert.equal(r.corroboration.cycle_defeated_candidates.length, 0);
+  assert.equal(r.research_status, "supported");
+});
+
+test("RA652-005: reordered graph gives the same closure verdict", () => {
+  // Same chain as the A->B->C case but with registry keys and link
+  // arrays in reverse order: closure must be order-independent.
+  const reg = {};
+  reg["dc|p1"] = { provenance_group_id: "g3", derivation_links: [{ from_doc: "db", from_passage: "p1", kind: "copy" }] };
+  reg["db|p1"] = { provenance_group_id: "g2", derivation_links: [{ from_doc: "da", from_passage: "p1", kind: "copy" }] };
+  reg["da|p1"] = { provenance_group_id: "g1", derivation_links: [] };
+  const idx = [xEntry("dc", "p1"), xEntry("db", "p1"), xEntry("da", "p1")];
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, new Set(), new Map());
+  assert.equal(r.corroboration.evidence.length, 0);
+  assert.ok(r.corroboration.derivation_linked_candidates.some((c) => c.doc_id === "dc"));
+  assert.equal(r.research_status, "attributed-only");
+  // Closure itself is order-independent.
+  const fwd = derivationClosure("da|p1", xReg([
+    ["da", "p1", "g1", []],
+    ["db", "p1", "g2", [{ from_doc: "da", from_passage: "p1", kind: "copy" }]],
+    ["dc", "p1", "g3", [{ from_doc: "db", from_passage: "p1", kind: "copy" }]],
+  ]));
+  assert.deepEqual([...derivationClosure("da|p1", reg)].sort(), [...fwd].sort());
+});
+
+test("RA652-005: reverse derivation (origin derived from candidate) also defeats", () => {
+  // Independence is defeated in either direction: if the origin's
+  // passage derived from the candidate, the candidate is not an
+  // independent underlying assertion.
+  const reg = xReg([
+    ["da", "p1", "g1", [{ from_doc: "db", from_passage: "p1", kind: "copy" }]],
+    ["db", "p1", "g2", []],
+  ]);
+  const idx = [xEntry("da", "p1"), xEntry("db", "p1")];
+  const r = evaluateAtom(ATOM_X, [{ doc_id: "da", passage_id: "p1" }], idx, reg, new Set(), new Map());
+  assert.equal(r.corroboration.evidence.length, 0);
+  assert.equal(r.research_status, "attributed-only");
+});
+
+test("RA652-005: classifyCorroboration returns cycle_defeated for the cycle case", () => {
+  const reg = xReg([
+    ["da", "p1", "g1", []],
+    ["db", "p1", "g2", []],
+  ]);
+  const graph = xGraph([["da", ["db"]], ["db", ["da"]]]);
+  const cycles = detectCitationCycles(graph);
+  assert.equal(
+    classifyCorroboration({ doc_id: "da", passage_id: "p1" }, { doc_id: "db", passage_id: "p1" }, reg, cycles, graph),
+    "cycle_defeated"
+  );
+  assert.equal(
+    citationCycleDefeats("da", "db", graph, cycles),
+    true
+  );
+  assert.equal(
+    citationCycleDefeats("da", "db", xGraph([["da", ["db"]], ["db", []]]), new Set()),
+    false,
+    "no cycle members -> not defeated"
+  );
 });

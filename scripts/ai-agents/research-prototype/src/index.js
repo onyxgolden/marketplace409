@@ -17,13 +17,16 @@
  * each assertion and each citation — is charged with budget.countObject()
  * (or chargeObjectOnce for shared admission) as the FIRST statement
  * before any of its own fields are read. Attempt 65 refuses before that
- * candidate (or any later one) is inspected at all. validateContext()
- * requires the caller's live monotonic budget.
+ * candidate (or any later one) is inspected at all. After the grant
+ * gate, only the selected source/revision and required provenance
+ * metadata are admitted (RA652-006); non-selected sources stay
+ * untouched.
  */
 
 import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
 import {
-  validateTask, validateContext, validateDocumentRecord, splitTopLevelArray,
+  validateTask, validateGrantGateContext, validateSelectedSourceEntry,
+  validateProvenanceRegistry, validateDocumentRecord, splitTopLevelArray,
   admitGraph, renderAssertionText, SchemaError,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
@@ -134,19 +137,118 @@ function emptyReport() {
   };
 }
 
+/**
+ * RA652-004: one bounded, cycle-safe final-envelope record walk
+ * implementing the brief's public-record taxonomy. Counts every returned
+ * record once per emitted occurrence:
+ *
+ *   report record ...................... the report object itself
+ *   item records ....................... each claims[] element
+ *   nested basis records ................ each claim's atom and origin
+ *   citation records .................... every emitted citation
+ *   span records ........................ every span nested in a citation
+ *   source-ref records .................. every emitted source_ref
+ *   resource records .................... each corroboration evidence /
+ *                                         same-group / unregistered /
+ *                                         derivation-linked /
+ *                                         cycle-defeated entry
+ *   conflict records ................... each contradictions[] entry
+ *   completeness record ................ coverage
+ *   summary record ..................... summary (when non-null)
+ *   exclusion records .................. each quarantined_sources entry
+ *   diagnostic records ................. each diagnostics[] entry
+ *
+ * Scalars and collection arrays are not records; internal work objects
+ * are never counted — only the exact final envelope. Cycle-safe: each
+ * distinct object is visited once (shared/cyclic references cannot
+ * inflate the count or loop forever). Bounded: aborts to +Infinity past
+ * a generous node cap so a corrupt envelope cannot hang the counter.
+ */
+const OUTPUT_WALK_NODE_CAP = 200000;
+export function countFinalEnvelopeRecords(env) {
+  const seen = new WeakSet();
+  let count = 0;
+  let nodes = 0;
+  const rec = () => { count += 1; };
+  // Visit one envelope object; count it as a record only when the
+  // caller classifies it so. Arrays are traversed, never counted.
+  function obj(v, fn) {
+    if (v === null || typeof v !== "object") return;
+    if (seen.has(v)) return; // cycle-safe
+    seen.add(v);
+    if (++nodes > OUTPUT_WALK_NODE_CAP) { count = Number.POSITIVE_INFINITY; return; }
+    fn(v);
+  }
+  const walkCitation = (c) => obj(c, (o) => {
+    rec(); // citation record
+    obj(o.source_ref, () => rec()); // source-ref record
+    obj(o.span, () => rec()); // span record
+  });
+  const walkResourceEntry = (e) => obj(e, (o) => {
+    rec(); // resource record (evidence / same-group / unregistered /
+           // derivation-linked / cycle-defeated)
+    walkCitation(o.citation);
+  });
+  const walkClaim = (c) => obj(c, (o) => {
+    rec(); // claim item record
+    obj(o.atom, () => rec()); // nested basis: atom
+    obj(o.origin, (og) => {
+      rec(); // nested basis: origin
+      walkCitation(og.citation);
+    });
+    obj(o.corroboration, (cor) => {
+      for (const e of cor.evidence ?? []) walkResourceEntry(e);
+      for (const e of cor.same_group_occurrences ?? []) walkResourceEntry(e);
+      for (const e of cor.unregistered_candidates ?? []) walkResourceEntry(e);
+      for (const e of cor.derivation_linked_candidates ?? []) walkResourceEntry(e);
+      for (const e of cor.cycle_defeated_candidates ?? []) walkResourceEntry(e);
+    });
+    obj(o.contradictions, () => {
+      for (const k of o.contradictions ?? []) obj(k, () => {
+        rec(); // conflict record
+        walkCitation(k.citation);
+      });
+    });
+  });
+  obj(env?.report, (r) => {
+    rec(); // report record
+    obj(r.coverage, () => rec()); // completeness record
+    if (r.summary !== null && r.summary !== undefined) obj(r.summary, () => rec()); // summary record
+    obj(r.claims, () => {
+      for (const c of r.claims ?? []) walkClaim(c);
+    });
+  });
+  obj(env?.source_refs, () => {
+    for (const s of env.source_refs ?? []) obj(s, () => rec()); // source-ref records
+  });
+  obj(env?.diagnostics, () => {
+    for (const d of env.diagnostics ?? []) obj(d, () => rec()); // diagnostic records
+  });
+  obj(env?.quarantined_sources, () => {
+    for (const q of env.quarantined_sources ?? []) obj(q, () => rec()); // exclusion records
+  });
+  return count;
+}
+
 function sourceRefOut(r) {
   return { repo: r.repo, path: r.path, commit: r.commit, blob: r.blob, algorithm: r.algorithm, revision: r.revision };
 }
 
 export function run(task, context) {
   // The monotonic object budget exists BEFORE any admission or
-  // validation. admitGraph charges each distinct object BEFORE its
+  // validation. admitGraph charges each distinct task object BEFORE its
   // descriptor fields are examined, so candidate #65 refuses with
   // BUDGET_EXCEEDED without touching that candidate at all.
+  //
+  // RA652-006: the context is NOT admitted wholesale. Admission is
+  // split: the grant gate inspects only bounded grant/principal/control
+  // metadata (never source revision metadata or payload bytes); the
+  // denied-source grant is checked next; only after an exact grant
+  // succeeds are the selected source/revision and the required
+  // provenance metadata admitted.
   const budget = makeBudget();
   try {
     admitGraph(task, "task", budget);
-    admitGraph(context, "context", budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);
     if (e instanceof SchemaError) return boundedRefused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
@@ -189,9 +291,12 @@ export function run(task, context) {
     );
   }
 
-  let ctx;
+  // ---- RA652-006: grant-gate admission FIRST. Only bounded
+  // grant/principal/control metadata is inspected here — no source
+  // revision metadata, no payload bytes. ----
+  let gate;
   try {
-    ctx = validateContext(context, budget);
+    gate = validateGrantGateContext(context, budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
     if (e instanceof SchemaError) return boundedRefused(taskId, "INVALID_INPUT", "error", `context: ${e.message}`);
@@ -199,19 +304,54 @@ export function run(task, context) {
   }
 
   // Authenticated request authority: Jason or his registered Muse relay.
-  if (ctx.principal.revoked) {
-    return boundedRefused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
+  if (gate.principal.revoked) {
+    return boundedRefused(taskId, "ACTION_DENIED", "critical", `principal '${gate.principal.principal_id}' is revoked; no request authority`);
   }
-  const validFrom = Date.parse(ctx.principal.valid_from);
-  const expiresAt = Date.parse(ctx.principal.expires_at);
-  if (!(validFrom <= ctx.clock && ctx.clock <= expiresAt)) {
-    return boundedRefused(taskId, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
+  const validFrom = Date.parse(gate.principal.valid_from);
+  const expiresAt = Date.parse(gate.principal.expires_at);
+  if (!(validFrom <= gate.clock && gate.clock <= expiresAt)) {
+    return boundedRefused(taskId, "ACTION_DENIED", "critical", `principal '${gate.principal.principal_id}' is not valid at the current clock; no request authority`);
+  }
+
+  // RA652-006: the denied-source grant is checked BEFORE any source
+  // byte or payload metadata is accessed. A missing grant refuses here;
+  // the selected source's revision metadata and payload are never
+  // touched.
+  if (!hasReadGrant(validatedTask.evidence_bundle_ref, gate.readGrants)) {
+    return boundedRefused(taskId, "READ_DENIED", "error", `read grant missing for evidence bundle ${validatedTask.evidence_bundle_ref.repo}/${validatedTask.evidence_bundle_ref.path}`);
+  }
+
+  // ---- RA652-006: post-grant admission. Only the selected registered
+  // source/revision and the required provenance metadata are admitted
+  // and charged. Non-selected source entries stay untouched. ----
+  const selectedKey = `${validatedTask.evidence_bundle_ref.repo}|${validatedTask.evidence_bundle_ref.path}`;
+  // Key presence is control metadata (sources-map lookup, not entry
+  // inspection). An unregistered key is a resolution failure with the
+  // same SOURCE_UNVERIFIED code the resolver reports — never a grant
+  // bypass and never an entry read.
+  if (!Object.prototype.hasOwnProperty.call(context.sources, selectedKey)) {
+    return boundedRefused(taskId, "SOURCE_UNVERIFIED", "error", `source key not registered: ${validatedTask.evidence_bundle_ref.repo}/${validatedTask.evidence_bundle_ref.path}`);
+  }
+  let ctx;
+  try {
+    validateSelectedSourceEntry(context, budget, selectedKey);
+    const provenance_registry = validateProvenanceRegistry(context, budget);
+    ctx = {
+      clock: gate.clock,
+      sources: context.sources,
+      readGrants: gate.readGrants,
+      principal: gate.principal,
+      criteria: gate.criteria,
+      provenance_registry,
+      test_hooks: gate.test_hooks,
+    };
+  } catch (e) {
+    if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
+    if (e instanceof SchemaError) return boundedRefused(taskId, "INVALID_INPUT", "error", `context: ${e.message}`);
+    throw e;
   }
 
   // Resolve the evidence bundle.
-  if (!hasReadGrant(validatedTask.evidence_bundle_ref, ctx.readGrants)) {
-    return boundedRefused(taskId, "READ_DENIED", "error", `read grant missing for evidence bundle ${validatedTask.evidence_bundle_ref.repo}/${validatedTask.evidence_bundle_ref.path}`);
-  }
   let bundleResolved;
   try {
     bundleResolved = resolveSourceRef(validatedTask.evidence_bundle_ref, ctx.sources, budget, "evidence bundle source");
@@ -419,7 +559,7 @@ export function run(task, context) {
   for (const rc of sortedClaims) {
     for (let ai = 0; ai < rc.atoms.length; ai++) {
       const atom = rc.atoms[ai];
-      const res = evaluateAtom(atom, rc.origin_passage_refs, verifiedIndex, ctx.provenance_registry, citationCycles);
+      const res = evaluateAtom(atom, rc.origin_passage_refs, verifiedIndex, ctx.provenance_registry, citationCycles, docCitations);
       res.claim_id = `${rc.claim_id}#${ai + 1}`;
       // A quarantined or span-mismatched origin can never yield a
       // faithful attribution; surface the coverage change explicitly.
@@ -496,32 +636,17 @@ export function run(task, context) {
     report,
   });
 
-  // Exact final-envelope output accounting: every emitted claim,
-  // corroboration/same-group/unregistered/derivation record,
-  // contradiction, diagnostic, quarantine and source_ref counts once.
-  // The host-only prefill (context.test_hooks) shifts the base for the
-  // 256/257 boundary test; it is zero in production.
+  // RA652-004: exact final-envelope output accounting via the single
+  // bounded, cycle-safe record walk implementing the brief's taxonomy
+  // (see countFinalEnvelopeRecords). The host-only prefill
+  // (context.test_hooks) shifts the base for the 256/257 boundary test;
+  // it is zero in production.
   const prefill = ctx.test_hooks?.prefill_output_records ?? 0;
-  const outputRecords =
-    prefill +
-    result.report.claims.length +
-    result.report.claims.reduce(
-      (n, c) =>
-        n +
-        c.corroboration.evidence.length +
-        c.corroboration.same_group_occurrences.length +
-        c.corroboration.unregistered_candidates.length +
-        c.corroboration.derivation_linked_candidates.length +
-        c.contradictions.length,
-      0
-    ) +
-    result.diagnostics.length +
-    result.quarantined_sources.length +
-    result.source_refs.length;
+  const outputRecords = prefill + countFinalEnvelopeRecords(result);
   if (outputRecords > BUDGET_LIMITS.maxOutputRecords || canonicalByteLength(result) > BUDGET_LIMITS.maxOutputBytes) {
     return boundedRefused(taskId, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
   }
   return result;
 }
 
-export { validateTask, validateContext, BUDGET_LIMITS, canonicalJson, sha256HexUtf8, makeBudget };
+export { validateTask, validateGrantGateContext, validateSelectedSourceEntry, validateProvenanceRegistry, BUDGET_LIMITS, canonicalJson, sha256HexUtf8, makeBudget };

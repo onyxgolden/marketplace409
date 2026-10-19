@@ -6,12 +6,18 @@
  * all happen here under the parent's supervised watchdog timer. A
  * hanging Proxy can never reach this worker — the parent refuses
  * non-strings before worker creation.
+ *
+ * RA652-003 (fifth fix round): the worker-side failure envelope uses the
+ * same bounded null-report contract as the parent: REFUSED,
+ * complete:false, report:null.
  */
 
 import { parentPort, workerData } from "node:worker_threads";
 import { run } from "../src/index.js";
 
 function failEnvelope(code, reason) {
+  // RA652-003: bounded null-report refusal contract — report:null, never
+  // an empty domain report object.
   return {
     schema_version: "1",
     agent: "research-agent",
@@ -25,11 +31,7 @@ function failEnvelope(code, reason) {
     diagnostics: [{ code, severity: "critical", source_ref: null, record_id: null, reason }],
     quarantined_sources: [],
     routing_flags: [],
-    report: {
-      claims: [],
-      coverage: { state: "UNKNOWN", admitted_count: 0, excluded_count: 0 },
-      summary: null,
-    },
+    report: null,
   };
 }
 

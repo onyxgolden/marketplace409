@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { run, BUDGET_LIMITS } from "../src/index.js";
+import { run, BUDGET_LIMITS, countFinalEnvelopeRecords } from "../src/index.js";
 import { makeBudget, BudgetError } from "../src/resolver.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -100,27 +100,94 @@ test("over-budget-docs: 100 documents refuse with BUDGET_EXCEEDED", () => {
   assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"));
 });
 
-test("output prefill: 254 + 2 natural records = 256 allowed", () => {
+test("RA652-004: final-envelope walk counts every public record per the taxonomy", () => {
+  // The old head counted a hand-maintained field list and missed the
+  // public report, coverage, summary, each claim's atom/origin, and the
+  // nested citation/source-ref/span records inside origins, evidence
+  // and contradictions. The walk must count all of them, once per
+  // emitted occurrence.
   const claims = [{
     claim_id: "c1", atoms: [REV_ALPHA],
     origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
   }];
-  const r = run(taskFor("single-passage", claims), ctxFor("single-passage", {
-    test_hooks: { prefill_output_records: 254 },
-  }));
-  // Natural records: 1 claim + 1 source_ref = 2; 254 + 2 = 256 <= 256.
+  const r = run(taskFor("single-passage", claims), ctxFor("single-passage"));
   assert.equal(r.status, "REPORT_READY");
-  assert.notEqual(r.report, null);
+  const n = countFinalEnvelopeRecords(r);
+  const c = r.report.claims[0];
+  // Hand-derived for the single-passage 1-claim REPORT_READY envelope:
+  // report(1) + coverage(1) + summary(1) + claim(1) + atom(1) +
+  // origin(1) + origin.citation(1) + citation.source_ref(1) +
+  // citation.span(1) + top-level source_refs[0](1) = 10.
+  // The old hand-maintained field list counted 2.
+  assert.equal(n, 10, `walk must count 10 public records (got ${n})`);
+  assert.equal(c.corroboration.evidence.length, 0);
 });
 
-test("output prefill: 255 + 2 natural records = 257 refused with report:null", () => {
+test("RA652-004: walk counts nested evidence/contradiction records", () => {
   const claims = [{
     claim_id: "c1", atoms: [REV_ALPHA],
     origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
   }];
+  const r = run(taskFor("contradiction", claims), ctxFor("contradiction"));
+  assert.equal(r.status, "PARTIAL");
+  const n = countFinalEnvelopeRecords(r);
+  const c = r.report.claims[0];
+  assert.equal(c.fidelity, "FAITHFUL");
+  assert.equal(c.contradictions.length, 1);
+  // report(1) + coverage(1) + claim(1) + atom(1) + origin(1) +
+  // origin.citation(1) + cit.source_ref(1) + cit.span(1) +
+  // contradiction(1) + k.citation(1) + k.source_ref(1) + k.span(1) +
+  // top-level source_refs[0](1) = 13. (PARTIAL => summary null.)
+  assert.equal(n, 13, `walk must count 13 public records (got ${n})`);
+  // Scalars/arrays are not records: the walk of a refusal (report null)
+  // counts zero.
+  assert.equal(countFinalEnvelopeRecords({ report: null, source_refs: [], diagnostics: [], quarantined_sources: [] }), 0);
+});
+
+test("RA652-004: walk is cycle-safe (shared references counted once)", () => {
+  const shared = { repo: "r", path: "p.json" };
+  const env = {
+    report: { claims: [], coverage: { state: "X" }, summary: null },
+    source_refs: [shared, shared],
+    diagnostics: [],
+    quarantined_sources: [],
+  };
+  // report(1) + coverage(1) + shared source_ref(1, once) = 3.
+  assert.equal(countFinalEnvelopeRecords(env), 3);
+  const cyclic = { a: 1 };
+  cyclic.self = cyclic;
+  const env2 = { report: { claims: [cyclic], coverage: null, summary: null }, source_refs: [], diagnostics: [], quarantined_sources: [] };
+  assert.ok(Number.isFinite(countFinalEnvelopeRecords(env2)), "cyclic envelope must terminate");
+});
+
+test("output prefill: 256 records allowed through the actual public run", () => {
+  // RA652-004: the 256/257 boundary is exercised through the real run()
+  // path with the real final-envelope walk — not an isolated counter.
+  const claims = [{
+    claim_id: "c1", atoms: [REV_ALPHA],
+    origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
+  }];
+  const natural = countFinalEnvelopeRecords(run(taskFor("single-passage", claims), ctxFor("single-passage")));
+  assert.ok(natural > 0 && natural < 256, `natural record count must be within bounds (got ${natural})`);
   const r = run(taskFor("single-passage", claims), ctxFor("single-passage", {
-    test_hooks: { prefill_output_records: 255 },
+    test_hooks: { prefill_output_records: 256 - natural },
   }));
+  // 256 total: allowed.
+  assert.equal(r.status, "REPORT_READY");
+  assert.notEqual(r.report, null);
+  assert.equal(countFinalEnvelopeRecords(r), natural, "the walk — not the prefill — counts the envelope");
+});
+
+test("output prefill: 257 records refused with report:null through the actual public run", () => {
+  const claims = [{
+    claim_id: "c1", atoms: [REV_ALPHA],
+    origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
+  }];
+  const natural = countFinalEnvelopeRecords(run(taskFor("single-passage", claims), ctxFor("single-passage")));
+  const r = run(taskFor("single-passage", claims), ctxFor("single-passage", {
+    test_hooks: { prefill_output_records: 257 - natural },
+  }));
+  // 257 total: refused with report:null.
   assert.equal(r.status, "REFUSED");
   assert.equal(r.report, null);
   assert.equal(r.complete, false);

@@ -79,12 +79,35 @@ refunds after a charge. Arrays cannot hide long primitive ID lists:
 `origin_passage_refs`, `atoms`, `citations` and `derivation_links` are
 length-bounded and every element is a charged candidate.
 
-Output accounting walks the exact final envelope: every emitted claim,
-corroboration/same-group/unregistered/derivation record, contradiction,
-diagnostic, quarantine record and source_ref counts once per emitted
-occurrence. Overrun returns bounded `REFUSED`, `complete:false`,
-`report:null`, with a bounded safe `task_id` and no partial domain
-artifact.
+Output accounting walks the exact final envelope with one bounded,
+cycle-safe record walk (`countFinalEnvelopeRecords` in `src/index.js`),
+implementing the brief's public-record taxonomy — every record counted
+once per emitted occurrence:
+
+| Record | Where it is counted |
+|---|---|
+| report record | the `report` object itself |
+| item records | each `report.claims[]` element |
+| nested basis records | each claim's `atom` and `origin` |
+| citation records | every emitted `citation` |
+| span records | every `span` nested in a citation |
+| source-ref records | every emitted `source_ref` (nested and top-level) |
+| resource records | each corroboration `evidence` / `same_group_occurrences` / `unregistered_candidates` / `derivation_linked_candidates` / `cycle_defeated_candidates` entry |
+| conflict records | each `contradictions[]` entry |
+| completeness record | `report.coverage` |
+| summary record | `report.summary` (when non-null) |
+| exclusion records | each `quarantined_sources[]` entry |
+| diagnostic records | each `diagnostics[]` entry |
+
+Scalars and collection arrays are not records; internal work objects
+are never counted. Shared/cyclic references are visited once, so the
+walk terminates and cannot inflate the count. Overrun returns bounded
+`REFUSED`, `complete:false`, `report:null`, with a bounded safe
+`task_id` and no partial domain artifact.
+
+Every guard/transport/boot/worker-error/cleanup refusal uses the same
+bounded null-report contract (`REFUSED`, `complete:false`,
+`report:null`) — no envelope carries an empty domain report object.
 
 The 64-object input budget makes 256 natural output records unreachable,
 so the output-record counter accepts a host-prefilled base through the
@@ -109,9 +132,15 @@ boundary test through the real `run()` path.
   `corpus_digest.txt` (trust pins).
 - `runner/run-manual.js` — manual host launcher (not scored).
 - `runner/run-guarded.js` — external 5-second watchdog (worker thread,
-  inert serialized JSON transport).
+  inert serialized JSON transport). JSON-only: no executable task
+  factories, no eval (RA652-001).
+- `runner/timeout-hang-worker.js` — fixed hang fixture for timeout
+  probes, selectable only through the closed enum in
+  `tests/timeout-probe-host.js` (test-only host, outside the production
+  API).
 - `tests/` — `node:test` suites + `run-tests.js` / `run-battery.js`
-  trust-gated entrypoints.
+  trust-gated entrypoints (invoked via the separately trusted
+  bootstrap; see Trust chain).
 
 ## Running
 
@@ -121,10 +150,40 @@ node fixtures/make-fixtures.js
 node corpus/make-battery.js
 node corpus/freeze-corpus.js   # writes manifest.json + corpus_digest.txt
 
-# Scored runs (need the externally supplied approval root)
+# Scored runs (need the externally supplied approval root).
+# The npm scripts invoke the separately trusted bootstrap at
+# /home/hatch/workspace/research-prototype-trust/bootstrap.js, which
+# authenticates every byte (and the manifest itself) against the
+# approved root BEFORE any candidate byte executes. Direct invocation:
+#   RESEARCH_APPROVED_ROOT=<digest> node /home/hatch/workspace/research-prototype-trust/bootstrap.js <repo-dir> tests
 RESEARCH_APPROVED_ROOT=<digest> npm test
 RESEARCH_APPROVED_ROOT=<digest> npm run battery
 ```
+
+## Trust chain
+
+`npm test` / `npm run battery` never execute in-repo bytes first: the
+package scripts invoke the small builtins-only bootstrap in the
+separately trusted directory
+`/home/hatch/workspace/research-prototype-trust/` (outside the repo,
+never modified by the PR). The bootstrap pins the approved root from
+its own `approved-root.txt` (must match `RESEARCH_APPROVED_ROOT`),
+authenticates every manifest-listed byte, rejects unlisted files,
+nested helpers and symlinks, authenticates the manifest digest itself,
+rejects npm lifecycle hooks, and only then spawns the in-repo
+launcher. Prepend/top-of-file marker canaries against both official
+entrypoints and the runtime/watchdog chain are covered by
+`tests/trust.test.js`.
+
+## Grant before bytes
+
+`run()` admits the context in two phases: the grant gate inspects only
+bounded grant/principal/control metadata, the denied-source read grant
+is checked next, and only after an exact grant succeeds are the
+selected source/revision and the required provenance metadata admitted.
+Non-selected sources are never inspected. A denied source's revision
+metadata and payload remain untouched (see the RA652-006 sentinels in
+`tests/execution-addendum.test.js`).
 
 ## Boundaries
 

@@ -141,3 +141,121 @@ test("deeply nested task beyond depth 32 refuses", () => {
   assert.equal(r.status, "REFUSED");
   assert.ok(r.diagnostics.some((d) => d.code === "INVALID_INPUT" || d.code === "BUDGET_EXCEEDED"));
 });
+
+// ---- RA652-006: grant-before-bytes sentinels ----
+// The denied-source grant must be checked BEFORE any source byte or
+// payload metadata is accessed. These sentinels fail on the old head,
+// which validated (and thereby inspected) every source revision's
+// metadata before the grant check.
+
+function ra652Ctx(overrides = {}) {
+  const ref = store.bundleRefs["single-passage"];
+  const key = `${ref.repo}|${ref.path}`;
+  return {
+    clock: 1780315200000,
+    sources: { [key]: store.sources[key] },
+    readGrants: [{ repo: ref.repo, path: ref.path }],
+    principal: store.principals.jason,
+    criteria: store.criteriaPresets.standard,
+    provenance_registry: {},
+    ...overrides,
+  };
+}
+
+test("RA652-006: denied source revision metadata is never touched (proxy sentinel)", () => {
+  // The selected source's revision entry is a Proxy that throws on ANY
+  // inspection (get, ownKeys, getOwnPropertyDescriptor, has). With no
+  // read grant, the run must refuse READ_DENIED without touching it.
+  let touches = 0;
+  const throwing = {
+    get(t, p) { touches++; throw new Error(`revision metadata touched: ${String(p)}`); },
+    has(t, p) { touches++; throw new Error(`revision metadata touched: has ${String(p)}`); },
+    ownKeys(t) { touches++; throw new Error("revision metadata touched: ownKeys"); },
+    getOwnPropertyDescriptor(t, p) { touches++; throw new Error("revision metadata touched: descriptor"); },
+  };
+  const ref = store.bundleRefs["single-passage"];
+  const key = `${ref.repo}|${ref.path}`;
+  const ctx = ra652Ctx({
+    sources: { [key]: new Proxy({}, throwing) },
+    readGrants: [],
+  });
+  const r = run(taskFor("single-passage"), ctx);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "READ_DENIED"), "must refuse with READ_DENIED");
+  assert.equal(r.report, null);
+  assert.equal(touches, 0, "denied revision metadata must remain completely untouched");
+});
+
+test("RA652-006: denied source payload metadata is never validated", () => {
+  // The denied revision carries metadata that would fail validation
+  // (non-hex blob, empty label, negative expected_records) and a
+  // marker in its text. The grant check must fire first: the refusal is
+  // READ_DENIED and the marker never appears in the output.
+  const ref = store.bundleRefs["single-passage"];
+  const key = `${ref.repo}|${ref.path}`;
+  const ctx = ra652Ctx({
+    sources: {
+      [key]: {
+        revisions: {
+          [ref.commit]: {
+            text: "RA652-006-DENIED-PAYLOAD-MARKER",
+            blob: "not-a-hex-blob",
+            label: "",
+            expected_records: -1,
+          },
+        },
+      },
+    },
+    readGrants: [],
+  });
+  const r = run(taskFor("single-passage"), ctx);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "READ_DENIED"), "grant denial precedes metadata validation");
+  assert.ok(!r.diagnostics.some((d) => d.code === "INVALID_INPUT"), "metadata must not be validated before the grant check");
+  assert.equal(r.report, null);
+  assert.ok(
+    !JSON.stringify(r).includes("RA652-006-DENIED-PAYLOAD-MARKER"),
+    "denied payload must not leak into the refusal"
+  );
+});
+
+test("RA652-006: non-selected sources are never admitted", () => {
+  // A second source entry is outright malformed. The grant covers only
+  // the selected bundle, so the run must succeed — proving the
+  // non-selected entry was never inspected or charged.
+  const ref = store.bundleRefs["single-passage"];
+  const key = `${ref.repo}|${ref.path}`;
+  const ctx = ra652Ctx({
+    sources: {
+      [key]: store.sources[key],
+      "other|bundles/garbage.json": { revisions: { "nope": "garbage" } },
+    },
+  });
+  const r = run(taskFor("single-passage", [{
+    claim_id: "c1", atoms: [REV],
+    origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
+  }]), ctx);
+  assert.equal(r.status, "REPORT_READY", "malformed non-selected source must be ignored");
+  assert.equal(r.report.claims[0].research_status, "attributed-only");
+});
+
+test("RA652-006: grant for a different path still denies the selected bundle", () => {
+  // A grant exists, but for another path: the selected bundle's bytes
+  // stay unread and the refusal is READ_DENIED naming the bundle.
+  const ref = store.bundleRefs["single-passage"];
+  const key = `${ref.repo}|${ref.path}`;
+  let touches = 0;
+  const throwing = {
+    get(t, p) { touches++; throw new Error("touched"); },
+    ownKeys(t) { touches++; throw new Error("touched"); },
+    getOwnPropertyDescriptor(t, p) { touches++; throw new Error("touched"); },
+  };
+  const ctx = ra652Ctx({
+    sources: { [key]: new Proxy({}, throwing) },
+    readGrants: [{ repo: ref.repo, path: "bundles/other.json" }],
+  });
+  const r = run(taskFor("single-passage"), ctx);
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "READ_DENIED"));
+  assert.equal(touches, 0, "wrong-path grant must not admit the selected source");
+});

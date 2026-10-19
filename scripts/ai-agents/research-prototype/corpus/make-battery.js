@@ -52,14 +52,70 @@ function oVerifyAssertion(passageText, assertion) {
   const slice = bytes.subarray(start_byte, end_byte).toString("utf8");
   return slice === expected ? { start_byte, end_byte, quoted_text: expected } : null;
 }
-function oClassify(originRef, candRef, registry) {
+function oClosure(originKey, registry) {
+  // Independent reimplementation of bounded provenance closure:
+  // undirected derivation graph, visited set (cycle-safe).
+  const adj = new Map();
+  const link = (a, b) => {
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a).add(b);
+    adj.get(b).add(a);
+  };
+  for (const key of Object.keys(registry)) {
+    for (const l of (registry[key] && registry[key].derivation_links) || []) {
+      if (!l || typeof l.from_doc !== "string") continue;
+      link(key, `${l.from_doc}|${l.from_passage}`);
+    }
+  }
+  const seen = new Set([originKey]);
+  const queue = [originKey];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    for (const next of adj.get(cur) || []) {
+      if (!seen.has(next)) { seen.add(next); queue.push(next); }
+    }
+  }
+  seen.delete(originKey);
+  return seen;
+}
+function oCycleDefeats(originDoc, candDoc, docCites, cycles) {
+  // Independent reimplementation: the cycle is relevant only when it
+  // connects the origin and the candidate.
+  if (originDoc === candDoc) return false;
+  if (!cycles.has(originDoc) && !cycles.has(candDoc)) return false;
+  const adj = new Map();
+  const link = (a, b) => {
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a).add(b);
+    adj.get(b).add(a);
+  };
+  for (const [d, targets] of docCites) for (const t of targets || []) link(d, t);
+  const seen = new Set([originDoc]);
+  const queue = [originDoc];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur === candDoc) return true;
+    for (const next of adj.get(cur) || []) {
+      if (!seen.has(next)) { seen.add(next); queue.push(next); }
+    }
+  }
+  return false;
+}
+function oClassify(originRef, candRef, registry, docCites, cycles) {
   const o = registry[`${originRef.doc_id}|${originRef.passage_id}`];
   const c = registry[`${candRef.doc_id}|${candRef.passage_id}`];
   if (!o || !c) return "unregistered";
   if (o.provenance_group_id === c.provenance_group_id) return "same_group";
-  const linked = (c.derivation_links || []).some((l) => l.from_doc === originRef.doc_id && l.from_passage === originRef.passage_id) ||
-    (o.derivation_links || []).some((l) => l.from_doc === candRef.doc_id && l.from_passage === candRef.passage_id);
-  return linked ? "derivation_linked" : "independent";
+  // Transitive copy/derivation defeat (either direction), then relevant
+  // citation-cycle defeat. Both defeat classes contribute zero
+  // corroboration.
+  if (oClosure(`${originRef.doc_id}|${originRef.passage_id}`, registry).has(`${candRef.doc_id}|${candRef.passage_id}`)) {
+    return "derivation_linked";
+  }
+  if (oCycleDefeats(originRef.doc_id, candRef.doc_id, docCites, cycles || new Set())) return "cycle_defeated";
+  return "independent";
 }
 function oCycles(docCites) {
   const docs = [...docCites.keys()];
@@ -120,15 +176,20 @@ function oEvaluate(docs, claims, registry) {
       }
       let corroborated = false;
       const diags = [];
+      // Per-class corroboration counts (for the independent output-record
+      // taxonomy derivation below).
+      const classCounts = { independent: 0, same_group: 0, unregistered: 0, derivation_linked: 0, cycle_defeated: 0 };
       if (faithful) {
         for (const e of index) {
           if (e.doc_id === origin.doc_id && e.passage_id === origin.passage_id) continue;
           if (!oSame(e.atom, atom)) continue;
-          const cls = oClassify(origin, { doc_id: e.doc_id, passage_id: e.passage_id }, registry);
+          const cls = oClassify(origin, { doc_id: e.doc_id, passage_id: e.passage_id }, registry, docCites, cycles);
+          classCounts[cls] += 1;
           if (cls === "independent") corroborated = true;
         }
       }
       const contradicted = index.some((e) => oConflict(e.atom, atom));
+      const contradictionCount = index.filter((e) => oConflict(e.atom, atom)).length;
       let research_status;
       if (contradicted) research_status = "contradicted";
       else if (faithful && corroborated) research_status = "supported";
@@ -141,10 +202,40 @@ function oEvaluate(docs, claims, registry) {
         const q0 = `${rc.origin_passage_refs[0].doc_id}#${rc.origin_passage_refs[0].passage_id}`;
         if (quarantined.has(q0) || spanMismatch) diags.push("EVIDENCE_WITHHELD");
       }
-      claimResults.push({ claim_id: `${rc.claim_id}#${ai + 1}`, research_status, diags });
+      claimResults.push({ claim_id: `${rc.claim_id}#${ai + 1}`, research_status, diags, faithful, classCounts, contradictionCount });
     }
   }
   return { claimResults, quarantined: [...quarantined].sort(), spanMismatch, cycles };
+}
+
+/**
+ * Independent derivation of the natural output-record count under the
+ * brief's public-record taxonomy (separately written from
+ * countFinalEnvelopeRecords in src/index.js):
+ * report(1) + coverage(1) + summary(1 when REPORT_READY and population
+ * verified with no quarantine/span-mismatch) + per claim: claim(1) +
+ * atom(1) + origin(1) [+ origin citation(1) + source_ref(1) + span(1)
+ * when faithful] + per corroboration resource entry (all five classes):
+ * entry(1) + citation(1) + source_ref(1) + span(1) + per contradiction:
+ * conflict(1) + citation(1) + source_ref(1) + span(1) + top-level
+ * source_ref(1) + diagnostics(n) + quarantined(n).
+ */
+function oNaturalRecords(evalSummary) {
+  const { claimResults, quarantined, spanMismatch, popVerified, hasSummary } = evalSummary;
+  let n = 1 + 1; // report + coverage
+  if (hasSummary) n += 1;
+  for (const cr of claimResults) {
+    n += 3; // claim + atom + origin
+    if (cr.faithful) n += 3; // origin citation + source_ref + span
+    const resources = cr.classCounts.independent + cr.classCounts.same_group + cr.classCounts.unregistered +
+      cr.classCounts.derivation_linked + cr.classCounts.cycle_defeated;
+    n += resources * 4; // entry + citation + source_ref + span
+    n += cr.contradictionCount * 4; // conflict + citation + source_ref + span
+  }
+  n += 1; // top-level source_refs[0]
+  n += evalSummary.diagCount;
+  n += quarantined.length;
+  return n;
 }
 
 function oDocCost(d) {
@@ -532,10 +623,23 @@ addCase("bud-003-boundary-plus1", "budget_replay", "boundary-plus1", {}, { prove
 addCase("bud-004-sentinel-65", "budget_replay", "sentinel-65", {}, { provenance_registry: {} }, expRefused("BUDGET_EXCEEDED"));
 addCase("bud-005-task-100-claims", "budget_replay", "single-passage",
   { claims: Array.from({ length: 100 }, (_, i) => mkClaim(`c${i}`, [REV()], C_ALPH)) }, {}, expRefused("BUDGET_EXCEEDED"));
-addEval("bud-006-output-prefill-254", "budget_replay", "single-passage",
-  [mkClaim("c1", [REV()], C_ALPH)], {}, { test_hooks: { prefill_output_records: 254 } });
-addCase("bud-007-output-prefill-255", "budget_replay", "single-passage",
-  { claims: [mkClaim("c1", [REV()], C_ALPH)] }, { test_hooks: { prefill_output_records: 255 } }, expRefused("OUTPUT_LIMIT"));
+// Output-record boundary: the prefill is derived from the brief's
+// public-record taxonomy (oNaturalRecords), so prefill + natural = 256
+// (allowed) / 257 (refused) through the actual public run. The old
+// 254/255 values encoded the pre-fix hand-maintained field list
+// (natural 2); the taxonomy walk counts 10 natural records for this
+// envelope.
+const budNatural = oNaturalRecords((() => {
+  const docs = docsFor("single-passage");
+  const reg = registryFor(["single-passage"]);
+  const { claimResults, quarantined, spanMismatch } = oEvaluate(docs, [mkClaim("c1", [REV()], C_ALPH)], reg);
+  return { claimResults, quarantined, spanMismatch, popVerified: true, hasSummary: true, diagCount: 0 };
+})());
+if (budNatural !== 10) throw new Error(`bud-006/007 taxonomy drift: natural=${budNatural}, expected 10`);
+addEval("bud-006-output-prefill-256", "budget_replay", "single-passage",
+  [mkClaim("c1", [REV()], C_ALPH)], {}, { test_hooks: { prefill_output_records: 256 - budNatural } });
+addCase("bud-007-output-prefill-257", "budget_replay", "single-passage",
+  { claims: [mkClaim("c1", [REV()], C_ALPH)] }, { test_hooks: { prefill_output_records: 257 - budNatural } }, expRefused("OUTPUT_LIMIT"));
 addEval("bud-008-replay-single", "budget_replay", "single-passage", [mkClaim("c1", [REV()], C_ALPH)]);
 addCase("bud-009-input-limit", "budget_replay", "huge-text", {}, {}, expRefused("TRANSPORT_REFUSED"));
 addEval("bud-010-boundary-fit-plus-claim", "budget_replay", "boundary-fit",

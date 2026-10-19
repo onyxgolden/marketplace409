@@ -10,6 +10,15 @@
  * object-charged BEFORE any of their fields are read. Revision text
  * bytes are payload-charged before acceptance. `budget` is REQUIRED.
  *
+ * RA652-006: the public run() path does NOT admit the whole context at
+ * once. Admission is split: validateGrantGateContext() inspects only
+ * bounded grant/principal/control metadata (never source revision
+ * metadata or payload bytes); the denied-source grant is checked next;
+ * only after an exact grant succeeds do validateSelectedSourceEntry()
+ * (the selected source/revision only) and validateProvenanceRegistry()
+ * admit the rest. validateContext() below keeps the full-registry
+ * validation for unit tests of the validator itself.
+ *
  * splitTopLevelArray() is the bounded-container preflight: it yields raw
  * per-element source spans of the evidence bundle WITHOUT decoding any
  * candidate's fields; the caller charges each candidate before
@@ -301,8 +310,19 @@ export function validateProvenanceEntry(value, where, budget) {
   return { provenance_group_id, derivation_links };
 }
 
-export function validateContext(context, budget) {
-  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateContext requires a live budget");
+/**
+ * RA652-006: grant-gate context validation. Inspects ONLY bounded
+ * grant/principal/control metadata: the clock, the sources MAP (key set
+ * and count — never entry contents), read grants, principal, criteria
+ * and test hooks. Source revision metadata (keys, commits, blobs,
+ * labels, expected record counts) and payload bytes are NOT touched
+ * here; they are admitted only after an exact read grant succeeds (see
+ * validateSelectedSourceEntry). A denied source's revision metadata and
+ * payload therefore remain completely untouched when the grant check
+ * fails.
+ */
+export function validateGrantGateContext(context, budget) {
+  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateGrantGateContext requires a live budget");
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   charge(context, "context");
   if (!isPlainObject(context)) fail("context", "must be an object");
@@ -315,45 +335,15 @@ export function validateContext(context, budget) {
   const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
+  // Sources map: key set only. Entries are NOT read here — a denied
+  // source's revision metadata and payload stay untouched until the
+  // grant check passes.
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
   charge(context.sources, "context.sources");
   assertNoAccessors(context.sources, "context.sources");
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
-  for (const sk of sourceKeys) {
-    const entry = context.sources[sk];
-    charge(entry, `context.sources[${sk}]`);
-    budget.countPayload(sk, `context.sources key`);
-    if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
-    assertNoAccessors(entry, `context.sources[${sk}]`);
-    const revs = entry.revisions;
-    if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
-    charge(revs, `context.sources[${sk}].revisions`);
-    assertNoAccessors(revs, `context.sources[${sk}].revisions`);
-    for (const commit of Object.keys(revs)) {
-      const rev = revs[commit];
-      charge(rev, `context.sources[${sk}]@${commit}`);
-      budget.countPayload(commit, `context.sources[${sk}] commit`);
-      if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
-      assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
-      exactKeys(rev, ["text", "blob", "label", "expected_records"], `context.sources[${sk}]@${commit}`);
-      const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
-      if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
-        fail("context", `source '${sk}' revision '${commit}' text must be a plain data property`);
-      }
-      if (typeof textDesc.value !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
-      if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
-      if (typeof rev.label !== "string" || rev.label.length === 0) {
-        fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
-      }
-      budget.countPayload(rev.label, `context.sources[${sk}]@${commit} label`);
-      if (rev.expected_records !== undefined) {
-        if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
-          fail("context", `source '${sk}' revision '${commit}' expected_records must be a nonnegative integer`);
-        }
-      }
-    }
-  }
+  for (const sk of sourceKeys) budget.countPayload(sk, "context.sources key");
 
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
   assertDenseArray(context.readGrants, "context.readGrants");
@@ -373,11 +363,77 @@ export function validateContext(context, budget) {
   charge(context.criteria, "context.criteria");
   const criteria = validateCriteria(context.criteria, "context.criteria", budget);
 
-  // Provenance registry: host-registered independence/derivation metadata.
-  // Every entry is a consulted candidate, charged before its fields are read.
+  // Host-only output-boundary test hook (see validateTestHooks).
+  const test_hooks = validateTestHooks(context.test_hooks, "context.test_hooks", budget);
+
+  return { clock, sourceKeys, readGrants, principal, criteria, test_hooks };
+}
+
+/**
+ * Validate and charge ONE registered source entry (its revisions map and
+ * every revision's metadata). Extracted so the post-grant path admits
+ * only the selected source.
+ */
+function validateSourceEntry(sources, sk, budget) {
+  const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
+  const entry = sources[sk];
+  charge(entry, `context.sources[${sk}]`);
+  if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
+  assertNoAccessors(entry, `context.sources[${sk}]`);
+  const revs = entry.revisions;
+  if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+  charge(revs, `context.sources[${sk}].revisions`);
+  assertNoAccessors(revs, `context.sources[${sk}].revisions`);
+  for (const commit of Object.keys(revs)) {
+    const rev = revs[commit];
+    charge(rev, `context.sources[${sk}]@${commit}`);
+    budget.countPayload(commit, `context.sources[${sk}] commit`);
+    if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
+    assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
+    exactKeys(rev, ["text", "blob", "label", "expected_records"], `context.sources[${sk}]@${commit}`);
+    const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
+    if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
+      fail("context", `source '${sk}' revision '${commit}' text must be a plain data property`);
+    }
+    if (typeof textDesc.value !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
+    if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
+    if (typeof rev.label !== "string" || rev.label.length === 0) {
+      fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
+    }
+    budget.countPayload(rev.label, `context.sources[${sk}]@${commit} label`);
+    if (rev.expected_records !== undefined) {
+      if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
+        fail("context", `source '${sk}' revision '${commit}' expected_records must be a nonnegative integer`);
+      }
+    }
+  }
+}
+
+/**
+ * RA652-006: post-grant admission of the SELECTED source only. Called
+ * after an exact read grant for the task's evidence-bundle SourceRef has
+ * succeeded. Non-selected source entries are never inspected — they stay
+ * unadmitted and uncharged.
+ */
+export function validateSelectedSourceEntry(context, budget, selectedKey) {
+  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateSelectedSourceEntry requires a live budget");
+  if (typeof selectedKey !== "string" || !Object.prototype.hasOwnProperty.call(context.sources, selectedKey)) {
+    fail("context", `selected source '${String(selectedKey).slice(0, 80)}' is not a registered source key`);
+  }
+  validateSourceEntry(context.sources, selectedKey, budget);
+  return context.sources[selectedKey];
+}
+
+/**
+ * Validate and charge the host-registered provenance/independence
+ * metadata. Required provenance metadata is admitted post-grant; it
+ * carries no source bytes.
+ */
+export function validateProvenanceRegistry(context, budget) {
+  if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateProvenanceRegistry requires a live budget");
   const regIn = context.provenance_registry;
   if (!isPlainObject(regIn)) fail("context", "provenance_registry must be an object");
-  charge(regIn, "context.provenance_registry");
+  budget.chargeObjectOnce(regIn, "context.provenance_registry");
   assertNoAccessors(regIn, "context.provenance_registry");
   const regKeys = Object.keys(regIn);
   if (regKeys.length > 256) fail("context", "provenance_registry must have at most 256 entries");
@@ -388,14 +444,28 @@ export function validateContext(context, budget) {
     }
     budget.countPayload(rk, "context.provenance_registry key");
     const entry = regIn[rk];
-    charge(entry, `context.provenance_registry[${rk}]`);
+    budget.chargeObjectOnce(entry, `context.provenance_registry[${rk}]`);
     provenance_registry[rk] = validateProvenanceEntry(entry, `context.provenance_registry[${rk}]`, budget);
   }
+  return provenance_registry;
+}
 
-  // Host-only output-boundary test hook (see validateTestHooks).
-  const test_hooks = validateTestHooks(context.test_hooks, "context.test_hooks", budget);
-
-  return { clock, sources: context.sources, readGrants, principal, criteria, provenance_registry, test_hooks };
+export function validateContext(context, budget) {
+  // Full-registry validation, kept for unit tests of the validator
+  // itself. The public run() path splits admission (RA652-006) and does
+  // not call this.
+  const gate = validateGrantGateContext(context, budget);
+  for (const sk of gate.sourceKeys) validateSourceEntry(context.sources, sk, budget);
+  const provenance_registry = validateProvenanceRegistry(context, budget);
+  return {
+    clock: gate.clock,
+    sources: context.sources,
+    readGrants: gate.readGrants,
+    principal: gate.principal,
+    criteria: gate.criteria,
+    provenance_registry,
+    test_hooks: gate.test_hooks,
+  };
 }
 
 /**

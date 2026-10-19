@@ -4,6 +4,10 @@
  * Reads explicitly registered fixtures and saves reports to an explicit
  * scratch directory. The agent itself receives no filesystem capability.
  *
+ * Invoke through the separately trusted bootstrap so the manifest is
+ * authenticated before any candidate byte executes:
+ *   RESEARCH_APPROVED_ROOT=<digest> node /home/hatch/workspace/research-prototype-trust/bootstrap.js <repo-dir> manual <bundle> [outdir]
+ *
  * Usage: RESEARCH_APPROVED_ROOT=<digest> node runner/run-manual.js <bundle> [outdir]
  */
 

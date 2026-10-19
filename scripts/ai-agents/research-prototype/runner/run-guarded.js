@@ -3,8 +3,8 @@
  *
  * S648A-006: run() executes in a worker thread (process boundary). If it
  * does not settle within 5000ms, the worker is terminated and a bounded
- * REFUSED envelope (complete:false, empty domain collections) is returned.
- * A cooperative timer on the blocked thread is insufficient — the watchdog
+ * REFUSED envelope (complete:false, report:null) is returned. A
+ * cooperative timer on the blocked thread is insufficient — the watchdog
  * is external to the work.
  *
  * Hardening (third fix round):
@@ -28,8 +28,18 @@
  *   Strings are inert: workerData cloning cannot execute code. The worker
  *   parses, admits, and executes under the supervised timer.
  * - Callers (battery, manual runner, tests) JSON.stringify first.
- * - The factorySource path is unchanged: the factory string is evaluated
- *   INSIDE the worker, so the parent never touches the constructed objects.
+ *
+ * RA652-001 (fifth fix round): the executable factory/eval path is
+ * REMOVED. runGuarded no longer accepts a factorySource argument and
+ * never creates an `eval: true` worker. The launcher is JSON-only; there
+ * is no executable task factory in the shipped runner. Timeout probes
+ * use the fixed fixture worker in runner/timeout-hang-worker.js through
+ * the test-only host in tests/timeout-probe-host.js (closed enum —
+ * outside the production API).
+ *
+ * RA652-003 (fifth fix round): every refusal envelope uses the same
+ * bounded null-report contract as src/index.js: REFUSED, complete:false,
+ * report:null. No envelope carries an empty domain report object.
  *
  * Usage: import { runGuarded, GUARD_TIMEOUT_MS } from "./runner/run-guarded.js";
  *   const result = await runGuarded(JSON.stringify(task), JSON.stringify(context));
@@ -46,6 +56,9 @@ export const GUARD_MAX_TRANSPORT_BYTES = 262144;
 
 const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "guarded-worker.js");
 
+// RA652-003: the bounded null-report refusal contract, identical to
+// src/index.js refused(): REFUSED, complete:false, report:null. No
+// empty domain collections inside report — report is null, always.
 function baseEnvelope() {
   return {
     schema_version: "1",
@@ -60,11 +73,7 @@ function baseEnvelope() {
     diagnostics: [],
     quarantined_sources: [],
     routing_flags: [],
-    report: {
-      claims: [],
-      coverage: { state: "UNKNOWN", admitted_count: 0, excluded_count: 0 },
-      summary: null,
-    },
+    report: null,
   };
 }
 
@@ -108,11 +117,10 @@ function transportEnvelope(code, reason) {
  * inspection. Byte-bounded at 256KiB. The worker parses and admits under
  * the supervised timer.
  *
- * factorySource path: the factory string is evaluated INSIDE the worker,
- * so the parent never touches the constructed objects. taskJson and
- * contextJson are ignored (may be null) when factorySource is set.
+ * RA652-001: JSON-only launcher. There is no executable factory
+ * parameter; request code is never evaluated on either thread.
  */
-export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS, factorySource = null) {
+export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let settled = false;
     // S648A-006: settlement state initialized BEFORE any fallible
@@ -131,67 +139,53 @@ export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS, 
     // is the non-executing admission primitive — it cannot trigger Proxy
     // traps, unlike Object.getOwnPropertyNames/getOwnPropertyDescriptor.
     // Non-strings (including Proxies) refuse here, before any reflection.
-    let workerDataPayload = null;
-    if (!factorySource) {
-      if (typeof taskJson !== "string" || typeof contextJson !== "string") {
-        finish(
-          transportEnvelope(
-            "TRANSPORT_REFUSED",
-            "guarded transport requires serialized JSON strings; non-string (possibly Proxy) input refused before reflective inspection"
-          )
-        );
-        return;
-      }
-      if (
-        Buffer.byteLength(taskJson, "utf8") > GUARD_MAX_TRANSPORT_BYTES ||
-        Buffer.byteLength(contextJson, "utf8") > GUARD_MAX_TRANSPORT_BYTES
-      ) {
-        finish(
-          transportEnvelope(
-            "TRANSPORT_REFUSED",
-            `serialized transport exceeds ${GUARD_MAX_TRANSPORT_BYTES} bytes; refusing before worker creation`
-          )
-        );
-        return;
-      }
-      // S648-006 (fifth fix round): aggregate input byte budget. The
-      // individual caps above do not imply an invocation-wide cap — a
-      // 200KiB task + 200KiB context would pass both but exceed the
-      // 256KiB aggregate budget. Enforce the combined total here.
-      if (
-        Buffer.byteLength(taskJson, "utf8") +
-          Buffer.byteLength(contextJson, "utf8") >
-        GUARD_MAX_TRANSPORT_BYTES
-      ) {
-        finish(
-          transportEnvelope(
-            "TRANSPORT_REFUSED",
-            `aggregate serialized input exceeds ${GUARD_MAX_TRANSPORT_BYTES} bytes; refusing before worker creation`
-          )
-        );
-        return;
-      }
-      // Strings are inert: structured-clone of workerData cannot execute
-      // code. Parsing and admission happen inside the supervised worker.
-      workerDataPayload = { taskJson, contextJson };
+    if (typeof taskJson !== "string" || typeof contextJson !== "string") {
+      finish(
+        transportEnvelope(
+          "TRANSPORT_REFUSED",
+          "guarded transport requires serialized JSON strings; non-string (possibly Proxy) input refused before reflective inspection"
+        )
+      );
+      return;
     }
+    if (
+      Buffer.byteLength(taskJson, "utf8") > GUARD_MAX_TRANSPORT_BYTES ||
+      Buffer.byteLength(contextJson, "utf8") > GUARD_MAX_TRANSPORT_BYTES
+    ) {
+      finish(
+        transportEnvelope(
+          "TRANSPORT_REFUSED",
+          `serialized transport exceeds ${GUARD_MAX_TRANSPORT_BYTES} bytes; refusing before worker creation`
+        )
+      );
+      return;
+    }
+    // S648-006 (fifth fix round): aggregate input byte budget. The
+    // individual caps above do not imply an invocation-wide cap — a
+    // 200KiB task + 200KiB context would pass both but exceed the
+    // 256KiB aggregate budget. Enforce the combined total here.
+    if (
+      Buffer.byteLength(taskJson, "utf8") +
+        Buffer.byteLength(contextJson, "utf8") >
+      GUARD_MAX_TRANSPORT_BYTES
+    ) {
+      finish(
+        transportEnvelope(
+          "TRANSPORT_REFUSED",
+          `aggregate serialized input exceeds ${GUARD_MAX_TRANSPORT_BYTES} bytes; refusing before worker creation`
+        )
+      );
+      return;
+    }
+    // Strings are inert: structured-clone of workerData cannot execute
+    // code. Parsing and admission happen inside the supervised worker.
+    const workerDataPayload = { taskJson, contextJson };
 
     let worker = null;
     try {
-      worker = factorySource
-        ? new Worker(
-            `import { parentPort } from "node:worker_threads";
-             import { run } from ${JSON.stringify(new URL("../src/index.js", import.meta.url).href)};
-             const factory = ${factorySource};
-             const { task, context } = factory();
-             try {
-               parentPort.postMessage({ ok: true, result: run(task, context) });
-             } catch (e) {
-               parentPort.postMessage({ ok: false, error: { name: e?.name ?? "Error", code: e?.code ?? null, message: String(e?.message ?? e).slice(0, 500) } });
-             }`,
-            { eval: true }
-          )
-        : new Worker(WORKER_PATH, { workerData: workerDataPayload });
+      // RA652-001: the worker is ALWAYS the fixed pinned worker file.
+      // No eval, no executable factory, no request-code execution.
+      worker = new Worker(WORKER_PATH, { workerData: workerDataPayload });
     } catch (err) {
       // S648A-006: construction/clone failure is a bounded named refusal,
       // never a thrown TDZ ReferenceError.
