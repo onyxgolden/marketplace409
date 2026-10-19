@@ -1,1 +1,13 @@
-{"dependencies":{},"description":"AI Lab Phase 2 slice 1 — Project Manager agent synthetic prototype (offline, zero dependencies)","name":"project-manager-prototype","private":true,"scripts":{"battery":"node tests/run-battery.js","run":"node runner/run-manual.js","test":"node --test tests/*.test.js"},"type":"module","version":"1.0.0"}
+{
+  "dependencies": {},
+  "description": "AI Lab Phase 2 slice 1 \u2014 Project Manager agent synthetic prototype (offline, zero dependencies)",
+  "name": "project-manager-prototype",
+  "private": true,
+  "scripts": {
+    "battery": "node tests/run-battery.js",
+    "run": "node runner/run-manual.js",
+    "test": "node tests/run-tests.js"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}

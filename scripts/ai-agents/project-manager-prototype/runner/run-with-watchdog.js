@@ -99,8 +99,20 @@ async function main() {
   //   preventing the watchdog timer from ever starting.
   // - Enforce the size cap via stat BEFORE allocating the read buffer.
   //   A size comparison after a full synchronous read is not bounded I/O.
+  // PM651-009 (fourth fix round): aggregate input budget before allocation.
+  // Stat BOTH files first, reject if the combined size exceeds 256KiB,
+  // THEN read. Reading both fully before checking the aggregate would
+  // allocate over-budget bytes pre-supervision.
   let taskRaw, contextRaw;
   try {
+    const taskStat = statSync(resolve(taskPath));
+    const contextStat = statSync(resolve(contextPath));
+    if (!taskStat.isFile() || !contextStat.isFile()) {
+      throw new Error('input is not a regular file (refusing FIFO/socket/device/directory)');
+    }
+    if (taskStat.size + contextStat.size > MAX_INPUT_BYTES) {
+      throw new Error(`aggregate input exceeds 256KiB (${taskStat.size + contextStat.size} bytes)`);
+    }
     taskRaw = readBoundedInput(taskPath, 'task');
     contextRaw = readBoundedInput(contextPath, 'context');
   } catch (e) {

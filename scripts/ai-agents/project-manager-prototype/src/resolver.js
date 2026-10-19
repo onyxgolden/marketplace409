@@ -232,6 +232,11 @@ export class Resolver {
       e.code = 'SOURCE_REF_INVALID';
       throw e;
     }
+    // PM651-003 (fourth fix round): byte-count consulted source_ref metadata.
+    // The repo/path/revision strings are consulted and must be charged.
+    this.chargeInputBytes(utf8Length(sref.repo));
+    this.chargeInputBytes(utf8Length(sref.path));
+    this.chargeInputBytes(utf8Length(sref.revision));
     // Read bytes ONLY after authority + source_ref shape are confirmed.
     const bytes = safeGet(entry, 'bytes', 'entry').value;
     if (typeof bytes !== 'string') {
