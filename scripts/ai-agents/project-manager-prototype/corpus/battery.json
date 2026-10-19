@@ -1,0 +1,2458 @@
+[
+  {
+    "case_id": "n01",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n01",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          4
+        ],
+        "b": [
+          4,
+          7
+        ],
+        "c": [
+          7,
+          9
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n02",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n02",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-fork-join"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          2
+        ],
+        "b": [
+          2,
+          7
+        ],
+        "c": [
+          2,
+          5
+        ],
+        "d": [
+          7,
+          8
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n03",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n03",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-lag"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          4
+        ],
+        "b": [
+          6,
+          9
+        ],
+        "c": [
+          8,
+          10
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n04",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n04",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-release"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          10,
+          14
+        ],
+        "b": [
+          14,
+          16
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n05",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n05",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-zero-duration"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          4
+        ],
+        "ms": [
+          4,
+          4
+        ],
+        "b": [
+          4,
+          6
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n06",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n06",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-ok"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          6
+        ],
+        "b": [
+          6,
+          10
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n07",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n07",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-abut"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          4
+        ],
+        "b": [
+          4,
+          8
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n08",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n08",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-rational"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          4
+        ],
+        "b": [
+          0,
+          4
+        ]
+      },
+      "findings": 0,
+      "milestones": {
+        "m1": "FEASIBLE"
+      }
+    }
+  },
+  {
+    "case_id": "n09",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n09",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-empty-milestone"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "math": {
+        "a": [
+          0,
+          2
+        ]
+      },
+      "findings": 2,
+      "milestones": {
+        "m1": "UNVERIFIABLE"
+      }
+    }
+  },
+  {
+    "case_id": "n10",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n10",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {
+        "include_draft_summary": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "findings": 0,
+      "draft": true
+    }
+  },
+  {
+    "case_id": "n11",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n11",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "muse-relay",
+    "expected": {
+      "status": "REPORT_READY",
+      "findings": 0
+    }
+  },
+  {
+    "case_id": "n12",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n12",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear",
+        "plan-fork-join"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "plans": 2
+    }
+  },
+  {
+    "case_id": "n13",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n13",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n14",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n14",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-fork-join"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n15",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n15",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-lag"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n16",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n16",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-release"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n17",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n17",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-zero-duration"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n18",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n18",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-ok"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n19",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n19",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-abut"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n20",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n20",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-rational"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n21",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n21",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-empty-milestone"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n22",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n22",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n23",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n23",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-fork-join"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n24",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n24",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-lag"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n25",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n25",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-release"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n26",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n26",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-zero-duration"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n27",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n27",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-ok"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n28",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n28",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-abut"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n29",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n29",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-rational"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n30",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n30",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n31",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n31",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-fork-join"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n32",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n32",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-lag"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n33",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n33",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-release"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n34",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n34",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-zero-duration"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n35",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n35",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-ok"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n36",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n36",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-abut"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n37",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n37",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-rational"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n38",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n38",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n39",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n39",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-fork-join"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "n40",
+    "category": "nominal",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-n40",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-lag"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "c01",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c01",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-cycle"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "PARTIAL",
+      "mathNull": true,
+      "findingCodes": [
+        "CYCLE_DETECTED"
+      ]
+    }
+  },
+  {
+    "case_id": "c02",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c02",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-dangling"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "PARTIAL",
+      "mathNull": true,
+      "findingCodes": [
+        "DANGLING_DEPENDENCY"
+      ]
+    }
+  },
+  {
+    "case_id": "c03",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c03",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-orphan"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "orphans": [
+        "lonely"
+      ],
+      "findingCodes": [
+        "ORPHAN_TASKS"
+      ]
+    }
+  },
+  {
+    "case_id": "c04",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c04",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-early"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "milestones": {
+        "m1": "MISMATCH"
+      },
+      "findingCodes": [
+        "MILESTONE_IMPOSSIBLE"
+      ]
+    }
+  },
+  {
+    "case_id": "c05",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c05",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-overlap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "findingCodes": [
+        "RESOURCE_OVERALLOCATION"
+      ]
+    }
+  },
+  {
+    "case_id": "c06",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c06",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-complete"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "completion": [
+        6,
+        10
+      ],
+      "findingCodes": [
+        "HEADER_COMPLETION_MISMATCH"
+      ]
+    }
+  },
+  {
+    "case_id": "c07",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c07",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-window-overlap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "findingCodes": [
+        "CAPACITY_WINDOW_OVERLAP"
+      ]
+    }
+  },
+  {
+    "case_id": "c08",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c08",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-coverage-gap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "findingCodes": [
+        "CAPACITY_COVERAGE_GAP"
+      ]
+    }
+  },
+  {
+    "case_id": "c09",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c09",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-dup-task"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED"
+    }
+  },
+  {
+    "case_id": "c10",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c10",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-dup-edge"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED"
+    }
+  },
+  {
+    "case_id": "c11",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c11",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-claimed-early"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "findingCodes": [
+        "CLAIMED_START_VIOLATION"
+      ]
+    }
+  },
+  {
+    "case_id": "c12",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c12",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-zero-demand"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "findingCodes": [
+        "ZERO_DURATION_DEMAND"
+      ]
+    }
+  },
+  {
+    "case_id": "c13",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c13",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-ms-missing"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "milestones": {
+        "m1": "UNVERIFIABLE"
+      },
+      "findingCodes": [
+        "MILESTONE_MISSING_REQUIREMENT"
+      ]
+    }
+  },
+  {
+    "case_id": "c14",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c14",
+      "operation": "analyze",
+      "fixture_refs": [
+        "no-such-fixture"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "PARTIAL",
+      "findingCodes": [
+        "READ_DENIED"
+      ]
+    }
+  },
+  {
+    "case_id": "c15",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c15",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-cycle"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "CYCLE_DETECTED"
+      ]
+    }
+  },
+  {
+    "case_id": "c16",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c16",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-dangling"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "DANGLING_DEPENDENCY"
+      ]
+    }
+  },
+  {
+    "case_id": "c17",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c17",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-orphan"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "ORPHAN_TASKS"
+      ]
+    }
+  },
+  {
+    "case_id": "c18",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c18",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-early"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "MILESTONE_IMPOSSIBLE"
+      ]
+    }
+  },
+  {
+    "case_id": "c19",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c19",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-overlap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "RESOURCE_OVERALLOCATION"
+      ]
+    }
+  },
+  {
+    "case_id": "c20",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c20",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-complete"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "HEADER_COMPLETION_MISMATCH"
+      ]
+    }
+  },
+  {
+    "case_id": "c21",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c21",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-window-overlap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "CAPACITY_WINDOW_OVERLAP"
+      ]
+    }
+  },
+  {
+    "case_id": "c22",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c22",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-coverage-gap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "CAPACITY_COVERAGE_GAP"
+      ]
+    }
+  },
+  {
+    "case_id": "c23",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c23",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-claimed-early"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "CLAIMED_START_VIOLATION"
+      ]
+    }
+  },
+  {
+    "case_id": "c24",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c24",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-zero-demand"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "ZERO_DURATION_DEMAND"
+      ]
+    }
+  },
+  {
+    "case_id": "c25",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c25",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-ms-missing"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "MILESTONE_MISSING_REQUIREMENT"
+      ]
+    }
+  },
+  {
+    "case_id": "c26",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c26",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-cycle"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "CYCLE_DETECTED"
+      ]
+    }
+  },
+  {
+    "case_id": "c27",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c27",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-dangling"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "DANGLING_DEPENDENCY"
+      ]
+    }
+  },
+  {
+    "case_id": "c28",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c28",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-orphan"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "ORPHAN_TASKS"
+      ]
+    }
+  },
+  {
+    "case_id": "c29",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c29",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-milestone-early"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "MILESTONE_IMPOSSIBLE"
+      ]
+    }
+  },
+  {
+    "case_id": "c30",
+    "category": "contradiction",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-c30",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-overlap"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "findingCodes": [
+        "RESOURCE_OVERALLOCATION"
+      ]
+    }
+  },
+  {
+    "case_id": "i01",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i01",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i02",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i02",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "mallory",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "AUTH_UNVERIFIED"
+      ]
+    }
+  },
+  {
+    "case_id": "i03",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i03",
+      "operation": "delete",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "UNSUPPORTED_TASK"
+      ],
+      "badOp": true
+    }
+  },
+  {
+    "case_id": "i04",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i04",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i05",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i05",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i06",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i06",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i07",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i07",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i08",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i08",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i09",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i09",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i10",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i10",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i11",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i11",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i12",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i12",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i13",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i13",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i14",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i14",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i15",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i15",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i16",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i16",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i17",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i17",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i18",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i18",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i19",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i19",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "i20",
+    "category": "injection",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-i20",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-injection"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "quarantined": 1,
+      "findingCodes": [
+        "INSTRUCTION_INJECTION"
+      ]
+    }
+  },
+  {
+    "case_id": "s01",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {},
+      "bogus": 1
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s02",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": "plan-linear",
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s03",
+    "category": "schema",
+    "task": {
+      "schema_version": "2",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s04",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s05",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "delete",
+      "fixture_refs": [],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "UNSUPPORTED_TASK"
+      ]
+    }
+  },
+  {
+    "case_id": "s06",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s07",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s08",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s09",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s10",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s11",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s12",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s13",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s14",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s15",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s16",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s17",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s18",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s19",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "s20",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "x",
+      "operation": "analyze",
+      "fixture_refs": [],
+      "options": {
+        "evil": true
+      }
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "b01",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b01",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear",
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REFUSED",
+      "findingCodes": [
+        "BUDGET_EXCEEDED"
+      ]
+    }
+  },
+  {
+    "case_id": "b02",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b02",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "replay": true
+    }
+  },
+  {
+    "case_id": "b03",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b03",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY",
+      "replay": true
+    }
+  },
+  {
+    "case_id": "b04",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b04",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "b05",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b05",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "b06",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b06",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "b07",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b07",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "b08",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b08",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "b09",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b09",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  },
+  {
+    "case_id": "b10",
+    "category": "budget",
+    "task": {
+      "schema_version": "1",
+      "task_id": "case-b10",
+      "operation": "analyze",
+      "fixture_refs": [
+        "plan-linear"
+      ],
+      "options": {}
+    },
+    "authority": "jason",
+    "expected": {
+      "status": "REPORT_READY"
+    }
+  }
+]

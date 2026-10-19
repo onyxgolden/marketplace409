@@ -1,0 +1,71 @@
+{
+  "plan-linear": {
+    "sha256": "c8dfa11605e34bd82e3f4bd50b981168df7dd3adfc0943b7ef67b6a73c64a773"
+  },
+  "plan-fork-join": {
+    "sha256": "6e5b083f39fa276ef3461bf1e74604e768a933a6aa690996853b57d1593fb275"
+  },
+  "plan-cycle": {
+    "sha256": "a85a1b7252bb0ee8744b7b3dd9d8e8b62e765754936ec78fb0c22a9a1b22d7c2"
+  },
+  "plan-dangling": {
+    "sha256": "e99cfb98c29b7b3d894c750f6f30b52dd0fe504b4e9f7297449101f618a55f23"
+  },
+  "plan-orphan": {
+    "sha256": "f9659e0fabbe043f0363979b53118931f3adf7e13789278d62a90b40925185a5"
+  },
+  "plan-milestone-early": {
+    "sha256": "0d5b64faae7b00d886cccb966597666cbd30e0ff603ea7948a4f936e034fdb45"
+  },
+  "plan-milestone-ok": {
+    "sha256": "27b59dfd7f2e55d68237cdc349148a505b9002c2f1aa1caf8d7e2cf0741836fa"
+  },
+  "plan-lag": {
+    "sha256": "391dd647677bf21ee1e98555418984e663a0e102d5c012ae76e02e6f63301605"
+  },
+  "plan-release": {
+    "sha256": "9818039cbb43206519885eeadc2cb15e8abfef0322f21ac6368b3a03698eb3dd"
+  },
+  "plan-zero-duration": {
+    "sha256": "f3e319f88e06e91fc189938c3ce2c8f01cf7df5b9b8af6594eb5e06f01e16b13"
+  },
+  "plan-overlap": {
+    "sha256": "16b9b9d0eeef67ee47d24cff1609053b2a97bb747d21c1fe051a328b1c92b849"
+  },
+  "plan-abut": {
+    "sha256": "a6a32254f21924a961f8517a33a6d26964b3ba5d21d87077232adb328b69d52a"
+  },
+  "plan-complete": {
+    "sha256": "79566d97416981ad9a5aaf414e89e8edd8e6af826893df167be26d2c3c346107"
+  },
+  "plan-injection": {
+    "sha256": "9335eedccc8d617ea4149a8ec7027551bba1404f423d5c25f4507e5033bf8591"
+  },
+  "plan-empty-milestone": {
+    "sha256": "50e45380261b527e0f25191c5a8fd1478e6697c0be02415ccdc188fe2b917d48"
+  },
+  "plan-window-overlap": {
+    "sha256": "05cdac781c3124b8794eb5edbeae48a801c86524487dd8c003687cc55a3ab2ca"
+  },
+  "plan-coverage-gap": {
+    "sha256": "c805d40c909be961f3842ea29eaf3f91df4eed7ad0ea676d67fe0658b18a18ba"
+  },
+  "plan-rational": {
+    "sha256": "3843359313183eefe93e6e563ece2be0fb6953d728c6940ac9ccbe5e0f1a0445"
+  },
+  "plan-dup-task": {
+    "sha256": "1524bb160e36830463b9ff9fb500fd0c8872297dbdb85eab8e0f551e32360b5c"
+  },
+  "plan-dup-edge": {
+    "sha256": "bf3865b5f9594d11b1738aa62a4c3d2fe3da06f85996fbd2b1705431ee0ddfce"
+  },
+  "plan-claimed-early": {
+    "sha256": "cad5385320d78076ef92959618febb8af00133e4373ae2275d1dca93dbc2c17b"
+  },
+  "plan-zero-demand": {
+    "sha256": "fc7b9b6e52238a7abb10a707faf8f92162a2d94d9fc98976b59ab54fe7898564"
+  },
+  "plan-ms-missing": {
+    "sha256": "01f0eddc56f82c0fe98bdeeb6a5567cb5473f0996edb9f66700511bc8ff3299d"
+  }
+}
