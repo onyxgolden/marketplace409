@@ -59,6 +59,14 @@ export function sha256Hex(text) {
 const SOURCEREF_FIELDS = ['repo', 'path', 'commit', 'blob', 'algorithm', 'revision'];
 const HEX40 = /^[0-9a-f]{40}$/;
 
+// PM651-001: closed relay scope vocabulary. Scope strings are matched
+// EXACTLY against this registered set — substring matching (e.g.
+// scope.includes('read')) is forbidden. Unknown strings, negative phrases,
+// and irrelevant scopes fail closed with zero source-byte reads.
+const REGISTERED_RELAY_SCOPES = new Set([
+  'read-fixtures',
+]);
+
 function checkSourceRef(ref, fixtureId) {
   // PM651-003: descriptor-safe reads only. Direct field access would invoke
   // getters (e.g. a source_ref.blob getter) before admission.
@@ -160,9 +168,11 @@ export class Resolver {
       if (relayId !== REGISTERED_RELAY_ID) {
         throw new AuthError('AUTH_UNVERIFIED', `relay_id ${relayId} is not the registered relay`);
       }
-      // Scope must authorize fixture reads.
-      if (typeof scope !== 'string' || !scope.includes('read')) {
-        throw new AuthError('AUTHZ_DENIED', `relay scope "${scope}" does not authorize reads`);
+      // PM651-001: scope must EXACTLY match a registered capability.
+      // Substring matching is forbidden: "bread-only" contains "read" but
+      // is not a registered fixture-read scope.
+      if (typeof scope !== 'string' || !REGISTERED_RELAY_SCOPES.has(scope)) {
+        throw new AuthError('AUTHZ_DENIED', `relay scope "${scope}" is not a registered read scope`);
       }
     } else if (ra !== pid) {
       throw new AuthError('AUTH_UNVERIFIED', 'request_authority does not match principal');
@@ -213,7 +223,9 @@ export class Resolver {
     }
     this.chargeObject();
     // SourceRef must be present and well-formed.
+    // PM651-003: the source_ref is a consulted metadata candidate; charge it.
     const sref = safeGet(entry, 'source_ref', 'entry').value;
+    if (sref && typeof sref === 'object') this.chargeObject();
     const srefErrors = checkSourceRef(sref, fixtureId);
     if (srefErrors.length) {
       const e = new Error(`SOURCE_REF_INVALID: ${srefErrors[0]}`);

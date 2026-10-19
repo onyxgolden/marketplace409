@@ -25,6 +25,27 @@ function safeTaskId(task) {
   return INADMISSIBLE_ID_MARKER;
 }
 
+/**
+ * PM651-003: descriptor-safe shallow copy of context EXCLUDING fixtureStore.
+ * The fixtureStore subtree is host-trusted and was skipped by admitGraph;
+ * serializing it would invoke getters on denied/unselected payloads.
+ * After admitGraph, the non-store portion is accessor-free, so this
+ * descriptor-safe copy cannot invoke getters.
+ */
+function contextWithoutStore(context) {
+  const out = {};
+  for (const k of Object.keys(context)) {
+    if (k === 'fixtureStore') continue;
+    const desc = Object.getOwnPropertyDescriptor(context, k);
+    if (desc && 'value' in desc) {
+      out[k] = desc.value;
+    }
+    // Accessor descriptors are skipped (admitGraph already rejected them,
+    // so this is defense-in-depth; they contribute zero bytes).
+  }
+  return out;
+}
+
 export function run(task, context) {
   const started = Date.now();
   try {
@@ -83,11 +104,17 @@ function runInner(task, context, started) {
 
   // Serialized task/context bytes are charged as input (PM651-003).
   // Both graphs are already admitted (accessors rejected, objects charged)
-  // so serialization cannot invoke getters. Context metadata counts against
-  // the same 256KiB input budget as the task.
+  // so serialization cannot invoke getters. The fixtureStore is NEVER
+  // serialized: it was skipped by admitGraph, and canonicalizing it would
+  // evaluate getters on denied/unselected payloads before authorization.
+  // Context metadata (excluding the store) counts against the same 256KiB
+  // input budget as the task.
   const taskBytes = canonicalStringify(task === undefined ? null : task);
   resolver.chargeInputBytes(utf8Length(taskBytes));
-  const contextBytes = canonicalStringify(context === undefined ? null : context);
+  const contextForBytes = (context !== undefined && context !== null && typeof context === 'object' && !Array.isArray(context))
+    ? contextWithoutStore(context)
+    : context;
+  const contextBytes = canonicalStringify(contextForBytes === undefined ? null : contextForBytes);
   resolver.chargeInputBytes(utf8Length(contextBytes));
 
   // 1. Validate task + context envelopes (charged, descriptor-safe).

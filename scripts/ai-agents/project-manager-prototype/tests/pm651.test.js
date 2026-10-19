@@ -1,15 +1,68 @@
 // pm651.test.js — regression tests for ChatGPT NEEDS CHANGES findings PM651-001..010.
 // Every probe from the verdict is reproduced here through the public run().
-import './bootstrap.js'; // PM651-008: trust gate FIRST
+// PM651-008: inline builtins-only trust verification BEFORE any agent import.
+// Uses ONLY node:fs, node:crypto, node:path, node:url (builtins). Agent
+// imports below are DYNAMIC (await import).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { run } from '../src/index.js';
-import { analyzePlan } from '../src/manager.js';
-import { Resolver, gitBlobSha1 } from '../src/resolver.js';
-import { checkPlanPackage } from '../src/schemas.js';
-import { canonicalStringify } from '../src/canonical.js';
-import { sha256Hex } from '../src/resolver.js';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __PM_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+function __pmVerifyTrust() {
+  const hostRoot = process.env.PM_TRUST_ROOT;
+  if (!hostRoot || !/^[0-9a-f]{64}$/.test(hostRoot)) {
+    console.error('TRUST-BOOTSTRAP FAILED: no host trust root (set PM_TRUST_ROOT)');
+    process.exit(1);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(join(__PM_ROOT, 'corpus', 'manifest.json'), 'utf8'));
+  } catch (e) {
+    console.error(`TRUST-BOOTSTRAP FAILED: cannot read manifest: ${e.message}`);
+    process.exit(1);
+  }
+  const canon = (v) => {
+    if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+    if (v !== null && typeof v === 'object') {
+      return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+    }
+    return JSON.stringify(v);
+  };
+  const digest = createHash('sha256').update(canon(manifest), 'utf8').digest('hex');
+  if (digest !== hostRoot) {
+    console.error('TRUST-BOOTSTRAP FAILED: manifest digest mismatch');
+    process.exit(1);
+  }
+  for (const entry of manifest) {
+    if (!entry.path || !entry.sha256) {
+      console.error('TRUST-BOOTSTRAP FAILED: manifest entry missing path/sha256');
+      process.exit(1);
+    }
+    let data;
+    try {
+      data = readFileSync(join(__PM_ROOT, entry.path));
+    } catch (e) {
+      console.error(`TRUST-BOOTSTRAP FAILED: cannot read ${entry.path}`);
+      process.exit(1);
+    }
+    const actual = createHash('sha256').update(data).digest('hex');
+    if (actual !== entry.sha256) {
+      console.error(`TRUST-BOOTSTRAP FAILED: hash mismatch ${entry.path}`);
+      process.exit(1);
+    }
+  }
+}
+__pmVerifyTrust();
+
+// Dynamic imports AFTER verification (PM651-008).
+const { run } = await import('../src/index.js');
+const { analyzePlan } = await import('../src/manager.js');
+const { Resolver, gitBlobSha1, sha256Hex } = await import('../src/resolver.js');
+const { checkPlanPackage } = await import('../src/schemas.js');
+const { canonicalStringify } = await import('../src/canonical.js');
 
 const fixtures = JSON.parse(readFileSync(new URL('../fixtures/store.json', import.meta.url), 'utf8')).fixtures;
 function ctx(authority = 'jason', store = fixtures, principalId = 'jason') {
@@ -280,6 +333,18 @@ test('PM651-001: write-only scope -> denied', () => {
   assert.ok(r.diagnostics.some((d) => d.code === 'AUTHZ_DENIED'));
 });
 
+// PM651-001 (round 3): substring scope "bread-only" contains "read" but is
+// NOT a registered capability. Exact vocabulary matching is required.
+test('PM651-001: substring scope "bread-only" -> denied', () => {
+  const c = ctx('muse-relay', fixtures, 'relay-op');
+  c.principal = { principal_id: 'relay-op', kind: 'relay' };
+  c.relay = { relay_id: 'muse-relay', delegate_principal_id: 'relay-op', valid: true, scope: 'bread-only' };
+  c.grants = [{ grant_id: 'g1', principal_id: 'relay-op', action: 'read', resource: { fixture_id: '*' } }];
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTHZ_DENIED'));
+});
+
 test('PM651-001: correct relay_id and read scope -> allowed', () => {
   const c = ctx('muse-relay', fixtures, 'relay-op');
   c.principal = { principal_id: 'relay-op', kind: 'relay' };
@@ -347,6 +412,50 @@ test('PM651-003: oversized context metadata is charged', () => {
   assert.ok(r.diagnostics.some((d) => d.code === 'INPUT_LIMIT' || d.code === 'BUDGET_EXCEEDED'));
 });
 
+// PM651-003 (round 3): fixtureStore is NEVER serialized. Getters on denied/
+// unselected store payloads must not execute (0 calls), even when the
+// fixture is registered. The store is skipped by admitGraph and excluded
+// from context serialization.
+test('PM651-003: getter on denied fixture bytes never executes', () => {
+  let calls = 0;
+  // Build a store with a getter on the bytes of a registered fixture.
+  const evilStore = {};
+  for (const [k, v] of Object.entries(fixtures)) {
+    evilStore[k] = v;
+  }
+  const victim = evilStore['plan-linear'];
+  Object.defineProperty(victim, 'bytes', {
+    get() { calls++; return victim._realBytes || '{}'; },
+    enumerable: true, configurable: true,
+  });
+  // Deny grants: no read grant for this principal.
+  const c = ctx('jason', evilStore, 'jason');
+  c.grants = []; // no grants -> AUTHZ_DENIED
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTHZ_DENIED'));
+  assert.equal(calls, 0, `fixture bytes getter executed ${calls} times (must be 0)`);
+});
+
+test('PM651-003: getter on source_ref.blob never executes', () => {
+  let calls = 0;
+  const evilStore = {};
+  for (const [k, v] of Object.entries(fixtures)) {
+    evilStore[k] = { ...v, source_ref: { ...v.source_ref } };
+  }
+  const victim = evilStore['plan-linear'];
+  const realBlob = victim.source_ref.blob;
+  Object.defineProperty(victim.source_ref, 'blob', {
+    get() { calls++; return realBlob; },
+    enumerable: true, configurable: true,
+  });
+  const c = ctx('jason', evilStore, 'jason');
+  const r = run(task(), c);
+  // The getter must not execute during admission/serialization.
+  // (The run may succeed or fail on other grounds; the invariant is 0 calls.)
+  assert.equal(calls, 0, `source_ref.blob getter executed ${calls} times (must be 0)`);
+});
+
 // ---- PM651-005 (round 2): exact tick arithmetic ----
 
 test('PM651-005: MAX_SAFE_INTEGER start+duration refuses (no rounding)', () => {
@@ -385,9 +494,18 @@ test('PM651-006: matching population declaration -> verified:true', () => {
     milestones: [M('m1', ['a'], 1)],
   });
   const r = new Resolver({});
-  const analysis = analyzePlan(p, r, JSON.stringify(p), null, { expected_tasks: 1 });
+  // PM651-006 (round 3): population must bind to the exact plan and source.
+  const citation = { commit: 'a'.repeat(40), blob: 'b'.repeat(40) };
+  const population = {
+    expected_tasks: 1,
+    plan_id: 'p1',
+    source_commit: 'a'.repeat(40),
+    source_blob: 'b'.repeat(40),
+  };
+  const analysis = analyzePlan(p, r, JSON.stringify(p), citation, population);
   assert.equal(analysis.completion.verified, true);
   assert.equal(analysis.completion.population_matches, true);
+  assert.equal(analysis.completion.population_binding_matches, true);
 });
 
 test('PM651-006: mismatched population -> verified:false', () => {
@@ -400,6 +518,65 @@ test('PM651-006: mismatched population -> verified:false', () => {
   const analysis = analyzePlan(p, r, JSON.stringify(p), null, { expected_tasks: 5 });
   assert.equal(analysis.completion.verified, false);
   assert.equal(analysis.completion.population_matches, false);
+});
+
+// PM651-006 (round 3): wrong binding -> verified:false even if count matches.
+test('PM651-006: wrong plan_id binding -> verified:false', () => {
+  const p = pkg({
+    plan_id: 'p1', project_start_tick: 0,
+    tasks: [t('a', 1, { status: 'COMPLETE', declared: 0 })],
+    milestones: [M('m1', ['a'], 1)],
+  });
+  const r = new Resolver({});
+  const citation = { commit: 'a'.repeat(40), blob: 'b'.repeat(40) };
+  const population = {
+    expected_tasks: 1, // count matches
+    plan_id: 'different-plan', // but binding is wrong
+    source_commit: 'a'.repeat(40),
+    source_blob: 'b'.repeat(40),
+  };
+  const analysis = analyzePlan(p, r, JSON.stringify(p), citation, population);
+  assert.equal(analysis.completion.verified, false);
+  assert.equal(analysis.completion.population_matches, true); // count matches
+  assert.equal(analysis.completion.population_binding_matches, false); // binding fails
+});
+
+test('PM651-006: wrong source_commit binding -> verified:false', () => {
+  const p = pkg({
+    plan_id: 'p1', project_start_tick: 0,
+    tasks: [t('a', 1, { status: 'COMPLETE', declared: 0 })],
+    milestones: [M('m1', ['a'], 1)],
+  });
+  const r = new Resolver({});
+  const citation = { commit: 'a'.repeat(40), blob: 'b'.repeat(40) };
+  const population = {
+    expected_tasks: 1,
+    plan_id: 'p1',
+    source_commit: 'c'.repeat(40), // wrong revision
+    source_blob: 'b'.repeat(40),
+  };
+  const analysis = analyzePlan(p, r, JSON.stringify(p), citation, population);
+  assert.equal(analysis.completion.verified, false);
+  assert.equal(analysis.completion.population_binding_matches, false);
+});
+
+test('PM651-006: wrong source_blob binding -> verified:false', () => {
+  const p = pkg({
+    plan_id: 'p1', project_start_tick: 0,
+    tasks: [t('a', 1, { status: 'COMPLETE', declared: 0 })],
+    milestones: [M('m1', ['a'], 1)],
+  });
+  const r = new Resolver({});
+  const citation = { commit: 'a'.repeat(40), blob: 'b'.repeat(40) };
+  const population = {
+    expected_tasks: 1,
+    plan_id: 'p1',
+    source_commit: 'a'.repeat(40),
+    source_blob: 'd'.repeat(40), // wrong bytes
+  };
+  const analysis = analyzePlan(p, r, JSON.stringify(p), citation, population);
+  assert.equal(analysis.completion.verified, false);
+  assert.equal(analysis.completion.population_binding_matches, false);
 });
 
 // ---- PM651-007 (round 2): schema gaps ----

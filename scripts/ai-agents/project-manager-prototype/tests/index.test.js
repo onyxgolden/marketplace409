@@ -1,10 +1,66 @@
 // index.test.js — envelope, budget-first, task_id preservation, refusals.
-import './bootstrap.js'; // PM651-008: trust gate FIRST
+// PM651-008: inline builtins-only trust verification BEFORE any agent import.
+// Uses ONLY node:fs, node:crypto, node:path, node:url (builtins). Verifies
+// manifest digest against host PM_TRUST_ROOT and every listed file hash.
+// Exits nonzero before any in-corpus module is evaluated on failure.
+// Agent imports below are DYNAMIC (await import).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { run } from '../src/index.js';
-import { canonicalStringify } from '../src/canonical.js';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __PM_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+function __pmVerifyTrust() {
+  const hostRoot = process.env.PM_TRUST_ROOT;
+  if (!hostRoot || !/^[0-9a-f]{64}$/.test(hostRoot)) {
+    console.error('TRUST-BOOTSTRAP FAILED: no host trust root (set PM_TRUST_ROOT)');
+    process.exit(1);
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(join(__PM_ROOT, 'corpus', 'manifest.json'), 'utf8'));
+  } catch (e) {
+    console.error(`TRUST-BOOTSTRAP FAILED: cannot read manifest: ${e.message}`);
+    process.exit(1);
+  }
+  const canon = (v) => {
+    if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+    if (v !== null && typeof v === 'object') {
+      return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+    }
+    return JSON.stringify(v);
+  };
+  const digest = createHash('sha256').update(canon(manifest), 'utf8').digest('hex');
+  if (digest !== hostRoot) {
+    console.error('TRUST-BOOTSTRAP FAILED: manifest digest mismatch');
+    process.exit(1);
+  }
+  for (const entry of manifest) {
+    if (!entry.path || !entry.sha256) {
+      console.error('TRUST-BOOTSTRAP FAILED: manifest entry missing path/sha256');
+      process.exit(1);
+    }
+    let data;
+    try {
+      data = readFileSync(join(__PM_ROOT, entry.path));
+    } catch (e) {
+      console.error(`TRUST-BOOTSTRAP FAILED: cannot read ${entry.path}`);
+      process.exit(1);
+    }
+    const actual = createHash('sha256').update(data).digest('hex');
+    if (actual !== entry.sha256) {
+      console.error(`TRUST-BOOTSTRAP FAILED: hash mismatch ${entry.path}`);
+      process.exit(1);
+    }
+  }
+}
+__pmVerifyTrust();
+
+// Dynamic imports AFTER verification (PM651-008).
+const { run } = await import('../src/index.js');
+const { canonicalStringify } = await import('../src/canonical.js');
 
 const fixtures = JSON.parse(readFileSync(new URL('../fixtures/store.json', import.meta.url), 'utf8')).fixtures;
 function ctx(authority = 'jason', store = fixtures, principalId = 'jason') {

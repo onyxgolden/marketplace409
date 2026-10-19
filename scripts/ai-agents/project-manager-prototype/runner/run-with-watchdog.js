@@ -16,7 +16,7 @@
 //   the envelope JSON to stdout. Exit 0 on success (even for REFUSED
 //   envelopes); exit 1 on usage error; exit 2 on trust failure.
 
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -55,6 +55,37 @@ function bootFailureEnvelope(taskId, detail) {
     `worker failed before agent execution: ${String(detail).slice(0, 200)}`);
 }
 
+/**
+ * PM651-009: bounded input read.
+ * - stat() first: reject non-regular files (FIFO, socket, device, directory)
+ *   WITHOUT blocking. readFileSync on a FIFO with no writer hangs forever.
+ * - Check st.size against the cap BEFORE reading. This bounds the allocation.
+ * - Only then readFileSync (safe: regular file, known size within limit).
+ * Throws on any violation; caller emits BOOT_FAILURE.
+ */
+function readBoundedInput(inputPath, label) {
+  const abs = resolve(inputPath);
+  let st;
+  try {
+    st = statSync(abs);
+  } catch (e) {
+    throw new Error(`cannot stat ${label} input: ${e.message}`);
+  }
+  if (!st.isFile()) {
+    throw new Error(`${label} input is not a regular file (refusing FIFO/socket/device/directory)`);
+  }
+  if (st.size > MAX_INPUT_BYTES) {
+    throw new Error(`${label} input exceeds 256KiB (${st.size} bytes)`);
+  }
+  // Regular file, size within cap: safe to read.
+  const raw = readFileSync(abs, 'utf8');
+  // Defense-in-depth: verify the read didn't exceed the cap (TOCTOU).
+  if (Buffer.byteLength(raw, 'utf8') > MAX_INPUT_BYTES) {
+    throw new Error(`${label} input exceeds 256KiB after read`);
+  }
+  return raw;
+}
+
 async function main() {
   const [, , taskPath, contextPath] = process.argv;
   if (!taskPath || !contextPath) {
@@ -62,18 +93,18 @@ async function main() {
     process.exit(1);
   }
 
-  // Bound input I/O before supervision (PM651-009).
+  // PM651-009: bounded input acquisition BEFORE supervision.
+  // - Reject non-regular files (FIFO, socket, device, directory) without
+  //   blocking. A FIFO with no writer would hang readFileSync forever,
+  //   preventing the watchdog timer from ever starting.
+  // - Enforce the size cap via stat BEFORE allocating the read buffer.
+  //   A size comparison after a full synchronous read is not bounded I/O.
   let taskRaw, contextRaw;
   try {
-    taskRaw = readFileSync(resolve(taskPath), 'utf8');
-    contextRaw = readFileSync(resolve(contextPath), 'utf8');
+    taskRaw = readBoundedInput(taskPath, 'task');
+    contextRaw = readBoundedInput(contextPath, 'context');
   } catch (e) {
-    console.log(JSON.stringify(bootFailureEnvelope(null, `cannot read input: ${e.message}`)));
-    return;
-  }
-  if (Buffer.byteLength(taskRaw, 'utf8') > MAX_INPUT_BYTES ||
-      Buffer.byteLength(contextRaw, 'utf8') > MAX_INPUT_BYTES) {
-    console.log(JSON.stringify(bootFailureEnvelope(null, 'input exceeds 256KiB')));
+    console.log(JSON.stringify(bootFailureEnvelope(null, e.message)));
     return;
   }
   let task, context;

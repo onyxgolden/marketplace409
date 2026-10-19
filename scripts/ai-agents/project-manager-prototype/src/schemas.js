@@ -7,7 +7,7 @@
 
 const TASK_FIELDS = ['schema_version', 'task_id', 'operation', 'fixture_refs', 'options'];
 const CONTEXT_FIELDS = ['clock', 'criteria_version', 'principal', 'grants', 'request_authority', 'relay', 'fixtureStore', 'population'];
-const POPULATION_FIELDS = ['expected_tasks', 'scope'];
+const POPULATION_FIELDS = ['expected_tasks', 'scope', 'plan_id', 'source_commit', 'source_blob'];
 const OPTION_FIELDS = ['include_draft_summary'];
 const PRINCIPAL_FIELDS = ['principal_id', 'kind'];
 const GRANT_FIELDS = ['grant_id', 'principal_id', 'action', 'resource'];
@@ -163,9 +163,12 @@ export function checkContext(ctx, budget) {
     }
 
     // PM651-006: host-established population coverage (optional). If present,
-    // it must declare the expected task count; completion.verified requires
-    // the declaration to match the admitted population. Absent/unknown
-    // coverage never yields a verified plan-wide percentage.
+    // it must declare the expected task count AND bind to the exact plan
+    // and source revision. Completion.verified requires the declaration to
+    // match the admitted population AND the binding to match the analyzed
+    // package's plan_id and source_ref. Absent/unknown/mismatched coverage
+    // never yields a verified plan-wide percentage. A bare count without
+    // binding is insufficient (the same count could verify unrelated plans).
     const pop = safeGet(ctx, 'population', 'context').value;
     if (pop !== undefined && pop !== null) {
       if (typeof pop !== 'object' || Array.isArray(pop)) {
@@ -179,6 +182,22 @@ export function checkContext(ctx, budget) {
         const scope = safeGet(pop, 'scope', 'context.population').value;
         if (scope !== undefined && scope !== null && (typeof scope !== 'string' || !scope)) {
           err(errors, 'population.scope must be a non-empty string if present');
+        }
+        // PM651-006: binding fields. If expected_tasks is declared, the
+        // binding must also be present (a count without binding is useless).
+        const planId = safeGet(pop, 'plan_id', 'context.population').value;
+        const srcCommit = safeGet(pop, 'source_commit', 'context.population').value;
+        const srcBlob = safeGet(pop, 'source_blob', 'context.population').value;
+        if (et !== undefined && et !== null) {
+          if (typeof planId !== 'string' || !planId) {
+            err(errors, 'population.plan_id is required when expected_tasks is declared (binds coverage to the exact plan)');
+          }
+          if (typeof srcCommit !== 'string' || !/^[0-9a-f]{40}$/.test(srcCommit)) {
+            err(errors, 'population.source_commit must be 40-hex when expected_tasks is declared (binds coverage to the exact source revision)');
+          }
+          if (typeof srcBlob !== 'string' || !/^[0-9a-f]{40}$/.test(srcBlob)) {
+            err(errors, 'population.source_blob must be 40-hex when expected_tasks is declared (binds coverage to the exact source bytes)');
+          }
         }
       }
     }

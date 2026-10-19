@@ -41,7 +41,7 @@
   },
   {
     "path": "runner/run-with-watchdog.js",
-    "sha256": "04c3d46e89bcd6b6f927702ecd685bcf8d2b31ea7e68dea69b6c8a423d85c839"
+    "sha256": "c36b86be7ed1c3af05150f459bc62688e3d760ad34c33d99318cb2c0e66d7f0f"
   },
   {
     "path": "src/canonical.js",
@@ -49,7 +49,7 @@
   },
   {
     "path": "src/index.js",
-    "sha256": "e3eb7274b62c06dcadf58a8976744ac491d2b6dec50afc54487b69cc977d7803"
+    "sha256": "fc85b9980d905fde73736dbc76dd141780fa31efc15b7472dd33e7fffdb8210e"
   },
   {
     "path": "src/injection.js",
@@ -57,15 +57,15 @@
   },
   {
     "path": "src/manager.js",
-    "sha256": "b110fcd3c7ce49b6ae1663a389a7220c98cc7a36b53738b0840d5387c89e68b4"
+    "sha256": "a2e38790fcd08a1ec2e3aaf450bb08caa0294d19c721644107389133a2b00da3"
   },
   {
     "path": "src/resolver.js",
-    "sha256": "b5300130b8a9bef41a2d8f4877924e8d1e0e5f6ed66bf1b1a70022353d223885"
+    "sha256": "144450d03290a88ed315bb5c96c64ce4cf34645a6776980fe8be45814bcd2630"
   },
   {
     "path": "src/schemas.js",
-    "sha256": "ec573f063c79362b412e8d5e6be444c912e9ebdc9fea71196b8137dc3d331381"
+    "sha256": "cea333d9d133bf65b9f9a33a47f5323ec8ad40f65e2603cd638227c48c1a366e"
   },
   {
     "path": "tests/bootstrap.js",
@@ -73,26 +73,26 @@
   },
   {
     "path": "tests/index.test.js",
-    "sha256": "053422a2a4a9431ccea4d4a0213db959a71df9799f3bcbfe6a18be2a3fb3ad67"
+    "sha256": "226bdaa2a69a6a85380c8a7414ec64e1f67dadfc5b13484b558c166908c3fb8c"
   },
   {
     "path": "tests/manager.test.js",
-    "sha256": "47428dc50add1b9d0f2d6f8c0cbb103798ecf4a0b666aeca18c740e2bb0181fb"
+    "sha256": "62828e1b1b8b1e473daf1382ec2a02afa757c679b8fb02b9bb06530e1ab47dd9"
   },
   {
     "path": "tests/pm651.test.js",
-    "sha256": "9bf982d7207f2ab0738933d0994e9665e99af483b0046a580bced3a22227bf53"
+    "sha256": "1c155d3799114bd8e22d42552a84cbb35e656c1ad7d91bcec5681851f6ea9309"
   },
   {
     "path": "tests/run-battery.js",
-    "sha256": "04b727c51cdd411cbb8f79a8732eaf0937ab959aaf6e895ec0a606e603c603cf"
+    "sha256": "a5711971fda01ef58fb93dd3a0e21c08593e7cf1847e29384b18cfda05de5819"
   },
   {
     "path": "tests/trust-mutations.test.js",
-    "sha256": "06a18c60dd196bbfa7b4feebb76a57e9af90dd9b8442b27c02d88bb248c67386"
+    "sha256": "b17eed6a7ec3e96215c8f803503f07926b52e037a5c47fae49a08d7c2c73ea16"
   },
   {
     "path": "tests/watchdog.test.js",
-    "sha256": "362bd5e4c88b0da81ac4152accdaaef5650c8ffe463a4b36850b34c70f54fc7b"
+    "sha256": "6d0cd13a1140455f75487d368be91ce4b9045380968d0e4a0e087a4d7087e1a2"
   }
 ]

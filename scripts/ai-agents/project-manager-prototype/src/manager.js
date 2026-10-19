@@ -382,25 +382,39 @@ export function analyzePlan(pkg, resolver, bytes, citation, population) {
     }
   }
 
-  // ---- 6. completion (PM651-006: verified only with host population) ----
+  // ---- 6. completion (PM651-006: verified only with bound host population) ----
   let completeCount = 0;
   for (const t of tasks.values()) if (t.status === 'COMPLETE') completeCount++;
   // Completion is verified ONLY if the host separately established the
-  // population (expected_tasks matches the admitted task count) AND there
-  // are no unverifiable findings. Absence of unrelated findings does not
-  // prove the task list is the entire plan.
+  // population AND the binding matches the analyzed package:
+  // - expected_tasks matches the admitted task count
+  // - plan_id matches pkg.plan_id (binds to the exact plan)
+  // - source_commit matches citation.commit (binds to the exact source revision)
+  // - source_blob matches citation.blob (binds to the exact source bytes)
+  // AND there are no unverifiable findings. A bare count without binding,
+  // or a binding to a different plan/source, never verifies.
   const hasUnverifiable = findings.some((f) => f.severity === SEVERITY.UNVERIFIABLE);
   const popExpected = population && typeof population.expected_tasks === 'number'
     ? population.expected_tasks : null;
   const popMatches = popExpected !== null && popExpected === tasks.size;
+  // PM651-006: binding validation. All four must match.
+  const popPlanId = population && typeof population.plan_id === 'string' ? population.plan_id : null;
+  const popSrcCommit = population && typeof population.source_commit === 'string' ? population.source_commit : null;
+  const popSrcBlob = population && typeof population.source_blob === 'string' ? population.source_blob : null;
+  const citeCommit = citation && typeof citation.commit === 'string' ? citation.commit : null;
+  const citeBlob = citation && typeof citation.blob === 'string' ? citation.blob : null;
+  const bindingMatches = popPlanId !== null && popPlanId === pkg.plan_id &&
+    popSrcCommit !== null && popSrcCommit === citeCommit &&
+    popSrcBlob !== null && popSrcBlob === citeBlob;
   const completion = {
     complete: completeCount,
     total: tasks.size,
     ratio: tasks.size === 0 ? null : completeCount / tasks.size,
     ratio_defined: tasks.size !== 0,
-    verified: popMatches && !hasUnverifiable && tasks.size > 0,
+    verified: popMatches && bindingMatches && !hasUnverifiable && tasks.size > 0,
     population_declared: popExpected,
     population_matches: popMatches,
+    population_binding_matches: bindingMatches,
   };
   let header = null;
   if (pkg.header_claims && pkg.header_claims.claimed_completion_pct !== undefined && pkg.header_claims.claimed_completion_pct !== null) {

@@ -3,11 +3,17 @@
 // host approval BEFORE importing the candidate or executing. The host root
 // comes from --trust-root <sha256> or the PM_TRUST_ROOT env var. Absent or
 // mismatched root refuses to run. The local corpus_digest.txt is NOT trusted.
+// PM651-009: Task execution is routed through the five-second watchdog host
+// (runner/run-with-watchdog.js), not via synchronous run(). This proves the
+// guarded path works for normal results, admission/resolver/compute hangs,
+// boot failures, and cleanup.
 // Usage: node tests/run-battery.js [--battery corpus/battery.json] [--trust-root <sha256>]
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sha256File = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
@@ -52,13 +58,62 @@ for (const e of manifestEntries) {
 console.log(`manifest verified (${manifestEntries.length} files, root ${hostRoot.slice(0, 12)}…)`);
 
 // 2. Import candidate only after verification.
-const { run } = await import('../src/index.js');
+// PM651-009: we do NOT import run() for direct synchronous execution.
+// Task execution goes through the watchdog host below.
 const { canonicalStringify } = await import('../src/canonical.js');
 
-const batteryPath = new URL(process.argv[2] || '../corpus/battery.json', import.meta.url);
+const batteryPath = (() => {
+  // PM651-009: skip --trust-root <hash> when resolving the battery path.
+  const filtered = [];
+  for (let i = 2; i < process.argv.length; i++) {
+    if (process.argv[i] === '--trust-root') { i++; continue; }
+    filtered.push(process.argv[i]);
+  }
+  return new URL(filtered[0] || '../corpus/battery.json', import.meta.url);
+})();
 const storePath = new URL('../fixtures/store.json', import.meta.url);
 const battery = JSON.parse(readFileSync(batteryPath, 'utf8'));
 const fixtures = JSON.parse(readFileSync(storePath, 'utf8')).fixtures;
+
+/**
+ * PM651-009: run a task through the five-second watchdog host.
+ * Writes task/context to temp files, spawns runner/run-with-watchdog.js,
+ * parses the envelope JSON from stdout. The watchdog enforces the timeout,
+ * distinguishes BOOT_FAILURE from TIMEOUT, and cleans up temp files.
+ * The host trust root is propagated via PM_TRUST_ROOT env var.
+ */
+function runViaWatchdog(task, ctx) {
+  const dir = mkdtempSync(join(tmpdir(), 'pm-battery-'));
+  try {
+    const taskFile = join(dir, 'task.json');
+    const ctxFile = join(dir, 'context.json');
+    writeFileSync(taskFile, JSON.stringify(task));
+    writeFileSync(ctxFile, JSON.stringify(ctx));
+    // Propagate the trust root to the watchdog child via env.
+    const childEnv = { ...process.env };
+    if (hostRoot && !childEnv.PM_TRUST_ROOT) {
+      childEnv.PM_TRUST_ROOT = hostRoot;
+    }
+    const result = spawnSync(process.execPath, [
+      join(root, 'runner', 'run-with-watchdog.js'),
+      taskFile, ctxFile,
+    ], {
+      encoding: 'utf8',
+      timeout: 20000, // watchdog has 5s internal timeout; headroom for spawn
+      env: childEnv,
+    });
+    if (result.error) {
+      throw new Error(`watchdog spawn failed: ${result.error.message}`);
+    }
+    const out = (result.stdout || '').trim();
+    if (!out) {
+      throw new Error(`watchdog produced no output (stderr: ${(result.stderr || '').slice(0, 200)})`);
+    }
+    return JSON.parse(out);
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -90,7 +145,8 @@ for (const c of battery) {
   const label = c.case_id;
   let result;
   try {
-    result = run(c.task, ctxFor(c.authority));
+    // PM651-009: route through the five-second watchdog host.
+    result = runViaWatchdog(c.task, ctxFor(c.authority));
   } catch (e) {
     fail++;
     failures.push(`${label}: threw ${e.message}`);
@@ -153,7 +209,8 @@ for (const c of battery) {
     if (n !== exp.plans) problems.push(`plans ${n} != ${exp.plans}`);
   }
   if (exp.replay) {
-    const again = run(c.task, ctxFor(c.authority));
+    // PM651-009: replay also goes through the watchdog host.
+    const again = runViaWatchdog(c.task, ctxFor(c.authority));
     if (canonicalStringify(again) !== canonicalStringify(result)) {
       problems.push('replay not byte-identical');
     }
