@@ -112,3 +112,69 @@ test("trust: bootstrap refuses a missing approval root", () => {
   });
   assert.equal(r.status, 3);
 });
+
+test("trust: bootstrap refuses a manifest listing a FIFO, root-first (S653-009)", () => {
+  if (!APPROVED_ROOT) { console.log("skip: no SALES_APPROVED_ROOT"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "sales-trust-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    // Tamper the manifest: prepend a FIFO entry. The digest check must
+    // fail BEFORE the bootstrap tries to open it.
+    const manifestPath = join(tmp, "corpus", "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.files.unshift({ path: "fixtures/evil-fifo", sha256: "0".repeat(64) });
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    const r = spawnSync(process.execPath, [join(tmp, "bootstrap.mjs"), "test"], {
+      env: { ...process.env, SALES_APPROVED_ROOT: APPROVED_ROOT },
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    assert.equal(r.status, 3, "tampered manifest must exit 3");
+    assert.ok(r.stderr.includes("corpus digest mismatch"), `root-first refusal expected (stderr: ${r.stderr.slice(0, 200)})`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("trust: manual prepend canary never executes via the pinned bootstrap (S653-009)", () => {
+  // S653-009 (fix round 2): `node bootstrap.mjs manual` authenticates
+  // before importing the manual launcher. A canary prepended to
+  // runner/run-manual.js must not execute.
+  if (!APPROVED_ROOT) { console.log("skip: no SALES_APPROVED_ROOT"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "sales-trust-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const target = join(tmp, "runner", "run-manual.js");
+    const original = readFileSync(target, "utf8");
+    writeFileSync(target, 'console.error("MANUAL_PRE_AUTH_CANARY");\n' + original);
+    const r = spawnSync(process.execPath, [join(tmp, "bootstrap.mjs"), "manual", "main", join(tmp, "out")], {
+      env: { ...process.env, SALES_APPROVED_ROOT: APPROVED_ROOT },
+      encoding: "utf8",
+      timeout: 60000,
+    });
+    assert.equal(r.status, 3, "mutated manual launcher must exit 3");
+    assert.ok(!r.stdout.includes("MANUAL_PRE_AUTH_CANARY"), "manual canary must not execute");
+    assert.ok(!r.stderr.includes("MANUAL_PRE_AUTH_CANARY"), "manual canary must not execute (stderr)");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("trust: valid manual run works through the pinned bootstrap (S653-009)", () => {
+  if (!APPROVED_ROOT) { console.log("skip: no SALES_APPROVED_ROOT"); return; }
+  const outdir = mkdtempSync(join(tmpdir(), "sales-manual-"));
+  try {
+    // The 'temporal' bundle (1 lead) fits the 256-record output cap; the
+    // 16-lead 'main' bundle with drafts exceeds it by design.
+    const r = spawnSync(process.execPath, [join(ROOT, "bootstrap.mjs"), "manual", "temporal", outdir], {
+      env: { ...process.env, SALES_APPROVED_ROOT: APPROVED_ROOT },
+      encoding: "utf8",
+      timeout: 60000,
+    });
+    assert.equal(r.status, 0, `manual via bootstrap must succeed (stderr: ${r.stderr.slice(0, 300)})`);
+    const report = JSON.parse(readFileSync(join(outdir, "temporal-report.json"), "utf8"));
+    assert.ok(report.report.classifications.length > 0, "manual report must carry classifications");
+  } finally {
+    rmSync(outdir, { recursive: true, force: true });
+  }
+});

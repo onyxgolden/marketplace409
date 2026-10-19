@@ -45,8 +45,8 @@ import { types } from "node:util";
 import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
 import {
   validateTask, validateContextControl, validateSourceEntry, validateLeadRecord,
-  splitTopLevelArray, admitGraph, assertDenseArray, assertNotProxy,
-  principalWindowLive, SchemaError,
+  splitTopLevelArray, admitGraph, assertDenseArray, assertNotProxy, assertPlainPrototype,
+  principalWindowLive, instantStartMs, instantEndMs, SchemaError,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
@@ -76,16 +76,21 @@ function requestTaskId(task) {
 
 /**
  * Admit the context control plane: trap-free Proxy gate, object charging,
- * and UTF-8 byte charging for every reachable string — but the sources
- * container is charged and descriptor-checked WITHOUT recursing into it.
- * Source entries are admitted individually, per granted ref, after the
- * grant check (S653-006).
+ * and serialized byte charging for every consulted value — but the sources
+ * container is charged (keys only) and descriptor-checked WITHOUT
+ * recursing into it. Source entries are admitted individually, per granted
+ * ref, after the grant check (S653-006).
+ *
+ * S653-005 (fix round 2): byte accounting uses the single nonduplicating
+ * serialized representation (budget.chargeSerialized): each consulted
+ * control value is charged once, with structure, quoting and escaping.
+ * The sources container's entries are NOT serialized here — only its key
+ * list — so selected source bytes are never double-counted.
  */
 function admitContextControlGraph(context, budget) {
   assertNotProxy(context, "context");
   budget.chargeObjectOnce(context, "context");
   for (const k of Object.getOwnPropertyNames(context)) {
-    budget.countPayload(k, "context property name");
     const desc = Object.getOwnPropertyDescriptor(context, k);
     if (!desc) continue;
     if (typeof desc.get === "function" || typeof desc.set === "function") {
@@ -98,8 +103,11 @@ function admitContextControlGraph(context, budget) {
       throw new SchemaError(`context: symbol property '${k}' is not plain data; refusing`);
     }
     if (k === "sources") {
-      // Charged, proxy-checked, descriptor-checked — never walked.
+      // Charged, proxy-checked, prototype-checked, descriptor-checked —
+      // never walked. Only the key list is byte-charged; entries are
+      // admitted per granted ref after the grant check.
       assertNotProxy(desc.value, "context.sources");
+      assertPlainPrototype(desc.value, "context.sources");
       budget.chargeObjectOnce(desc.value, "context.sources");
       if (desc.value !== null && typeof desc.value === "object") {
         for (const kk of Object.getOwnPropertyNames(desc.value)) {
@@ -108,10 +116,12 @@ function admitContextControlGraph(context, budget) {
             throw new SchemaError(`context.sources: accessor property '${kk}' is not plain data; refusing`);
           }
         }
+        budget.chargeSerialized(Object.getOwnPropertyNames(desc.value), "context.sources keys");
       }
       continue;
     }
     admitGraph(desc.value, `context.${String(k)}`, budget);
+    budget.chargeSerialized(desc.value, `context.${String(k)}`);
   }
   for (const s of Object.getOwnPropertySymbols(context)) {
     throw new SchemaError(`context: symbol-keyed property '${String(s)}' is not plain data; refusing`);
@@ -179,55 +189,31 @@ function verifyRecordSpan(bytes, start_byte, end_byte, quoted_text, budget, what
 }
 
 /**
- * S653-007: one bounded final-envelope record walk with a published
- * taxonomy (see README). Every emitted occurrence counts once:
- * source_refs / diagnostics / quarantined_sources entries; each
- * classification and draft; each citation and span nested inside them;
- * each metrics-group occurrence (including the aliased copy inside
- * summary); each nested stage_age; the header_comparison, population,
- * and summary records. Scalars and plain collection arrays are not
- * records; discarded intermediate work is never counted.
+ * S653-007 (fix round 2): one bounded COMPLETE-envelope record walk with
+ * a published taxonomy (see README). Every object occurrence in the final
+ * public envelope counts once per emitted occurrence — no shared-identity
+ * deduplication, no schema-specific field list. The outer envelope shell
+ * itself is the transport container, not a domain record; everything
+ * inside it (source_refs, diagnostics, quarantines, classifications,
+ * drafts, citations, spans, source-refs, verifications, metrics groups
+ * and their nested counts/win-rate/stage-ages, calculation bases,
+ * header comparisons, population, summary and its aliases) counts.
+ * Arrays are transparent structural nodes (walked into, not counted).
+ * Scalars are not records. Bounded depth guards adversarial shapes.
  */
 export function countOutputRecords(env) {
   let n = 0;
-  const rec = (v) => { if (v !== null && typeof v === "object") n += 1; };
-  const countCitation = (holder) => {
-    if (holder && typeof holder === "object" && holder.citation && typeof holder.citation === "object") {
-      rec(holder.citation);
-      if (holder.citation.span && typeof holder.citation.span === "object") rec(holder.citation.span);
+  const walk = (v, depth) => {
+    if (v === null || typeof v !== "object" || depth > 64) return;
+    if (Array.isArray(v)) {
+      for (const e of v) walk(e, depth + 1);
+      return;
     }
+    n += 1;
+    for (const k of Object.keys(v)) walk(v[k], depth + 1);
   };
-  const countMetrics = (arr) => {
-    if (!Array.isArray(arr)) return;
-    for (const m of arr) {
-      rec(m);
-      if (m && typeof m === "object" && Array.isArray(m.stage_ages)) {
-        for (const s of m.stage_ages) rec(s);
-      }
-    }
-  };
-  for (const k of ["source_refs", "diagnostics", "quarantined_sources"]) {
-    const a = env[k];
-    if (Array.isArray(a)) for (const e of a) rec(e);
-  }
-  const rep = env.report;
-  if (rep && typeof rep === "object") {
-    if (Array.isArray(rep.classifications)) {
-      for (const c of rep.classifications) { rec(c); countCitation(c); }
-    }
-    if (Array.isArray(rep.drafts)) {
-      for (const d of rep.drafts) { rec(d); countCitation(d); }
-    }
-    countMetrics(rep.metrics);
-    if (rep.header_comparison && typeof rep.header_comparison === "object") rec(rep.header_comparison);
-    if (rep.population && typeof rep.population === "object") rec(rep.population);
-    if (rep.summary && typeof rep.summary === "object") {
-      rec(rep.summary);
-      countMetrics(rep.summary.metrics);
-      if (rep.summary.header_comparison && typeof rep.summary.header_comparison === "object") {
-        rec(rep.summary.header_comparison);
-      }
-    }
+  if (env !== null && typeof env === "object") {
+    for (const k of Object.keys(env)) walk(env[k], 0);
   }
   return n;
 }
@@ -245,6 +231,10 @@ export function run(task, context) {
   const taskId = requestTaskId(task);
   try {
     admitGraph(task, "task", budget);
+    // S653-005 (fix round 2): the task is byte-charged ONCE under the
+    // single nonduplicating serialized representation (structure,
+    // quoting, escaping included). admitGraph charges objects only.
+    budget.chargeSerialized(task, "task serialized");
     admitContextControlGraph(context, budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
@@ -288,7 +278,13 @@ export function run(task, context) {
         return boundedRefused(taskId, "ACTION_DENIED", "error", `no read grant for ${ref.repo}/${ref.path}`);
       }
       const key = `${ref.repo}|${ref.path}`;
-      const rawEntry = c.sources[key];
+      // S653-006 (fix round 2): the selected source slot is read through
+      // its OWN data descriptor — never direct property access — so an
+      // inherited getter behind the container cannot execute.
+      const slotDesc = Object.getOwnPropertyDescriptor(c.sources, key);
+      const rawEntry = slotDesc && typeof slotDesc.get !== "function" && typeof slotDesc.set !== "function"
+        ? slotDesc.value
+        : undefined;
       if (!rawEntry || typeof rawEntry !== "object") {
         return boundedRefused(taskId, "SOURCE_UNVERIFIED", "error", `source not registered: ${key}`);
       }
@@ -305,6 +301,7 @@ export function run(task, context) {
       bundles.push({
         ref, text: resolved.text, expected_records: resolved.expected_records,
         dataset_id: resolved.dataset_id, dataset_version: resolved.dataset_version,
+        coverage: resolved.coverage,
       });
     }
 
@@ -314,7 +311,10 @@ export function run(task, context) {
     const seenOppIds = new Set();
     for (let bi = 0; bi < bundles.length; bi++) {
       const b = bundles[bi];
-      budget.countPayload(b.text, `bundle ${b.ref.repo}/${b.ref.path} payload`);
+      // S653-005 (fix round 2): the bundle text was already charged
+      // EXACTLY ONCE in resolveSourceRef. Re-charging it here — or
+      // charging per-record slices of the same bytes — would triple-count
+      // the selected source bytes. Spans are byte ranges of charged bytes.
       const { spans, bytes } = splitTopLevelArray(b.text, `bundle[${bi}]`);
       b.spanCount = spans.length;
       // Over-long reference lists cannot hide behind the array: bound first.
@@ -325,9 +325,9 @@ export function run(task, context) {
         const { start_byte, end_byte } = spans[si];
         // S653-005: charge the candidate slot BEFORE decoding or inspecting
         // its fields. Candidate 65 refuses here, before JSON.parse runs.
+        // (The slot's bytes are part of the once-charged bundle text.)
         budget.countObject(`bundle[${bi}] record ${si} slot`);
         const rawText = bytes.subarray(start_byte, end_byte).toString("utf8");
-        budget.countPayload(rawText, `bundle[${bi}] record ${si} bytes`);
         let parsed;
         try {
           parsed = JSON.parse(rawText);
@@ -355,9 +355,12 @@ export function run(task, context) {
         seenLeadIds.add(record.lead_id);
         seenOppIds.add(record.opportunity_id);
         // S653-002: byte-exact citation for this record's claim inputs.
+        // The agreed Citation schema carries quoted_span plus the span
+        // triple and the verification record.
         const span = verifyRecordSpan(bytes, start_byte, end_byte, rawText, budget, `citation ${record.lead_id}`);
         const citation = {
           source_ref: { repo: b.ref.repo, path: b.ref.path, commit: b.ref.commit, blob: b.ref.blob, algorithm: "git-sha1", revision: b.ref.revision },
+          quoted_span: rawText,
           span,
           verification: { algorithm: "git-sha1", blob: b.ref.blob, byte_length: end_byte - start_byte, round_trip_ok: true },
         };
@@ -387,9 +390,12 @@ export function run(task, context) {
     // S653-001: trusted, applicable population completeness. Requires ALL
     // of: the caller declared complete; the host's registered
     // expected_records matches admitted spans on EVERY bundle; the
-    // caller's identity claims match; and the declared dataset_id /
+    // caller's identity claims match; the declared dataset_id /
     // dataset_version binds to every resolved bundle's host-registered
-    // identity. A matching caller claim alone never establishes it.
+    // identity; AND the host's declared coverage contract covers the
+    // task's report interval on EVERY bundle (fix round 2). A matching
+    // caller claim alone never establishes it — and a caller-selected
+    // period cannot supply its own coverage.
     let populationComplete = false;
     if (t.population && t.population.declared_complete) {
       const actualIds = new Set(leads.map((l) => l.record.lead_id));
@@ -407,11 +413,17 @@ export function run(task, context) {
       const identityBound = bundles.length > 0 && bundles.every(
         (b) => b.dataset_id === t.population.dataset_id && b.dataset_version === t.population.dataset_version
       );
-      populationComplete = claimOk && hostCovered && identityBound;
+      const intervalCovered = bundles.length > 0 && bundles.every((b) => {
+        const cov = b.coverage;
+        if (!cov) return false;
+        return instantStartMs(cov.interval_start) <= instantStartMs(t.options.report_interval_start) &&
+          instantEndMs(cov.interval_end) >= instantEndMs(t.options.report_interval_end);
+      });
+      populationComplete = claimOk && hostCovered && identityBound && intervalCovered;
       if (!populationComplete) {
         diagnostics.push({
           code: "POPULATION_INCOMPLETE", severity: "warning", record_id: null, source_ref: null,
-          reason: "declared-complete population not established against host-registered coverage and dataset identity; whole-pipeline totals unverified",
+          reason: "declared-complete population not established against host-registered coverage, dataset identity, and report-period applicability; whole-pipeline totals unverified",
         });
       }
     }
@@ -419,6 +431,16 @@ export function run(task, context) {
     // 3. Classify, suppress, draft.
     const classified = [];
     const draftRecords = [];
+    // S653-002 (fix round 2): the applicable criterion with its evidence.
+    // Criteria live in the separately trusted host context; the evidence
+    // record says so explicitly rather than implying source-byte
+    // provenance.
+    const criteriaEvidence = {
+      criteria_id: c.criteria.criteria_id,
+      criteria_version: c.criteria.criteria_version,
+      state: "HOST_CONTEXT",
+      detail: "fit precedence applied from separately trusted host criteria; not source bytes",
+    };
     for (const l of leads) {
       const { fit, gaps } = classifyFit(l.record, c.criteria.fit_high_timing_days);
       const { suppressed } = checkSuppression(l.record);
@@ -434,6 +456,10 @@ export function run(task, context) {
           draftReason = "NO_PRODUCT: fixture_product_id not in the host product registry";
         } else if (!product.verified) {
           draftReason = "UNVERIFIED_PRODUCT: product entry not verified; no draft";
+        } else if (product.evidence.state !== "VERIFIED") {
+          // S653-002 (fix round 2): conservative eligibility — without
+          // registered VERIFIED product/benefit evidence, no draft.
+          draftReason = `UNAVAILABLE_PRODUCT_EVIDENCE: ${product.evidence.detail}; no draft`;
         } else {
           drafts = buildDrafts(l.record, product, c.criteria);
         }
@@ -453,20 +479,27 @@ export function run(task, context) {
         stage: l.record.stage,
         currency: l.record.currency,
         criteria_version: c.criteria.criteria_version,
+        criteria_evidence: criteriaEvidence,
         citation: l.citation,
       });
       for (const d of drafts) {
+        const product = c.product_registry[l.record.fixture_product_id];
         draftRecords.push({
           lead_id: l.record.lead_id,
           variant: d.variant,
           text: d.text,
           marker: d.marker,
-          // S653-002: the lead-record citation plus an explicit marker that
-          // product/benefit tokens come from the separately trusted host
-          // context, not from source bytes.
+          // S653-002 (fix round 2): structured product/benefit evidence —
+          // registered and pinned, or explicitly UNAVAILABLE. Drafts are
+          // only built when the evidence state is VERIFIED (see above).
           citation: {
             ...l.citation,
-            product_evidence: "host product_registry (separately trusted context; not source bytes)",
+            product_evidence: {
+              state: product.evidence.state,
+              detail: product.evidence.detail,
+              product_id: product.product_id,
+              product_token: product.product_token,
+            },
           },
         });
       }
@@ -486,6 +519,23 @@ export function run(task, context) {
       classified.map((cl, i) => ({ record: leads[i].record, fit: cl.fit, gaps: cl.gaps, suppressed: cl.suppressed })),
       t.options
     );
+    // S653-002 (fix round 2): calculation-basis records for every metric
+    // group — the contributing verified lead citations plus the applicable
+    // criterion/version. Contributing leads are linked by lead_id to the
+    // classification records in this same report (which carry the
+    // byte-exact citations) rather than duplicating citation bytes; every
+    // metric input is traceable to evidence without double-emitting it.
+    for (const m of metrics) {
+      m.calculation_basis = {
+        criteria_ref: { criteria_id: c.criteria.criteria_id, criteria_version: c.criteria.criteria_version },
+        criteria_evidence: criteriaEvidence,
+        rule: "open stages NEW/QUALIFICATION/PROPOSAL; open_gross=sum(amount_minor) exact; open_weighted=sum(amount_minor*probability_num/probability_den) rounded once half-away-from-zero; win_rate=CLOSED_WON/(CLOSED_WON+CLOSED_LOST) over closed_at within the report interval; stage_age=(as_of-stage_entered_at) elapsed UTC minutes",
+        contributing_leads: classified
+          .filter((cl) => cl.currency === m.currency)
+          .map((cl) => ({ lead_id: cl.lead_id })),
+        link_note: "each contributing_leads[].lead_id resolves to report.classifications[] in this envelope, which carries the byte-exact citation for that lead's claim inputs",
+      };
+    }
 
     // 5. Header-claim comparison; mismatch OR inapplicable interval
     // suppresses the definitive summary (comparison evidence retained).

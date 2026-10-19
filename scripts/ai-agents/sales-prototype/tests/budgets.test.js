@@ -46,10 +46,11 @@ describe("makeBudget", () => {
 
 describe("run() budget enforcement", () => {
   // S653-005: with the standard test context the fixed admission overhead
-  // is 23 objects (task 4 + control plane 12 + one granted source 4 +
-  // resolve 1 + validate-time re-charges deduped). Records are charged one
-  // slot each BEFORE decode, so 41 records fit exactly (64/64) and the
-  // 42nd record — the 65th candidate — refuses before JSON.parse runs.
+  // is 25 objects (task 4 + control plane 14 + one granted source 3 +
+  // resolve 1 + validate-time re-charges deduped; the control plane grew
+  // by 2 for the S653-002 product-evidence records). Records are charged
+  // one slot each BEFORE decode, so 39 records fit exactly (64/64) and the
+  // 40th record — the 65th object — refuses before JSON.parse runs.
   function dncBundle(n, poisonLast) {
     const leads = [];
     for (let i = 0; i < n; i++) leads.push({
@@ -72,28 +73,28 @@ describe("run() budget enforcement", () => {
   }
 
   it("candidate 65 refuses before decode; later records untouched (sentinel)", () => {
-    // 41 records = exactly 64 admitted candidates: valid positive control.
-    const s41 = dncBundle(41, false);
-    const r41 = run(makeTask(s41, { bundleNames: ["dnc"] }), makeContext(s41, { bundleNames: ["dnc"] }));
-    assert.notEqual(r41.diagnostics[0]?.code, "BUDGET_EXCEEDED", "41 records must not trip the object budget");
-    // 42 records: the 42nd record is candidate 65 and refuses BUDGET_EXCEEDED.
-    const s42 = dncBundle(42, false);
-    const r42 = run(makeTask(s42, { bundleNames: ["dnc"] }), makeContext(s42, { bundleNames: ["dnc"] }));
-    assert.equal(r42.status, "REFUSED");
-    assert.equal(r42.diagnostics[0].code, "BUDGET_EXCEEDED");
-    assert.equal(r42.report, null);
-    assert.equal(r42.complete, false);
+    // 39 records = exactly 64 admitted objects: valid positive control.
+    const s39 = dncBundle(39, false);
+    const r39 = run(makeTask(s39, { bundleNames: ["dnc"] }), makeContext(s39, { bundleNames: ["dnc"] }));
+    assert.notEqual(r39.diagnostics[0]?.code, "BUDGET_EXCEEDED", "39 records must not trip the object budget");
+    // 40 records: the 40th record is the 65th object and refuses BUDGET_EXCEEDED.
+    const s40 = dncBundle(40, false);
+    const r40 = run(makeTask(s40, { bundleNames: ["dnc"] }), makeContext(s40, { bundleNames: ["dnc"] }));
+    assert.equal(r40.status, "REFUSED");
+    assert.equal(r40.diagnostics[0].code, "BUDGET_EXCEEDED");
+    assert.equal(r40.report, null);
+    assert.equal(r40.complete, false);
   });
 
   it("over-budget candidate with malformed JSON refuses BUDGET_EXCEEDED, not INVALID_INPUT", () => {
-    // The poisoned 42nd record proves the over-budget candidate is refused
+    // The poisoned 40th record proves the over-budget candidate is refused
     // BEFORE JSON.parse decodes it: the refusal must be BUDGET_EXCEEDED,
     // never INVALID_INPUT for the malformed bytes.
-    const s = dncBundle(42, true);
+    const s = dncBundle(40, true);
     const r = run(makeTask(s, { bundleNames: ["dnc"] }), makeContext(s, { bundleNames: ["dnc"] }));
     assert.equal(r.status, "REFUSED");
     assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
-    assert.ok(r.diagnostics[0].reason.includes("record 41 slot"));
+    assert.ok(r.diagnostics[0].reason.includes("record 39 slot"));
     assert.equal(r.report, null);
   });
 
@@ -122,9 +123,10 @@ describe("run() budget enforcement", () => {
     s.task.population = (await import("./helpers.js")).boundPopulation(store, "empty");
     const r = run(s.task, s.context);
     assert.equal(r.status, "REPORT_READY");
-    // source_refs 1 + classifications 0 + metrics 0 + population 1 +
-    // summary 1 (+ its aliased empty metrics array 0) = 3.
-    assert.equal(countOutputRecords(r), 3);
+    // S653-007 (fix round 2): the complete-envelope walk counts every
+    // object occurrence except the outer envelope shell and transparent
+    // arrays: source_refs 1 + report 1 + population 1 + summary 1 = 4.
+    assert.equal(countOutputRecords(r), 4);
   });
 
   it("oversized task_id becomes a bounded marker, not a huge envelope", () => {
@@ -149,5 +151,159 @@ describe("run() budget enforcement", () => {
     const r = run(task, context);
     assert.equal(r.status, "REFUSED");
     assert.equal(r.diagnostics[0].code, "INVALID_INPUT");
+  });
+});
+
+describe("S653 fix round 2: serialized input accounting (S653-005)", () => {
+  it("escaped metadata cannot bypass the input cap (reviewer probe)", async () => {
+    // The reviewer's exact probe: 50,000 NUL chars in principal.registered_by.
+    // Serialized with JSON escaping this is ~300KiB — INPUT_LIMIT, never REPORT_READY.
+    const { makeStandard } = await import("./helpers.js");
+    const { run } = await import("../src/index.js");
+    const { task, context } = makeStandard(store);
+    context.principal = { ...context.principal, registered_by: "\0".repeat(50000) };
+    const r = run(task, context);
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "INPUT_LIMIT");
+    assert.equal(r.report, null);
+  });
+
+  it("quote/backslash/unicode metadata is charged with escaping", async () => {
+    const { makeStandard } = await import("./helpers.js");
+    const { run } = await import("../src/index.js");
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const { task, context } = makeStandard(store);
+    // '"' serializes as 2 bytes; '\\' as 2; 'é' as 2 UTF-8 bytes.
+    const pad = '"'.repeat(100000) + "\\".repeat(100000) + "é".repeat(40000);
+    context.principal = { ...context.principal, registered_by: pad };
+    const measured = serializedByteLength(context.principal);
+    assert.ok(measured > 262144, `escaped payload must exceed cap (measured ${measured})`);
+    const r = run(task, context);
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "INPUT_LIMIT");
+  });
+
+  it("aggregate exact-fit is allowed, +1 refuses (task+context serialized)", async () => {
+    const { makeStandard, PRINCIPAL } = await import("./helpers.js");
+    const { run } = await import("../src/index.js");
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const { BUDGET_LIMITS } = await import("../src/resolver.js");
+    const cap = BUDGET_LIMITS.maxPayloadBytes;
+    // Replicate run()'s byte accounting exactly: task + each context
+    // control value (sources container = keys only) + revision metadata +
+    // the once-charged selected source bytes.
+    const key = "sales-fixtures|leads/main.json";
+    const ref = store.bundleRefs["main"];
+    const rev = store.sources[key].revisions[ref.commit];
+    const probe = makeStandard(store);
+    const fixedBytes =
+      serializedByteLength(probe.task) +
+      serializedByteLength(probe.context.clock) +
+      serializedByteLength(Object.getOwnPropertyNames(probe.context.sources)) +
+      serializedByteLength(probe.context.readGrants) +
+      serializedByteLength(probe.context.criteria) +
+      serializedByteLength(probe.context.product_registry) +
+      serializedByteLength({
+        commit: ref.commit, blob: rev.blob, label: rev.label,
+        expected_records: rev.expected_records, dataset_id: rev.dataset_id,
+        dataset_version: rev.dataset_version, coverage: rev.coverage,
+      }) +
+      Buffer.byteLength(rev.text, "utf8");
+    const principalBase = (padLen) =>
+      serializedByteLength({ ...PRINCIPAL, registered_by: "p".repeat(padLen) });
+    const padFor = (target) => target - fixedBytes - principalBase(0);
+    const padLen = padFor(cap);
+    assert.ok(padLen > 0, "fixture must leave headroom under the cap");
+    // Exact-fit: total byte charge equals the cap -> allowed.
+    const t2 = makeStandard(store);
+    t2.context.principal.registered_by = "p".repeat(padLen);
+    const checkTotal =
+      fixedBytes + principalBase(padLen);
+    assert.equal(checkTotal, cap, `sized total ${checkTotal} must equal cap ${cap}`);
+    const rFit = run(t2.task, t2.context);
+    assert.notEqual(rFit.diagnostics[0]?.code, "INPUT_LIMIT", "exact-fit aggregate must be allowed");
+    // +1 byte over the cap refuses.
+    const t3 = makeStandard(store);
+    t3.context.principal.registered_by = "p".repeat(padLen + 1);
+    const rOver = run(t3.task, t3.context);
+    assert.equal(rOver.status, "REFUSED");
+    assert.equal(rOver.diagnostics[0].code, "INPUT_LIMIT");
+    assert.equal(rOver.report, null);
+  });
+
+  it("selected source bytes are charged exactly once (S653-005)", async () => {
+    // Direct accounting verification: resolveSourceRef must charge the
+    // revision text bytes exactly once. If the bytes were counted three
+    // times (resolver + bundle + per-record), the delta would be 3x.
+    const { makeBudget, resolveSourceRef } = await import("../src/resolver.js");
+    const { makeTask } = await import("./helpers.js");
+    const key = "sales-fixtures|leads/main.json";
+    const ref = store.bundleRefs["main"];
+    const rev = store.sources[key].revisions[ref.commit];
+    const textBytes = Buffer.byteLength(rev.text, "utf8");
+    const budget = makeBudget();
+    const before = budget.used.payloadBytes;
+    const task = makeTask(store);
+    const sourceRef = task.fixture_refs[0];
+    const sources = { [key]: store.sources[key] };
+    resolveSourceRef(sourceRef, sources, budget, "test");
+    const after = budget.used.payloadBytes;
+    const delta = after - before;
+    // The delta includes the text bytes (once) + the small metadata
+    // serialization. It must NOT include 3x the text bytes.
+    assert.ok(delta < textBytes * 1.5, `source bytes must be charged once, not three times (delta ${delta}, text ${textBytes})`);
+    assert.ok(delta >= textBytes, `delta ${delta} must include the ${textBytes} text bytes`);
+  });
+});
+
+describe("S653 fix round 2: complete-envelope output walk (S653-007)", () => {
+  it("the walk counts every emitted object occurrence (independent derivation)", async () => {
+    // Independent complete-envelope count, written without importing the
+    // candidate's counter: every object occurrence except the outer
+    // envelope shell; arrays transparent; scalars not records.
+    const { makeStandard } = await import("./helpers.js");
+    const { run, countOutputRecords } = await import("../src/index.js");
+    const { task, context } = makeStandard(store);
+    const r = run(task, context);
+    let independent = 0;
+    const walk = (v, depth) => {
+      if (v === null || typeof v !== "object" || depth > 64) return;
+      if (Array.isArray(v)) { for (const e of v) walk(e, depth + 1); return; }
+      independent += 1;
+      for (const k of Object.keys(v)) walk(v[k], depth + 1);
+    };
+    for (const k of Object.keys(r)) walk(r[k], 0);
+    assert.equal(countOutputRecords(r), independent, "walk must match the independent derivation");
+    assert.ok(independent > 200, `main envelope should have >200 records (got ${independent})`);
+    assert.ok(independent <= 256, `main envelope must fit the 256 cap (got ${independent})`);
+  });
+
+  it("256 allowed / 257 refused derives prefill from the independent count", async () => {
+    const { makeStandard } = await import("./helpers.js");
+    const { run, countOutputRecords } = await import("../src/index.js");
+    const base = makeStandard(store);
+    const natural = countOutputRecords(run(base.task, base.context));
+    // Derive the remaining prefill from the INDEPENDENT complete-envelope
+    // count, not from the candidate's own helper.
+    let independent = 0;
+    const walk = (v, depth) => {
+      if (v === null || typeof v !== "object" || depth > 64) return;
+      if (Array.isArray(v)) { for (const e of v) walk(e, depth + 1); return; }
+      independent += 1;
+      for (const k of Object.keys(v)) walk(v[k], depth + 1);
+    };
+    const r0 = run(base.task, base.context);
+    for (const k of Object.keys(r0)) walk(r0[k], 0);
+    assert.equal(independent, natural);
+    const ctxFit = makeStandard(store).context;
+    Object.assign(ctxFit, { test_hooks: { prefill_output_records: 256 - independent } });
+    const rFit = run(base.task, ctxFit);
+    assert.notEqual(rFit.diagnostics[0]?.code, "OUTPUT_LIMIT", "exactly 256 must be allowed");
+    const ctxOver = makeStandard(store).context;
+    Object.assign(ctxOver, { test_hooks: { prefill_output_records: 256 - independent + 1 } });
+    const rOver = run(base.task, ctxOver);
+    assert.equal(rOver.status, "REFUSED");
+    assert.equal(rOver.diagnostics[0].code, "OUTPUT_LIMIT");
+    assert.equal(rOver.report, null);
   });
 });

@@ -115,6 +115,11 @@ const REPO = "sales-fixtures";
 // alone never establishes coverage (S653-001).
 const DATASET_ID = "sales-fixtures";
 const DATASET_VERSION = "2026-10-19";
+// S653-001 (fix round 2): host-declared coverage contract — the report
+// period this bundle's population is registered to cover. Population
+// completeness requires the task's report interval to fall inside it; a
+// caller-selected period cannot supply its own coverage.
+const COVERAGE = { interval_start: "2026-10-01", interval_end: "2026-10-31" };
 const store = { bundleRefs: {}, sources: {} };
 
 for (const [name, leads] of Object.entries(bundles)) {
@@ -126,7 +131,7 @@ for (const [name, leads] of Object.entries(bundles)) {
   store.bundleRefs[name] = { repo: REPO, path, commit };
   store.sources[key] = {
     revisions: {
-      [commit]: { text, blob, label: `sales-fixtures/${name}@v1`, expected_records: leads.length, dataset_id: DATASET_ID, dataset_version: DATASET_VERSION },
+      [commit]: { text, blob, label: `sales-fixtures/${name}@v1`, expected_records: leads.length, dataset_id: DATASET_ID, dataset_version: DATASET_VERSION, coverage: { ...COVERAGE } },
     },
   };
 }

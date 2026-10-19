@@ -224,13 +224,42 @@ describe("S653 fix-round: admission hardening", () => {
     assert.equal(touched, false, "nested proxy must be refused before reflection");
   });
 
-  it("admitGraph charges string bytes against the aggregate input budget", () => {
+  it("admitGraph charges objects only; bytes ride the serialized representation", () => {
+    // S653-005 (fix round 2): admitGraph is the structural gate (object
+    // counts, accessor/prototype/proxy/depth checks). Byte accounting uses
+    // the single nonduplicating serialized representation via
+    // budget.chargeSerialized — ~300KiB of string payload trips
+    // INPUT_LIMIT there, not in admitGraph.
     const b = makeBudget();
-    // ~300KiB of string payload must trip INPUT_LIMIT during admission.
-    assert.throws(
-      () => admitGraph({ task_id: "t", blob: "x".repeat(300000) }, "t", b),
-      (e) => e.code === "INPUT_LIMIT"
-    );
+    admitGraph({ task_id: "t", blob: "x".repeat(300000) }, "t", b);
+    assert.throws(() => b.chargeSerialized({ task_id: "t", blob: "x".repeat(300000) }, "t"), (e) => e.code === "INPUT_LIMIT");
+  });
+
+  it("serializedByteLength equals canonicalByteLength on plain data", async () => {
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const { canonicalByteLength } = await import("../src/canonical.js");
+    const samples = [
+      { a: 1, b: "x", c: true, d: null, e: [1, "two", { three: 3 }] },
+      { nul: "\0", quote: '"q"', backslash: "\\", unicode: "héllo→", emoji: "🎉" },
+      { nested: { deep: { deeper: [{ x: [1, 2, { y: "z" }] }] } } },
+      { "key with spaces": "value\nwith\nnewlines", "": "empty-key" },
+      [1, 2, 3, "four", null, true, { five: 5 }],
+    ];
+    for (const s of samples) {
+      assert.equal(serializedByteLength(s), canonicalByteLength(s), `mismatch for ${JSON.stringify(s).slice(0, 60)}`);
+    }
+  });
+
+  it("serializedByteLength counts escapes (NUL/quote/backslash/Unicode)", async () => {
+    const { serializedByteLength } = await import("../src/resolver.js");
+    // One NUL char serializes as 6 bytes (\u0000); a quote as 2 (\").
+    assert.equal(serializedByteLength("\0"), 8); // "\u0000" with quotes
+    assert.equal(serializedByteLength('"'), 4); // "\"" with quotes
+    assert.equal(serializedByteLength("\\"), 4);
+    // 50,000 NULs -> 300,006 bytes: over the 256KiB cap during measurement.
+    const { makeBudget } = await import("../src/resolver.js");
+    const b = makeBudget();
+    assert.throws(() => b.chargeSerialized({ registered_by: "\0".repeat(50000) }, "probe"), (e) => e.code === "INPUT_LIMIT");
   });
 
   it("validatePrincipal rejects an inverted validity window", () => {
@@ -282,5 +311,71 @@ describe("S653 fix-round: admission hardening", () => {
       expected_lead_ids: Array.from({ length: 50000 }, (_, i) => `id-${i}`),
     };
     assert.throws(() => validateTask(t, makeBudget()), SchemaError);
+  });
+});
+
+describe("S653 fix round 2: inherited getters never execute (S653-006)", () => {
+  it("assertPlainPrototype rejects inherited getters and inherited data", async () => {
+    const schemas = await import("../src/schemas.js");
+    assert.throws(() => schemas.assertPlainPrototype(Object.create({ x: 1 }), "t"), SchemaError);
+    assert.throws(
+      () => schemas.assertPlainPrototype(Object.create({ get x() { return 1; } }), "t"),
+      SchemaError
+    );
+    // Plain objects (and null-prototype) pass.
+    schemas.assertPlainPrototype({ x: 1 }, "t");
+    schemas.assertPlainPrototype(Object.create(null), "t");
+  });
+
+  it("validateSourceEntry refuses an inherited revisions getter with zero invocations", async () => {
+    const schemas = await import("../src/schemas.js");
+    const { makeBudget } = await import("../src/resolver.js");
+    const { loadStore } = await import("./helpers.js");
+    const store = loadStore();
+    const key = "sales-fixtures|leads/main.json";
+    const origEntry = store.sources[key];
+    let calls = 0;
+    const evil = Object.create({
+      get revisions() { calls++; return origEntry.revisions; },
+    });
+    assert.throws(
+      () => schemas.validateSourceEntry(evil, key, "t", makeBudget()),
+      SchemaError
+    );
+    assert.equal(calls, 0, "inherited revisions getter must never execute");
+  });
+
+  it("validateSourceEntry refuses inherited data-only revisions", async () => {
+    const schemas = await import("../src/schemas.js");
+    const { makeBudget } = await import("../src/resolver.js");
+    const { loadStore } = await import("./helpers.js");
+    const store = loadStore();
+    const key = "sales-fixtures|leads/main.json";
+    const origEntry = store.sources[key];
+    const evil = Object.create({ revisions: origEntry.revisions });
+    assert.throws(
+      () => schemas.validateSourceEntry(evil, key, "t", makeBudget()),
+      SchemaError
+    );
+  });
+
+  it("run() refuses a sources container with an inherited slot getter, zero invocations", async () => {
+    const { run } = await import("../src/index.js");
+    const { loadStore, makeTask, makeContext } = await import("./helpers.js");
+    const store = loadStore();
+    const task = makeTask(store);
+    const context = makeContext(store);
+    const key = "sales-fixtures|leads/main.json";
+    let calls = 0;
+    const evilSources = Object.create({
+      get [key]() { calls++; return context.sources[key]; },
+    });
+    Object.defineProperty(evilSources, "unrelated", {
+      value: { revisions: {} }, enumerable: true, configurable: true, writable: true,
+    });
+    context.sources = evilSources;
+    const r = run(task, context);
+    assert.equal(r.status, "REFUSED");
+    assert.equal(calls, 0, "inherited source-slot getter must never execute");
   });
 });

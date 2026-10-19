@@ -40,7 +40,11 @@
           "label": "sales-fixtures/main@v1",
           "expected_records": 16,
           "dataset_id": "sales-fixtures",
-          "dataset_version": "2026-10-19"
+          "dataset_version": "2026-10-19",
+          "coverage": {
+            "interval_start": "2026-10-01",
+            "interval_end": "2026-10-31"
+          }
         }
       }
     },
@@ -52,7 +56,11 @@
           "label": "sales-fixtures/duplicates@v1",
           "expected_records": 2,
           "dataset_id": "sales-fixtures",
-          "dataset_version": "2026-10-19"
+          "dataset_version": "2026-10-19",
+          "coverage": {
+            "interval_start": "2026-10-01",
+            "interval_end": "2026-10-31"
+          }
         }
       }
     },
@@ -64,7 +72,11 @@
           "label": "sales-fixtures/duplicate-opps@v1",
           "expected_records": 2,
           "dataset_id": "sales-fixtures",
-          "dataset_version": "2026-10-19"
+          "dataset_version": "2026-10-19",
+          "coverage": {
+            "interval_start": "2026-10-01",
+            "interval_end": "2026-10-31"
+          }
         }
       }
     },
@@ -76,7 +88,11 @@
           "label": "sales-fixtures/temporal@v1",
           "expected_records": 1,
           "dataset_id": "sales-fixtures",
-          "dataset_version": "2026-10-19"
+          "dataset_version": "2026-10-19",
+          "coverage": {
+            "interval_start": "2026-10-01",
+            "interval_end": "2026-10-31"
+          }
         }
       }
     },
@@ -88,7 +104,11 @@
           "label": "sales-fixtures/big-1000@v1",
           "expected_records": 1000,
           "dataset_id": "sales-fixtures",
-          "dataset_version": "2026-10-19"
+          "dataset_version": "2026-10-19",
+          "coverage": {
+            "interval_start": "2026-10-01",
+            "interval_end": "2026-10-31"
+          }
         }
       }
     },
@@ -100,7 +120,11 @@
           "label": "sales-fixtures/empty@v1",
           "expected_records": 0,
           "dataset_id": "sales-fixtures",
-          "dataset_version": "2026-10-19"
+          "dataset_version": "2026-10-19",
+          "coverage": {
+            "interval_start": "2026-10-01",
+            "interval_end": "2026-10-31"
+          }
         }
       }
     }

@@ -7,14 +7,19 @@
  * cooperative timer on the blocked thread is insufficient — the watchdog
  * is external to the work.
  *
- * S653-008: the executable factorySource/eval path is REMOVED. The
- * production API accepts ONLY JSON strings (typeof check is non-executing
- * and cannot trigger Proxy traps). Byte-bounded (256KiB per side,
- * 256KiB aggregate). Strings are inert: workerData cloning cannot execute
- * code. Hang tests use fixed, manifest-authenticated test workers via
- * runGuardedWithWorker (see tests/hang-worker.js), never eval.
+ * S653-008 (fix round 2): there is NO caller-selectable worker path. The
+ * production API runGuarded() always constructs the single fixed worker
+ * (runner/guarded-worker.js, resolved from this module's own directory).
+ * The old runGuardedWithWorker(taskJson, contextJson, timeoutMs,
+ * workerPath) seam — which passed an arbitrary filesystem path straight
+ * to `new Worker` and accepted any {ok:true,result} message — is REMOVED.
+ * Hang coverage uses runGuardedWithTestWorker(), a CLOSED identity: the
+ * caller names one of the manifest-pinned test workers ("hang"), and the
+ * path is resolved internally. Unknown names refuse. Worker results are
+ * shape-checked before acceptance; a malformed/forged result is contained
+ * as WORKER_ERROR, never trusted.
  *
- * Usage: import { runGuarded, runGuardedWithWorker, GUARD_TIMEOUT_MS } from "./runner/run-guarded.js";
+ * Usage: import { runGuarded, runGuardedWithTestWorker, GUARD_TIMEOUT_MS } from "./runner/run-guarded.js";
  *   const result = await runGuarded(JSON.stringify(task), JSON.stringify(context));
  */
 
@@ -27,7 +32,15 @@ export const GUARD_TIMEOUT_MS = 5000;
 // before worker creation.
 export const GUARD_MAX_TRANSPORT_BYTES = 262144;
 
-const WORKER_PATH = join(dirname(fileURLToPath(import.meta.url)), "guarded-worker.js");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PROTO_ROOT = join(HERE, "..");
+const WORKER_PATH = join(HERE, "guarded-worker.js");
+// S653-008 (fix round 2): closed test-worker identity. Keys are the only
+// selectable values; paths resolve inside this package — never from the
+// caller. Every listed file is manifest-pinned and trust-authenticated.
+const TEST_WORKERS = {
+  hang: join(PROTO_ROOT, "tests", "hang-worker.js"),
+};
 
 /**
  * S653-008: every refusal envelope carries report:null per the refusal
@@ -89,17 +102,53 @@ function transportEnvelope(code, reason) {
  * it cannot trigger Proxy traps, unlike Object.getOwnPropertyNames /
  * getOwnPropertyDescriptor. Non-strings (including Proxies) refuse with
  * TRANSPORT_REFUSED before any reflective inspection.
+ *
+ * S653-008 (fix round 2): the worker is ALWAYS the fixed production
+ * worker. There is no path parameter.
  */
 export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS) {
-  return runGuardedWithWorker(taskJson, contextJson, timeoutMs, WORKER_PATH);
+  return runGuardedInternal(taskJson, contextJson, timeoutMs, WORKER_PATH);
 }
 
 /**
- * Test seam: identical to runGuarded but the worker script path is fixed
- * by the caller. Hang tests pass a manifest-authenticated worker that
- * never settles (tests/hang-worker.js). No eval, no factories.
+ * S653-008 (fix round 2): test-only seam with a CLOSED worker identity.
+ * workerName must be a key of TEST_WORKERS ("hang"); the path is resolved
+ * internally from this package. Arbitrary caller-supplied paths are not
+ * accepted — the old runGuardedWithWorker(taskJson, contextJson,
+ * timeoutMs, workerPath) export is removed.
  */
-export function runGuardedWithWorker(taskJson, contextJson, timeoutMs, workerPath) {
+export function runGuardedWithTestWorker(taskJson, contextJson, timeoutMs, workerName) {
+  const workerPath = TEST_WORKERS[workerName];
+  if (!workerPath) {
+    return Promise.resolve(
+      transportEnvelope(
+        "TRANSPORT_REFUSED",
+        `unknown test worker '${String(workerName)}'; only the closed manifest-pinned test-worker identities are allowed`
+      )
+    );
+  }
+  return runGuardedInternal(taskJson, contextJson, timeoutMs, workerPath);
+}
+
+/**
+ * The worker result must be a well-formed sales-agent envelope before it
+ * is trusted. A forged or malformed {ok:true,result} is contained as
+ * WORKER_ERROR, never passed through (S653-008 fix round 2).
+ */
+function isResultEnvelope(r) {
+  return (
+    r !== null &&
+    typeof r === "object" &&
+    r.schema_version === "1" &&
+    r.agent === "sales-agent" &&
+    typeof r.status === "string" &&
+    typeof r.complete === "boolean" &&
+    "report" in r &&
+    Array.isArray(r.diagnostics)
+  );
+}
+
+function runGuardedInternal(taskJson, contextJson, timeoutMs, workerPath) {
   return new Promise((resolve) => {
     let settled = false;
     // S648A-006: settlement state initialized BEFORE any fallible
@@ -185,8 +234,22 @@ export function runGuardedWithWorker(taskJson, contextJson, timeoutMs, workerPat
     // Do not keep the event loop alive for a hung worker after timeout.
     if (typeof timer.unref === "function") timer.unref();
     worker.on("message", (msg) => {
-      if (msg && msg.ok) {
+      if (msg && msg.ok === true && isResultEnvelope(msg.result)) {
         finish(msg.result);
+      } else if (msg && msg.ok === true) {
+        // S653-008 (fix round 2): the worker posted ok:true with a
+        // malformed or forged result — contain it, never trust it.
+        const e = baseEnvelope();
+        e.diagnostics = [
+          {
+            code: "WORKER_ERROR",
+            severity: "critical",
+            source_ref: null,
+            record_id: null,
+            reason: "worker returned a malformed result envelope; contained, not trusted",
+          },
+        ];
+        finish(e);
       } else {
         const err = (msg && msg.error) || {};
         const e = baseEnvelope();

@@ -44,7 +44,10 @@ A definitive summary (`report.summary`, `complete:true`) requires ALL of:
   EVERY bundle (host-established coverage);
 - the caller's `expected_lead_ids` / `expected_count` claims match;
 - the declared `dataset_id` / `dataset_version` binds to every resolved
-  bundle's host-registered dataset identity.
+  bundle's host-registered dataset identity;
+- the task's report interval falls inside the host-registered `coverage`
+  interval (`interval_start`..`interval_end`) on EVERY bundle (S653-001:
+  caller-selected periods cannot supply their own coverage).
 
 A matching caller claim alone never establishes coverage. Missing,
 contradictory, or unknown coverage suppresses the summary and `complete:true`;
@@ -65,33 +68,39 @@ zero (empty bundle, bound identity) is distinct from unknown empty.
 ## Budget (per task)
 
 - 64 consulted objects, 512 checked spans, 256 output records
-- 256 KiB aggregate input (one invocation-wide budget: serialized task +
-  every consulted metadata string + selected source bytes — no separate
-  allowances), 256 KiB output envelope, depth 32, 5-second watchdog
+- 256 KiB aggregate input (one invocation-wide budget: the single
+  nonduplicating serialized UTF-8 representation of task + context control
+  values + revision metadata, plus the once-charged selected source bytes —
+  no separate allowances, no double-counting), 256 KiB output envelope,
+  depth 32, 5-second watchdog
 - Every candidate is charged **before** its fields are inspected; the 65th
-  candidate and 513th span are refused without traversal (sentinels prove it).
+  object and 513th span are refused without traversal (sentinels prove it).
 - Record slots are charged before parsing: an over-budget candidate with
   malformed JSON refuses `BUDGET_EXCEEDED`, never `INVALID_INPUT`.
+- Byte accounting uses the canonical serialized form (structure, quoting,
+  escaping included): `serializedByteLength` === `canonicalByteLength` on
+  plain data; NUL/quote/backslash/Unicode escapes are charged, never
+  bypassed.
 - Admission order: trap-free Proxy rejection → task → context control plane
   (the sources container is charged but never walked) → principal role AND
   validity window → per-ref grant check → that source entry only.
 - Proxies are rejected by the native trap-free check (`node:util`
   `types.isProxy`) before any reflection: zero trap invocations.
+- Inherited getters never execute: every admission level requires a plain
+  prototype (`Object.prototype` or `null`) and reads through own data
+  descriptors only.
 
-## Output-record taxonomy (one bounded final-envelope walk)
+## Output-record taxonomy (one bounded complete-envelope walk)
 
-Each emitted occurrence counts once toward the 256-record cap:
-
-- one per `source_refs[]`, `diagnostics[]`, `quarantined_sources[]` entry;
-- one per `classifications[]` and `drafts[]` entry;
-- one per citation and one per span nested inside a classification/draft;
-- one per `metrics[]` occurrence — including the aliased copy inside
-  `summary.metrics`;
-- one per nested `stage_ages[]` entry;
-- one for `header_comparison`, one for `population`, one for `summary`
-  (when present).
-
-Scalars and plain collection arrays are not records; discarded intermediate
+S653-007: a genuinely recursive, bounded walk over the final public
+envelope. Every object occurrence counts — no shared-identity dedup, no
+schema-specific field list. The outer envelope shell is the transport
+container (not counted); everything inside it counts: `source_refs`,
+`diagnostics`, `quarantined_sources`, `report`, `population`, `summary`
+(and its aliased metrics), each classification/draft, each nested citation,
+span, source_ref, verification, criteria_evidence, product_evidence,
+metrics group, calculation_basis, and stage_age. Arrays are transparent
+(walked into, not counted); scalars are not records; discarded intermediate
 work is never counted. Overrun returns bounded `REFUSED`, `complete:false`,
 `report:null` — no partial domain artifact.
 
@@ -141,12 +150,23 @@ work is never counted. Overrun returns bounded `REFUSED`, `complete:false`,
 export SALES_APPROVED_ROOT="$(cat corpus/corpus_digest.txt)"
 npm test        # unit tests (trust authentication first)
 npm run battery # 120-case battery (trust authentication first)
+node bootstrap.mjs manual [bundle] [outdir]  # manual run via the pinned bootstrap
 ```
 
 Trust: `bootstrap.mjs` is the host-pinned trust anchor (its sha256 is
 published in the review request; the host verifies it with
-`sha256sum bootstrap.mjs` before running). It recomputes the full corpus
-digest from `corpus/manifest.json` with Node builtins only — manifest root
-first, then every transitive file, rejecting unlisted files, symlinks, and
-unsupported executable extensions — and refuses (exit 3) on mismatch BEFORE
-importing any candidate code. `npm test` / `npm run battery` go through it.
+`sha256sum bootstrap.mjs` before running). It authenticates the manifest
+ROOT digest FIRST — before consulting any member path — then every
+transitive file (regular files only: symlinks, FIFOs, sockets, and devices
+are rejected without being opened; per-file size cap), rejecting unlisted
+files and unsupported executable extensions, and refuses (exit 3) on
+mismatch BEFORE importing any candidate code. `npm test` /
+`npm run battery` go through it, as does manual execution:
+`node bootstrap.mjs manual [bundle] [outdir]` (never a self-authenticating
+candidate entrypoint).
+
+Guarded execution: `runGuarded()` always constructs the single fixed
+production worker (`runner/guarded-worker.js`); there is no
+caller-selectable worker path. Hang coverage uses the closed test-only
+identity `runGuardedWithTestWorker(..., "hang")` — unknown names refuse.
+Worker results are shape-checked before acceptance.

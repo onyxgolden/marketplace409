@@ -29,12 +29,17 @@ export const PRODUCT_REGISTRY = {
     product_token: "crm-starter",
     benefit_tokens: ["faster-followup", "clean-pipeline"],
     verified: true,
+    // S653-002 (fix round 2): registered product/benefit evidence. Draft
+    // eligibility requires VERIFIED evidence; absent evidence defaults to
+    // UNAVAILABLE and withholds drafts.
+    evidence: { state: "VERIFIED", detail: "host product_registry (separately trusted context; not source bytes)" },
   },
   "pipeline-pro": {
     product_id: "pipeline-pro",
     product_token: "pipeline-pro",
     benefit_tokens: ["clean-pipeline", "team-visibility"],
     verified: true,
+    evidence: { state: "VERIFIED", detail: "host product_registry (separately trusted context; not source bytes)" },
   },
   "unverified-widget": {
     product_id: "unverified-widget",

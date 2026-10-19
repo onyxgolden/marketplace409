@@ -39,6 +39,74 @@ export class ResolutionError extends Error {
   }
 }
 
+/**
+ * S653-005: exact canonical-serialized UTF-8 byte measurement — the single
+ * nonduplicating serialized representation for the invocation-wide input
+ * budget. Counts structure (braces/brackets/colons/commas), property
+ * names WITH JSON quoting/escaping, string values WITH escaping
+ * (quotes, backslashes, NUL/Unicode -> \uXXXX), and numbers/booleans in
+ * their JSON form. Each distinct object is measured once (WeakSet dedup);
+ * shared references are not double-counted. Throws BudgetError
+ * INPUT_LIMIT if the running total would exceed `limit`, so oversized
+ * input is refused DURING measurement (bounded before full allocation).
+ *
+ * For plain JSON data this equals canonicalByteLength() exactly; the
+ * unit tests assert that equivalence.
+ */
+export function serializedByteLength(value, limit = Number.MAX_SAFE_INTEGER) {
+  const seen = new WeakSet();
+  let total = 0;
+  const bump = (n) => {
+    total += n;
+    if (total > limit) {
+      throw new BudgetError(
+        "INPUT_LIMIT",
+        `serialized input exceeds the invocation-wide ${BUDGET_LIMITS.maxPayloadBytes}-byte cap`
+      );
+    }
+  };
+  const strBytes = (s) => Buffer.byteLength(JSON.stringify(s), "utf8");
+  const walk = (v, depth) => {
+    if (depth > 32) {
+      throw new BudgetError("INPUT_LIMIT", "serialized measurement exceeded depth 32");
+    }
+    if (v === null) { bump(4); return; } // "null"
+    const t = typeof v;
+    if (t === "string") { bump(strBytes(v)); return; }
+    if (t === "number") {
+      if (!Number.isFinite(v)) throw new BudgetError("INPUT_LIMIT", "nonfinite number is not serializable");
+      bump(strBytes(v));
+      return;
+    }
+    if (t === "boolean") { bump(v ? 4 : 5); return; }
+    if (t === "bigint") { bump(strBytes(`{"$bigint":"${v.toString()}"}`)); return; }
+    if (t !== "object") return; // undefined/function/symbol: not JSON-serializable; schemas reject these
+    if (seen.has(v)) return; // nonduplicating: shared identity measured once
+    seen.add(v);
+    if (Array.isArray(v)) {
+      bump(2); // []
+      for (let i = 0; i < v.length; i++) {
+        if (i > 0) bump(1); // comma
+        if (v[i] === undefined) bump(4); // JSON.stringify -> null
+        else walk(v[i], depth + 1);
+      }
+      return;
+    }
+    bump(2); // {}
+    let first = true;
+    for (const k of Object.keys(v)) {
+      const child = v[k];
+      if (child === undefined) continue; // JSON.stringify drops undefined-valued keys
+      if (!first) bump(1); // comma
+      first = false;
+      bump(strBytes(k) + 1); // "key":
+      walk(child, depth + 1);
+    }
+  };
+  walk(value, 0);
+  return total;
+}
+
 /** Per-task monotonic budget: every object resolution, span check and
  *  payload byte is charged, incrementally, before inspection. */
 export function makeBudget() {
@@ -84,6 +152,19 @@ export function makeBudget() {
         throw new BudgetError("BUDGET_EXCEEDED", `span checks exceed ${BUDGET_LIMITS.maxSpans}${what ? ` (at ${what})` : ""}`);
       }
     },
+    /**
+     * S653-005: charge the exact canonical-serialized UTF-8 size of a
+     * value against the single invocation-wide input budget. The
+     * measurement throws INPUT_LIMIT partway when the cap would be
+     * exceeded, so oversized input is refused before full allocation.
+     * Each call measures independently; callers must pass each consulted
+     * value exactly once (nonduplicating representation).
+     */
+    chargeSerialized(value, what) {
+      const remaining = BUDGET_LIMITS.maxPayloadBytes - used.payloadBytes;
+      const n = serializedByteLength(value, remaining);
+      used.payloadBytes += n;
+    },
   };
 }
 
@@ -128,8 +209,17 @@ export function resolveSourceRef(ref, sources, budget, what) {
     throw new ResolutionError("SOURCE_UNVERIFIED", `revision bytes missing for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}`);
   }
   const bytes = Buffer.from(rev.text, "utf8");
+  // S653-005: the selected revision's raw bytes are charged EXACTLY ONCE
+  // here. Callers must not re-charge the bundle text or per-record slices
+  // (they are byte ranges of these same bytes).
   budget.countPayload(rev.text, `source ${ref.repo}/${ref.path}`);
   const actualBlob = gitBlobId(bytes);
+  // S653-002: bind the full consumed tuple to the HOST registration. The
+  // recomputed bytes must match BOTH the task pin AND the host-registered
+  // blob; a disagreement with the registered immutable tuple fails closed.
+  if (actualBlob !== rev.blob) {
+    throw new ResolutionError("HASH_MISMATCH", `blob mismatch for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}: recomputed ${actualBlob.slice(0, 12)}… disagrees with the HOST-REGISTERED blob ${String(rev.blob).slice(0, 12)}…; failing closed`);
+  }
   if (actualBlob !== ref.blob) {
     throw new ResolutionError("HASH_MISMATCH", `blob mismatch for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}: pinned ${ref.blob.slice(0, 12)}… recomputed ${actualBlob.slice(0, 12)}…`);
   }
@@ -139,7 +229,9 @@ export function resolveSourceRef(ref, sources, budget, what) {
   const expected_records = rev.expected_records;
   // S653-001: host-registered dataset identity travels with the resolved
   // source so population declarations can bind to it.
-  return { bytes, text: rev.text, expected_records, dataset_id: rev.dataset_id, dataset_version: rev.dataset_version };
+  // S653-001 (fix round 2): the host-declared coverage contract (report
+  // period applicability) travels with it as well.
+  return { bytes, text: rev.text, expected_records, dataset_id: rev.dataset_id, dataset_version: rev.dataset_version, coverage: rev.coverage };
 }
 
 /** Exact read-grant check: grants are exact repo+path, never prefixes. */

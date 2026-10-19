@@ -23,6 +23,20 @@ export function assertNotProxy(value, where) {
   }
 }
 
+/**
+ * S653-006 (fix round 2): plain-prototype assertion. Only Object.prototype
+ * and null prototypes are plain data. Any other prototype — including
+ * inherited GETTERS or inherited data — is refused structurally, before
+ * any property of the object is read. This stops inherited accessors from
+ * executing during admission (a Proxy check alone cannot stop them).
+ */
+export function assertPlainPrototype(value, where) {
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    fail(where, "unsupported prototype; inherited accessors or data are not plain data; refusing");
+  }
+}
+
 /** Real calendar date (YYYY-MM-DD) or full UTC instant. Throws on invalid. */
 function validateDate(value, where) {
   if (typeof value !== "string") fail(where, "must be a string");
@@ -110,12 +124,14 @@ export function assertNoAccessors(obj, where) {
  * non-plain prototypes, Proxies (via trap-free native detection), and
  * graphs deeper than 32.
  *
- * S653-005: the walk also charges every reachable string's UTF-8 bytes
- * (values AND property names) against the aggregate 256-KiB input budget.
- * There is one invocation-wide byte budget covering task + context +
- * selected source bytes; metadata that never appears in output cannot
- * escape it. S653-006: types.isProxy is checked before ANY reflective
- * call, so a Proxy-wrapped input is refused with zero trap invocations.
+ * S653-005 (fix round 2): this walk charges OBJECTS only. Byte accounting
+ * uses the single nonduplicating serialized representation
+ * (budget.chargeSerialized, measured with serializedByteLength), applied by
+ * the caller once per consulted value — structure, quoting, escaping and
+ * all. Per-string/per-name byte charging here would double-count against
+ * that representation, so it is intentionally absent.
+ * S653-006: types.isProxy is checked before ANY reflective call, so a
+ * Proxy-wrapped input is refused with zero trap invocations.
  */
 export function admitGraph(value, where, budget, maxDepth = 32) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") {
@@ -124,7 +140,6 @@ export function admitGraph(value, where, budget, maxDepth = 32) {
   const seen = new WeakSet();
   const walk = (v, path, depth) => {
     if (v === null || typeof v !== "object") {
-      if (typeof v === "string") budget.countPayload(v, `string at '${path}'`);
       return;
     }
     // S653-006: native Proxy rejection before any reflection. This check
@@ -136,12 +151,17 @@ export function admitGraph(value, where, budget, maxDepth = 32) {
     if (seen.has(v)) return;
     seen.add(v);
     budget.chargeObjectOnce(v, path);
+    // Plain data: objects on Object.prototype (or null), arrays on
+    // Array.prototype. Anything else — including inherited accessors or
+    // inherited data — is refused structurally (S653-006 fix round 2).
     const proto = Object.getPrototypeOf(v);
-    if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) {
-      fail(where, `unsupported prototype at '${path}'; inherited controls are not plain data; refusing`);
+    const protoOk = Array.isArray(v)
+      ? (proto === Array.prototype)
+      : (proto === Object.prototype || proto === null);
+    if (!protoOk) {
+      fail(where, `unsupported prototype at '${path}'; inherited accessors or data are not plain data; refusing`);
     }
     for (const k of Object.getOwnPropertyNames(v)) {
-      budget.countPayload(k, `property name at '${path}'`);
       const desc = Object.getOwnPropertyDescriptor(v, k);
       if (!desc) continue;
       if (typeof desc.get === "function" || typeof desc.set === "function") {
@@ -429,28 +449,58 @@ export function splitTopLevelArray(text, where) {
  * Validate ONE source entry's revisions without touching any other source.
  * Used after the read-grant check so denied/unselected source metadata
  * stays untouched (S653-006). Returns the normalized entry.
+ *
+ * S653-006 (fix round 2): every level (entry, revisions container, each
+ * revision) must be on a plain prototype — inherited getters or inherited
+ * data are refused structurally, before any property is read. All reads
+ * use own data descriptors, never direct property access.
+ *
+ * S653-001 (fix round 2): each revision carries the host-declared
+ * `coverage` contract — the report period this bundle's population is
+ * registered to cover. Population completeness requires the task's report
+ * interval to fall inside it; a caller-selected period cannot supply its
+ * own coverage.
+ *
+ * S653-005 (fix round 2): revision metadata (label, blob, expected
+ * counts, dataset identity, coverage) is charged once under the single
+ * serialized representation. Revision TEXT is not charged here — the
+ * selected revision's raw bytes are charged exactly once in
+ * resolveSourceRef.
  */
 export function validateSourceEntry(entry, key, where, budget) {
   const charge = (obj, w) => { if (budget) budget.chargeObjectOnce(obj, w); };
   assertNotProxy(entry, where);
+  assertPlainPrototype(entry, where);
   charge(entry, where);
   if (!isPlainObject(entry)) fail(where, "source entry must be an object");
   assertNoAccessors(entry, where);
   exactKeys(entry, ["revisions"], where);
-  const revs = entry.revisions;
-  if (!isPlainObject(revs)) fail(where, "revisions must be an object");
+  const revsDesc = Object.getOwnPropertyDescriptor(entry, "revisions");
+  if (!revsDesc || typeof revsDesc.get === "function" || typeof revsDesc.set === "function") {
+    fail(where, "revisions must be an own data property; inherited accessors are not plain data; refusing");
+  }
+  const revs = revsDesc.value;
+  assertNotProxy(revs, `${where}.revisions`);
+  assertPlainPrototype(revs, `${where}.revisions`);
   charge(revs, `${where}.revisions`);
+  if (!isPlainObject(revs)) fail(where, "revisions must be an object");
   assertNoAccessors(revs, `${where}.revisions`);
   const out = {};
   for (const commit of Object.keys(revs)) {
     if (!HEX40.test(commit)) fail(where, `revision key '${commit}' must be a 40-hex commit id`);
-    const rev = revs[commit];
+    const revDesc = Object.getOwnPropertyDescriptor(revs, commit);
+    if (!revDesc || typeof revDesc.get === "function" || typeof revDesc.set === "function") {
+      fail(where, `revision '${commit}' must be an own data property; inherited accessors are not plain data; refusing`);
+    }
+    const rev = revDesc.value;
     assertNotProxy(rev, `${where}@${commit}`);
+    assertPlainPrototype(rev, `${where}@${commit}`);
     charge(rev, `${where}@${commit}`);
-    if (budget) budget.countPayload(commit, `${where} commit key`);
+    // S653-005 (fix round 2): the commit key is byte-charged once, inside
+    // the metadata serialization below — not separately.
     if (!isPlainObject(rev)) fail(where, `revision '${commit}' must be an object`);
     assertNoAccessors(rev, `${where}@${commit}`);
-    exactKeys(rev, ["text", "blob", "label", "expected_records", "dataset_id", "dataset_version"], `${where}@${commit}`);
+    exactKeys(rev, ["text", "blob", "label", "expected_records", "dataset_id", "dataset_version", "coverage"], `${where}@${commit}`);
     const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
     if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
       fail(where, `revision '${commit}' text must be a plain data property`);
@@ -460,7 +510,6 @@ export function validateSourceEntry(entry, key, where, budget) {
     if (typeof rev.label !== "string" || rev.label.length === 0) {
       fail(where, `revision '${commit}' must carry a registered label`);
     }
-    if (budget) budget.countPayload(rev.label, `${where}@${commit} label`);
     if (rev.expected_records !== undefined) {
       if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
         fail(where, `revision '${commit}' expected_records must be a nonnegative integer`);
@@ -470,9 +519,33 @@ export function validateSourceEntry(entry, key, where, budget) {
     // declarations bind to this; caller claims alone never establish it.
     const dataset_id = reqStr(rev, "dataset_id", `${where}@${commit}`, { maxBytes: 128 });
     const dataset_version = reqStr(rev, "dataset_version", `${where}@${commit}`, { maxBytes: 128 });
+    // S653-001 (fix round 2): host-declared coverage contract. Optional
+    // in the schema (unknown coverage stays a soft "not complete" state,
+    // not a structural refusal); when present it must be a valid
+    // interval, non-inverted.
+    let coverage = undefined;
+    if (rev.coverage !== undefined) {
+      const cov = rev.coverage;
+      if (!isPlainObject(cov)) fail(`${where}@${commit}`, "coverage must be an object");
+      assertPlainPrototype(cov, `${where}@${commit}.coverage`);
+      assertNoAccessors(cov, `${where}@${commit}.coverage`);
+      exactKeys(cov, ["interval_start", "interval_end"], `${where}@${commit}.coverage`);
+      validateDate(cov.interval_start, `${where}@${commit}.coverage.interval_start`);
+      validateDate(cov.interval_end, `${where}@${commit}.coverage.interval_end`);
+      if (instantStartMs(cov.interval_start) > instantEndMs(cov.interval_end)) {
+        fail(`${where}@${commit}`, "coverage interval is inverted; refusing");
+      }
+      coverage = { interval_start: cov.interval_start, interval_end: cov.interval_end };
+    }
+    if (budget) {
+      budget.chargeSerialized(
+        { commit, blob: rev.blob, label: rev.label, expected_records: rev.expected_records, dataset_id, dataset_version, coverage },
+        `${where}@${commit} registered metadata`
+      );
+    }
     out[commit] = {
       text: textDesc.value, blob: rev.blob, label: rev.label,
-      expected_records: rev.expected_records, dataset_id, dataset_version,
+      expected_records: rev.expected_records, dataset_id, dataset_version, coverage,
     };
   }
   return { revisions: out };
@@ -509,6 +582,9 @@ export function validateContextControl(context, budget) {
   }
   const sources = sourcesDesc.value;
   assertNotProxy(sources, "context.sources");
+  // S653-006 (fix round 2): the sources container must be on a plain
+  // prototype — an inherited getter behind it would execute on slot reads.
+  assertPlainPrototype(sources, "context.sources");
   charge(sources, "context.sources");
   if (!isPlainObject(sources)) fail("context", "sources must be an object");
   assertNoAccessors(sources, "context.sources");
@@ -548,7 +624,9 @@ export function validateContextControl(context, budget) {
   const product_registry = {};
   for (const rk of regKeys) {
     if (!PRODUCT_ID_RE.test(rk)) fail("context", `invalid product registry key '${rk}'`);
-    budget.countPayload(rk, "context.product_registry key");
+    // S653-005 (fix round 2): registry keys are byte-charged once inside
+    // the product_registry serialization (admitContextControlGraph) —
+    // not separately here.
     const entry = regIn[rk];
     assertNotProxy(entry, `context.product_registry[${rk}]`);
     charge(entry, `context.product_registry[${rk}]`);
@@ -576,8 +654,9 @@ export function validateContext(context, budget) {
 
 function validateProductEntry(value, where, budget, criteria) {
   if (!isPlainObject(value)) fail(where, "product entry must be an object");
+  assertPlainPrototype(value, where);
   assertNoAccessors(value, where);
-  exactKeys(value, ["product_id", "product_token", "benefit_tokens", "verified"], where);
+  exactKeys(value, ["product_id", "product_token", "benefit_tokens", "verified", "evidence"], where);
   if (budget) budget.chargeObjectOnce(value, where);
   const product_id = reqStr(value, "product_id", where);
   if (!PRODUCT_ID_RE.test(product_id)) fail(where, `invalid product_id '${product_id}'`);
@@ -594,7 +673,25 @@ function validateProductEntry(value, where, budget, criteria) {
     }
   }
   if (typeof value.verified !== "boolean") fail(where, "verified must be a boolean");
-  return { product_id, product_token, benefit_tokens: [...bt], verified: value.verified };
+  // S653-002 (fix round 2): product/benefit evidence must be registered and
+  // pinned, or explicitly typed UNAVAILABLE. Absent evidence is
+  // conservative: UNAVAILABLE, and drafts are withheld until the host
+  // supplies VERIFIED evidence. A bare "trusted context" literal is not
+  // evidence.
+  let evidence = { state: "UNAVAILABLE", detail: "host supplied no product evidence" };
+  if (value.evidence !== undefined) {
+    const ev = value.evidence;
+    if (!isPlainObject(ev)) fail(where, "evidence must be an object");
+    assertPlainPrototype(ev, `${where}.evidence`);
+    assertNoAccessors(ev, `${where}.evidence`);
+    exactKeys(ev, ["state", "detail"], `${where}.evidence`);
+    if (ev.state !== "VERIFIED" && ev.state !== "UNAVAILABLE") {
+      fail(where, "evidence.state must be 'VERIFIED' or 'UNAVAILABLE'");
+    }
+    const detail = reqStr(ev, "detail", `${where}.evidence`, { allowEmpty: true, maxBytes: 512 });
+    evidence = { state: ev.state, detail };
+  }
+  return { product_id, product_token, benefit_tokens: [...bt], verified: value.verified, evidence };
 }
 
 /**
