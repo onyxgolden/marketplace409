@@ -263,9 +263,11 @@ export class Resolver {
     // SHA-256 integrity as well (artifact bytes).
     const sha256 = safeGet(entry, 'sha256', 'entry').value;
     if (sha256) {
-      // PM651-003 (fix round 5): the consulted sha256 metadata must be
-      // byte-counted using serialized JSON bytes.
-      this.chargeInputBytes(Buffer.byteLength(JSON.stringify(sha256), 'utf8'));
+      // PM651-003 (fix round 7): charge the complete serialized metadata
+      // object, not just the bare value. The field key and container
+      // structure are part of the consulted bytes.
+      const sha256Obj = JSON.stringify({ sha256 });
+      this.chargeInputBytes(Buffer.byteLength(sha256Obj, 'utf8'));
     }
     if (sha256 && sha256Hex(bytes) !== sha256) {
       const e = new Error(`HASH_MISMATCH: fixture ${fixtureId}`);

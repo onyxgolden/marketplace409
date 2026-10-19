@@ -63,11 +63,30 @@ const sha256File = (absPath) => {
   return createHash('sha256').update(readFileSync(absPath)).digest('hex');
 };
 
+// PM651-008 (fix round 7): pre-delegation unlisted-helper preflight.
+// Before ANY test discovery or spawn, inventory every .js file in tests/
+// and require each to be pinned in the authenticated manifest with a
+// matching hash. An unlisted helper must refuse before delegation.
+const allJsFiles = readdirSync(TESTS_DIR)
+  .filter((f) => f.endsWith('.js'))
+  .sort();
+for (const f of allJsFiles) {
+  const relPath = `tests/${f}`;
+  const expectedHash = manifestMap.get(relPath);
+  if (!expectedHash) {
+    console.error(`run-tests: REFUSED — unlisted executable in tests/: ${relPath} (pre-delegation)`);
+    process.exit(1);
+  }
+  const actualHash = sha256File(join(TESTS_DIR, f));
+  if (actualHash !== expectedHash) {
+    console.error(`run-tests: REFUSED — hash mismatch (pre-delegation): ${relPath}`);
+    process.exit(1);
+  }
+}
+
 // PM651-008: authenticate every tests/*.test.js file BEFORE execution.
 // Each must be listed in the manifest with a matching hash.
-const actualTests = readdirSync(TESTS_DIR)
-  .filter((f) => f.endsWith('.test.js'))
-  .sort();
+const actualTests = allJsFiles.filter((f) => f.endsWith('.test.js'));
 
 const authenticatedTests = [];
 for (const f of actualTests) {

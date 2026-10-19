@@ -49,7 +49,7 @@
   },
   {
     "path": "src/index.js",
-    "sha256": "bfa2138e7b3f4eec8dd1bab60c8d7bb0f01e7ace732f77c7ab72b77692a4b30d"
+    "sha256": "c052473144461c009dc2ed2b0840bb6032ab0523f51b3a7df91a533e17ab735f"
   },
   {
     "path": "src/injection.js",
@@ -61,7 +61,7 @@
   },
   {
     "path": "src/resolver.js",
-    "sha256": "6a0f537a8fdf44a5bd60a4882f598fedac3d988dad63dbbfdda5c5a047da9020"
+    "sha256": "a6f3af29322d58748213a8a7641c36b8ae5a7b5a0855e392b30e22b0562f181b"
   },
   {
     "path": "src/schemas.js",
@@ -89,7 +89,7 @@
   },
   {
     "path": "tests/run-tests.js",
-    "sha256": "1308d82decb00e302f1c96ccf32d3bbbd4492d46eb4b9607b9e4f5d70b200329"
+    "sha256": "bcb9ec9b6a7824a9af03504d41ea9e890e0f25c6a281b5fc291f867b25fcb03f"
   },
   {
     "path": "tests/run-verified.js",

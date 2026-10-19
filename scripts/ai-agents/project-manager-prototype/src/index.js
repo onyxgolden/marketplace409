@@ -161,6 +161,8 @@ function runInner(task, context, started) {
     } catch (e) {
       if (e.code === 'READ_DENIED') {
         diagnostics.push(mkdiag('READ_DENIED', 'high', null, `fixture ${ref}: not registered`, null));
+        // PM651-003 (fix round 7): charge each diagnostic as a public record.
+        resolver.chargeOutputRecord();
         partial = true;
         continue;
       }
@@ -189,8 +191,12 @@ function runInner(task, context, started) {
     for (const h of hits) {
       quarantinedIds.add(h.record_id);
       quarantined.push({ fixture_id: ref, record_id: h.record_id, families: h.families });
+      // PM651-003 (fix round 7): charge each quarantine record.
+      resolver.chargeOutputRecord();
       diagnostics.push(mkdiag('INSTRUCTION_INJECTION', 'high', h.record_id,
         `quarantined note text (${h.families.join(',')})`, null));
+      // PM651-003 (fix round 7): charge each diagnostic.
+      resolver.chargeOutputRecord();
     }
     // Exact citation: whole-fixture span, verified under the span budget.
     // Quarantined records are cited with explicit exclusion.
@@ -204,6 +210,10 @@ function runInner(task, context, started) {
       verification: 'VERIFIED',
     };
     sourceRefs.push(stripSpanForList(sourceRef));
+    // PM651-003 (fix round 7): charge each source_ref as a public record.
+    resolver.chargeOutputRecord();
+    // Charge the span record nested in the source_ref.
+    if (sourceRef.span) resolver.chargeOutputRecord();
     packages.push({ ref, pkg, citation: sourceRef, bytes: resolved.bytes, quarantinedIds });
     resolver.chargeOutputRecord();
   }
