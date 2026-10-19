@@ -225,10 +225,10 @@ async function checkProbe(c, raw) {
       break;
     }
     case "candidate-65": {
-      // S653-005: record slots are charged BEFORE decode. With the standard
-      // test context the fixed admission overhead is 23 objects, so 41
-      // records fit exactly (64/64) and the 42nd record — the 65th
-      // candidate — refuses BUDGET_EXCEEDED before JSON.parse runs.
+      // S653-005: record slots are charged BEFORE decode. With the
+      // standard test context the fixed admission overhead is 28 objects
+      // (fix round 3: evidence/evidence_ref/coverage candidates), so the
+      // 65th candidate refuses BUDGET_EXCEEDED before JSON.parse runs.
       const leads = [];
       for (let i = 0; i < 42; i++) leads.push(goodLead(`c65-${String(i).padStart(2, "0")}`, { do_not_contact: true }));
       const s2 = customBundle(leads, "c65");

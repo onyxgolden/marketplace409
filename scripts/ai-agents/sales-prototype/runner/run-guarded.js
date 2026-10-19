@@ -38,9 +38,11 @@ const WORKER_PATH = join(HERE, "guarded-worker.js");
 // S653-008 (fix round 2): closed test-worker identity. Keys are the only
 // selectable values; paths resolve inside this package — never from the
 // caller. Every listed file is manifest-pinned and trust-authenticated.
-const TEST_WORKERS = {
+// S653-008 (fix round 3): null-prototype mapping, so inherited key names
+// (e.g. "toString") can never match — only own keys are selectable.
+const TEST_WORKERS = Object.assign(Object.create(null), {
   hang: join(PROTO_ROOT, "tests", "hang-worker.js"),
-};
+});
 
 /**
  * S653-008: every refusal envelope carries report:null per the refusal
@@ -116,18 +118,33 @@ export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS) 
  * internally from this package. Arbitrary caller-supplied paths are not
  * accepted — the old runGuardedWithWorker(taskJson, contextJson,
  * timeoutMs, workerPath) export is removed.
+ *
+ * S653-008 (fix round 3): non-executing identity admission. The identity
+ * is rejected via typeof BEFORE any lookup — a property read or
+ * String() conversion on a caller-controlled object would execute its
+ * coercion hooks on this thread, outside the worker/watchdog boundary.
+ * The refusal path performs no conversion or reflection on the input,
+ * and the match requires an own key of the closed enum (null-prototype
+ * mapping, so inherited names never match).
  */
 export function runGuardedWithTestWorker(taskJson, contextJson, timeoutMs, workerName) {
-  const workerPath = TEST_WORKERS[workerName];
-  if (!workerPath) {
+  if (typeof workerName !== "string") {
     return Promise.resolve(
       transportEnvelope(
         "TRANSPORT_REFUSED",
-        `unknown test worker '${String(workerName)}'; only the closed manifest-pinned test-worker identities are allowed`
+        "test worker identity must be a primitive string; non-string identities refused before lookup"
       )
     );
   }
-  return runGuardedInternal(taskJson, contextJson, timeoutMs, workerPath);
+  if (!Object.prototype.hasOwnProperty.call(TEST_WORKERS, workerName)) {
+    return Promise.resolve(
+      transportEnvelope(
+        "TRANSPORT_REFUSED",
+        "unknown test worker identity; only the closed manifest-pinned test-worker identities are allowed"
+      )
+    );
+  }
+  return runGuardedInternal(taskJson, contextJson, timeoutMs, TEST_WORKERS[workerName]);
 }
 
 /**

@@ -13,7 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, cpSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, cpSync, readFileSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -176,5 +176,78 @@ test("trust: valid manual run works through the pinned bootstrap (S653-009)", ()
     assert.ok(report.report.classifications.length > 0, "manual report must carry classifications");
   } finally {
     rmSync(outdir, { recursive: true, force: true });
+  }
+});
+
+test("trust: manifest FIFO refuses promptly without blocking (S653-009)", () => {
+  // The reviewer's kill-after-2s probe: a FIFO at corpus/manifest.json
+  // must be refused by the pinned bootstrap, not block it.
+  if (!APPROVED_ROOT) { console.log("skip: no SALES_APPROVED_ROOT"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "sales-fifo-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const manifest = join(tmp, "corpus", "manifest.json");
+    rmSync(manifest);
+    // Use mkfifo via shell (node has no direct mkfifo binding).
+    const mk = spawnSync("mkfifo", [manifest], { timeout: 5000 });
+    if (mk.status !== 0) { console.log("skip: mkfifo unavailable"); return; }
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [join(tmp, "bootstrap.mjs"), "manual", "temporal", join(tmp, "out")], {
+      env: { ...process.env, SALES_APPROVED_ROOT: APPROVED_ROOT },
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 10000, `FIFO manifest must refuse promptly (took ${elapsed}ms)`);
+    assert.notEqual(r.status, 0, "FIFO manifest must not succeed");
+    assert.ok(r.stderr.includes("refusing") || r.status === 3, `stderr: ${r.stderr.slice(0, 200)}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("trust: manifest symlink refuses without following (S653-009)", () => {
+  if (!APPROVED_ROOT) { console.log("skip: no SALES_APPROVED_ROOT"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "sales-symlink-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const manifest = join(tmp, "corpus", "manifest.json");
+    const real = readFileSync(manifest, "utf8");
+    rmSync(manifest);
+    // Symlink to a valid manifest elsewhere — must still refuse (no-follow).
+    const other = join(tmp, "real-manifest.json");
+    writeFileSync(other, real);
+    symlinkSync(other, manifest);
+    const r = spawnSync(process.execPath, [join(tmp, "bootstrap.mjs"), "manual", "temporal", join(tmp, "out")], {
+      env: { ...process.env, SALES_APPROVED_ROOT: APPROVED_ROOT },
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    assert.notEqual(r.status, 0, "symlinked manifest must not succeed");
+    assert.ok(r.status === 3, `expected exit 3, got ${r.status} (stderr: ${r.stderr.slice(0, 200)})`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("trust: oversize manifest refuses before allocation (S653-009)", () => {
+  if (!APPROVED_ROOT) { console.log("skip: no SALES_APPROVED_ROOT"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "sales-bigmanifest-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const manifest = join(tmp, "corpus", "manifest.json");
+    // 3 MiB of padding — over the 1 MiB manifest cap.
+    writeFileSync(manifest, JSON.stringify({ files: [], digest: "x", padding: "y".repeat(3 * 1024 * 1024) }));
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [join(tmp, "bootstrap.mjs"), "manual", "temporal", join(tmp, "out")], {
+      env: { ...process.env, SALES_APPROVED_ROOT: APPROVED_ROOT },
+      encoding: "utf8",
+      timeout: 15000,
+    });
+    const elapsed = Date.now() - t0;
+    assert.ok(elapsed < 10000, `oversize manifest must refuse promptly (took ${elapsed}ms)`);
+    assert.notEqual(r.status, 0, "oversize manifest must not succeed");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

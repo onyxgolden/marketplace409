@@ -125,11 +125,13 @@ export function assertNoAccessors(obj, where) {
  * graphs deeper than 32.
  *
  * S653-005 (fix round 2): this walk charges OBJECTS only. Byte accounting
- * uses the single nonduplicating serialized representation
- * (budget.chargeSerialized, measured with serializedByteLength), applied by
- * the caller once per consulted value — structure, quoting, escaping and
- * all. Per-string/per-name byte charging here would double-count against
- * that representation, so it is intentionally absent.
+ * uses the single serialized representation (budget.chargeSerialized,
+ * measured with serializedByteLength), applied by the caller once per
+ * consulted value — structure, quoting, escaping and all.
+ * S653-005 (fix round 3): the serialized measurement charges every
+ * emitted occurrence (shared references are measured per occurrence, not
+ * deduplicated). Per-string/per-name byte charging here would
+ * double-count against that representation, so it is intentionally absent.
  * S653-006: types.isProxy is checked before ANY reflective call, so a
  * Proxy-wrapped input is refused with zero trap invocations.
  */
@@ -189,6 +191,8 @@ export function assertDeepNoAccessors(value, where, maxDepth = 32) {
   const seen = new WeakSet();
   const walk = (v, path, depth) => {
     if (v === null || typeof v !== "object") return;
+    // S653-006 (fix round 3): trap-free Proxy rejection before reflection.
+    assertNotProxy(v, path);
     if (depth > maxDepth) fail(where, `object graph exceeds max depth ${maxDepth} at '${path}'; refusing`);
     if (seen.has(v)) return;
     seen.add(v);
@@ -230,6 +234,9 @@ export function assertDenseArray(arr, where) {
 
 /** SourceRef = {repo, path, commit, blob, algorithm:"git-sha1", revision}. */
 export function validateSourceRef(value, where) {
+  // S653-006 (fix round 3): trap-free native Proxy rejection before any
+  // reflective check, on every exported validator.
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "SourceRef must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path", "commit", "blob", "algorithm", "revision"], where);
@@ -247,6 +254,7 @@ export function validateSourceRef(value, where) {
 }
 
 export function validatePrincipal(value, where) {
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "principal must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["principal_id", "role", "registered_by", "valid_from", "expires_at", "revoked"], where);
@@ -292,6 +300,7 @@ export function principalWindowLive(principal, clockMs) {
 }
 
 export function validateReadGrant(value, where, budget) {
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "read grant must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path"], where);
@@ -308,6 +317,7 @@ export function validateReadGrant(value, where, budget) {
  *  fit_high_timing_days, allowlisted_product_tokens, allowlisted_benefit_tokens}.
  */
 export function validateCriteria(value, where, budget) {
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "criteria must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["criteria_id", "criteria_version", "fit_high_timing_days", "allowlisted_product_tokens", "allowlisted_benefit_tokens"], where);
@@ -347,6 +357,7 @@ export function validateLeadRecord(value, where, budget = null, preCharged = fal
   // to avoid double-counting the same candidate. Direct callers keep the
   // default behavior.
   const charge = (obj, w) => { if (budget && !preCharged) budget.chargeObjectOnce(obj, w); };
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "lead record must be an object");
   charge(value, where);
   assertNoAccessors(value, where);
@@ -525,7 +536,19 @@ export function validateSourceEntry(entry, key, where, budget) {
     // interval, non-inverted.
     let coverage = undefined;
     if (rev.coverage !== undefined) {
-      const cov = rev.coverage;
+      // S653-006 (fix round 3): the coverage metadata container gets the
+      // same admission discipline as every other consumed object —
+      // trap-free native Proxy rejection and candidate charging BEFORE
+      // any reflection. A Proxy-wrapped coverage object is refused with
+      // zero trap invocations; an over-budget coverage candidate refuses
+      // with BUDGET_EXCEEDED before it is ever reflected on.
+      const covDesc = Object.getOwnPropertyDescriptor(rev, "coverage");
+      if (!covDesc || typeof covDesc.get === "function" || typeof covDesc.set === "function") {
+        fail(`${where}@${commit}`, "coverage must be an own data property; inherited accessors are not plain data; refusing");
+      }
+      const cov = covDesc.value;
+      assertNotProxy(cov, `${where}@${commit}.coverage`);
+      charge(cov, `${where}@${commit}.coverage`);
       if (!isPlainObject(cov)) fail(`${where}@${commit}`, "coverage must be an object");
       assertPlainPrototype(cov, `${where}@${commit}.coverage`);
       assertNoAccessors(cov, `${where}@${commit}.coverage`);
@@ -653,6 +676,9 @@ export function validateContext(context, budget) {
 }
 
 function validateProductEntry(value, where, budget, criteria) {
+  // S653-006 (fix round 3): trap-free Proxy rejection before reflection,
+  // on this metadata container too.
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "product entry must be an object");
   assertPlainPrototype(value, where);
   assertNoAccessors(value, where);
@@ -673,23 +699,49 @@ function validateProductEntry(value, where, budget, criteria) {
     }
   }
   if (typeof value.verified !== "boolean") fail(where, "verified must be a boolean");
-  // S653-002 (fix round 2): product/benefit evidence must be registered and
-  // pinned, or explicitly typed UNAVAILABLE. Absent evidence is
-  // conservative: UNAVAILABLE, and drafts are withheld until the host
-  // supplies VERIFIED evidence. A bare "trusted context" literal is not
-  // evidence.
-  let evidence = { state: "UNAVAILABLE", detail: "host supplied no product evidence" };
+  // S653-002 (fix round 3): product/benefit evidence must be a PINNED
+  // registered source tuple — the full repo/path/commit/blob/algorithm/
+  // revision identity — or explicitly UNAVAILABLE. A VERIFIED label with
+  // no evidence pin is a structural refusal: a host-context label is not
+  // provenance, and it can never promote a draft to VERIFIED. The pin is
+  // resolved against the host registration in run() (index.js); anything
+  // unresolvable downgrades to UNAVAILABLE there (conservative: drafts
+  // withheld, never fabricated).
+  let evidence = { state: "UNAVAILABLE", detail: "host supplied no product evidence", evidence_ref: undefined };
   if (value.evidence !== undefined) {
-    const ev = value.evidence;
+    const evDesc = Object.getOwnPropertyDescriptor(value, "evidence");
+    if (!evDesc || typeof evDesc.get === "function" || typeof evDesc.set === "function") {
+      fail(where, "evidence must be an own data property; inherited accessors are not plain data; refusing");
+    }
+    const ev = evDesc.value;
+    assertNotProxy(ev, `${where}.evidence`);
+    if (budget) budget.chargeObjectOnce(ev, `${where}.evidence`);
     if (!isPlainObject(ev)) fail(where, "evidence must be an object");
     assertPlainPrototype(ev, `${where}.evidence`);
     assertNoAccessors(ev, `${where}.evidence`);
-    exactKeys(ev, ["state", "detail"], `${where}.evidence`);
+    exactKeys(ev, ["state", "detail", "evidence_ref"], `${where}.evidence`);
     if (ev.state !== "VERIFIED" && ev.state !== "UNAVAILABLE") {
       fail(where, "evidence.state must be 'VERIFIED' or 'UNAVAILABLE'");
     }
     const detail = reqStr(ev, "detail", `${where}.evidence`, { allowEmpty: true, maxBytes: 512 });
-    evidence = { state: ev.state, detail };
+    if (ev.state === "UNAVAILABLE") {
+      if (ev.evidence_ref !== undefined) {
+        fail(where, "UNAVAILABLE evidence must not carry an evidence_ref");
+      }
+      evidence = { state: "UNAVAILABLE", detail, evidence_ref: undefined };
+    } else {
+      if (ev.evidence_ref === undefined) {
+        fail(where, "VERIFIED evidence requires a pinned evidence_ref (repo/path/commit/blob/algorithm/revision); a bare state label is not evidence");
+      }
+      const pinDesc = Object.getOwnPropertyDescriptor(ev, "evidence_ref");
+      if (!pinDesc || typeof pinDesc.get === "function" || typeof pinDesc.set === "function") {
+        fail(where, "evidence_ref must be an own data property; refusing");
+      }
+      assertNotProxy(pinDesc.value, `${where}.evidence.evidence_ref`);
+      if (budget) budget.chargeObjectOnce(pinDesc.value, `${where}.evidence.evidence_ref`);
+      const evidence_ref = validateSourceRef(pinDesc.value, `${where}.evidence.evidence_ref`);
+      evidence = { state: "VERIFIED", detail, evidence_ref };
+    }
   }
   return { product_id, product_token, benefit_tokens: [...bt], verified: value.verified, evidence };
 }
@@ -699,6 +751,7 @@ function validateProductEntry(value, where, budget, criteria) {
  */
 function validateTestHooks(value, where, budget) {
   if (value === undefined) return undefined;
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "test_hooks must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["prefill_output_records"], where);
@@ -712,6 +765,7 @@ function validateTestHooks(value, where, budget) {
 
 export function validateTask(task, budget = null) {
   const charge = (obj, what) => { if (budget) budget.chargeObjectOnce(obj, what); };
+  assertNotProxy(task, "task");
   if (!isPlainObject(task)) fail("task", "must be an object");
   charge(task, "task");
   assertNoAccessors(task, "task");
@@ -796,6 +850,7 @@ export function validateTask(task, budget = null) {
 }
 
 function validateTaskOptions(value, where, budget) {
+  assertNotProxy(value, where);
   if (!isPlainObject(value)) fail(where, "options must be an object");
   if (budget) budget.chargeObjectOnce(value, where);
   assertNoAccessors(value, where);

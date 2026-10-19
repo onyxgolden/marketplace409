@@ -69,3 +69,66 @@ describe("runGuarded", () => {
     assert.equal(r.report, null);
   });
 });
+
+describe("S653 fix round 3: worker identity validated before lookup, no coercion (S653-008)", () => {
+  it("object identity with a toString counter refuses with zero coercion-hook calls", async () => {
+    // The reviewer's exact probe: an object whose toString counts calls.
+    // typeof must reject it BEFORE the TEST_WORKERS lookup, and the
+    // refusal must not String(workerName).
+    let calls = 0;
+    const evil = { toString() { calls++; return "hang"; } };
+    const r = await runGuardedWithTestWorker("{}", "{}", 1500, evil);
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "TRANSPORT_REFUSED");
+    assert.equal(calls, 0, "toString must never be called");
+  });
+
+  it("Proxy identity refuses with zero trap invocations", async () => {
+    let traps = 0;
+    const proxy = new Proxy({}, {
+      get(t, k) { traps++; return t[k]; },
+      getOwnPropertyDescriptor(t, k) { traps++; return Object.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { traps++; return Object.getPrototypeOf(t); },
+      ownKeys(t) { traps++; return Object.getOwnPropertyNames(t); },
+      has(t, k) { traps++; return k in t; },
+    });
+    const r = await runGuardedWithTestWorker("{}", "{}", 1500, proxy);
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "TRANSPORT_REFUSED");
+    assert.equal(traps, 0, "no proxy trap may fire");
+  });
+
+  it("symbol identity refuses without coercion", async () => {
+    const r = await runGuardedWithTestWorker("{}", "{}", 1500, Symbol("hang"));
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "TRANSPORT_REFUSED");
+  });
+
+  it("inherited key names do not match (closed enum, own-key only)", async () => {
+    // "toString", "constructor", "hasOwnProperty" are inherited on a
+    // normal object; the null-prototype TEST_WORKERS map must not match
+    // them.
+    for (const name of ["toString", "constructor", "hasOwnProperty", "watch"]) {
+      const r = await runGuardedWithTestWorker("{}", "{}", 1500, name);
+      assert.equal(r.status, "REFUSED", `"${name}" must not resolve to a worker`);
+      assert.equal(r.diagnostics[0].code, "TRANSPORT_REFUSED");
+    }
+  });
+
+  it("unknown strings refuse", async () => {
+    const r = await runGuardedWithTestWorker("{}", "{}", 1500, "definitely-not-a-worker");
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "TRANSPORT_REFUSED");
+    assert.equal(r.report, null);
+  });
+
+  it("the registered hang worker still terminates under the watchdog", async () => {
+    // Control: the real "hang" identity keeps working after the fix.
+    const t0 = Date.now();
+    const r = await runGuardedWithTestWorker("{}", "{}", 1500, "hang");
+    const elapsed = Date.now() - t0;
+    assert.equal(r.status, "REFUSED");
+    assert.equal(r.diagnostics[0].code, "EXECUTION_TIMEOUT");
+    assert.ok(elapsed < 10000, `watchdog must terminate promptly (took ${elapsed}ms)`);
+  });
+});

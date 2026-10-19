@@ -136,5 +136,36 @@ for (const [name, leads] of Object.entries(bundles)) {
   };
 }
 
+// S653-002 (fix round 3): registered product evidence catalog. A
+// product's VERIFIED evidence pins one of these versioned source tuples;
+// run() resolves the pin against the host registration and requires the
+// catalog to actually document that product_id. Synthetic only.
+const EVIDENCE_CATALOG = {
+  "crm-starter": {
+    evidence_text: "CRM Starter is the entry customer-relationship product: contact timelines, faster follow-up sequences, and a clean pipeline board.",
+    evidence_version: "2026-10-19",
+    benefits: ["faster-followup", "clean-pipeline"],
+  },
+  "pipeline-pro": {
+    evidence_text: "Pipeline Pro adds shared team visibility and pipeline hygiene on top of CRM Starter.",
+    evidence_version: "2026-10-19",
+    benefits: ["clean-pipeline", "team-visibility"],
+  },
+};
+{
+  const path = "products/catalog.json";
+  const text = JSON.stringify(EVIDENCE_CATALOG);
+  const commit = fakeCommit("products/catalog");
+  const blob = gitBlobId(text);
+  const key = `${REPO}|${path}`;
+  store.sources[key] = {
+    revisions: {
+      [commit]: { text, blob, label: `sales-fixtures/products@v1`, dataset_id: DATASET_ID, dataset_version: DATASET_VERSION },
+    },
+  };
+  store.evidenceCatalogRef = { repo: REPO, path, commit, blob, algorithm: "git-sha1", revision: `sales-fixtures/products@v1` };
+  store.evidenceSourceKey = key;
+}
+
 writeFileSync(join(ROOT, "fixtures", "store.json"), JSON.stringify(store, null, 2) + "\n");
-console.log(`wrote fixtures/store.json with ${Object.keys(bundles).length} bundles`);
+console.log(`wrote fixtures/store.json with ${Object.keys(bundles).length} bundles + product evidence catalog`);

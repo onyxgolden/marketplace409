@@ -379,3 +379,76 @@ describe("S653 fix round 2: inherited getters never execute (S653-006)", () => {
     assert.equal(calls, 0, "inherited source-slot getter must never execute");
   });
 });
+
+describe("S653 fix round 3: proxy rejection before reflection, coverage charged first (S653-006)", () => {
+  it("validateSourceEntry rejects a Proxy coverage container with ZERO trap invocations", async () => {
+    // The reviewer's exact probe: a Proxy-wrapped rev.coverage must be
+    // rejected by trap-free types.isProxy BEFORE any descriptor
+    // reflection, and the coverage candidate must already be charged.
+    const schemas = await import("../src/schemas.js");
+    const { makeBudget } = await import("../src/resolver.js");
+    const { loadStore } = await import("./helpers.js");
+    const store = loadStore();
+    const key = "sales-fixtures|leads/main.json";
+    const entry = JSON.parse(JSON.stringify(store.sources[key]));
+    const commit = Object.keys(entry.revisions)[0];
+    let traps = 0;
+    const proxyCoverage = new Proxy({ checked: true }, {
+      get(t, k) { traps++; return t[k]; },
+      getOwnPropertyDescriptor(t, k) { traps++; return Object.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { traps++; return Object.getPrototypeOf(t); },
+      ownKeys(t) { traps++; return Object.getOwnPropertyNames(t); },
+      has(t, k) { traps++; return k in t; },
+    });
+    entry.revisions[commit].coverage = proxyCoverage;
+    const budget = makeBudget();
+    assert.throws(
+      () => schemas.validateSourceEntry(entry, key, "t", budget),
+      (e) => e.code === "INVALID_INPUT" || e.name === "SchemaError"
+    );
+    assert.equal(traps, 0, "no proxy trap may fire on the coverage container");
+  });
+
+  it("over-budget coverage candidates are never reflected on", async () => {
+    // Candidate64/65 instrumentation: when the object budget is exhausted
+    // by the coverage candidate itself, validateSourceEntry must throw
+    // the budget error BEFORE any reflection on the coverage object.
+    const schemas = await import("../src/schemas.js");
+    const { makeBudget } = await import("../src/resolver.js");
+    const { loadStore } = await import("./helpers.js");
+    const store = loadStore();
+    const key = "sales-fixtures|leads/main.json";
+    const entry = JSON.parse(JSON.stringify(store.sources[key]));
+    const budget = makeBudget();
+    // Exhaust the object budget to 63 (one slot left).
+    for (let i = 0; i < 63; i++) budget.countObject(`filler-${i}`);
+    // The coverage charge is the 64th; the NEXT charge must throw.
+    // Force the coverage to be the 65th by pre-charging one more.
+    budget.countObject("filler-63");
+    let reflected = false;
+    const evilCoverage = {
+      get checked() { reflected = true; return true; },
+    };
+    const commit = Object.keys(entry.revisions)[0];
+    entry.revisions[commit].coverage = evilCoverage;
+    assert.throws(
+      () => schemas.validateSourceEntry(entry, key, "t", budget),
+      (e) => e.code === "INPUT_LIMIT" || e.code === "BUDGET_EXCEEDED" || e.name === "BudgetError"
+    );
+    assert.equal(reflected, false, "over-budget coverage must never be reflected on");
+  });
+
+  it("validateSourceRef rejects a Proxy with zero traps", async () => {
+    const schemas = await import("../src/schemas.js");
+    const { makeBudget } = await import("../src/resolver.js");
+    let traps = 0;
+    const proxy = new Proxy({}, {
+      get(t, k) { traps++; return t[k]; },
+      getOwnPropertyDescriptor(t, k) { traps++; return Object.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { traps++; return Object.getPrototypeOf(t); },
+      ownKeys(t) { traps++; return Object.getOwnPropertyNames(t); },
+    });
+    assert.throws(() => schemas.validateSourceRef(proxy, "t", makeBudget()), SchemaError);
+    assert.equal(traps, 0, "no proxy trap may fire on a SourceRef");
+  });
+});

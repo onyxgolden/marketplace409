@@ -219,6 +219,99 @@ export function countOutputRecords(env) {
 }
 
 /**
+ * S653-002 (fix round 3): resolve one evidence source pin against the
+ * host-registered sources. Returns {catalog} on success or {error} when
+ * the pin cannot be resolved. Selected source bytes are charged exactly
+ * once per unique pin (the once-per-selected-source-byte convention) —
+ * the caller caches by pin identity so shared pins are not re-charged.
+ */
+function resolveEvidenceSource(pin, c, admittedEntries, budget) {
+  const key = `${pin.repo}|${pin.path}`;
+  if (!hasReadGrant(pin, c.readGrants)) {
+    return { error: "no read grant for the evidence source" };
+  }
+  let entry = admittedEntries[key];
+  if (!entry) {
+    const slotDesc = Object.getOwnPropertyDescriptor(c.sources, key);
+    const rawEntry = slotDesc && typeof slotDesc.get !== "function" && typeof slotDesc.set !== "function"
+      ? slotDesc.value
+      : undefined;
+    if (!rawEntry || typeof rawEntry !== "object") {
+      return { error: "evidence source not registered" };
+    }
+    try {
+      entry = validateSourceEntry(rawEntry, key, `context.sources[${key}]`, budget);
+    } catch (e) {
+      // Budget exhaustion is not an unresolvable pin — it means the
+      // invocation is over budget. Propagate; the caller refuses.
+      if (e instanceof BudgetError) throw e;
+      return { error: `evidence source admission failed: ${String(e.message).slice(0, 160)}` };
+    }
+    admittedEntries[key] = entry;
+  }
+  let resolved;
+  try {
+    resolved = resolveSourceRef(pin, { [key]: entry }, budget, `product_registry.evidence`);
+  } catch (e) {
+    if (e instanceof BudgetError) throw e;
+    return { error: `evidence pin failed resolution: ${e.code ?? e.name}: ${String(e.message).slice(0, 160)}` };
+  }
+  let catalog;
+  try {
+    catalog = JSON.parse(resolved.text);
+  } catch {
+    return { error: "evidence source text is not valid JSON" };
+  }
+  if (catalog === null || typeof catalog !== "object" || Array.isArray(catalog)) {
+    return { error: "evidence catalog is not a JSON object" };
+  }
+  return { catalog };
+}
+
+/**
+ * S653-002 (fix round 3): compute one product's effective evidence.
+ * VERIFIED only when the pinned tuple resolves to registered bytes that
+ * actually document this product_id; otherwise UNAVAILABLE with a
+ * diagnostic (conservative: drafts withheld, never fabricated).
+ *
+ * The evidence catalog is a host-registered JSON object keyed by
+ * product_id. The product binding is an own-data-property check — never
+ * inherited, never fuzzy string matching.
+ */
+function resolveProductEvidence(product, c, admittedEntries, evidenceCache, budget, diagnostics) {
+  const ev = product.evidence;
+  if (!ev || ev.state !== "VERIFIED") return ev;
+  const pin = ev.evidence_ref;
+  // Cache by full pin identity: shared pins resolve (and charge bytes)
+  // once; per-product binding is still checked individually below.
+  const cacheKey = `${pin.repo}|${pin.path}|${pin.commit}|${pin.blob}`;
+  let cached = evidenceCache[cacheKey];
+  if (!cached) {
+    cached = resolveEvidenceSource(pin, c, admittedEntries, budget);
+    evidenceCache[cacheKey] = cached;
+  }
+  const downgrade = (reason) => {
+    diagnostics.push({
+      code: "PRODUCT_EVIDENCE_UNRESOLVED",
+      severity: "warning",
+      record_id: null,
+      source_ref: null,
+      reason: `product '${product.product_id}' evidence pin unresolved (${reason}); treating as UNAVAILABLE, drafts withheld`,
+    });
+    return { state: "UNAVAILABLE", detail: `evidence pin unresolved: ${reason}`, evidence_ref: undefined };
+  };
+  if (cached.error) {
+    return downgrade(cached.error);
+  }
+  const itemDesc = Object.getOwnPropertyDescriptor(cached.catalog, product.product_id);
+  if (!itemDesc || typeof itemDesc.get === "function" || typeof itemDesc.set === "function" ||
+      itemDesc.value === null || typeof itemDesc.value !== "object" || Array.isArray(itemDesc.value)) {
+    return downgrade(`evidence catalog does not document product '${product.product_id}'`);
+  }
+  return ev;
+}
+
+/**
  * run(task, context) — the single public entrypoint.
  */
 export function run(task, context) {
@@ -272,6 +365,9 @@ export function run(task, context) {
     // 1. Per fixture_ref: grant check FIRST, then admit + verify that one
     // source entry. Denied/unselected source metadata stays untouched.
     const bundles = [];
+    // S653-002 (fix round 3): admitted source entries, reused when a
+    // product evidence pin names an already-admitted source.
+    const admittedEntries = {};
     for (let i = 0; i < t.fixture_refs.length; i++) {
       const ref = t.fixture_refs[i];
       if (!hasReadGrant(ref, c.readGrants)) {
@@ -296,6 +392,7 @@ export function run(task, context) {
         if (e instanceof SchemaError) return boundedRefused(taskId, "INVALID_INPUT", "error", e.message);
         throw e;
       }
+      admittedEntries[key] = entry;
       const resolved = resolveSourceRef(ref, { [key]: entry }, budget, `task.fixture_refs[${i}]`);
       source_refs.push({ repo: ref.repo, path: ref.path, commit: ref.commit, blob: ref.blob, algorithm: ref.algorithm, revision: ref.revision });
       bundles.push({
@@ -387,6 +484,33 @@ export function run(task, context) {
       }
     }
 
+    // S653-002 (fix round 3): resolve product evidence pins against the
+    // host-registered sources. VERIFIED evidence is only eligible when its
+    // pinned tuple resolves to registered bytes that actually document
+    // THIS product. Anything less — no grant, unregistered source,
+    // admission failure, blob mismatch, or a catalog that does not name
+    // this product — downgrades the evidence to UNAVAILABLE (conservative:
+    // drafts withheld, never fabricated). This is eligibility, not a
+    // whole-run refusal: classifications and metrics do not depend on
+    // product evidence.
+    // S653-002 (fix round 3): product evidence resolves LAZILY, only
+    // when a draft might actually be built. Evidence sources resolve once
+    // per unique pin; the byte charge follows the
+    // once-per-selected-source-byte convention even when several products
+    // share a catalog. Runs that build no drafts (suppressed,
+    // quarantined, non-FIT_HIGH) never pay the resolution cost.
+    const evidenceCache = {};
+    const effectiveEvidenceCache = {};
+    const getEffectiveEvidence = (pid) => {
+      if (!(pid in effectiveEvidenceCache)) {
+        const product = c.product_registry[pid];
+        effectiveEvidenceCache[pid] = product
+          ? resolveProductEvidence(product, c, admittedEntries, evidenceCache, budget, diagnostics)
+          : undefined;
+      }
+      return effectiveEvidenceCache[pid];
+    };
+
     // S653-001: trusted, applicable population completeness. Requires ALL
     // of: the caller declared complete; the host's registered
     // expected_records matches admitted spans on EVERY bundle; the
@@ -431,15 +555,14 @@ export function run(task, context) {
     // 3. Classify, suppress, draft.
     const classified = [];
     const draftRecords = [];
-    // S653-002 (fix round 2): the applicable criterion with its evidence.
-    // Criteria live in the separately trusted host context; the evidence
-    // record says so explicitly rather than implying source-byte
-    // provenance.
+    // S653-002 (fix round 3): the applicable criterion, pinned by its
+    // host-registered id+version — a versioned reference, not prose. The
+    // criteria are host-registered out-of-band; the id+version tuple is
+    // their identity.
     const criteriaEvidence = {
       criteria_id: c.criteria.criteria_id,
       criteria_version: c.criteria.criteria_version,
-      state: "HOST_CONTEXT",
-      detail: "fit precedence applied from separately trusted host criteria; not source bytes",
+      state: "HOST_REGISTERED",
     };
     for (const l of leads) {
       const { fit, gaps } = classifyFit(l.record, c.criteria.fit_high_timing_days);
@@ -452,14 +575,17 @@ export function run(task, context) {
         draftReason = "QUARANTINED: untrusted field matched an injection family; no draft";
       } else if (fit === "FIT_HIGH" && t.options.include_drafts) {
         const product = c.product_registry[l.record.fixture_product_id];
+        // S653-002 (fix round 3): the EFFECTIVE evidence — VERIFIED only
+        // when the evidence pin resolved to registered bytes documenting
+        // this product. Anything less withholds drafts. Resolved lazily:
+        // suppressed/quarantined/non-FIT_HIGH leads never trigger it.
+        const effEvidence = product ? getEffectiveEvidence(l.record.fixture_product_id) : undefined;
         if (!product) {
           draftReason = "NO_PRODUCT: fixture_product_id not in the host product registry";
         } else if (!product.verified) {
           draftReason = "UNVERIFIED_PRODUCT: product entry not verified; no draft";
-        } else if (product.evidence.state !== "VERIFIED") {
-          // S653-002 (fix round 2): conservative eligibility — without
-          // registered VERIFIED product/benefit evidence, no draft.
-          draftReason = `UNAVAILABLE_PRODUCT_EVIDENCE: ${product.evidence.detail}; no draft`;
+        } else if (!effEvidence || effEvidence.state !== "VERIFIED") {
+          draftReason = `UNAVAILABLE_PRODUCT_EVIDENCE: ${effEvidence ? effEvidence.detail : "no effective evidence"}; no draft`;
         } else {
           drafts = buildDrafts(l.record, product, c.criteria);
         }
@@ -484,21 +610,25 @@ export function run(task, context) {
       });
       for (const d of drafts) {
         const product = c.product_registry[l.record.fixture_product_id];
+        const effEvidence = getEffectiveEvidence(l.record.fixture_product_id);
         draftRecords.push({
           lead_id: l.record.lead_id,
           variant: d.variant,
           text: d.text,
           marker: d.marker,
-          // S653-002 (fix round 2): structured product/benefit evidence —
-          // registered and pinned, or explicitly UNAVAILABLE. Drafts are
-          // only built when the evidence state is VERIFIED (see above).
+          // S653-002 (fix round 3): the emitted product evidence carries
+          // the resolved evidence pin — the versioned source tuple — so
+          // the VERIFIED assertion is traceable to registered bytes.
+          // Drafts are only built when the effective evidence is
+          // VERIFIED (see above).
           citation: {
             ...l.citation,
             product_evidence: {
-              state: product.evidence.state,
-              detail: product.evidence.detail,
+              state: effEvidence.state,
+              detail: effEvidence.detail,
               product_id: product.product_id,
               product_token: product.product_token,
+              evidence_ref: effEvidence.evidence_ref ?? null,
             },
           },
         });

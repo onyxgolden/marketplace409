@@ -17,6 +17,13 @@
  * regular file (no symlinks, FIFOs, sockets, or devices), with a per-file
  * size cap, so acquisition itself is bounded.
  *
+ * S653-009 (fix round 3): descriptor-first admission. Files are opened
+ * with O_NOFOLLOW|O_NONBLOCK and the OPENED DESCRIPTOR is fstat'd — the
+ * old lstat-then-pathname-open had a replacement race. The manifest
+ * itself gets the same treatment: a FIFO/symlink/socket/device at
+ * corpus/manifest.json is refused promptly instead of blocking the
+ * pinned bootstrap before root verification.
+ *
  * This file is intentionally NOT listed in corpus/manifest.json — it is
  * the trust root, not scored corpus. The unlisted-file scan below covers
  * the scored subdirectories; this anchor lives outside them.
@@ -30,7 +37,7 @@
  * before running. Exit 3 on any authentication failure.
  */
 
-import { readFileSync, readdirSync, lstatSync } from "node:fs";
+import { readdirSync, lstatSync, openSync, readSync, fstatSync, closeSync, constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { normalize } from "node:path/posix";
@@ -55,22 +62,54 @@ if (mode !== "test" && mode !== "battery" && mode !== "manual") {
 
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 
+/**
+ * S653-009 (fix round 3): bounded regular-file/no-follow descriptor
+ * admission. The file is opened FIRST with O_NOFOLLOW|O_NONBLOCK, then
+ * the OPENED DESCRIPTOR is fstat'd — never a pathname stat. This closes
+ * the lstat-then-open replacement race: a symlink is refused at open
+ * (ELOOP), a FIFO/socket/device is refused by the fstat type check
+ * without ever blocking (O_NONBLOCK means the open itself cannot hang
+ * on a FIFO), and the size cap is enforced with cap+1 reads off the
+ * descriptor so a concurrently growing file cannot overrun the bound.
+ */
+function readBoundedRegularFile(absPath, rel) {
+  let fd;
+  try {
+    fd = openSync(absPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (err) {
+    if (err && (err.code === "ELOOP" || err.code === "ENXIO")) {
+      throw new Error(`not a regular file (symlink/device refused): ${rel}`);
+    }
+    throw new Error(`cannot open pinned file: ${rel}`);
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) {
+      throw new Error(`not a regular file: ${rel}`);
+    }
+    if (st.size > MAX_MEMBER_BYTES) {
+      throw new Error(`member exceeds ${MAX_MEMBER_BYTES} bytes: ${rel}`);
+    }
+    const buf = Buffer.alloc(MAX_MEMBER_BYTES + 1);
+    let total = 0;
+    let n;
+    // Cap+1 reads off the opened descriptor: a file that grows between
+    // the fstat and the read still cannot exceed the bound.
+    while (total <= MAX_MEMBER_BYTES && (n = readSync(fd, buf, total, buf.length - total)) > 0) {
+      total += n;
+    }
+    if (total > MAX_MEMBER_BYTES) {
+      throw new Error(`member exceeds ${MAX_MEMBER_BYTES} bytes: ${rel}`);
+    }
+    return buf.subarray(0, total);
+  } finally {
+    try { closeSync(fd); } catch { /* already closed */ }
+  }
+}
+
 /** Read a corpus member only after proving it is a bounded regular file. */
 function readMemberBytes(absPath, rel) {
-  let st;
-  try {
-    st = lstatSync(absPath);
-  } catch {
-    throw new Error(`missing pinned file: ${rel}`);
-  }
-  // lstat (no follow): symlinks, FIFOs, sockets, devices all refused.
-  if (!st.isFile()) {
-    throw new Error(`not a regular file: ${rel}`);
-  }
-  if (st.size > MAX_MEMBER_BYTES) {
-    throw new Error(`member exceeds ${MAX_MEMBER_BYTES} bytes: ${rel}`);
-  }
-  return readFileSync(absPath);
+  return readBoundedRegularFile(absPath, rel);
 }
 
 // ---- trust authentication (builtins only) ----
@@ -83,9 +122,14 @@ function readMemberBytes(absPath, rel) {
   try {
     // The manifest itself is read by direct path (not via a manifest
     // listing), so a tampered listing cannot redirect this read.
-    manifest = JSON.parse(readFileSync(join(ROOT, "corpus", "manifest.json"), "utf8"));
-  } catch {
-    bad = "corpus/manifest.json unreadable";
+    // S653-009 (fix round 3): the manifest gets the same bounded
+    // regular-file/no-follow descriptor admission as members — a FIFO,
+    // socket, symlink or device at the manifest path is refused promptly
+    // instead of blocking the pinned bootstrap before root verification.
+    const manifestBytes = readBoundedRegularFile(join(ROOT, "corpus", "manifest.json"), "corpus/manifest.json");
+    manifest = JSON.parse(manifestBytes.toString("utf8"));
+  } catch (err) {
+    bad = `corpus/manifest.json unreadable: ${err.message}`;
   }
   // ROOT-FIRST: authenticate the manifest digest before consulting ANY
   // member path. A manifest that lists a FIFO/socket/symlink is rejected

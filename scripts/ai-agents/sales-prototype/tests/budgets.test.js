@@ -73,28 +73,31 @@ describe("run() budget enforcement", () => {
   }
 
   it("candidate 65 refuses before decode; later records untouched (sentinel)", () => {
-    // 39 records = exactly 64 admitted objects: valid positive control.
-    const s39 = dncBundle(39, false);
-    const r39 = run(makeTask(s39, { bundleNames: ["dnc"] }), makeContext(s39, { bundleNames: ["dnc"] }));
-    assert.notEqual(r39.diagnostics[0]?.code, "BUDGET_EXCEEDED", "39 records must not trip the object budget");
-    // 40 records: the 40th record is the 65th object and refuses BUDGET_EXCEEDED.
-    const s40 = dncBundle(40, false);
-    const r40 = run(makeTask(s40, { bundleNames: ["dnc"] }), makeContext(s40, { bundleNames: ["dnc"] }));
-    assert.equal(r40.status, "REFUSED");
-    assert.equal(r40.diagnostics[0].code, "BUDGET_EXCEEDED");
-    assert.equal(r40.report, null);
-    assert.equal(r40.complete, false);
+    // S653-002/S653-006 (fix round 3): the fixed admission overhead grew
+    // (evidence + evidence_ref pin objects, coverage candidate charging),
+    // so the boundary moved: 36 records fit without tripping the object
+    // budget (positive control), and the 37th record is the 65th
+    // candidate and refuses BUDGET_EXCEEDED before JSON.parse decodes it.
+    const s36 = dncBundle(36, false);
+    const r36 = run(makeTask(s36, { bundleNames: ["dnc"] }), makeContext(s36, { bundleNames: ["dnc"] }));
+    assert.notEqual(r36.diagnostics[0]?.code, "BUDGET_EXCEEDED", "36 records must not trip the object budget");
+    const s37 = dncBundle(37, false);
+    const r37 = run(makeTask(s37, { bundleNames: ["dnc"] }), makeContext(s37, { bundleNames: ["dnc"] }));
+    assert.equal(r37.status, "REFUSED");
+    assert.equal(r37.diagnostics[0].code, "BUDGET_EXCEEDED");
+    assert.equal(r37.report, null);
+    assert.equal(r37.complete, false);
   });
 
   it("over-budget candidate with malformed JSON refuses BUDGET_EXCEEDED, not INVALID_INPUT", () => {
-    // The poisoned 40th record proves the over-budget candidate is refused
+    // The poisoned 37th record proves the over-budget candidate is refused
     // BEFORE JSON.parse decodes it: the refusal must be BUDGET_EXCEEDED,
     // never INVALID_INPUT for the malformed bytes.
-    const s = dncBundle(40, true);
+    const s = dncBundle(37, true);
     const r = run(makeTask(s, { bundleNames: ["dnc"] }), makeContext(s, { bundleNames: ["dnc"] }));
     assert.equal(r.status, "REFUSED");
     assert.equal(r.diagnostics[0].code, "BUDGET_EXCEEDED");
-    assert.ok(r.diagnostics[0].reason.includes("record 39 slot"));
+    assert.ok(r.diagnostics[0].reason.includes("record 36 slot"));
     assert.equal(r.report, null);
   });
 
@@ -192,9 +195,15 @@ describe("S653 fix round 2: serialized input accounting (S653-005)", () => {
     // Replicate run()'s byte accounting exactly: task + each context
     // control value (sources container = keys only) + revision metadata +
     // the once-charged selected source bytes.
+    // S653-002 (fix round 3): run() also resolves the product evidence
+    // pins — the evidence catalog's revision metadata and text bytes are
+    // charged once via the same resolveSourceRef path.
     const key = "sales-fixtures|leads/main.json";
     const ref = store.bundleRefs["main"];
     const rev = store.sources[key].revisions[ref.commit];
+    const ekey = "sales-fixtures|products/catalog.json";
+    const eref = store.evidenceCatalogRef;
+    const erev = store.sources[ekey].revisions[eref.commit];
     const probe = makeStandard(store);
     const fixedBytes =
       serializedByteLength(probe.task) +
@@ -208,7 +217,13 @@ describe("S653 fix round 2: serialized input accounting (S653-005)", () => {
         expected_records: rev.expected_records, dataset_id: rev.dataset_id,
         dataset_version: rev.dataset_version, coverage: rev.coverage,
       }) +
-      Buffer.byteLength(rev.text, "utf8");
+      Buffer.byteLength(rev.text, "utf8") +
+      serializedByteLength({
+        commit: eref.commit, blob: erev.blob, label: erev.label,
+        expected_records: erev.expected_records, dataset_id: erev.dataset_id,
+        dataset_version: erev.dataset_version, coverage: erev.coverage,
+      }) +
+      Buffer.byteLength(erev.text, "utf8");
     const principalBase = (padLen) =>
       serializedByteLength({ ...PRINCIPAL, registered_by: "p".repeat(padLen) });
     const padFor = (target) => target - fixedBytes - principalBase(0);
@@ -305,5 +320,63 @@ describe("S653 fix round 2: complete-envelope output walk (S653-007)", () => {
     assert.equal(rOver.status, "REFUSED");
     assert.equal(rOver.diagnostics[0].code, "OUTPUT_LIMIT");
     assert.equal(rOver.report, null);
+  });
+});
+
+describe("S653 fix round 3: per-occurrence serialized accounting (S653-005)", () => {
+  it("shared references are measured once per serialized occurrence", async () => {
+    // The reviewer's exact probe shape: one SourceRef object aliased
+    // twice in fixture_refs. JSON emits it twice, so the measurement
+    // must count it twice — the old whole-walk dedup refunded the
+    // alias and bypassed the cap.
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const { canonicalByteLength } = await import("../src/canonical.js");
+    const ref = {
+      repo: "sales-fixtures", path: "leads/main.json",
+      commit: "a".repeat(40), blob: "b".repeat(40),
+      algorithm: "git-sha1", revision: "x",
+    };
+    const task = { fixture_refs: [ref, ref] };
+    const measured = serializedByteLength(task);
+    const canonical = canonicalByteLength(task);
+    assert.equal(measured, canonical, "aliased occurrences must be measured per occurrence");
+    assert.ok(measured > serializedByteLength({ fixture_refs: [ref] }), "two occurrences must exceed one");
+  });
+
+  it("repeated SourceRefs are charged per occurrence in run() accounting", async () => {
+    // S653-005 (fix round 3): the run() input accounting must charge
+    // each serialized occurrence, even when the same SourceRef object
+    // is aliased. (The run itself refuses DUPLICATE_ID on the doubled
+    // bundle; the accounting property is what matters here.)
+    const { makeStandard } = await import("./helpers.js");
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const { task } = makeStandard(store);
+    // Alias the same SourceRef object twice.
+    const shared = task.fixture_refs[0];
+    task.fixture_refs = [shared, shared];
+    const measured = serializedByteLength(task);
+    const independent = Buffer.byteLength(JSON.stringify(task), "utf8");
+    const single = serializedByteLength({ ...task, fixture_refs: [shared] });
+    assert.ok(measured > single, "aliased ref must be charged twice, not refunded");
+    assert.ok(measured >= independent * 0.9 && measured <= independent * 1.1,
+      `measured ${measured} must approximate independently serialized ${independent}`);
+  });
+
+  it("shared nested registry objects are charged per occurrence", async () => {
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const shared = { a: "x".repeat(1000) };
+    const obj = { first: shared, second: shared };
+    const measured = serializedByteLength(obj);
+    // Each occurrence emitted: 2x the shared bytes + structure.
+    const once = serializedByteLength({ only: shared });
+    assert.ok(measured > once, "shared nested object must be measured per occurrence");
+    assert.equal(measured, serializedByteLength(JSON.parse(JSON.stringify(obj))), "must match a fresh deep copy");
+  });
+
+  it("cyclic input refuses instead of hanging or under-counting", async () => {
+    const { serializedByteLength } = await import("../src/resolver.js");
+    const cyclic = { name: "c" };
+    cyclic.self = cyclic;
+    assert.throws(() => serializedByteLength(cyclic), /cyclic|INPUT_LIMIT/);
   });
 });

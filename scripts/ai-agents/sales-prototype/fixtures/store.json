@@ -127,6 +127,26 @@
           }
         }
       }
+    },
+    "sales-fixtures|products/catalog.json": {
+      "revisions": {
+        "b5128afd06956c6aa3d7cba88cec35430011c0cb": {
+          "text": "{\"crm-starter\":{\"evidence_text\":\"CRM Starter is the entry customer-relationship product: contact timelines, faster follow-up sequences, and a clean pipeline board.\",\"evidence_version\":\"2026-10-19\",\"benefits\":[\"faster-followup\",\"clean-pipeline\"]},\"pipeline-pro\":{\"evidence_text\":\"Pipeline Pro adds shared team visibility and pipeline hygiene on top of CRM Starter.\",\"evidence_version\":\"2026-10-19\",\"benefits\":[\"clean-pipeline\",\"team-visibility\"]}}",
+          "blob": "e675926f66a47cbc4b46a4499d49593c2d609338",
+          "label": "sales-fixtures/products@v1",
+          "dataset_id": "sales-fixtures",
+          "dataset_version": "2026-10-19"
+        }
+      }
     }
-  }
+  },
+  "evidenceCatalogRef": {
+    "repo": "sales-fixtures",
+    "path": "products/catalog.json",
+    "commit": "b5128afd06956c6aa3d7cba88cec35430011c0cb",
+    "blob": "e675926f66a47cbc4b46a4499d49593c2d609338",
+    "algorithm": "git-sha1",
+    "revision": "sales-fixtures/products@v1"
+  },
+  "evidenceSourceKey": "sales-fixtures|products/catalog.json"
 }

@@ -41,20 +41,31 @@ export class ResolutionError extends Error {
 
 /**
  * S653-005: exact canonical-serialized UTF-8 byte measurement — the single
- * nonduplicating serialized representation for the invocation-wide input
- * budget. Counts structure (braces/brackets/colons/commas), property
- * names WITH JSON quoting/escaping, string values WITH escaping
- * (quotes, backslashes, NUL/Unicode -> \uXXXX), and numbers/booleans in
- * their JSON form. Each distinct object is measured once (WeakSet dedup);
- * shared references are not double-counted. Throws BudgetError
- * INPUT_LIMIT if the running total would exceed `limit`, so oversized
- * input is refused DURING measurement (bounded before full allocation).
+ * serialized representation for the invocation-wide input budget. Counts
+ * structure (braces/brackets/colons/commas), property names WITH JSON
+ * quoting/escaping, string values WITH escaping (quotes, backslashes,
+ * NUL/Unicode -> \uXXXX), and numbers/booleans in their JSON form.
  *
- * For plain JSON data this equals canonicalByteLength() exactly; the
- * unit tests assert that equivalence.
+ * S653-005 (fix round 3): EVERY serialized occurrence is charged. A
+ * shared reference aliased N times in the structure is emitted N times by
+ * JSON, so it is measured N times here. The old whole-walk WeakSet dedup
+ * refunded repeated occurrences and let aliased input bypass the cap.
+ * Cycle rejection uses the ancestor path only: an object that is its own
+ * ancestor is a genuine cycle (not JSON-serializable) and refuses; a
+ * shared DAG reference is measured once per occurrence. Measurement
+ * throws BudgetError INPUT_LIMIT partway when the cap would be exceeded,
+ * so oversized input is refused DURING measurement (bounded before full
+ * allocation) — this also bounds the walk on adversarial sharing.
+ *
+ * This is deliberately different from the once-per-selected-source-byte
+ * convention: selected source BYTES (bundle text) are charged exactly once
+ * in resolveSourceRef. Repeated METADATA references in the structure are
+ * charged per emitted occurrence, matching the actual serialized bytes.
+ *
+ * For plain JSON data without aliases this equals canonicalByteLength()
+ * exactly; the unit tests assert that equivalence.
  */
 export function serializedByteLength(value, limit = Number.MAX_SAFE_INTEGER) {
-  const seen = new WeakSet();
   let total = 0;
   const bump = (n) => {
     total += n;
@@ -66,7 +77,7 @@ export function serializedByteLength(value, limit = Number.MAX_SAFE_INTEGER) {
     }
   };
   const strBytes = (s) => Buffer.byteLength(JSON.stringify(s), "utf8");
-  const walk = (v, depth) => {
+  const walk = (v, ancestors, depth) => {
     if (depth > 32) {
       throw new BudgetError("INPUT_LIMIT", "serialized measurement exceeded depth 32");
     }
@@ -81,29 +92,38 @@ export function serializedByteLength(value, limit = Number.MAX_SAFE_INTEGER) {
     if (t === "boolean") { bump(v ? 4 : 5); return; }
     if (t === "bigint") { bump(strBytes(`{"$bigint":"${v.toString()}"}`)); return; }
     if (t !== "object") return; // undefined/function/symbol: not JSON-serializable; schemas reject these
-    if (seen.has(v)) return; // nonduplicating: shared identity measured once
-    seen.add(v);
-    if (Array.isArray(v)) {
-      bump(2); // []
-      for (let i = 0; i < v.length; i++) {
-        if (i > 0) bump(1); // comma
-        if (v[i] === undefined) bump(4); // JSON.stringify -> null
-        else walk(v[i], depth + 1);
-      }
-      return;
+    // Ancestor-path cycle rejection: only a true cycle refuses. A shared
+    // reference reached via a different path is measured again — JSON
+    // emits it again.
+    if (ancestors.has(v)) {
+      throw new BudgetError("INPUT_LIMIT", "cyclic input is not JSON-serializable; refusing");
     }
-    bump(2); // {}
-    let first = true;
-    for (const k of Object.keys(v)) {
-      const child = v[k];
-      if (child === undefined) continue; // JSON.stringify drops undefined-valued keys
-      if (!first) bump(1); // comma
-      first = false;
-      bump(strBytes(k) + 1); // "key":
-      walk(child, depth + 1);
+    ancestors.add(v);
+    try {
+      if (Array.isArray(v)) {
+        bump(2); // []
+        for (let i = 0; i < v.length; i++) {
+          if (i > 0) bump(1); // comma
+          if (v[i] === undefined) bump(4); // JSON.stringify -> null
+          else walk(v[i], ancestors, depth + 1);
+        }
+        return;
+      }
+      bump(2); // {}
+      let first = true;
+      for (const k of Object.keys(v)) {
+        const child = v[k];
+        if (child === undefined) continue; // JSON.stringify drops undefined-valued keys
+        if (!first) bump(1); // comma
+        first = false;
+        bump(strBytes(k) + 1); // "key":
+        walk(child, ancestors, depth + 1);
+      }
+    } finally {
+      ancestors.delete(v);
     }
   };
-  walk(value, 0);
+  walk(value, new Set(), 0);
   return total;
 }
 
@@ -157,8 +177,10 @@ export function makeBudget() {
      * value against the single invocation-wide input budget. The
      * measurement throws INPUT_LIMIT partway when the cap would be
      * exceeded, so oversized input is refused before full allocation.
-     * Each call measures independently; callers must pass each consulted
-     * value exactly once (nonduplicating representation).
+     * S653-005 (fix round 3): every serialized occurrence is charged —
+     * shared references are measured once per occurrence, matching the
+     * emitted bytes. Selected source bytes keep their own once-only
+     * convention via countPayload in resolveSourceRef.
      */
     chargeSerialized(value, what) {
       const remaining = BUDGET_LIMITS.maxPayloadBytes - used.payloadBytes;

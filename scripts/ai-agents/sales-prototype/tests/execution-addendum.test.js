@@ -5,9 +5,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { run } from "../src/index.js";
 import { SchemaError } from "../src/schemas.js";
-import { loadStore, makeStandard, makeTask, makeContext, boundPopulation, PRODUCT_REGISTRY } from "./helpers.js";
+import { loadStore, makeStandard, makeTask, makeContext, boundPopulation, PRODUCT_REGISTRY, makeProductRegistry } from "./helpers.js";
 
 const store = loadStore();
 
@@ -49,15 +50,17 @@ test("addendum: complete population declaration binds identities", () => {
   assert.ok(r.diagnostics.some((d) => d.code === "POPULATION_INCOMPLETE"));
 });
 
-test("addendum: same-sized unrelated dataset is not complete", () => {
-  // Declared-complete against the wrong identity set must fail even when
-  // the count matches.
+test("addendum: unrelated dataset identity is not complete", () => {
+  // Declared-complete against the wrong identity set must fail.
+  // (Uses 4 IDs: the object budget is tight with the fix-round-3
+  // evidence admission charges; the identity-binding property does not
+  // need 16.)
   const { task, context } = makeStandard(store);
   const t2 = makeTask(store, {
     population: {
       declared_complete: true, dataset_id: "sales-fixtures", dataset_version: "2026-10-19",
-      expected_lead_ids: Array.from({ length: 16 }, (_, i) => `other-${i}`),
-      expected_count: 16,
+      expected_lead_ids: Array.from({ length: 4 }, (_, i) => `other-${i}`),
+      expected_count: 4,
     },
   });
   const r = run(t2, context);
@@ -67,8 +70,12 @@ test("addendum: same-sized unrelated dataset is not complete", () => {
 test("addendum: unbound dataset identity is not complete even with matching ids", () => {
   // S653-001: the caller's ids match, but the dataset identity does not
   // bind to the host registration -> no trusted coverage.
+  // (Trims to 4 IDs: the object budget is tight with fix-round-3 evidence
+  // charges; the identity-binding property does not need 16.)
   const { task, context } = makeStandard(store);
   const pop = boundPopulation(store, "main");
+  pop.expected_lead_ids = pop.expected_lead_ids.slice(0, 4);
+  pop.expected_count = 4;
   const t2 = makeTask(store, {
     population: { ...pop, dataset_id: "unrelated", dataset_version: "never-registered" },
   });
@@ -81,6 +88,8 @@ test("addendum: unbound dataset identity is not complete even with matching ids"
 test("addendum: absent host expected_records means unknown coverage", () => {
   // Host registration without expected_records: coverage unknown, never
   // verified complete, even with a bound identity and matching ids.
+  // (Trims to 4 IDs: the object budget is tight with fix-round-3 evidence
+  // charges.)
   const s2 = JSON.parse(JSON.stringify(store));
   const key = "sales-fixtures|leads/main.json";
   const ref = s2.bundleRefs["main"];
@@ -88,6 +97,8 @@ test("addendum: absent host expected_records means unknown coverage", () => {
   delete rev.expected_records;
   const { task, context } = makeStandard(s2);
   const pop = boundPopulation(s2, "main");
+  pop.expected_lead_ids = pop.expected_lead_ids.slice(0, 4);
+  pop.expected_count = 4;
   const t2 = makeTask(s2, { population: pop });
   const r = run(t2, context);
   assert.equal(r.report.population.complete, false);
@@ -166,12 +177,18 @@ test("addendum: drafts cite the lead span and carry structured product evidence"
   for (const d of r.report.drafts) {
     assert.ok(d.citation && d.citation.span, "draft must carry a citation");
     assert.equal(typeof d.citation.quoted_span, "string");
-    // S653-002 (fix round 2): product evidence is a structured record —
-    // VERIFIED state with an explicit detail — not a bare literal.
+    // S653-002 (fix round 3): product evidence is a PINNED record —
+    // VERIFIED state with the versioned evidence_ref tuple, not a bare
+    // label. The pin must resolve to the registered catalog.
     const pe = d.citation.product_evidence;
     assert.equal(pe.state, "VERIFIED");
-    assert.ok(pe.detail.includes("trusted context"));
     assert.ok(pe.product_id && pe.product_token);
+    assert.ok(pe.evidence_ref, "VERIFIED evidence must carry the evidence_ref pin");
+    assert.equal(pe.evidence_ref.repo, "sales-fixtures");
+    assert.equal(pe.evidence_ref.path, "products/catalog.json");
+    assert.ok(/^[0-9a-f]{40}$/.test(pe.evidence_ref.commit));
+    assert.ok(/^[0-9a-f]{40}$/.test(pe.evidence_ref.blob));
+    assert.equal(pe.evidence_ref.algorithm, "git-sha1");
   }
 });
 
@@ -179,7 +196,7 @@ test("addendum: draft withheld when product evidence is unavailable", () => {
   // S653-002 (fix round 2): conservative eligibility — a verified product
   // WITHOUT registered evidence yields no draft.
   const s = makeStandard(store);
-  const reg = structuredClone(PRODUCT_REGISTRY);
+  const reg = makeProductRegistry(store);
   delete reg["crm-starter"].evidence;
   s.context.product_registry = reg;
   const r = run(s.task, s.context);
@@ -323,7 +340,7 @@ test("addendum: metrics carry calculation-basis records (S653-002)", () => {
     const basis = m.calculation_basis;
     assert.ok(basis, "metrics group must carry a calculation_basis");
     assert.equal(basis.criteria_ref.criteria_version, "2026-10-19");
-    assert.equal(basis.criteria_evidence.state, "HOST_CONTEXT");
+    assert.equal(basis.criteria_evidence.state, "HOST_REGISTERED");
     assert.ok(basis.contributing_leads.length > 0);
     // Every contributing lead_id resolves to a classification carrying a
     // byte-exact citation in this same envelope.
@@ -346,6 +363,111 @@ test("addendum: classifications carry criteria evidence (S653-002)", () => {
   for (const c of r.report.classifications) {
     assert.ok(c.criteria_evidence, "classification must carry criteria evidence");
     assert.equal(c.criteria_evidence.criteria_version, "2026-10-19");
-    assert.equal(c.criteria_evidence.state, "HOST_CONTEXT");
+    // S653-002 (fix round 3): criteria are pinned by host-registered
+    // id+version, not prose.
+    assert.equal(c.criteria_evidence.state, "HOST_REGISTERED");
+    assert.equal(c.criteria_evidence.criteria_id, "sales-v1");
+  }
+});
+
+test("addendum: blank VERIFIED evidence label without a pin is a structural refusal (S653-002)", () => {
+  // The reviewer's exact probe: a bare {state:"VERIFIED",detail:""} label
+  // must NOT promote drafts to VERIFIED. Without an evidence_ref pin it
+  // is malformed input.
+  const s = makeStandard(store);
+  const reg = makeProductRegistry(store);
+  reg["crm-starter"].evidence = { state: "VERIFIED", detail: "" };
+  s.context.product_registry = reg;
+  const r = run(s.task, s.context);
+  assert.equal(r.status, "REFUSED");
+  assert.equal(r.diagnostics[0].code, "INVALID_INPUT");
+  assert.equal(r.report, null);
+});
+
+test("addendum: fabricated evidence pin to an unregistered source withholds drafts (S653-002)", () => {
+  // A well-formed pin naming a source the host never registered is
+  // conservative: no drafts, never VERIFIED.
+  const s = makeStandard(store);
+  const reg = makeProductRegistry(store);
+  reg["crm-starter"].evidence = {
+    state: "VERIFIED",
+    detail: "fabricated",
+    evidence_ref: {
+      repo: "sales-fixtures", path: "products/catalog.json",
+      commit: "f".repeat(40), blob: "e".repeat(40),
+      algorithm: "git-sha1", revision: "sales-fixtures/products@v999",
+    },
+  };
+  s.context.product_registry = reg;
+  const r = run(s.task, s.context);
+  assert.ok(r.report.drafts.length === 0, "no drafts on fabricated evidence pin");
+  assert.ok(r.diagnostics.some((d) => d.code === "PRODUCT_EVIDENCE_UNRESOLVED"));
+});
+
+test("addendum: stale evidence pin (blob mismatch) withholds drafts (S653-002)", () => {
+  // The pin names the registered source but a wrong blob: the bytes do
+  // not match the registration -> conservative, no drafts.
+  const s = makeStandard(store);
+  const reg = makeProductRegistry(store);
+  const pin = { ...store.evidenceCatalogRef, blob: "d".repeat(40) };
+  reg["crm-starter"].evidence = { state: "VERIFIED", detail: "stale", evidence_ref: pin };
+  s.context.product_registry = reg;
+  const r = run(s.task, s.context);
+  assert.ok(r.report.drafts.length === 0, "no drafts on stale evidence pin");
+  assert.ok(r.diagnostics.some((d) => d.code === "PRODUCT_EVIDENCE_UNRESOLVED"));
+});
+
+test("addendum: wrong-product evidence pin withholds drafts (S653-002)", () => {
+  // The pin resolves to registered bytes, but the catalog does not
+  // document THIS product -> conservative, no drafts. Uses a product_id
+  // ("forecast-plus") that is an allowlisted token but absent from the
+  // evidence catalog, with a FIT_HIGH lead pointed at it so draft
+  // eligibility is actually attempted.
+  const s2 = JSON.parse(JSON.stringify(store));
+  const key = "sales-fixtures|leads/main.json";
+  const ref = s2.bundleRefs["main"];
+  const leads = JSON.parse(s2.sources[key].revisions[ref.commit].text);
+  const target = leads.find((l) => l.need_match && l.budget_match && (l.timing_days ?? 999) <= 90 && !l.do_not_contact);
+  assert.ok(target, "fixture must contain a FIT_HIGH lead");
+  target.fixture_product_id = "forecast-plus";
+  const text = JSON.stringify(leads);
+  const header = Buffer.from(`blob ${Buffer.byteLength(text, "utf8")}\0`, "utf8");
+  const blob = createHash("sha1").update(Buffer.concat([header, Buffer.from(text, "utf8")])).digest("hex");
+  s2.sources[key].revisions[ref.commit] = {
+    ...s2.sources[key].revisions[ref.commit], text, blob,
+  };
+  const { task, context } = makeStandard(s2);
+  const reg = makeProductRegistry(s2);
+  reg["forecast-plus"] = {
+    product_id: "forecast-plus",
+    product_token: "forecast-plus",
+    benefit_tokens: ["accurate-forecast"],
+    verified: true,
+    evidence: {
+      state: "VERIFIED",
+      detail: "pin resolves, but the catalog has no forecast-plus entry",
+      evidence_ref: { ...s2.evidenceCatalogRef },
+    },
+  };
+  context.product_registry = reg;
+  // The task pin must match the modified bytes.
+  task.fixture_refs[0].blob = blob;
+  const r = run(task, context);
+  assert.ok(r.diagnostics.some((d) => d.code === "PRODUCT_EVIDENCE_UNRESOLVED" && d.reason.includes("forecast-plus")));
+  for (const d of r.report.drafts) {
+    assert.notEqual(d.citation.product_evidence.product_id, "forecast-plus", "no VERIFIED draft on wrong-product evidence");
+  }
+});
+
+test("addendum: positive registered evidence produces pinned drafts (S653-002)", () => {
+  // The actual positive: a pin that resolves to registered bytes
+  // documenting the product -> drafts built, evidence_ref emitted.
+  const { task, context } = makeStandard(store);
+  const r = run(task, context);
+  assert.ok(r.report.drafts.length > 0, "positive registered evidence must produce drafts");
+  assert.ok(!r.diagnostics.some((d) => d.code === "PRODUCT_EVIDENCE_UNRESOLVED"));
+  for (const d of r.report.drafts) {
+    assert.equal(d.citation.product_evidence.state, "VERIFIED");
+    assert.ok(d.citation.product_evidence.evidence_ref, "draft must carry the evidence pin");
   }
 });

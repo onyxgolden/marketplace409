@@ -80,7 +80,10 @@ zero (empty bundle, bound identity) is distinct from unknown empty.
 - Byte accounting uses the canonical serialized form (structure, quoting,
   escaping included): `serializedByteLength` === `canonicalByteLength` on
   plain data; NUL/quote/backslash/Unicode escapes are charged, never
-  bypassed.
+  bypassed. Every serialized occurrence is measured — shared references
+  are charged per occurrence (JSON emits them per occurrence); only true
+  cycles are rejected, via ancestor-path tracking, never whole-walk alias
+  dedup.
 - Admission order: trap-free Proxy rejection → task → context control plane
   (the sources container is charged but never walked) → principal role AND
   validity window → per-ref grant check → that source entry only.
@@ -127,6 +130,25 @@ work is never counted. Overrun returns bounded `REFUSED`, `complete:false`,
   clock (inclusive). Expired, future, or inverted windows are `ACTION_DENIED`
   before any source entry is admitted.
 
+## Product evidence (pinned, conservative)
+
+- VERIFIED product evidence requires a versioned `evidence_ref` pin
+  (`repo`/`path`/`commit`/`blob`/`algorithm`/`revision`); a bare
+  `{state, detail}` label is a structural `INVALID_INPUT` refusal, never a
+  promotion to VERIFIED.
+- The pin must resolve through the read-grant → admission → byte-verified
+  path to registered catalog bytes that document the product
+  (`product_id` as an own data property). Fabricated pins (unregistered
+  source), stale pins (blob mismatch), and wrong-product pins (catalog
+  lacks the product) downgrade the evidence to UNAVAILABLE with a
+  `PRODUCT_EVIDENCE_UNRESOLVED` diagnostic; drafts are withheld.
+- Evidence sources resolve lazily, once per unique pin, only when a draft
+  might actually be built (FIT_HIGH + `include_drafts`); the byte charge
+  follows the once-per-selected-source-byte convention even when several
+  products share a catalog.
+- Criteria are pinned by host-registered `criteria_id` + `criteria_version`
+  (`HOST_REGISTERED`); prose descriptions are never evidence.
+
 ## Refusal vocabulary
 
 - `REFUSED / INVALID_INPUT` — malformed task, context, lead record, or proxy input
@@ -155,18 +177,27 @@ node bootstrap.mjs manual [bundle] [outdir]  # manual run via the pinned bootstr
 
 Trust: `bootstrap.mjs` is the host-pinned trust anchor (its sha256 is
 published in the review request; the host verifies it with
-`sha256sum bootstrap.mjs` before running). It authenticates the manifest
-ROOT digest FIRST — before consulting any member path — then every
-transitive file (regular files only: symlinks, FIFOs, sockets, and devices
-are rejected without being opened; per-file size cap), rejecting unlisted
-files and unsupported executable extensions, and refuses (exit 3) on
-mismatch BEFORE importing any candidate code. `npm test` /
-`npm run battery` go through it, as does manual execution:
+`sha256sum bootstrap.mjs` before running). The manifest itself is
+admitted as a bounded regular file — opened with `O_NOFOLLOW |
+O_NONBLOCK`, type-checked via `fstat` on the opened descriptor (symlinks
+refuse with ELOOP, FIFOs/sockets/devices refuse without blocking), and
+read with cap+1 bounded reads — before allocation or parsing, so a FIFO
+at the manifest path cannot block the pinned bootstrap. It authenticates
+the manifest ROOT digest FIRST — before consulting any member path —
+then every transitive file (regular files only: symlinks, FIFOs, sockets,
+and devices are rejected without being opened; per-file size cap),
+rejecting unlisted files and unsupported executable extensions, and
+refuses (exit 3) on mismatch BEFORE importing any candidate code.
+`npm test` / `npm run battery` go through it, as does manual execution:
 `node bootstrap.mjs manual [bundle] [outdir]` (never a self-authenticating
 candidate entrypoint).
 
 Guarded execution: `runGuarded()` always constructs the single fixed
 production worker (`runner/guarded-worker.js`); there is no
 caller-selectable worker path. Hang coverage uses the closed test-only
-identity `runGuardedWithTestWorker(..., "hang")` — unknown names refuse.
-Worker results are shape-checked before acceptance.
+identity `runGuardedWithTestWorker(..., "hang")` — the identity is
+validated with `typeof` BEFORE the worker-map lookup, non-string
+identities (objects, Proxies, symbols) refuse with zero coercion-hook
+calls, and only own-key matches on the null-prototype map resolve;
+unknown or inherited names refuse. Worker results are shape-checked
+before acceptance.

@@ -49,6 +49,49 @@ export const PRODUCT_REGISTRY = {
   },
 };
 
+/**
+ * S653-002 (fix round 3): build the product registry with PINNED
+ * evidence. Each VERIFIED evidence record carries the versioned
+ * evidence_ref tuple from the fixture store's registered product evidence
+ * catalog (store.evidenceCatalogRef); run() resolves the pin against the
+ * host registration before any draft may assert VERIFIED.
+ */
+export function makeProductRegistry(store) {
+  const pin = store.evidenceCatalogRef ? { ...store.evidenceCatalogRef } : undefined;
+  const pinned = (entry) => {
+    if (!pin) return structuredClone(entry);
+    const e = structuredClone(entry);
+    e.evidence = { ...e.evidence, evidence_ref: { ...pin } };
+    return e;
+  };
+  return {
+    "crm-starter": pinned({
+      product_id: "crm-starter",
+      product_token: "crm-starter",
+      benefit_tokens: ["faster-followup", "clean-pipeline"],
+      verified: true,
+      evidence: { state: "VERIFIED", detail: "pinned product evidence catalog (sales-fixtures/products/catalog.json)" },
+    }),
+    "pipeline-pro": pinned({
+      product_id: "pipeline-pro",
+      product_token: "pipeline-pro",
+      benefit_tokens: ["clean-pipeline", "team-visibility"],
+      verified: true,
+      evidence: { state: "VERIFIED", detail: "pinned product evidence catalog (sales-fixtures/products/catalog.json)" },
+    }),
+    "unverified-widget": {
+      product_id: "unverified-widget",
+      product_token: "crm-starter",
+      benefit_tokens: ["faster-followup"],
+      verified: false,
+    },
+  };
+}
+
+// S653-002 (fix round 3): the registered product evidence source key. Its
+// read grant lets run() resolve product evidence pins.
+export const EVIDENCE_SOURCE_KEY = "sales-fixtures|products/catalog.json";
+
 export const PRINCIPAL = {
   principal_id: "jason",
   role: "JASON",
@@ -96,6 +139,12 @@ export function makeContext(store, opts = {}) {
     sources[key] = store.sources[key];
     readGrants.push({ repo: ref.repo, path: ref.path });
   }
+  // S653-002 (fix round 3): the registered product evidence source is
+  // always present in the host context (its read grant is added to the
+  // default grants; an explicit readGrants override controls grants).
+  if (store.sources[EVIDENCE_SOURCE_KEY]) {
+    sources[EVIDENCE_SOURCE_KEY] = store.sources[EVIDENCE_SOURCE_KEY];
+  }
   if (opts.readGrants !== undefined) {
     return {
       clock: Date.parse("2026-10-19T12:00:00Z"),
@@ -103,10 +152,11 @@ export function makeContext(store, opts = {}) {
       readGrants: opts.readGrants,
       principal: opts.principal ?? { ...PRINCIPAL },
       criteria: opts.criteria ?? { ...CRITERIA },
-      product_registry: opts.productRegistry ?? structuredClone(PRODUCT_REGISTRY),
+      product_registry: opts.productRegistry ?? makeProductRegistry(store),
       ...(opts.testHooks ? { test_hooks: opts.testHooks } : {}),
     };
   }
+  readGrants.push({ repo: "sales-fixtures", path: "products/catalog.json" });
   if (opts.extraSources) {
     for (const [key, entry] of Object.entries(opts.extraSources)) {
       sources[key] = entry;
@@ -118,7 +168,7 @@ export function makeContext(store, opts = {}) {
     readGrants,
     principal: opts.principal ?? { ...PRINCIPAL },
     criteria: opts.criteria ?? { ...CRITERIA },
-    product_registry: opts.productRegistry ?? structuredClone(PRODUCT_REGISTRY),
+    product_registry: opts.productRegistry ?? makeProductRegistry(store),
     ...(opts.testHooks ? { test_hooks: opts.testHooks } : {}),
   };
 }

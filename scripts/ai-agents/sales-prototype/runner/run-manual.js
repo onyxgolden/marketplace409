@@ -147,8 +147,16 @@ export async function runManualMain(args) {
   // ---- host-supplied context (fixture-only; invented values) ----
   const context = {
     clock: Date.parse("2026-10-19T12:00:00Z"),
-    sources: { [key]: store.sources[key] },
-    readGrants: [{ repo: ref.repo, path: ref.path }],
+    // S653-002 (fix round 3): the evidence catalog source travels with
+    // the context so pinned product evidence can resolve.
+    sources: {
+      [key]: store.sources[key],
+      [store.evidenceSourceKey]: store.sources[store.evidenceSourceKey],
+    },
+    readGrants: [
+      { repo: ref.repo, path: ref.path },
+      { repo: store.evidenceCatalogRef.repo, path: store.evidenceCatalogRef.path },
+    ],
     principal: {
       principal_id: "manual-host",
       role: "JASON",
@@ -164,20 +172,30 @@ export async function runManualMain(args) {
       allowlisted_product_tokens: ["crm-starter", "pipeline-pro", "forecast-plus"],
       allowlisted_benefit_tokens: ["faster-followup", "clean-pipeline", "accurate-forecast", "team-visibility"],
     },
+    // S653-002 (fix round 3): VERIFIED product evidence must be pinned
+    // to the registered evidence catalog, not a bare label.
     product_registry: {
       "crm-starter": {
         product_id: "crm-starter",
         product_token: "crm-starter",
         benefit_tokens: ["faster-followup", "clean-pipeline"],
         verified: true,
-        evidence: { state: "VERIFIED", detail: "host product_registry (separately trusted context; not source bytes)" },
+        evidence: {
+          state: "VERIFIED",
+          detail: "pinned product evidence catalog",
+          evidence_ref: { ...store.evidenceCatalogRef },
+        },
       },
       "pipeline-pro": {
         product_id: "pipeline-pro",
         product_token: "pipeline-pro",
         benefit_tokens: ["clean-pipeline", "team-visibility"],
         verified: true,
-        evidence: { state: "VERIFIED", detail: "host product_registry (separately trusted context; not source bytes)" },
+        evidence: {
+          state: "VERIFIED",
+          detail: "pinned product evidence catalog",
+          evidence_ref: { ...store.evidenceCatalogRef },
+        },
       },
     },
   };
