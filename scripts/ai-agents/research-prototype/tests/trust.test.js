@@ -10,6 +10,7 @@ import { mkdtempSync, cpSync, readFileSync, writeFileSync, rmSync } from "node:f
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, homedir } from "node:os";
+import { createHash } from "node:crypto";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const APPROVED_ROOT = process.env.RESEARCH_APPROVED_ROOT;
@@ -247,6 +248,82 @@ test("RA652-002: npm itself cannot dispatch a lifecycle hook — no scripts ship
     const combined = (r.stdout || "") + (r.stderr || "");
     assert.ok(!combined.includes("NPM_LIFECYCLE_CANARY_EXECUTED"), "npm must not execute the pretest hook");
     assert.notEqual(r.status, 0, "npm test must fail without a test script");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("fix round 3: bootstrap receipt pins match the live trusted bootstrap", () => {
+  // The re-review-2 verdict found the receipt's embedded bootstrap source
+  // did not hash to the pinned SHA-256 (stale embedded copy). This test
+  // recomputes from the live bytes and fails the suite on any drift, so
+  // a mismatched receipt can never ship again.
+  const receiptPath = join(homedir(), "workspace", "forge-ai-drop", "results", "muse",
+    "research-agent-phase2-slice1-bootstrap-receipt-2026-10-19.md");
+  let receipt;
+  try {
+    receipt = readFileSync(receiptPath, "utf8");
+  } catch {
+    console.log("skip: bootstrap receipt not present on this host");
+    return;
+  }
+  const live = readFileSync(BOOTSTRAP);
+  const liveHash = createHash("sha256").update(live).digest("hex");
+  // The pin table must name the live hash.
+  assert.ok(receipt.includes(liveHash), `receipt pin table must contain the live bootstrap hash ${liveHash}`);
+  // The embedded ```js fenced source must be byte-identical to the live file.
+  const m = receipt.match(/```js\n([\s\S]*?)```\n\n## Execution/);
+  assert.ok(m, "receipt must embed the full bootstrap source in a ```js fence");
+  assert.equal(m[1], live.toString("utf8"), "embedded bootstrap source must be byte-identical to the live file");
+  assert.equal(
+    createHash("sha256").update(m[1], "utf8").digest("hex"),
+    liveHash,
+    "embedded source must hash to the pinned SHA-256"
+  );
+});
+
+test("fix round 3: tampered manifest root refuses before any pinned file is opened", () => {
+  // The fix-round-2 bootstrap read every manifest-selected member file
+  // BEFORE authenticating the manifest root digest. The root must be
+  // verified first: a tampered pin refuses with exit 3 and the specific
+  // "refusing before opening any pinned file" diagnostic.
+  if (!APPROVED_ROOT) { console.log("skip: no RESEARCH_APPROVED_ROOT"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "research-trust-rootfirst-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const manPath = join(tmp, "corpus", "manifest.json");
+    const man = JSON.parse(readFileSync(manPath, "utf8"));
+    man.files[0].sha256 = "0".repeat(64); // invalidate the root digest
+    writeFileSync(manPath, JSON.stringify(man));
+    const r = runViaBootstrap(tmp, "tests");
+    assert.equal(r.status, 3, "tampered manifest root must refuse");
+    assert.ok(
+      r.stderr.includes("refusing before opening any pinned file"),
+      `must refuse before opening member files (stderr: ${r.stderr.slice(0, 200)})`
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("fix round 3: FIFO at corpus/manifest.json refuses instead of hanging", () => {
+  // A FIFO/symlink/device at the manifest path must fail closed
+  // ("not a regular file") rather than blocking on open.
+  if (!APPROVED_ROOT) { console.log("skip: no RESEARCH_APPROVED_ROOT"); return; }
+  if (process.platform === "win32") { console.log("skip: no FIFOs on Windows"); return; }
+  const tmp = mkdtempSync(join(tmpdir(), "research-trust-fifo-"));
+  try {
+    cpSync(ROOT, tmp, { recursive: true, filter: (p) => !p.includes("node_modules") });
+    const manPath = join(tmp, "corpus", "manifest.json");
+    rmSync(manPath);
+    const mk = spawnSync("mkfifo", [manPath], { encoding: "utf8", timeout: 10000 });
+    assert.equal(mk.status, 0, "mkfifo must succeed");
+    const r = runViaBootstrap(tmp, "tests");
+    assert.equal(r.status, 3, "FIFO manifest must refuse");
+    assert.ok(
+      r.stderr.includes("not a regular file"),
+      `must refuse non-regular manifest (stderr: ${r.stderr.slice(0, 200)})`
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

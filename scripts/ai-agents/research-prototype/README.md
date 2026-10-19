@@ -79,10 +79,17 @@ refunds after a charge. Arrays cannot hide long primitive ID lists:
 `origin_passage_refs`, `atoms`, `citations` and `derivation_links` are
 length-bounded and every element is a charged candidate.
 
-Output accounting walks the exact final envelope with one bounded,
-cycle-safe record walk (`countFinalEnvelopeRecords` in `src/index.js`),
+Output accounting walks the exact final envelope with one bounded
+record walk (`countFinalEnvelopeRecords` in `src/index.js`),
 implementing the brief's public-record taxonomy — every record counted
-once per emitted occurrence:
+once per emitted occurrence. Fix round 3: the walk runs over the
+SERIALIZED envelope (canonical JSON parsed back), not the live object
+graph. The live graph may share citation / source_ref / span objects
+across claims (one origin citation referenced from several claims);
+serialization emits each occurrence separately, so the walk counts
+per-occurrence — an identity-deduplicated walk undercounts the actual
+public records. Unserializable (cyclic) input fails closed to
++Infinity, which becomes an `OUTPUT_LIMIT` refusal:
 
 | Record | Where it is counted |
 |---|---|
@@ -93,6 +100,7 @@ once per emitted occurrence:
 | span records | every `span` nested in a citation |
 | source-ref records | every emitted `source_ref` (nested and top-level) |
 | resource records | each corroboration `evidence` / `same_group_occurrences` / `unregistered_candidates` / `derivation_linked_candidates` / `cycle_defeated_candidates` entry |
+| corroboration records | each claim's `corroboration` object itself |
 | conflict records | each `contradictions[]` entry |
 | completeness record | `report.coverage` |
 | summary record | `report.summary` (when non-null) |
@@ -100,8 +108,9 @@ once per emitted occurrence:
 | diagnostic records | each `diagnostics[]` entry |
 
 Scalars and collection arrays are not records; internal work objects
-are never counted. Shared/cyclic references are visited once, so the
-walk terminates and cannot inflate the count. Overrun returns bounded
+are never counted. The parsed serialized tree is acyclic by
+construction, so the walk terminates; a node cap aborts pathological
+input to +Infinity (fail-closed). Overrun returns bounded
 `REFUSED`, `complete:false`, `report:null`, with a bounded safe
 `task_id` and no partial domain artifact.
 

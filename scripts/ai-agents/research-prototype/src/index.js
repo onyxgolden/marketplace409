@@ -138,7 +138,7 @@ function emptyReport() {
 }
 
 /**
- * RA652-004: one bounded, cycle-safe final-envelope record walk
+ * RA652-004 (fix round 3): one bounded final-envelope record walk
  * implementing the brief's public-record taxonomy. Counts every returned
  * record once per emitted occurrence:
  *
@@ -160,24 +160,46 @@ function emptyReport() {
  *   exclusion records .................. each quarantined_sources entry
  *   diagnostic records ................. each diagnostics[] entry
  *
+ * Per-occurrence counting (fix round 3): the walk runs over the
+ * SERIALIZED envelope, not the live object graph. The live graph may
+ * share citation / source_ref / span objects across claims (e.g. one
+ * origin citation referenced from several corroboration entries);
+ * canonical JSON serialization emits each occurrence separately, so an
+ * identity-deduplicated walk undercounts the actual public records
+ * (a claimed 256-record envelope serialized to 259). Parsing the
+ * canonical bytes breaks all shared identity: every emitted occurrence
+ * becomes a distinct object in the parsed tree, and the walk below
+ * counts each one. Unserializable (cyclic) input fails closed to
+ * +Infinity, which the caller turns into an OUTPUT_LIMIT refusal.
+ * `$bigint` markers produced by canonicalJson are leaf encodings, not
+ * records: they are never counted and never descended into.
+ *
  * Scalars and collection arrays are not records; internal work objects
- * are never counted — only the exact final envelope. Cycle-safe: each
- * distinct object is visited once (shared/cyclic references cannot
- * inflate the count or loop forever). Bounded: aborts to +Infinity past
- * a generous node cap so a corrupt envelope cannot hang the counter.
+ * are never counted — only the exact final envelope. Bounded: aborts
+ * to +Infinity past a generous node cap so a corrupt envelope cannot
+ * hang the counter.
  */
 const OUTPUT_WALK_NODE_CAP = 200000;
 export function countFinalEnvelopeRecords(env) {
-  const seen = new WeakSet();
+  let tree;
+  try {
+    tree = JSON.parse(canonicalJson(env));
+  } catch {
+    return Number.POSITIVE_INFINITY; // cyclic/unserializable: fail closed
+  }
   let count = 0;
   let nodes = 0;
   const rec = () => { count += 1; };
+  const isBigintMarker = (v) =>
+    v !== null && typeof v === "object" && !Array.isArray(v) &&
+    Object.keys(v).length === 1 && typeof v.$bigint === "string";
   // Visit one envelope object; count it as a record only when the
   // caller classifies it so. Arrays are traversed, never counted.
+  // The parsed tree is acyclic by construction (JSON.parse output),
+  // so no identity dedup: shared references were already expanded by
+  // serialization and each emitted occurrence counts.
   function obj(v, fn) {
-    if (v === null || typeof v !== "object") return;
-    if (seen.has(v)) return; // cycle-safe
-    seen.add(v);
+    if (v === null || typeof v !== "object" || isBigintMarker(v)) return;
     if (++nodes > OUTPUT_WALK_NODE_CAP) { count = Number.POSITIVE_INFINITY; return; }
     fn(v);
   }
@@ -214,7 +236,7 @@ export function countFinalEnvelopeRecords(env) {
       });
     });
   });
-  obj(env?.report, (r) => {
+  obj(tree?.report, (r) => {
     rec(); // report record
     obj(r.coverage, () => rec()); // completeness record
     if (r.summary !== null && r.summary !== undefined) obj(r.summary, () => rec()); // summary record
@@ -222,14 +244,14 @@ export function countFinalEnvelopeRecords(env) {
       for (const c of r.claims ?? []) walkClaim(c);
     });
   });
-  obj(env?.source_refs, () => {
-    for (const s of env.source_refs ?? []) obj(s, () => rec()); // source-ref records
+  obj(tree?.source_refs, () => {
+    for (const s of tree.source_refs ?? []) obj(s, () => rec()); // source-ref records
   });
-  obj(env?.diagnostics, () => {
-    for (const d of env.diagnostics ?? []) obj(d, () => rec()); // diagnostic records
+  obj(tree?.diagnostics, () => {
+    for (const d of tree.diagnostics ?? []) obj(d, () => rec()); // diagnostic records
   });
-  obj(env?.quarantined_sources, () => {
-    for (const q of env.quarantined_sources ?? []) obj(q, () => rec()); // exclusion records
+  obj(tree?.quarantined_sources, () => {
+    for (const q of tree.quarantined_sources ?? []) obj(q, () => rec()); // exclusion records
   });
   return count;
 }

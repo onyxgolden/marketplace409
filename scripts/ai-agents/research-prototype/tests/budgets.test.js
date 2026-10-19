@@ -144,7 +144,7 @@ test("RA652-004: walk counts nested evidence/contradiction records", () => {
   assert.equal(countFinalEnvelopeRecords({ report: null, source_refs: [], diagnostics: [], quarantined_sources: [] }), 0);
 });
 
-test("RA652-004: walk is cycle-safe (shared references counted once)", () => {
+test("RA652-004: walk counts every emitted occurrence (shared references counted per occurrence)", () => {
   const shared = { repo: "r", path: "p.json" };
   const env = {
     report: { claims: [], coverage: { state: "X" }, summary: null },
@@ -152,12 +152,18 @@ test("RA652-004: walk is cycle-safe (shared references counted once)", () => {
     diagnostics: [],
     quarantined_sources: [],
   };
-  // report(1) + coverage(1) + shared source_ref(1, once) = 3.
-  assert.equal(countFinalEnvelopeRecords(env), 3);
+  // Fix round 3: the walk runs over the SERIALIZED envelope. The live
+  // graph shares one source_ref object, but canonical JSON emits it
+  // twice — so the count is report(1) + coverage(1) + 2 occurrences = 4.
+  // Identity-dedup undercounted this as 3 (the 256-claimed/259-actual
+  // defect).
+  assert.equal(countFinalEnvelopeRecords(env), 4);
   const cyclic = { a: 1 };
   cyclic.self = cyclic;
   const env2 = { report: { claims: [cyclic], coverage: null, summary: null }, source_refs: [], diagnostics: [], quarantined_sources: [] };
-  assert.ok(Number.isFinite(countFinalEnvelopeRecords(env2)), "cyclic envelope must terminate");
+  // A cyclic envelope cannot be serialized: the counter fails closed to
+  // +Infinity, which the caller turns into an OUTPUT_LIMIT refusal.
+  assert.ok(!Number.isFinite(countFinalEnvelopeRecords(env2)), "cyclic envelope must fail closed (non-finite)");
 });
 
 test("output prefill: 256 records allowed through the actual public run", () => {
