@@ -1,16 +1,29 @@
 // index.js — run(task, context) entry. Builds the public envelope.
-// S648 lessons applied: budget instantiated BEFORE any validation;
-// span verification wired into the runtime (findings carry citations);
-// validated task_id preserved on all post-validation responses.
+// Authority (PM651-001): principal/grant/relay validated before any
+// fixture bytes are touched. Citations (PM651-002): host-registered
+// SourceRef tuples with real Git blob SHA-1 and exact verified UTF-8
+// byte spans. All envelopes (including refusals) are byte-bounded
+// (PM651-003). Non-FS/calendar/float requests get named UNSUPPORTED_TASK.
 
 import { canonicalStringify, utf8Length } from './canonical.js';
-import { checkTask, checkContext, checkPlanPackage } from './schemas.js';
-import { Resolver, BudgetExceeded, InputLimit, LIMITS, sha256Hex } from './resolver.js';
+import { checkTask, checkContext, checkPlanPackage, safeGet } from './schemas.js';
+import { Resolver, BudgetExceeded, InputLimit, AuthError, LIMITS } from './resolver.js';
 import { scanPackageText } from './injection.js';
 import { analyzePlan } from './manager.js';
 
 export const AGENT = 'project-manager';
 export const SCHEMA_VERSION = '1';
+
+// Marker for inadmissible IDs in refusals (PM651-003): bounded, documented.
+export const INADMISSIBLE_ID_MARKER = '[inadmissible-id]';
+
+function safeTaskId(task) {
+  try {
+    const v = task && typeof task === 'object' ? safeGet(task, 'task_id', 'task').value : undefined;
+    if (typeof v === 'string' && v.length > 0 && v.length <= 1024) return v;
+  } catch { /* fall through */ }
+  return INADMISSIBLE_ID_MARKER;
+}
 
 export function run(task, context) {
   const started = Date.now();
@@ -22,18 +35,60 @@ export function run(task, context) {
 }
 
 function runInner(task, context, started) {
-  // 0. Budget FIRST — before any validation inspects candidates (S648-001).
-  const store = (context && context.fixtureStore) || {};
+  // 0. Budget FIRST — before any validation inspects candidates.
+  const store = (context && typeof context === 'object' && !Array.isArray(context))
+    ? safeGet(context, 'fixtureStore', 'context').value || {}
+    : {};
   const resolver = new Resolver(store);
 
-  // 1. Validate task + context envelopes (bounded preflight only).
-  const tc = checkTask(task);
-  if (!tc.ok) return invalidInput(task, tc.errors, started);
-  const cc = checkContext(context);
-  if (!cc.ok) return invalidInput(task, cc.errors, started);
+  // Pre-flight: bound fixture_refs length via descriptor-safe length read
+  // (does not trigger element getters) before serialization.
+  try {
+    const preRefs = task && typeof task === 'object' ? safeGet(task, 'fixture_refs', 'task').value : undefined;
+    if (Array.isArray(preRefs)) {
+      const lenDesc = Object.getOwnPropertyDescriptor(preRefs, 'length');
+      const len = lenDesc && typeof lenDesc.value === 'number' ? lenDesc.value : 0;
+      if (len > 64) {
+        const e = new Error('BUDGET_EXCEEDED: fixture_refs length exceeds 64');
+        e.code = 'BUDGET_EXCEEDED';
+        throw e;
+      }
+    }
+  } catch (e) {
+    if (e.code === 'BUDGET_EXCEEDED') throw e;
+    // Fall through to normal validation on accessor issues.
+  }
 
-  if (!['jason', 'muse-relay'].includes(context.request_authority)) {
-    return denied(task, 'AUTH_UNVERIFIED', 'request authority not recognized', started);
+  // Serialized task/context bytes are charged as input (PM651-003).
+  // Bounded preflight: measure without walking uncharged candidates.
+  const taskBytes = canonicalStringify(task === undefined ? null : task);
+  resolver.chargeInputBytes(utf8Length(taskBytes));
+
+  // 1. Validate task + context envelopes (charged, descriptor-safe).
+  let tc;
+  try {
+    tc = checkTask(task, resolver);
+  } catch (e) {
+    if (e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT' || e.code === 'ACCESSOR_REJECTED') throw e;
+    return invalidInput(task, ['task validation failed'], started, resolver);
+  }
+  if (!tc.ok) {
+    if (tc.oversizedId) return oversizedIdRefusal(task, started, resolver);
+    return invalidInput(task, tc.errors, started, resolver);
+  }
+  let cc;
+  try {
+    cc = checkContext(context, resolver);
+  } catch (e) {
+    if (e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT' || e.code === 'ACCESSOR_REJECTED') throw e;
+    return invalidInput(task, ['context validation failed'], started, resolver);
+  }
+  if (!cc.ok) return invalidInput(task, cc.errors, started, resolver);
+
+  // 1b. Unsupported operations -> named refusal (PM651-007).
+  const op = safeGet(task, 'operation', 'task').value;
+  if (op !== 'analyze') {
+    return namedRefusal(task, 'UNSUPPORTED_TASK', `operation "${op}" not supported; only "analyze"`, started, resolver);
   }
 
   const diagnostics = [];
@@ -42,70 +97,93 @@ function runInner(task, context, started) {
   const packages = [];
   let partial = false;
 
-  // 2. Resolve each fixture ref (charged before inspection).
-  for (const ref of task.fixture_refs) {
+  // 2. Resolve each fixture ref (authority checked before bytes; PM651-001).
+  const refs = safeGet(task, 'fixture_refs', 'task').value;
+  for (let ri = 0; ri < refs.length; ri++) {
+    const ref = safeGet(refs, String(ri), 'task.fixture_refs').value;
+    resolver.chargeObject(); // each ref candidate charged before use
     let resolved;
     try {
-      resolved = resolver.resolve(ref);
+      resolved = resolver.resolve(ref, context);
     } catch (e) {
       if (e.code === 'READ_DENIED') {
-        diagnostics.push(mkdiag('READ_DENIED', 'high', null, `fixture ${ref}: not registered`));
+        diagnostics.push(mkdiag('READ_DENIED', 'high', null, `fixture ${ref}: not registered`, null));
         partial = true;
         continue;
       }
-      throw e; // BUDGET_EXCEEDED / INPUT_LIMIT / HASH_MISMATCH -> refusal
+      if (e.code === 'AUTH_UNVERIFIED' || e.code === 'AUTHZ_DENIED') {
+        // Fail closed on authority; no bytes touched (PM651-001).
+        return denied(task, e.code, e.message, started, resolver);
+      }
+      throw e; // BUDGET_EXCEEDED / INPUT_LIMIT / HASH_MISMATCH / BLOB_MISMATCH -> refusal
     }
     const pkg = resolved.record;
-    const pc = checkPlanPackage(pkg);
-    if (!pc.ok) {
-      diagnostics.push(mkdiag('INVALID_INPUT', 'high', null, `package ${ref}: ${pc.errors[0]}`));
-      partial = true;
-      continue;
+    let pc;
+    try {
+      pc = checkPlanPackage(pkg, resolver);
+    } catch (e) {
+      if (e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT' || e.code === 'ACCESSOR_REJECTED') throw e;
+      return invalidInput(task, ['package validation failed'], started, resolver);
     }
-    // injection scan on free-text notes -> quarantine record text
+    if (!pc.ok) {
+      // Structural corruption -> named refusal, no partial domain payload (PM651-007).
+      return namedRefusal(task, 'INVALID_INPUT', `package ${ref}: ${pc.errors[0]}`, started, resolver);
+    }
+    // Injection scan on free-text notes -> quarantine record text.
+    // Quarantined text is EXCLUDED from citations (PM651-002).
     const hits = scanPackageText(pkg);
+    const quarantinedIds = new Set();
     for (const h of hits) {
+      quarantinedIds.add(h.record_id);
       quarantined.push({ fixture_id: ref, record_id: h.record_id, families: h.families });
       diagnostics.push(mkdiag('INSTRUCTION_INJECTION', 'high', h.record_id,
-        `quarantined note text (${h.families.join(',')})`));
+        `quarantined note text (${h.families.join(',')})`, null));
     }
-    // span citation: whole-record byte span, charged under the span budget
-    resolver.chargeSpan();
-    const bytes = canonicalStringify(pkg);
-    const span = { start_byte: 0, end_byte: utf8Length(bytes), quoted_text: bytes.slice(0, 120) };
+    // Exact citation: whole-fixture span, verified under the span budget.
+    // Quarantined records are cited with explicit exclusion.
+    const span = resolver.verifySpan(resolved.bytes, 0, Buffer.byteLength(resolved.bytes, 'utf8'));
     const sourceRef = {
-      repo: 'synthetic', path: ref, commit: '0'.repeat(40),
-      blob: sha256Hex(bytes).slice(0, 40), algorithm: 'git-sha1', revision: '1',
-      quoted_span: span.quoted_text, span: { ...span, verification: 'VERIFIED' },
+      ...resolved.source_ref,
+      quoted_span: span.quoted_text.slice(0, 120),
+      span,
     };
-    sourceRefs.push(stripSpan(sourceRef));
-    packages.push({ ref, pkg, citation: sourceRef });
+    sourceRefs.push(stripSpanForList(sourceRef));
+    packages.push({ ref, pkg, citation: sourceRef, bytes: resolved.bytes, quarantinedIds });
+    resolver.chargeOutputRecord();
   }
 
   // 3. Analyze each admitted package.
   const reports = [];
-  let planRefused = null;
   for (const p of packages) {
-    const analysis = analyzePlan(p.pkg, resolver);
-    // attach the package citation to every finding (S648-002)
-    for (const f of analysis.findings) f.source_ref = p.citation;
-    reports.push({ plan_id: p.pkg.plan_id, citation: stripSpan(p.citation), ...analysis });
+    const analysis = analyzePlan(p.pkg, resolver, p.bytes, p.citation);
+    // Attach exact per-finding citations (PM651-002); quarantined records
+    // get explicit exclusion instead of support.
+    for (const f of analysis.findings) {
+      if (f.record_id && p.quarantinedIds.has(f.record_id)) {
+        f.source_ref = { ...stripSpanForList(p.citation), excluded: 'quarantined' };
+        f.evidence_state = 'unavailable-quarantined';
+      } else if (f.record_id) {
+        const recSpan = resolver.findRecordSpan(p.bytes, f.record_key || 'task_id', f.record_id);
+        if (recSpan) {
+          const vs = resolver.verifySpan(p.bytes, recSpan[0], recSpan[1]);
+          f.source_ref = { ...stripSpanForList(p.citation), quoted_span: vs.quoted_text.slice(0, 120), span: vs };
+        } else {
+          f.source_ref = { ...stripSpanForList(p.citation), evidence_state: 'unavailable-record-span' };
+        }
+      } else {
+        f.source_ref = stripSpanForList(p.citation);
+      }
+      if (!f.evidence_state) f.evidence_state = 'verified';
+    }
+    reports.push({ plan_id: p.pkg.plan_id, citation: stripSpanForList(p.citation), ...analysis });
     if (analysis.status === 'PARTIAL') partial = true;
-    if (analysis.status === 'REFUSED' && !planRefused) planRefused = analysis;
-  }
-
-  // Structural refusal in any package -> whole envelope REFUSED.
-  if (planRefused) {
-    const env = baseEnvelope(task, started);
-    env.status = 'REFUSED';
-    for (const f of planRefused.findings) env.diagnostics.push(f);
-    env.report = null;
-    return env;
+    resolver.chargeOutputRecord();
   }
 
   // 4. Draft summary (inert, no approval/tasking language).
   let draft = null;
-  if (task.options.include_draft_summary && reports.length) {
+  const includeDraft = safeGet(safeGet(task, 'options', 'task').value || {}, 'include_draft_summary', 'opts').value;
+  if (includeDraft === true && reports.length) {
     draft = reports.map((r) =>
       `DRAFT plan-health summary for ${r.plan_id}: status ${r.status}, ` +
       `${r.findings.length} finding(s), ${r.orphans.length} orphan task(s), ` +
@@ -114,75 +192,114 @@ function runInner(task, context, started) {
     ).join('\n');
   }
 
-  const elapsed = Date.now() - started;
-  if (elapsed > 5000) throw timeoutErr();
-
   const envelope = {
     schema_version: SCHEMA_VERSION,
     agent: AGENT,
-    task_id: task.task_id, // validated request ID preserved (S648-004)
+    task_id: safeTaskId(task),
     status: partial ? 'PARTIAL' : 'REPORT_READY',
     advisory: true,
     fixture_only: true,
     authorization_granted: false,
-    complete: !partial,
+    complete: false, // computed below from verified coverage (PM651-006)
     source_refs: sourceRefs,
     diagnostics,
     quarantined_sources: quarantined,
     routing_flags: [],
     report: { plans: reports, draft_summary: draft },
   };
-  // output bound
+  // Completeness reflects verified coverage (PM651-006): true only if every
+  // plan is REPORT_READY with no UNVERIFIABLE findings and no quarantine.
+  const allReady = reports.length > 0 && reports.every((r) =>
+    r.status === 'REPORT_READY' &&
+    !(r.findings || []).some((f) => f.severity === 'UNVERIFIABLE') &&
+    !(r.completion && r.completion.verified === false));
+  const noQuarantine = quarantined.length === 0;
+  envelope.complete = !partial && allReady && noQuarantine;
+
+  // Output bound on the EXACT final envelope (PM651-003).
   const outBytes = utf8Length(canonicalStringify(envelope));
   if (outBytes > LIMITS.maxOutputBytes) throw outputLimitErr();
   return envelope;
 }
 
-function stripSpan(ref) {
+function stripSpanForList(ref) {
   const { quoted_span, span, ...rest } = ref;
   return rest;
 }
 
-function mkdiag(code, severity, record_id, reason) {
-  return { code, severity, record_id, source_ref: null, reason };
+function mkdiag(code, severity, record_id, reason, source_ref) {
+  return { code, severity, record_id, source_ref: source_ref || null, reason };
 }
 
 function baseEnvelope(task, started) {
   return {
     schema_version: SCHEMA_VERSION,
     agent: AGENT,
-    task_id: task && typeof task.task_id === 'string' ? task.task_id : 'unknown',
+    task_id: safeTaskId(task),
     advisory: true, fixture_only: true, authorization_granted: false,
     complete: false, source_refs: [], diagnostics: [],
     quarantined_sources: [], routing_flags: [],
   };
 }
 
-function invalidInput(task, errors, started) {
-  const e = baseEnvelope(task, started);
-  e.status = 'REFUSED';
-  for (const err of errors) e.diagnostics.push(mkdiag('INVALID_INPUT', 'high', null, err));
-  e.report = null;
-  return e;
+/** Bound an envelope's serialized size; replace with minimal refusal if over. */
+function boundEnvelope(env, resolver) {
+  try {
+    const n = utf8Length(canonicalStringify(env));
+    if (n <= LIMITS.maxOutputBytes) return env;
+  } catch { /* fall through to minimal */ }
+  return {
+    schema_version: SCHEMA_VERSION,
+    agent: AGENT,
+    task_id: INADMISSIBLE_ID_MARKER,
+    status: 'REFUSED',
+    advisory: true, fixture_only: true, authorization_granted: false,
+    complete: false, source_refs: [], diagnostics: [],
+    quarantined_sources: [], routing_flags: [],
+    report: null,
+    note: 'OUTPUT_LIMIT',
+  };
 }
 
-function denied(task, code, reason, started) {
+function invalidInput(task, errors, started, resolver) {
   const e = baseEnvelope(task, started);
   e.status = 'REFUSED';
-  e.diagnostics.push(mkdiag(code, 'high', null, reason));
+  for (const err of errors) e.diagnostics.push(mkdiag('INVALID_INPUT', 'high', null, err, null));
   e.report = null;
-  return e;
+  return boundEnvelope(e, resolver);
+}
+
+function oversizedIdRefusal(task, started, resolver) {
+  const e = baseEnvelope(task, started);
+  e.status = 'REFUSED';
+  e.diagnostics.push(mkdiag('INPUT_LIMIT', 'high', null, 'task_id exceeds 1024 chars; use bounded marker', null));
+  e.report = null;
+  return boundEnvelope(e, resolver);
+}
+
+function namedRefusal(task, code, reason, started, resolver) {
+  const e = baseEnvelope(task, started);
+  e.status = 'REFUSED';
+  e.diagnostics.push(mkdiag(code, 'high', null, reason, null));
+  e.report = null;
+  return boundEnvelope(e, resolver);
+}
+
+function denied(task, code, reason, started, resolver) {
+  const e = baseEnvelope(task, started);
+  e.status = 'REFUSED';
+  e.diagnostics.push(mkdiag(code, 'high', null, reason, null));
+  e.report = null;
+  return boundEnvelope(e, resolver);
 }
 
 function refusalEnvelope(task, e, started) {
   const env = baseEnvelope(task, started);
   env.status = 'REFUSED';
   const code = e && e.code ? e.code : 'INTERNAL_ERROR';
-  // HASH_MISMATCH and friends propagate as named refusals, never swallowed.
-  env.diagnostics.push(mkdiag(code, 'high', null, String((e && e.message) || e).slice(0, 200)));
+  env.diagnostics.push(mkdiag(code, 'high', null, String((e && e.message) || e).slice(0, 200), null));
   env.report = null;
-  return env;
+  return boundEnvelope(env, null);
 }
 
-function timeoutErr() { const e = new Error('TIMEOUT'); e.code = 'TIMEOUT'; return e; }
 function outputLimitErr() { const e = new Error('OUTPUT_LIMIT'); e.code = 'OUTPUT_LIMIT'; return e; }

@@ -118,7 +118,7 @@ test('claimed start violating predecessor bound flagged', () => {
 
 test('resource overallocation detected', () => {
   const a = analyzePlan(pkg({
-    tasks: [t('a', 4, { demands: [D('crew', 2)] }), t('b', 4, { demands: [D('crew', 2)] })],
+    tasks: [t('a', 4, { declared: 0, demands: [D('crew', 2)] }), t('b', 4, { declared: 0, demands: [D('crew', 2)] })],
     milestones: [M('m1', ['a', 'b'], 4)],
     capacity_windows: [W('w1', 'crew', 0, 10, 3)],
   }), R());
@@ -128,7 +128,7 @@ test('resource overallocation detected', () => {
 
 test('abutting demands never overlap', () => {
   const a = analyzePlan(pkg({
-    tasks: [t('a', 4, { demands: [D('crew', 3)] }), t('b', 4, { demands: [D('crew', 3)] })],
+    tasks: [t('a', 4, { declared: 0, demands: [D('crew', 3)] }), t('b', 4, { declared: 4, demands: [D('crew', 3)] })],
     edges: [E('e1', 'a', 'b')],
     milestones: [M('m1', ['b'], 8)],
     capacity_windows: [W('w1', 'crew', 0, 10, 3)],
@@ -157,11 +157,21 @@ test('overlapping capacity windows -> UNVERIFIABLE', () => {
 
 test('coverage gap -> UNVERIFIABLE', () => {
   const a = analyzePlan(pkg({
-    tasks: [t('a', 8, { demands: [D('crew', 1)] })],
+    tasks: [t('a', 8, { declared: 0, demands: [D('crew', 1)] })],
     milestones: [M('m1', ['a'], 8)],
     capacity_windows: [W('w1', 'crew', 0, 4, 2)],
   }), R());
   assert.ok(codes(a).includes('CAPACITY_COVERAGE_GAP'));
+});
+
+test('missing declared start -> UNVERIFIABLE resource basis (PM651-004)', () => {
+  const a = analyzePlan(pkg({
+    tasks: [t('a', 4, { demands: [D('crew', 1)] })],
+    milestones: [M('m1', ['a'], 4)],
+    capacity_windows: [W('w1', 'crew', 0, 10, 1)],
+  }), R());
+  assert.ok(codes(a).includes('RESOURCE_NO_DECLARED_START'));
+  assert.equal(a.resources[0].assessment, 'UNVERIFIABLE');
 });
 
 test('zero-duration milestone carries no demand; nonzero demand invalid', () => {

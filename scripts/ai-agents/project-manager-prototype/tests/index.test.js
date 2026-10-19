@@ -6,8 +6,13 @@ import { canonicalStringify } from '../src/canonical.js';
 import { readFileSync } from 'node:fs';
 
 const fixtures = JSON.parse(readFileSync(new URL('../fixtures/store.json', import.meta.url), 'utf8')).fixtures;
-function ctx(authority = 'jason', store = fixtures) {
-  return { clock: {}, criteria_version: '1', principal: 't', grants: [], request_authority: authority, fixtureStore: store };
+function ctx(authority = 'jason', store = fixtures, principalId = 'jason') {
+  return {
+    clock: {}, criteria_version: '1',
+    principal: { principal_id: principalId, kind: 'human' },
+    grants: [{ grant_id: 'g1', principal_id: principalId, action: 'read', resource: { fixture_id: '*' } }],
+    request_authority: authority, relay: null, fixtureStore: store,
+  };
 }
 function task(over = {}) {
   return { schema_version: '1', task_id: 'req-123', operation: 'analyze', fixture_refs: ['plan-linear'], options: {}, ...over };
@@ -33,9 +38,34 @@ test('unknown authority -> REFUSED AUTH_UNVERIFIED', () => {
   assert.ok(r.diagnostics.some((d) => d.code === 'AUTH_UNVERIFIED'));
 });
 
-test('muse-relay authority accepted', () => {
-  const r = run(task(), ctx('muse-relay'));
-  assert.equal(r.status, 'REPORT_READY');
+test('principal mismatch -> REFUSED AUTH_UNVERIFIED', () => {
+  const r = run(task(), ctx('jason', fixtures, 'mallory'));
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTH_UNVERIFIED'));
+});
+
+test('missing grant -> REFUSED AUTHZ_DENIED with zero byte access', () => {
+  const c = ctx();
+  c.grants = [];
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTHZ_DENIED'));
+});
+
+test('muse-relay authority requires valid relay', () => {
+  // No relay object -> refused.
+  const c1 = ctx('muse-relay');
+  c1.principal = { principal_id: 'relay-op', kind: 'relay' };
+  c1.grants = [{ grant_id: 'g1', principal_id: 'relay-op', action: 'read', resource: { fixture_id: '*' } }];
+  const r1 = run(task(), c1);
+  assert.equal(r1.status, 'REFUSED');
+  // Valid relay delegating to principal -> accepted.
+  const c2 = ctx('muse-relay');
+  c2.principal = { principal_id: 'relay-op', kind: 'relay' };
+  c2.grants = [{ grant_id: 'g1', principal_id: 'relay-op', action: 'read', resource: { fixture_id: '*' } }];
+  c2.relay = { relay_id: 'muse-relay', delegate_principal_id: 'relay-op', valid: true, scope: 'read-fixtures' };
+  const r2 = run(task(), c2);
+  assert.equal(r2.status, 'REPORT_READY');
 });
 
 test('unknown fixture -> PARTIAL with READ_DENIED', () => {
@@ -44,12 +74,12 @@ test('unknown fixture -> PARTIAL with READ_DENIED', () => {
   assert.ok(r.diagnostics.some((d) => d.code === 'READ_DENIED'));
 });
 
-test('hash mismatch -> REFUSED HASH_MISMATCH (not swallowed)', () => {
+test('hash mismatch -> REFUSED (not swallowed)', () => {
   const bad = JSON.parse(JSON.stringify(fixtures));
   bad['plan-linear'] = { ...bad['plan-linear'], bytes: '{"tampered":true}' };
   const r = run(task(), ctx('jason', bad));
   assert.equal(r.status, 'REFUSED');
-  assert.ok(r.diagnostics.some((d) => d.code === 'HASH_MISMATCH'));
+  assert.ok(r.diagnostics.some((d) => d.code === 'BLOB_MISMATCH' || d.code === 'HASH_MISMATCH'));
 });
 
 test('65 fixture refs -> BUDGET_EXCEEDED refusal', () => {
@@ -89,5 +119,40 @@ test('draft summary is inert prose', () => {
 test('findings carry source citations', () => {
   const r = run(task({ fixture_refs: ['plan-cycle'] }), ctx());
   const f = r.report.plans[0].findings[0];
-  assert.ok(f.source_ref && f.source_ref.path === 'plan-cycle');
+  assert.ok(f.source_ref && f.source_ref.path === 'fixtures/plan-cycle.json');
+  assert.ok(f.source_ref.blob && /^[0-9a-f]{40}$/.test(f.source_ref.blob));
+  assert.equal(f.source_ref.algorithm, 'git-sha1');
+  assert.equal(f.evidence_state, 'verified');
+});
+
+test('PM651-001: missing principal entirely -> REFUSED', () => {
+  const c = ctx();
+  delete c.principal;
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+});
+
+test('PM651-001: wrong-scope grant -> REFUSED AUTHZ_DENIED', () => {
+  const c = ctx();
+  c.grants = [{ grant_id: 'g1', principal_id: 'jason', action: 'read', resource: { fixture_id: 'other-fixture' } }];
+  const r = run(task(), c);
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'AUTHZ_DENIED'));
+});
+
+test('PM651-002: blob is real git SHA-1, not truncated SHA-256', () => {
+  const r = run(task(), ctx());
+  const ref = r.source_refs[0];
+  assert.equal(ref.algorithm, 'git-sha1');
+  assert.ok(/^[0-9a-f]{40}$/.test(ref.blob));
+  // Must equal the actual git blob SHA-1 ChatGPT computed.
+  assert.equal(ref.blob, '988320ec71f72d05f1b724ad19bea540e7f52b7f');
+});
+
+test('PM651-002: tampered blob -> BLOB_MISMATCH (not swallowed)', () => {
+  const bad = JSON.parse(JSON.stringify(fixtures));
+  bad['plan-linear'].source_ref.blob = '0000000000000000000000000000000000000000';
+  const r = run(task(), ctx('jason', bad));
+  assert.equal(r.status, 'REFUSED');
+  assert.ok(r.diagnostics.some((d) => d.code === 'BLOB_MISMATCH'));
 });

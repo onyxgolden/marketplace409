@@ -1478,7 +1478,7 @@
     "expected": {
       "status": "REFUSED",
       "findingCodes": [
-        "INVALID_INPUT"
+        "UNSUPPORTED_TASK"
       ],
       "badOp": true
     }
@@ -1912,7 +1912,7 @@
     "expected": {
       "status": "REFUSED",
       "findingCodes": [
-        "INVALID_INPUT"
+        "UNSUPPORTED_TASK"
       ]
     }
   },

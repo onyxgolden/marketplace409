@@ -5,8 +5,10 @@ import { run } from '../src/index.js';
 const fixtureId = process.argv[2] || 'plan-linear';
 const store = JSON.parse(readFileSync(new URL('../fixtures/store.json', import.meta.url), 'utf8')).fixtures;
 const ctx = {
-  clock: {}, criteria_version: '1', principal: 'manual',
-  grants: [], request_authority: 'jason', fixtureStore: store,
+  clock: {}, criteria_version: '1',
+  principal: { principal_id: 'jason', kind: 'human' },
+  grants: [{ grant_id: 'g1', principal_id: 'jason', action: 'read', resource: { fixture_id: '*' } }],
+  request_authority: 'jason', relay: null, fixtureStore: store,
 };
 const task = {
   schema_version: '1', task_id: `manual-${Date.now()}`,

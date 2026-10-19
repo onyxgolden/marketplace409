@@ -1,54 +1,171 @@
-// schemas.js — runtime validation. Rejects unknown control fields, missing
-// required fields, wrong types, bad enums, duplicate IDs, nonfinite numbers.
+// schemas.js — runtime validation. Budget-aware, descriptor-safe.
+// Each CANDIDATE object (task, context, principal, grant, package, row,
+// edge, milestone, window, demand) is charged ONCE before its fields are
+// read. Field reads within a charged object are free but descriptor-safe.
+// Getters/setters are refused. Rejects unknown fields, missing required
+// fields, wrong types, bad enums, duplicate IDs, unsafe numbers, reserved keys.
 
 const TASK_FIELDS = ['schema_version', 'task_id', 'operation', 'fixture_refs', 'options'];
-const CONTEXT_FIELDS = ['clock', 'criteria_version', 'principal', 'grants', 'request_authority', 'fixtureStore'];
+const CONTEXT_FIELDS = ['clock', 'criteria_version', 'principal', 'grants', 'request_authority', 'relay', 'fixtureStore'];
 const OPTION_FIELDS = ['include_draft_summary'];
+const PRINCIPAL_FIELDS = ['principal_id', 'kind'];
+const GRANT_FIELDS = ['grant_id', 'principal_id', 'action', 'resource'];
+const GRANT_RESOURCE_FIELDS = ['fixture_id'];
+const RELAY_FIELDS = ['relay_id', 'delegate_principal_id', 'valid', 'scope'];
+
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isSafeKey(k) {
+  return typeof k === 'string' && !RESERVED_KEYS.has(k);
+}
+
+function safeGet(obj, key, label) {
+  const desc = Object.getOwnPropertyDescriptor(obj, key);
+  if (!desc) return { value: undefined, present: false };
+  if (typeof desc.get === 'function' || typeof desc.set === 'function') {
+    const e = new Error(`ACCESSOR_REJECTED: ${label}.${key} is a getter/setter`);
+    e.code = 'ACCESSOR_REJECTED';
+    throw e;
+  }
+  return { value: desc.value, present: true };
+}
 
 function isInt(v) { return typeof v === 'number' && Number.isInteger(v); }
-function isNonNegInt(v) { return isInt(v) && v >= 0; }
+function isSafeInt(v) { return isInt(v) && Number.isSafeInteger(v); }
+function isNonNegSafeInt(v) { return isSafeInt(v) && v >= 0; }
 function isFiniteNum(v) { return typeof v === 'number' && Number.isFinite(v); }
 
 function unknownFields(obj, allowed) {
-  return Object.keys(obj).filter((k) => !allowed.includes(k));
+  const out = [];
+  for (const k of Object.keys(obj)) {
+    if (!isSafeKey(k)) out.push(`reserved:${k}`);
+    else if (!allowed.includes(k)) out.push(k);
+  }
+  return out;
 }
 
-export function checkTask(task) {
+function err(errors, msg) { errors.push(msg); }
+function charge(budget) { if (budget) budget.chargeObject(); }
+
+export function checkTask(task, budget) {
   const errors = [];
-  if (!task || typeof task !== 'object' || Array.isArray(task)) return { ok: false, errors: ['task must be an object'] };
-  const unk = unknownFields(task, TASK_FIELDS);
-  if (unk.length) errors.push(`unknown task fields: ${unk.join(',')}`);
-  if (task.schema_version !== '1') errors.push('schema_version must be "1"');
-  if (typeof task.task_id !== 'string' || !task.task_id) errors.push('task_id must be a non-empty string');
-  if (task.operation !== 'analyze') errors.push('operation must be "analyze"');
-  if (!Array.isArray(task.fixture_refs)) errors.push('fixture_refs must be an array');
-  else for (const r of task.fixture_refs) if (typeof r !== 'string') errors.push('fixture_refs entries must be strings');
-  if (!task.options || typeof task.options !== 'object' || Array.isArray(task.options)) {
-    errors.push('options must be an object');
-  } else {
-    const uo = unknownFields(task.options, OPTION_FIELDS);
-    if (uo.length) errors.push(`unknown options fields: ${uo.join(',')}`);
-    if ('include_draft_summary' in task.options && typeof task.options.include_draft_summary !== 'boolean') {
-      errors.push('options.include_draft_summary must be boolean');
+  try {
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return { ok: false, errors: ['task must be an object'] };
+    charge(budget); // task candidate
+    const tidDesc = Object.getOwnPropertyDescriptor(task, 'task_id');
+    if (tidDesc && typeof tidDesc.value === 'string' && tidDesc.value.length > 1024) {
+      return { ok: false, errors: ['task_id exceeds 1024 chars'], oversizedId: true };
     }
+    const unk = unknownFields(task, TASK_FIELDS);
+    if (unk.length) err(errors, `unknown task fields: ${unk.join(',')}`);
+    if (safeGet(task, 'schema_version', 'task').value !== '1') err(errors, 'schema_version must be "1"');
+    const tid = safeGet(task, 'task_id', 'task').value;
+    if (typeof tid !== 'string' || !tid) err(errors, 'task_id must be a non-empty string');
+    const op = safeGet(task, 'operation', 'task').value;
+    if (typeof op !== 'string' || !op) err(errors, 'operation must be a non-empty string');
+    // Note: unsupported operations are named UNSUPPORTED_TASK by the caller (index.js).
+    const refs = safeGet(task, 'fixture_refs', 'task').value;
+    if (!Array.isArray(refs)) err(errors, 'fixture_refs must be an array');
+    else {
+      for (let i = 0; i < refs.length; i++) {
+        charge(budget); // each ref candidate
+        const r = safeGet(refs, String(i), 'task.fixture_refs').value;
+        if (typeof r !== 'string') err(errors, `fixture_refs[${i}] must be a string`);
+      }
+    }
+    const opts = safeGet(task, 'options', 'task').value;
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
+      err(errors, 'options must be an object');
+    } else {
+      charge(budget); // options candidate
+      const uo = unknownFields(opts, OPTION_FIELDS);
+      if (uo.length) err(errors, `unknown options fields: ${uo.join(',')}`);
+      const ids = safeGet(opts, 'include_draft_summary', 'task.options').value;
+      if (ids !== undefined && typeof ids !== 'boolean') err(errors, 'options.include_draft_summary must be boolean');
+    }
+  } catch (e) {
+    if (e.code === 'ACCESSOR_REJECTED' || e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT') throw e;
+    err(errors, `task validation error: ${e.message}`);
   }
   return { ok: errors.length === 0, errors };
 }
 
-export function checkContext(ctx) {
+export function checkContext(ctx, budget) {
   const errors = [];
-  if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) return { ok: false, errors: ['context must be an object'] };
-  const unk = unknownFields(ctx, CONTEXT_FIELDS);
-  if (unk.length) errors.push(`unknown context fields: ${unk.join(',')}`);
-  if (!ctx.clock || typeof ctx.clock !== 'object') errors.push('clock required');
-  if (typeof ctx.request_authority !== 'string') errors.push('request_authority required');
-  if (ctx.fixtureStore !== undefined && (typeof ctx.fixtureStore !== 'object' || ctx.fixtureStore === null)) {
-    errors.push('fixtureStore must be an object');
+  try {
+    if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) return { ok: false, errors: ['context must be an object'] };
+    charge(budget); // context candidate
+    const unk = unknownFields(ctx, CONTEXT_FIELDS);
+    if (unk.length) err(errors, `unknown context fields: ${unk.join(',')}`);
+    const clock = safeGet(ctx, 'clock', 'context').value;
+    if (!clock || typeof clock !== 'object') err(errors, 'clock required');
+    if (safeGet(ctx, 'criteria_version', 'context').value !== '1') err(errors, 'criteria_version must be "1"');
+
+    const principal = safeGet(ctx, 'principal', 'context').value;
+    if (!principal || typeof principal !== 'object' || Array.isArray(principal)) {
+      err(errors, 'principal must be an object');
+    } else {
+      charge(budget); // principal candidate
+      const up = unknownFields(principal, PRINCIPAL_FIELDS);
+      if (up.length) err(errors, `unknown principal fields: ${up.join(',')}`);
+      const pid = safeGet(principal, 'principal_id', 'context.principal').value;
+      if (typeof pid !== 'string' || !pid) err(errors, 'principal.principal_id required');
+      const kind = safeGet(principal, 'kind', 'context.principal').value;
+      if (kind !== 'human' && kind !== 'relay') err(errors, 'principal.kind must be human or relay');
+    }
+
+    const grants = safeGet(ctx, 'grants', 'context').value;
+    if (!Array.isArray(grants)) {
+      err(errors, 'grants must be an array');
+    } else {
+      grants.forEach((g, i) => {
+        charge(budget); // each grant candidate
+        if (!g || typeof g !== 'object' || Array.isArray(g)) { err(errors, `grants[${i}] must be an object`); return; }
+        const ug = unknownFields(g, GRANT_FIELDS);
+        if (ug.length) err(errors, `grants[${i}] unknown fields: ${ug.join(',')}`);
+        const gid = safeGet(g, 'grant_id', `grants[${i}]`).value;
+        if (typeof gid !== 'string' || !gid) err(errors, `grants[${i}].grant_id required`);
+        const gpid = safeGet(g, 'principal_id', `grants[${i}]`).value;
+        if (typeof gpid !== 'string' || !gpid) err(errors, `grants[${i}].principal_id required`);
+        const action = safeGet(g, 'action', `grants[${i}]`).value;
+        if (action !== 'read') err(errors, `grants[${i}].action must be "read"`);
+        const res = safeGet(g, 'resource', `grants[${i}]`).value;
+        if (!res || typeof res !== 'object' || Array.isArray(res)) {
+          err(errors, `grants[${i}].resource must be an object`);
+        } else {
+          charge(budget); // grant resource candidate
+          const ur = unknownFields(res, GRANT_RESOURCE_FIELDS);
+          if (ur.length) err(errors, `grants[${i}].resource unknown fields: ${ur.join(',')}`);
+          const fid = safeGet(res, 'fixture_id', `grants[${i}].resource`).value;
+          if (typeof fid !== 'string' || !fid) err(errors, `grants[${i}].resource.fixture_id required`);
+        }
+      });
+    }
+
+    const ra = safeGet(ctx, 'request_authority', 'context').value;
+    if (typeof ra !== 'string' || !ra) err(errors, 'request_authority required');
+
+    const relay = safeGet(ctx, 'relay', 'context').value;
+    if (relay !== undefined && relay !== null) {
+      if (typeof relay !== 'object' || Array.isArray(relay)) {
+        err(errors, 'relay must be an object or null');
+      } else {
+        charge(budget); // relay candidate
+        const ur = unknownFields(relay, RELAY_FIELDS);
+        if (ur.length) err(errors, `unknown relay fields: ${ur.join(',')}`);
+      }
+    }
+
+    const store = safeGet(ctx, 'fixtureStore', 'context').value;
+    if (store !== undefined && (typeof store !== 'object' || store === null || Array.isArray(store))) {
+      err(errors, 'fixtureStore must be an object');
+    }
+  } catch (e) {
+    if (e.code === 'ACCESSOR_REJECTED' || e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT') throw e;
+    err(errors, `context validation error: ${e.message}`);
   }
   return { ok: errors.length === 0, errors };
 }
-
-// ---- plan package schema (the domain document inside a fixture) ----
 
 const PKG_FIELDS = ['plan_id', 'project_start_tick', 'tasks', 'edges', 'milestones', 'capacity_windows', 'header_claims', 'source_ref'];
 const TASK_ROW_FIELDS = ['task_id', 'workstream_id', 'duration_ticks', 'declared_start_tick', 'release_tick', 'status', 'resource_demands', 'notes'];
@@ -59,77 +176,136 @@ const DEMAND_FIELDS = ['resource_id', 'amount_num', 'amount_den'];
 const HEADER_FIELDS = ['claimed_completion_pct', 'claimed_window_text'];
 const TASK_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETE'];
 
-export function checkPlanPackage(pkg) {
+export function checkPlanPackage(pkg, budget) {
   const errors = [];
-  if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) return { ok: false, errors: ['package must be an object'] };
-  const unk = unknownFields(pkg, PKG_FIELDS);
-  if (unk.length) errors.push(`unknown package fields: ${unk.join(',')}`);
-  if (typeof pkg.plan_id !== 'string' || !pkg.plan_id) errors.push('plan_id required');
-  if (!isInt(pkg.project_start_tick)) errors.push('project_start_tick must be an integer');
-  for (const [key, fields, label] of [
-    ['tasks', TASK_ROW_FIELDS, 'task'],
-    ['edges', EDGE_FIELDS, 'edge'],
-    ['milestones', MILESTONE_FIELDS, 'milestone'],
-    ['capacity_windows', WINDOW_FIELDS, 'capacity window'],
-  ]) {
-    if (!Array.isArray(pkg[key])) { errors.push(`${key} must be an array`); continue; }
-    pkg[key].forEach((row, i) => {
-      if (!row || typeof row !== 'object') { errors.push(`${label}[${i}] must be an object`); return; }
-      const u = unknownFields(row, fields);
-      if (u.length) errors.push(`${label}[${i}] unknown fields: ${u.join(',')}`);
-    });
-  }
-  if (pkg.header_claims !== undefined) {
-    if (typeof pkg.header_claims !== 'object' || pkg.header_claims === null || Array.isArray(pkg.header_claims)) {
-      errors.push('header_claims must be an object');
-    } else {
-      const u = unknownFields(pkg.header_claims, HEADER_FIELDS);
-      if (u.length) errors.push(`header_claims unknown fields: ${u.join(',')}`);
-    }
-  }
-  // per-row value checks (structural; domain math lives in manager.js)
-  (pkg.tasks || []).forEach((t, i) => {
-    if (typeof t.task_id !== 'string' || !t.task_id) errors.push(`task[${i}].task_id required`);
-    if (!isNonNegInt(t.duration_ticks)) errors.push(`task[${i}].duration_ticks must be a non-negative integer`);
-    if (t.declared_start_tick !== null && t.declared_start_tick !== undefined && !isInt(t.declared_start_tick)) {
-      errors.push(`task[${i}].declared_start_tick must be integer or null`);
-    }
-    if (t.release_tick !== undefined && t.release_tick !== null && !isInt(t.release_tick)) {
-      errors.push(`task[${i}].release_tick must be integer or null`);
-    }
-    if (!TASK_STATUSES.includes(t.status)) errors.push(`task[${i}].status must be one of ${TASK_STATUSES.join('/')}`);
-    if (t.resource_demands !== undefined) {
-      if (!Array.isArray(t.resource_demands)) errors.push(`task[${i}].resource_demands must be an array`);
-      else t.resource_demands.forEach((d, j) => {
-        if (!d || typeof d !== 'object') { errors.push(`task[${i}].resource_demands[${j}] must be an object`); return; }
-        const u = unknownFields(d, DEMAND_FIELDS);
-        if (u.length) errors.push(`task[${i}].resource_demands[${j}] unknown fields: ${u.join(',')}`);
-        if (typeof d.resource_id !== 'string' || !d.resource_id) errors.push(`task[${i}].resource_demands[${j}].resource_id required`);
-        if (!isInt(d.amount_num) || !isInt(d.amount_den) || d.amount_den <= 0) {
-          errors.push(`task[${i}].resource_demands[${j}] amount must be rational with positive denominator`);
+  const fail = (msg) => { err(errors, msg); return { ok: false, errors }; };
+  try {
+    if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) return fail('package must be an object');
+    charge(budget); // package candidate
+    const unk = unknownFields(pkg, PKG_FIELDS);
+    if (unk.length) return fail(`unknown package fields: ${unk.join(',')}`);
+    const planId = safeGet(pkg, 'plan_id', 'pkg').value;
+    if (typeof planId !== 'string' || !planId || !isSafeKey(planId)) return fail('plan_id required');
+    if (!isSafeInt(safeGet(pkg, 'project_start_tick', 'pkg').value)) return fail('project_start_tick must be a safe integer');
+
+    const seen = { task: new Set(), edge: new Set(), milestone: new Set(), window: new Set() };
+    for (const [key, fields, label, setKey] of [
+      ['tasks', TASK_ROW_FIELDS, 'task', 'task'],
+      ['edges', EDGE_FIELDS, 'edge', 'edge'],
+      ['milestones', MILESTONE_FIELDS, 'milestone', 'milestone'],
+      ['capacity_windows', WINDOW_FIELDS, 'capacity window', 'window'],
+    ]) {
+      const arr = safeGet(pkg, key, 'pkg').value;
+      if (!Array.isArray(arr)) return fail(`${key} must be an array`);
+      for (let i = 0; i < arr.length; i++) {
+        charge(budget); // each row candidate
+        const row = safeGet(arr, String(i), `pkg.${key}`).value;
+        if (!row || typeof row !== 'object' || Array.isArray(row)) return fail(`${label}[${i}] must be an object`);
+        const u = unknownFields(row, fields);
+        if (u.length) return fail(`${label}[${i}] unknown fields: ${u.join(',')}`);
+        const idKey = key === 'tasks' ? 'task_id' : key === 'edges' ? 'edge_id' : key === 'milestones' ? 'milestone_id' : 'window_id';
+        const id = safeGet(row, idKey, `${label}[${i}]`).value;
+        if (typeof id === 'string' && id) {
+          if (seen[setKey].has(id)) return fail(`duplicate ${idKey}: ${id}`);
+          seen[setKey].add(id);
         }
-        if (d.amount_num < 0) errors.push(`task[${i}].resource_demands[${j}] amount_num must be >= 0`);
-      });
+      }
     }
-  });
-  (pkg.edges || []).forEach((e, i) => {
-    if (typeof e.edge_id !== 'string' || !e.edge_id) errors.push(`edge[${i}].edge_id required`);
-    if (typeof e.from_task !== 'string' || typeof e.to_task !== 'string') errors.push(`edge[${i}] from_task/to_task required`);
-    if (!isInt(e.lag_ticks)) errors.push(`edge[${i}].lag_ticks must be an integer`);
-  });
-  (pkg.milestones || []).forEach((m, i) => {
-    if (typeof m.milestone_id !== 'string' || !m.milestone_id) errors.push(`milestone[${i}].milestone_id required`);
-    if (!Array.isArray(m.required_tasks)) errors.push(`milestone[${i}].required_tasks must be an array`);
-    if (m.claimed_tick !== null && m.claimed_tick !== undefined && !isInt(m.claimed_tick)) {
-      errors.push(`milestone[${i}].claimed_tick must be integer or null`);
+
+    const hc = safeGet(pkg, 'header_claims', 'pkg').value;
+    if (hc !== undefined && hc !== null) {
+      if (typeof hc !== 'object' || Array.isArray(hc)) return fail('header_claims must be an object');
+      charge(budget);
+      const u = unknownFields(hc, HEADER_FIELDS);
+      if (u.length) return fail(`header_claims unknown fields: ${u.join(',')}`);
+      const ccp = safeGet(hc, 'claimed_completion_pct', 'pkg.header_claims').value;
+      if (ccp !== undefined && ccp !== null && typeof ccp !== 'number') {
+        return fail('header_claims.claimed_completion_pct must be a number');
+      }
     }
-  });
-  (pkg.capacity_windows || []).forEach((w, i) => {
-    if (typeof w.window_id !== 'string' || !w.window_id) errors.push(`capacity_windows[${i}].window_id required`);
-    if (typeof w.resource_id !== 'string' || !w.resource_id) errors.push(`capacity_windows[${i}].resource_id required`);
-    if (!isInt(w.start_tick) || !isInt(w.end_tick)) errors.push(`capacity_windows[${i}] start/end_tick must be integers`);
-    if (w.end_tick < w.start_tick) errors.push(`capacity_windows[${i}] end_tick < start_tick`);
-    if (!isFiniteNum(w.capacity) || w.capacity < 0) errors.push(`capacity_windows[${i}].capacity must be >= 0`);
-  });
+
+    const tasks = safeGet(pkg, 'tasks', 'pkg').value;
+    for (let i = 0; i < tasks.length; i++) {
+      const t = safeGet(tasks, String(i), 'pkg.tasks').value;
+      const tid = safeGet(t, 'task_id', `task[${i}]`).value;
+      if (typeof tid !== 'string' || !tid || !isSafeKey(tid)) return fail(`task[${i}].task_id required`);
+      if (!isNonNegSafeInt(safeGet(t, 'duration_ticks', `task[${i}]`).value)) return fail(`task[${i}].duration_ticks must be a non-negative safe integer`);
+      const dst = safeGet(t, 'declared_start_tick', `task[${i}]`).value;
+      if (dst !== null && dst !== undefined && !isSafeInt(dst)) return fail(`task[${i}].declared_start_tick must be safe integer or null`);
+      const rt = safeGet(t, 'release_tick', `task[${i}]`).value;
+      if (rt !== undefined && rt !== null && !isSafeInt(rt)) return fail(`task[${i}].release_tick must be safe integer or null`);
+      if (!TASK_STATUSES.includes(safeGet(t, 'status', `task[${i}]`).value)) return fail(`task[${i}].status invalid`);
+      const wsid = safeGet(t, 'workstream_id', `task[${i}]`).value;
+      if (wsid !== undefined && wsid !== null && (typeof wsid !== 'string' || !isSafeKey(wsid))) return fail(`task[${i}].workstream_id invalid`);
+      const notes = safeGet(t, 'notes', `task[${i}]`).value;
+      if (notes !== undefined && notes !== null && typeof notes !== 'string') return fail(`task[${i}].notes must be a string`);
+      const demands = safeGet(t, 'resource_demands', `task[${i}]`).value;
+      if (demands !== undefined && demands !== null) {
+        if (!Array.isArray(demands)) return fail(`task[${i}].resource_demands must be an array`);
+        for (let j = 0; j < demands.length; j++) {
+          charge(budget); // each demand candidate
+          const d = safeGet(demands, String(j), `task[${i}].demands`).value;
+          if (!d || typeof d !== 'object' || Array.isArray(d)) return fail(`task[${i}].resource_demands[${j}] must be an object`);
+          const u = unknownFields(d, DEMAND_FIELDS);
+          if (u.length) return fail(`task[${i}].resource_demands[${j}] unknown fields: ${u.join(',')}`);
+          const rid = safeGet(d, 'resource_id', `demand`).value;
+          if (typeof rid !== 'string' || !rid || !isSafeKey(rid)) return fail(`task[${i}].resource_demands[${j}].resource_id required`);
+          const anum = safeGet(d, 'amount_num', `demand`).value;
+          const aden = safeGet(d, 'amount_den', `demand`).value;
+          if (!isSafeInt(anum) || !isSafeInt(aden) || aden <= 0) return fail(`task[${i}].resource_demands[${j}] amount must be safe rational with positive denominator`);
+          if (anum < 0) return fail(`task[${i}].resource_demands[${j}] amount_num must be >= 0`);
+        }
+      }
+    }
+    const edges = safeGet(pkg, 'edges', 'pkg').value;
+    for (let i = 0; i < edges.length; i++) {
+      const e = safeGet(edges, String(i), 'pkg.edges').value;
+      const eid = safeGet(e, 'edge_id', `edge[${i}]`).value;
+      if (typeof eid !== 'string' || !eid || !isSafeKey(eid)) return fail(`edge[${i}].edge_id required`);
+      const ft = safeGet(e, 'from_task', `edge[${i}]`).value;
+      const tt = safeGet(e, 'to_task', `edge[${i}]`).value;
+      if (typeof ft !== 'string' || typeof tt !== 'string' || !isSafeKey(ft) || !isSafeKey(tt)) return fail(`edge[${i}] from_task/to_task required`);
+      if (!isSafeInt(safeGet(e, 'lag_ticks', `edge[${i}]`).value)) return fail(`edge[${i}].lag_ticks must be a safe integer`);
+    }
+    const milestones = safeGet(pkg, 'milestones', 'pkg').value;
+    for (let i = 0; i < milestones.length; i++) {
+      const m = safeGet(milestones, String(i), 'pkg.milestones').value;
+      const mid = safeGet(m, 'milestone_id', `milestone[${i}]`).value;
+      if (typeof mid !== 'string' || !mid || !isSafeKey(mid)) return fail(`milestone[${i}].milestone_id required`);
+      const req = safeGet(m, 'required_tasks', `milestone[${i}]`).value;
+      if (!Array.isArray(req)) return fail(`milestone[${i}].required_tasks must be an array`);
+      for (let j = 0; j < req.length; j++) {
+        const rt = safeGet(req, String(j), `milestone[${i}].req`).value;
+        if (typeof rt !== 'string' || !isSafeKey(rt)) return fail(`milestone[${i}].required_tasks[${j}] must be a string`);
+      }
+      const ct = safeGet(m, 'claimed_tick', `milestone[${i}]`).value;
+      if (ct !== null && ct !== undefined && !isSafeInt(ct)) return fail(`milestone[${i}].claimed_tick must be safe integer or null`);
+    }
+    const windows = safeGet(pkg, 'capacity_windows', 'pkg').value;
+    for (let i = 0; i < windows.length; i++) {
+      const w = safeGet(windows, String(i), 'pkg.windows').value;
+      const wid = safeGet(w, 'window_id', `window[${i}]`).value;
+      if (typeof wid !== 'string' || !wid || !isSafeKey(wid)) return fail(`capacity_windows[${i}].window_id required`);
+      const rid = safeGet(w, 'resource_id', `window[${i}]`).value;
+      if (typeof rid !== 'string' || !rid || !isSafeKey(rid)) return fail(`capacity_windows[${i}].resource_id required`);
+      const st = safeGet(w, 'start_tick', `window[${i}]`).value;
+      const et = safeGet(w, 'end_tick', `window[${i}]`).value;
+      if (!isSafeInt(st) || !isSafeInt(et)) return fail(`capacity_windows[${i}] start/end_tick must be safe integers`);
+      if (et < st) return fail(`capacity_windows[${i}] end_tick < start_tick`);
+      const cap = safeGet(w, 'capacity', `window[${i}]`).value;
+      if (typeof cap === 'number') {
+        if (!isFiniteNum(cap) || cap < 0 || !isSafeInt(cap)) return fail(`capacity_windows[${i}].capacity must be a safe non-negative integer`);
+      } else if (cap && typeof cap === 'object') {
+        const cn = safeGet(cap, 'num', `window[${i}].cap`).value;
+        const cd = safeGet(cap, 'den', `window[${i}].cap`).value;
+        if (!isSafeInt(cn) || !isSafeInt(cd) || cd <= 0 || cn < 0) return fail(`capacity_windows[${i}].capacity rational invalid`);
+      } else return fail(`capacity_windows[${i}].capacity must be a number or rational`);
+    }
+  } catch (e) {
+    if (e.code === 'ACCESSOR_REJECTED' || e.code === 'BUDGET_EXCEEDED' || e.code === 'INPUT_LIMIT') throw e;
+    return { ok: false, errors: [`package validation error: ${e.message}`] };
+  }
   return { ok: errors.length === 0, errors };
 }
+
+export { isSafeKey, safeGet, RESERVED_KEYS };

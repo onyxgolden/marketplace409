@@ -36,10 +36,18 @@ let pass = 0, fail = 0;
 const failures = [];
 
 function ctxFor(authority) {
-  return {
-    clock: {}, criteria_version: '1', principal: 'battery',
-    grants: [], request_authority: authority, fixtureStore: fixtures,
+  const isRelay = authority === 'muse-relay';
+  const principalId = isRelay ? 'relay-op' : authority;
+  const ctx = {
+    clock: {}, criteria_version: '1',
+    principal: { principal_id: principalId, kind: isRelay ? 'relay' : 'human' },
+    grants: [{ grant_id: 'g1', principal_id: principalId, action: 'read', resource: { fixture_id: '*' } }],
+    request_authority: authority, relay: null, fixtureStore: fixtures,
   };
+  if (isRelay) {
+    ctx.relay = { relay_id: 'muse-relay', delegate_principal_id: principalId, valid: true, scope: 'read-fixtures' };
+  }
+  return ctx;
 }
 
 function checkFindingCodes(report, codes) {

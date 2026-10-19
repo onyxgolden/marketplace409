@@ -1,7 +1,7 @@
 // make-fixtures.js — generates the synthetic fixture store (store.json).
 // All data invented; every record labeled SYNTHETIC by construction.
 import { writeFileSync } from 'node:fs';
-import { sha256Hex } from '../src/resolver.js';
+import { sha256Hex, gitBlobSha1 } from '../src/resolver.js';
 import { canonicalStringify, utf8Length } from '../src/canonical.js';
 
 function pkg(plan_id, tasks, edges = [], milestones = [], capacity_windows = [], header_claims = {}) {
@@ -76,14 +76,14 @@ const PLANS = {
     [m('m1', ['b'], 6)]),
 
   'plan-overlap': pkg('plan-overlap', [
-    t('a', 4, { demands: [d('crew', 2)] }),
-    t('b', 4, { demands: [d('crew', 2)] }),
+    t('a', 4, { declared: 0, demands: [d('crew', 2)] }),
+    t('b', 4, { declared: 0, demands: [d('crew', 2)] }),
   ], [], [m('m1', ['a', 'b'], 4)],
     [w('w1', 'crew', 0, 10, 3)]),
 
   'plan-abut': pkg('plan-abut', [
-    t('a', 4, { demands: [d('crew', 3)] }),
-    t('b', 4, { demands: [d('crew', 3)] }),
+    t('a', 4, { declared: 0, demands: [d('crew', 3)] }),
+    t('b', 4, { declared: 4, demands: [d('crew', 3)] }),
   ], [e('e1', 'a', 'b')], [m('m1', ['b'], 8)],
     [w('w1', 'crew', 0, 10, 3)]),
 
@@ -102,18 +102,18 @@ const PLANS = {
   ], [], [m('m1', [], 5)]),
 
   'plan-window-overlap': pkg('plan-window-overlap', [
-    t('a', 4, { demands: [d('crew', 1)] }),
+    t('a', 4, { declared: 0, demands: [d('crew', 1)] }),
   ], [], [m('m1', ['a'], 4)],
     [w('w1', 'crew', 0, 6, 2), w('w2', 'crew', 4, 10, 2)]),
 
   'plan-coverage-gap': pkg('plan-coverage-gap', [
-    t('a', 8, { demands: [d('crew', 1)] }),
+    t('a', 8, { declared: 0, demands: [d('crew', 1)] }),
   ], [], [m('m1', ['a'], 8)],
     [w('w1', 'crew', 0, 4, 2)]),
 
   'plan-rational': pkg('plan-rational', [
-    t('a', 4, { demands: [d('crew', 1, 2)] }),
-    t('b', 4, { demands: [d('crew', 1, 3)] }),
+    t('a', 4, { declared: 0, demands: [d('crew', 1, 2)] }),
+    t('b', 4, { declared: 0, demands: [d('crew', 1, 3)] }),
   ], [], [m('m1', ['a', 'b'], 4)],
     [w('w1', 'crew', 0, 10, 1)]),
 
@@ -139,9 +139,24 @@ const PLANS = {
 };
 
 const store = {};
+// Fixed synthetic commit for the fixture repo (documented, not real).
+const SYNTH_COMMIT = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 for (const [id, plan] of Object.entries(PLANS)) {
   const bytes = canonicalStringify(plan);
-  store[id] = { bytes, sha256: sha256Hex(bytes), media_type: 'application/json', byte_length: utf8Length(bytes) };
+  store[id] = {
+    bytes,
+    sha256: sha256Hex(bytes),
+    media_type: 'application/json',
+    byte_length: utf8Length(bytes),
+    source_ref: {
+      repo: 'synthetic-fixtures',
+      path: 'fixtures/' + id + '.json',
+      commit: SYNTH_COMMIT,
+      blob: gitBlobSha1(bytes),
+      algorithm: 'git-sha1',
+      revision: '1',
+    },
+  };
 }
 
 const keymap = {};

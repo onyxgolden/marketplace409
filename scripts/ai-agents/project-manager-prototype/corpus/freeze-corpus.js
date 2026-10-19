@@ -20,7 +20,10 @@ function walk(dir, out = []) {
 const files = walk(ROOT).filter((p) =>
   !p.endsWith('corpus_digest.txt') && !p.endsWith('manifest.json') &&
   (p.includes('/src/') || p.includes('/fixtures/store.json') || p.includes('/fixtures/keymap.json') ||
-   p.includes('/corpus/battery.json') || p.includes('/tests/') || p.includes('/runner/') ||
+   p.includes('/fixtures/make-fixtures.js') ||
+   p.includes('/corpus/battery.json') || p.includes('/corpus/trust-bootstrap.js') ||
+   p.includes('/corpus/freeze-corpus.js') || p.includes('/corpus/make-battery.js') ||
+   p.includes('/tests/') || p.includes('/runner/') ||
    p.endsWith('package.json') || p.endsWith('README.md'))
 );
 
