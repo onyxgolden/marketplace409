@@ -89,6 +89,9 @@ const testFiles = [
   "budgets.test.js",
   "determinism.test.js",
   "injection.test.js",
+  "execution-addendum.test.js",
+  "watchdog.test.js",
+  "trust.test.js",
   "battery.test.js",
 ];
 

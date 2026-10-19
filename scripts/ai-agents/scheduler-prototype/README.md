@@ -31,6 +31,23 @@ Structural failures (cycles, dangling ties, mixed calendars, horizon
 overflow, missing anchors/calendars) block math for that component with a
 named status; other anchored components may still return PARTIAL tables.
 
+## Contract notes (S648A)
+
+- **Connected components** are derived from the tie graph, not from
+  `record.component` labels. Disconnected islands under one label split
+  into independent components (`<label>~<n>`), each with its own deadline;
+  an explicit deadline on a split label refuses as ambiguous.
+- **Completeness**: `complete:true` only for a verified-complete report.
+  Quarantined-away, unknown, or partial populations are never complete.
+  Structural unknown references (constraint on missing activity) refuse.
+- **Admission** is descriptor-safe: accessor properties are rejected, UTC
+  instants are round-trip validated, and read grants are checked before
+  any source bytes are touched. Declared revision labels must match the
+  host registration.
+- **Execution watchdog**: `runner/run-guarded.js` runs `run()` in a worker
+  thread with an external 5s timeout, returning a bounded REFUSED envelope
+  on timeout.
+
 ## Layout
 
 - `src/` — `index.js` (`run(task, context)`), `scheduler.js` (CPM engine),

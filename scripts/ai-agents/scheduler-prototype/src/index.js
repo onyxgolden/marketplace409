@@ -302,9 +302,11 @@ export function run(task, context) {
       admitted_count: 0,
       excluded_count: excludedCount,
     };
+    // S648A-003: an unknown or quarantined-away population may not become
+    // a verified zero. complete is true only for a host-verified empty.
     return envelope(taskId, {
       status: "EMPTY",
-      complete: true,
+      complete: populationVerified && quarantinedIds.size === 0,
       source_refs: [sourceRefOut(validatedTask.network_bundle_ref)],
       diagnostics,
       quarantined_sources,
@@ -322,36 +324,98 @@ export function run(task, context) {
     else g.calendars.push(r);
   }
 
-  // Constraints referencing unknown activities get a diagnostic and are ignored.
-  const knownActivityIds = new Set(admitted.filter((r) => r.record === "activity").map((r) => r.id));
-  const anomalies = [];
-  const usableConstraints = [];
-  for (const c of validatedTask.constraints) {
-    if (!knownActivityIds.has(c.activity_id)) {
-      anomalies.push({
-        code: "CONSTRAINT_UNKNOWN_ACTIVITY",
-        severity: "warning",
-        record_id: c.activity_id,
-        reason: `constraint '${c.kind}' references unknown activity '${c.activity_id}'; ignored`,
-        citation: unavailableCitation("constraint from task input; no bundle source span"),
-      });
+  // S648A-004: connected components are derived from the tie graph, not
+  // from record.component labels. A label group whose activities form
+  // multiple disconnected islands splits into independent components, each
+  // with its own deadline (never a shared D creating false float). An
+  // explicit deadline on a split label is ambiguous and refuses.
+  const componentGroups = [];
+  for (const [componentId, g] of [...byComponent.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (g.activities.length <= 1) {
+      componentGroups.push({ componentId, ...g });
+      continue;
+    }
+    const adj = new Map(g.activities.map((a) => [a.id, []]));
+    for (const t of g.ties) {
+      if (adj.has(t.predecessor) && adj.has(t.successor)) {
+        adj.get(t.predecessor).push(t.successor);
+        adj.get(t.successor).push(t.predecessor);
+      }
+    }
+    const islands = [];
+    const visited = new Set();
+    for (const a of g.activities) {
+      if (visited.has(a.id)) continue;
+      const island = [];
+      const stack = [a.id];
+      visited.add(a.id);
+      while (stack.length > 0) {
+        const id = stack.pop();
+        island.push(id);
+        for (const n of adj.get(id)) {
+          if (!visited.has(n)) {
+            visited.add(n);
+            stack.push(n);
+          }
+        }
+      }
+      islands.push(island);
+    }
+    if (islands.length === 1) {
+      componentGroups.push({ componentId, ...g });
     } else {
-      usableConstraints.push(c);
+      const explicitDeadline = validatedTask.deadlines[componentId] ?? null;
+      if (explicitDeadline !== null) {
+        return refused(
+          taskId,
+          "DISCONNECTED_COMPONENT",
+          "error",
+          `component '${componentId}' has an explicit deadline but its ${g.activities.length} activities form ${islands.length} disconnected islands; deadline mapping is ambiguous`
+        );
+      }
+      islands.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      islands.forEach((islandIds, idx) => {
+        const islandSet = new Set(islandIds);
+        componentGroups.push({
+          componentId: `${componentId}~${idx}`,
+          baseComponentId: componentId,
+          activities: g.activities.filter((a) => islandSet.has(a.id)),
+          ties: g.ties.filter((t) => islandSet.has(t.predecessor) && islandSet.has(t.successor)),
+          calendars: g.calendars,
+        });
+      });
     }
   }
+
+  // S648A-003: structural unknown references refuse outright — a
+  // constraint on a missing activity is never silently discarded.
+  const knownActivityIds = new Set(admitted.filter((r) => r.record === "activity").map((r) => r.id));
+  for (const c of validatedTask.constraints) {
+    if (!knownActivityIds.has(c.activity_id)) {
+      return refused(
+        taskId,
+        "UNKNOWN_CONSTRAINT_REFERENCE",
+        "error",
+        `constraint '${c.kind}' references unknown activity '${c.activity_id}'; structural references must resolve, never silently ignored`
+      );
+    }
+  }
+  const anomalies = [];
+  const usableConstraints = [...validatedTask.constraints];
 
   const components = [];
   let anyReady = false;
   let anyFailed = false;
-  for (const [componentId, g] of [...byComponent.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  for (const grp of componentGroups) {
+    const baseId = grp.baseComponentId ?? grp.componentId;
     const result = analyzeComponent({
-      componentId,
-      activities: g.activities,
-      ties: g.ties,
-      calendars: g.calendars,
-      anchorDate: validatedTask.anchors[componentId] ?? null,
+      componentId: grp.componentId,
+      activities: grp.activities,
+      ties: grp.ties,
+      calendars: grp.calendars,
+      anchorDate: validatedTask.anchors[baseId] ?? null,
       horizonDays: validatedTask.horizon_days,
-      deadlineTick: validatedTask.deadlines[componentId] ?? null,
+      deadlineTick: validatedTask.deadlines[baseId] ?? null,
       constraints: usableConstraints,
     });
     components.push(result);
@@ -362,7 +426,7 @@ export function run(task, context) {
         code: result.status,
         severity: "error",
         source_ref: null,
-        record_id: componentId,
+        record_id: grp.componentId,
         reason: result.reason,
       });
     }
@@ -480,18 +544,21 @@ export function run(task, context) {
 
   const claimMismatches = claimed_comparisons.filter((c) => c.evidence_state === "mismatch").length;
   const failedComponents = components.filter((c) => c.status !== "READY").length;
+  const hasQuarantine = quarantinedIds.size > 0;
 
   let status;
   if (!anyReady) status = "PARTIAL";
-  else if (anyFailed || claimMismatches > 0) status = "PARTIAL";
+  else if (anyFailed || claimMismatches > 0 || hasQuarantine) status = "PARTIAL";
   else status = "REPORT_READY";
 
   let coverageState;
-  if (populationVerified) coverageState = failedComponents === 0 && claimMismatches === 0 ? "COMPLETE" : "PARTIAL";
+  if (populationVerified) coverageState = failedComponents === 0 && claimMismatches === 0 && !hasQuarantine ? "COMPLETE" : "PARTIAL";
   else coverageState = "UNKNOWN";
 
   let summary = null;
-  if (status === "REPORT_READY" && populationVerified) {
+  // S648A-003: no verified-complete summary when support was quarantined
+  // away; a zero-activity summary over quarantined work is not complete.
+  if (status === "REPORT_READY" && populationVerified && !hasQuarantine) {
     const critCount = components.reduce((n, c) => n + c.critical_subgraph.activities.length, 0);
     summary = {
       component_count: components.length,
@@ -513,7 +580,9 @@ export function run(task, context) {
 
   const result = envelope(taskId, {
     status,
-    complete: true,
+    // S648A-003: complete:true only for a verified-complete report.
+    // Quarantined-away, unknown, or partial populations are never complete.
+    complete: status === "REPORT_READY" && populationVerified && !hasQuarantine,
     source_refs: [sourceRefOut(validatedTask.network_bundle_ref)],
     diagnostics,
     quarantined_sources,

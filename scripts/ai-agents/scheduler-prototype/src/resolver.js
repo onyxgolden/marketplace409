@@ -97,6 +97,12 @@ export function resolveSourceRef(ref, sources, budget, what) {
   if (!rev || typeof rev !== "object") {
     throw new ResolutionError("SOURCE_UNVERIFIED", `commit ${ref.commit} not registered for ${ref.repo}/${ref.path}`);
   }
+  // S648A-002: bind every declared source-identity field. The revision
+  // label declared in the task must match the host-registered label for
+  // this commit; a fabricated revision on a real commit is tuple spoofing.
+  if (rev.label !== ref.revision) {
+    throw new ResolutionError("SOURCE_UNVERIFIED", `revision label '${ref.revision}' does not match registered label for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}`);
+  }
   if (typeof rev.text !== "string") {
     throw new ResolutionError("SOURCE_UNVERIFIED", `revision bytes missing for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}`);
   }

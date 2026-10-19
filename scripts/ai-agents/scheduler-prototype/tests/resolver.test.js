@@ -9,7 +9,7 @@ function pin(text) {
   const blob = gitBlobId(Buffer.from(text, "utf8"));
   return {
     ref: { repo: "sched-sources", path: "networks/x.json", commit, blob, algorithm: "git-sha1", revision: "v1" },
-    sources: { "sched-sources|networks/x.json": { revisions: { [commit]: { text, blob } } } },
+    sources: { "sched-sources|networks/x.json": { revisions: { [commit]: { text, blob, label: "v1" } } } },
   };
 }
 

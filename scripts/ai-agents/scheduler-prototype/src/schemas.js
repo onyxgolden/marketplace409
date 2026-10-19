@@ -16,7 +16,7 @@
  * JSON.parse on its span.
  */
 
-import { HEX40, isRealDate } from "./canonical.js";
+import { HEX40, isRealDate, isRealInstant } from "./canonical.js";
 
 export class SchemaError extends Error {
   constructor(message) {
@@ -67,7 +67,10 @@ function reqInt(obj, key, where, { min = null, max = null } = {}) {
   return v;
 }
 
-/** Real calendar date (YYYY-MM-DD) or full UTC instant. Returns the string. */
+/** Real calendar date (YYYY-MM-DD) or full UTC instant. Returns the string.
+ * S648A-001: instants are validated by real round-trip semantics —
+ * Date.parse normalizes impossible dates (2026-02-30 -> 2026-03-02),
+ * so the components are reconstructed and compared exactly. */
 export function validateDate(value, where) {
   if (typeof value !== "string") fail(where, "must be a string");
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -75,16 +78,32 @@ export function validateDate(value, where) {
     return value;
   }
   if (ISO_RE.test(value)) {
-    const ms = Date.parse(value);
-    if (!Number.isFinite(ms)) fail(where, "not a real calendar instant");
+    if (!isRealInstant(value)) fail(where, "not a real UTC instant");
     return value;
   }
   fail(where, "must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ");
 }
 
+/**
+ * S648A-001: descriptor-safe closed admission. Rejects objects carrying
+ * accessor properties (getters/setters) — they are not plain data, and
+ * reading them would execute request-supplied code during validation.
+ * Uses getOwnPropertyDescriptor so the check itself never invokes accessors.
+ */
+export function assertNoAccessors(obj, where) {
+  if (obj === null || typeof obj !== "object") return;
+  for (const k of Object.keys(obj)) {
+    const desc = Object.getOwnPropertyDescriptor(obj, k);
+    if (desc && (typeof desc.get === "function" || typeof desc.set === "function")) {
+      fail(where, `accessor property '${k}' is not plain data; refusing`);
+    }
+  }
+}
+
 /** SourceRef = {repo, path, commit, blob, algorithm:"git-sha1", revision}. */
 export function validateSourceRef(value, where) {
   if (!isPlainObject(value)) fail(where, "SourceRef must be an object");
+  assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path", "commit", "blob", "algorithm", "revision"], where);
   const repo = reqStr(value, "repo", where);
   if (!REPO_RE.test(repo)) fail(where, `invalid repo '${repo}'`);
@@ -101,6 +120,7 @@ export function validateSourceRef(value, where) {
 
 export function validatePrincipal(value, where) {
   if (!isPlainObject(value)) fail(where, "principal must be an object");
+  assertNoAccessors(value, where);
   exactKeys(value, ["principal_id", "role", "registered_by", "valid_from", "expires_at", "revoked"], where);
   const pid = reqStr(value, "principal_id", where);
   if (!RECORD_ID_RE.test(pid)) fail(where, `invalid principal_id '${pid}'`);
@@ -126,6 +146,7 @@ export function validateCriteria(value, where, budget) {
 
 export function validateReadGrant(value, where) {
   if (!isPlainObject(value)) fail(where, "read grant must be an object");
+  assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path"], where);
   const repo = reqStr(value, "repo", where);
   if (!REPO_RE.test(repo)) fail(where, `invalid repo '${repo}'`);
@@ -137,26 +158,45 @@ export function validateReadGrant(value, where) {
 export function validateContext(context, budget) {
   if (!budget || typeof budget.countObject !== "function") fail("context", "internal: validateContext requires a live budget");
   if (!isPlainObject(context)) fail("context", "must be an object");
+  assertNoAccessors(context, "context");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria"], "context");
   const clock = context.clock;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
+  assertNoAccessors(context.sources, "context.sources");
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
   for (const sk of sourceKeys) {
     budget.countObject(`context.sources[${sk}]`);
     const entry = context.sources[sk];
     if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
+    assertNoAccessors(entry, `context.sources[${sk}]`);
     const revs = entry.revisions;
     if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+    assertNoAccessors(revs, `context.sources[${sk}].revisions`);
     for (const commit of Object.keys(revs)) {
       budget.countObject(`context.sources[${sk}]@${commit}`);
       const rev = revs[commit];
       if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
-      if (typeof rev.text !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
-      budget.countPayload(rev.text, `context source ${sk}@${commit}`);
+      assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
+      // S648A-002: grants precede bytes. The revision TEXT is not read,
+      // payload-charged, or inspected here — only its descriptor is
+      // checked (data property, string-typed, no accessor invocation).
+      // The text is read by resolveSourceRef() after hasReadGrant passes.
+      const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
+      if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
+        fail("context", `source '${sk}' revision '${commit}' text must be a plain data property`);
+      }
+      if (typeof textDesc.value !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
       if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
+      // S648A-002: revision label binding. The declared revision label in
+      // the task's SourceRef must match the host-registered label for this
+      // commit; tuple spoofing (invented revision on a real commit) is
+      // rejected at resolve time.
+      if (typeof rev.label !== "string" || rev.label.length === 0) {
+        fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
+      }
     }
   }
 
@@ -177,6 +217,7 @@ export function validateContext(context, budget) {
 /** One network record: activity | tie | calendar. All carry `component`. */
 export function validateNetworkRecord(value, where) {
   if (!isPlainObject(value)) fail(where, "network record must be an object");
+  assertNoAccessors(value, where);
   const kind = value.record;
   if (kind !== "activity" && kind !== "tie" && kind !== "calendar") {
     fail(where, `record must be one of activity|tie|calendar, got '${String(kind)}'`);
@@ -245,6 +286,7 @@ export function validateTask(task, budget = null) {
   const charge = (what) => { if (budget) budget.countObject(what); };
   charge("task");
   if (!isPlainObject(task)) fail("task", "must be an object");
+  assertNoAccessors(task, "task");
   exactKeys(task, ["schema_version", "task_id", "operation", "fixture_refs", "options"], "task");
   if (task.schema_version !== "1") fail("task", "schema_version must be '1'");
   const task_id = reqStr(task, "task_id", "task", { maxBytes: 2048 });
@@ -299,6 +341,7 @@ export function validateTask(task, budget = null) {
     charge(`task.options.constraints[${i}]`);
     const where = `task.options.constraints[${i}]`;
     if (!isPlainObject(c)) fail(where, "must be an object");
+    assertNoAccessors(c, where);
     exactKeys(c, ["activity_id", "kind", "tick"], where);
     const activity_id = reqStr(c, "activity_id", where);
     if (!RECORD_ID_RE.test(activity_id)) fail(where, `invalid activity_id '${activity_id}'`);
@@ -320,6 +363,7 @@ export function validateTask(task, budget = null) {
     if (!RECORD_ID_RE.test(id)) fail("task.options.claimed.activities", `invalid activity id '${id}'`);
     const v = claimedActivitiesIn[id];
     if (!isPlainObject(v)) fail(where, "must be an object");
+    assertNoAccessors(v, where);
     exactKeys(v, ["es", "ef", "ls", "lf", "total_float"], where);
     const out = {};
     for (const k of ["es", "ef", "ls", "lf", "total_float"]) {

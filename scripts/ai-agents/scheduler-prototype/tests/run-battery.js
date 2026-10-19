@@ -8,8 +8,9 @@
  * Requires SCHED_APPROVED_ROOT (same trust gate as run-tests.js).
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { normalize } from "node:path/posix";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
@@ -20,13 +21,64 @@ if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) 
   console.error("bootstrap: missing SCHED_APPROVED_ROOT — refusing to run");
   process.exit(3);
 }
+
+// S648A-005: authenticate ALL manifest-listed file BYTES (not just the
+// manifest metadata) before importing src/index.js or reading the battery.
+// Uses only node:fs / node:crypto — no untrusted code executes first.
 {
-  const manifest = JSON.parse(readFileSync(join(ROOT, "corpus", "manifest.json"), "utf8"));
-  const digest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
-  if (digest !== APPROVED_ROOT) {
-    console.error("bootstrap: corpus digest mismatch — refusing to run");
+  const sha = (b) => createHash("sha256").update(b).digest("hex");
+  let bad = null;
+  let manifest = null;
+  try {
+    manifest = JSON.parse(readFileSync(join(ROOT, "corpus", "manifest.json"), "utf8"));
+  } catch {
+    bad = "corpus/manifest.json unreadable";
+  }
+  const files = manifest?.files ?? [];
+  const seen = new Set();
+  if (!bad) {
+    for (const e of files) {
+      const p = e?.path;
+      if (
+        typeof p !== "string" || p.length === 0 || p.startsWith("/") || p.includes("\\") ||
+        normalize(p) !== p || p.startsWith("..") || p.includes("../") || seen.has(p)
+      ) { bad = `bad manifest entry: ${String(p)}`; break; }
+      seen.add(p);
+      let bytes;
+      try { bytes = readFileSync(join(ROOT, p)); } catch { bad = `missing pinned file: ${p}`; break; }
+      if (sha(bytes) !== e.sha256) { bad = `hash mismatch: ${p}`; break; }
+    }
+  }
+  if (!bad) {
+    const walk = (dir, out = []) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p, out);
+        else out.push(p);
+      }
+      return out;
+    };
+    for (const sub of ["src", "tests", "runner", "fixtures", "corpus"]) {
+      for (const p of walk(join(ROOT, sub))) {
+        const rel = p.slice(ROOT.length + 1).replace(/\\/g, "/");
+        if (rel === "corpus/manifest.json" || rel === "corpus/corpus_digest.txt") continue;
+        if (!seen.has(rel)) { bad = `unlisted file: ${rel}`; break; }
+      }
+      if (bad) break;
+    }
+    for (const f of ["package.json", "README.md"]) {
+      if (!seen.has(f)) { bad = `unlisted file: ${f}`; break; }
+    }
+  }
+  if (!bad) {
+    const digest = sha(JSON.stringify(manifest));
+    if (digest !== APPROVED_ROOT) bad = `corpus digest mismatch: recomputed ${digest.slice(0, 16)}… vs approved ${APPROVED_ROOT.slice(0, 16)}…`;
+  }
+  if (bad) {
+    console.error(`bootstrap: trust authentication failed — ${bad}`);
     process.exit(3);
   }
+  console.log("bootstrap: trust authentication OK");
 }
 
 const { run, canonicalJson } = await import("../src/index.js");

@@ -65,6 +65,26 @@ export function isoWeekdayOf(dateStr) {
   return js === 0 ? 7 : js;
 }
 
+/** True iff the string is a real UTC instant (no Date.parse normalization). */
+export function isRealInstant(value) {
+  if (typeof value !== "string") return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/.exec(value);
+  if (!m) return false;
+  const [, ys, mos, ds, hs, mis, ss] = m;
+  const y = Number(ys), mo = Number(mos), d = Number(ds);
+  const h = Number(hs), mi = Number(mis), s = Number(ss);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d, h, mi, s));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === mo - 1 &&
+    dt.getUTCDate() === d &&
+    dt.getUTCHours() === h &&
+    dt.getUTCMinutes() === mi &&
+    dt.getUTCSeconds() === s
+  );
+}
+
 /** True iff the string is a real civil calendar date. */
 export function isRealDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
