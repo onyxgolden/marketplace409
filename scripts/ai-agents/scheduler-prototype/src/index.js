@@ -1,0 +1,471 @@
+/**
+ * index.js — public entry for the Scheduler Agent prototype.
+ * Pure Node 24 ESM, zero runtime dependencies, zero model calls.
+ *
+ * run(task, context) -> result. Deterministic synthetic CPM network
+ * recomputation (early/late start/finish, total float), driving/critical
+ * edges, calendar tick mapping, and source-claim discrepancy detection.
+ * Invented scheduling arithmetic only — never a project date commitment.
+ * The agent returns a detached advisory JSON snapshot; it cannot approve,
+ * merge, deploy, activate, or reinterpret authorization.
+ *
+ * Budget discipline: every candidate object — the network bundle source,
+ * EACH network record inside it, and EVERY element of the injected
+ * trusted context — is charged with budget.countObject() as the FIRST
+ * statement before any of its own fields are read. Attempt 65 refuses
+ * before that candidate (or any later one) is inspected at all.
+ * validateContext() requires the caller's live monotonic budget.
+ */
+
+import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
+import { validateTask, validateContext, validateNetworkRecord, splitTopLevelArray, SchemaError } from "./schemas.js";
+import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
+import { scanTexts } from "./injection.js";
+import { analyzeComponent } from "./scheduler.js";
+
+export const AGENT_ID = "scheduler-agent";
+export const SCHEMA_VERSION = "1";
+
+function taskIdOf(task) {
+  try {
+    return `sched-${sha256HexUtf8(canonicalJson(task)).slice(0, 16)}`;
+  } catch {
+    return "sched-invalid-task";
+  }
+}
+
+function envelope(task, { status, complete, source_refs = [], diagnostics = [], quarantined_sources = [], routing_flags = [], report = null }) {
+  return {
+    schema_version: SCHEMA_VERSION,
+    agent: AGENT_ID,
+    task_id: taskIdOf(task),
+    status,
+    advisory: true,
+    fixture_only: true,
+    authorization_granted: false,
+    complete,
+    source_refs,
+    diagnostics,
+    quarantined_sources,
+    routing_flags,
+    report: report ?? emptyReport(),
+  };
+}
+
+function refused(task, code, severity, reason, extra = {}) {
+  return envelope(task, {
+    status: "REFUSED",
+    complete: false,
+    diagnostics: [{ code, severity, source_ref: null, record_id: null, reason }],
+    ...extra,
+  });
+}
+
+function emptyReport() {
+  return {
+    components: [],
+    claimed_comparisons: [],
+    anomalies: [],
+    coverage: { state: "UNKNOWN", admitted_count: 0, excluded_count: 0 },
+    summary: null,
+  };
+}
+
+export function run(task, context) {
+  const clockRaw = context && typeof context === "object" ? context.clock : undefined;
+  if (!Number.isFinite(clockRaw)) return refused(task, "INVALID_INPUT", "error", "context.clock must be a finite number");
+
+  let validatedTask;
+  try {
+    validatedTask = validateTask(task);
+  } catch (e) {
+    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+    throw e;
+  }
+
+  const budget = makeBudget();
+  try {
+    budget.countPayload(canonicalJson(task), "task payload");
+  } catch (e) {
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    throw e;
+  }
+
+  if (validatedTask.kind === "prohibited") {
+    return refused(
+      task,
+      "ACTION_DENIED",
+      "critical",
+      `prohibited operation '${validatedTask.operation}': this agent only supports 'analyze' (read a fixture-only network and return an advisory recomputation); it cannot approve schedules, commit dates, publish, or mutate any record`
+    );
+  }
+
+  // ALAP and any non-implemented constraint kinds are explicitly
+  // unsupported in slice 1 — refuse before any math, no silent defaults.
+  for (const c of validatedTask.constraints) {
+    if (c.kind === "ALAP") {
+      return refused(task, "UNSUPPORTED_CONSTRAINT", "error", `constraint kind 'ALAP' on activity '${c.activity_id}' is explicitly unsupported in slice 1; no undocumented default applied`);
+    }
+  }
+
+  let ctx;
+  try {
+    ctx = validateContext(context, budget);
+  } catch (e) {
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", `context: ${e.message}`);
+    throw e;
+  }
+
+  // Authenticated request authority: Jason or his registered Muse relay.
+  if (ctx.principal.revoked) {
+    return refused(task, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is revoked; no request authority`);
+  }
+  const validFrom = Date.parse(ctx.principal.valid_from);
+  const expiresAt = Date.parse(ctx.principal.expires_at);
+  if (!(validFrom <= ctx.clock && ctx.clock <= expiresAt)) {
+    return refused(task, "ACTION_DENIED", "critical", `principal '${ctx.principal.principal_id}' is not valid at the current clock; no request authority`);
+  }
+
+  // Horizon policy: host criteria caps the requested horizon.
+  if (validatedTask.horizon_days > ctx.criteria.max_horizon_days) {
+    return refused(task, "INVALID_INPUT", "error", `horizon_days ${validatedTask.horizon_days} exceeds host policy max ${ctx.criteria.max_horizon_days}`);
+  }
+
+  // Resolve the network bundle.
+  if (!hasReadGrant(validatedTask.network_bundle_ref, ctx.readGrants)) {
+    return refused(task, "READ_DENIED", "error", `read grant missing for network bundle ${validatedTask.network_bundle_ref.repo}/${validatedTask.network_bundle_ref.path}`);
+  }
+  let bundleResolved;
+  try {
+    bundleResolved = resolveSourceRef(validatedTask.network_bundle_ref, ctx.sources, budget, "network bundle source");
+  } catch (e) {
+    if (e instanceof ResolutionError) return refused(task, e.code, "error", `network bundle: ${e.message}`);
+    if (e instanceof BudgetError) return refused(task, e.code, "error", e.message);
+    throw e;
+  }
+
+  // Bounded-container preflight FIRST — raw spans, no field decoding.
+  let spans;
+  try {
+    spans = splitTopLevelArray(bundleResolved.text, "network bundle");
+  } catch (e) {
+    if (e instanceof SchemaError) return refused(task, "INVALID_INPUT", "error", e.message);
+    throw e;
+  }
+
+  // ---- Charged pass: one countObject() per record, strictly before
+  // that candidate's span is decoded or any of its fields read. ----
+  const provisional = [];
+  let budgetExceeded = false;
+  for (let i = 0; i < spans.length; i++) {
+    try {
+      budget.countObject(`network[${i}]`);
+    } catch (e) {
+      if (e instanceof BudgetError) {
+        budgetExceeded = true;
+        break;
+      }
+      throw e;
+    }
+    let raw;
+    try {
+      raw = JSON.parse(spans[i]);
+    } catch {
+      return refused(task, "INVALID_INPUT", "error", `network bundle entry ${i} is not valid JSON`);
+    }
+    let rec;
+    try {
+      rec = validateNetworkRecord(raw, `network bundle[${i}]`);
+    } catch (e) {
+      if (e instanceof SchemaError) {
+        return refused(task, "INVALID_INPUT", "error", `malformed network record at index ${i}: ${e.message}`);
+      }
+      throw e;
+    }
+    provisional.push(rec);
+  }
+
+  if (budgetExceeded) {
+    return refused(task, "BUDGET_EXCEEDED", "error", `candidate object count exceeds ${BUDGET_LIMITS.maxObjects}; refusing before inspecting the remaining records`);
+  }
+
+  // Duplicate IDs are rejected outright — no first-wins, no dedup.
+  // (Calendar records carry no id field; two calendars for one component
+  // is a domain-level UNSUPPORTED_CALENDAR, not a schema duplicate.)
+  const seenIds = new Map();
+  for (const r of provisional) {
+    if (r.record === "calendar") continue;
+    const id = r.id;
+    if (seenIds.has(id)) {
+      return refused(task, "INVALID_INPUT", "error", `duplicate ${r.record} id '${id}'; duplicates are rejected outright`);
+    }
+    seenIds.set(id, r.record);
+  }
+
+  // Injection quarantine: records whose free-text note carries a seeded
+  // directive family are quarantined and excluded from the network.
+  // Quarantine is explicit; clean records still support unaffected math.
+  const quarantined_sources = [];
+  const quarantinedIds = new Set();
+  const admitted = [];
+  const diagnostics = [];
+  for (const r of provisional) {
+    const scan = scanTexts([r.note]);
+    if (scan.injected) {
+      const qid = r.record === "calendar" ? `calendar:${r.component}` : r.id;
+      quarantinedIds.add(qid);
+      quarantined_sources.push({ record_id: qid, reason: "INSTRUCTION_INJECTION_SEEDED_FAMILY" });
+      diagnostics.push({
+        code: "INSTRUCTION_INJECTION",
+        severity: "critical",
+        source_ref: null,
+        record_id: qid,
+        reason: `record '${qid}' note carries a seeded directive family; quarantined and excluded from the network`,
+      });
+    } else {
+      admitted.push(r);
+    }
+  }
+
+  const totalRecords = spans.length;
+  const populationVerified = validatedTask.population.complete === true && validatedTask.population.declared_total === totalRecords;
+  const admittedCount = admitted.length;
+  const excludedCount = totalRecords - admittedCount;
+
+  if (admitted.length === 0) {
+    const report = emptyReport();
+    report.coverage = {
+      state: populationVerified ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY",
+      admitted_count: 0,
+      excluded_count: excludedCount,
+    };
+    return envelope(task, {
+      status: "EMPTY",
+      complete: true,
+      source_refs: [sourceRefOut(validatedTask.network_bundle_ref)],
+      diagnostics,
+      quarantined_sources,
+      report,
+    });
+  }
+
+  // Group admitted records by component.
+  const byComponent = new Map();
+  for (const r of admitted) {
+    if (!byComponent.has(r.component)) byComponent.set(r.component, { activities: [], ties: [], calendars: [] });
+    const g = byComponent.get(r.component);
+    if (r.record === "activity") g.activities.push(r);
+    else if (r.record === "tie") g.ties.push(r);
+    else g.calendars.push(r);
+  }
+
+  // Constraints referencing unknown activities get a diagnostic and are ignored.
+  const knownActivityIds = new Set(admitted.filter((r) => r.record === "activity").map((r) => r.id));
+  const anomalies = [];
+  const usableConstraints = [];
+  for (const c of validatedTask.constraints) {
+    if (!knownActivityIds.has(c.activity_id)) {
+      anomalies.push({
+        code: "CONSTRAINT_UNKNOWN_ACTIVITY",
+        severity: "warning",
+        record_id: c.activity_id,
+        reason: `constraint '${c.kind}' references unknown activity '${c.activity_id}'; ignored`,
+      });
+    } else {
+      usableConstraints.push(c);
+    }
+  }
+
+  const components = [];
+  let anyReady = false;
+  let anyFailed = false;
+  for (const [componentId, g] of [...byComponent.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const result = analyzeComponent({
+      componentId,
+      activities: g.activities,
+      ties: g.ties,
+      calendars: g.calendars,
+      anchorDate: validatedTask.anchors[componentId] ?? null,
+      horizonDays: validatedTask.horizon_days,
+      deadlineTick: validatedTask.deadlines[componentId] ?? null,
+      constraints: usableConstraints,
+    });
+    components.push(result);
+    if (result.status === "READY") anyReady = true;
+    else {
+      anyFailed = true;
+      diagnostics.push({
+        code: result.status,
+        severity: "error",
+        source_ref: null,
+        record_id: componentId,
+        reason: result.reason,
+      });
+    }
+  }
+
+  // ---- Claimed comparisons against computed results. ----
+  const claimed_comparisons = [];
+  const computedById = new Map();
+  const computedByComponent = new Map();
+  for (const comp of components) {
+    computedByComponent.set(comp.component_id, comp);
+    if (comp.status !== "READY" && comp.status !== "CONSTRAINT_UNSATISFIABLE") continue;
+    for (const a of comp.activities) computedById.set(a.id, { comp: comp.component_id, row: a });
+  }
+
+  for (const [id, claimed] of Object.entries(validatedTask.claimed.activities)) {
+    const found = computedById.get(id);
+    if (!found || found.row.civil_start === null) {
+      claimed_comparisons.push({
+        kind: "activity",
+        activity_id: id,
+        evidence_state: "unverifiable",
+        reason: `no computed dates for activity '${id}'; claim cannot be checked`,
+        claimed,
+        computed: null,
+      });
+      continue;
+    }
+    const c = found.row;
+    const fields = ["es", "ef", "ls", "lf", "total_float"];
+    const mismatches = fields.filter((f) => claimed[f] !== c[f]);
+    claimed_comparisons.push({
+      kind: "activity",
+      activity_id: id,
+      component_id: found.comp,
+      evidence_state: mismatches.length === 0 ? "verified" : "mismatch",
+      mismatched_fields: mismatches,
+      claimed,
+      computed: { es: c.es, ef: c.ef, ls: c.ls, lf: c.lf, total_float: c.total_float },
+    });
+    if (mismatches.length > 0) {
+      diagnostics.push({
+        code: "CLAIMED_VALUE_MISMATCH",
+        severity: "error",
+        source_ref: null,
+        record_id: id,
+        reason: `claimed ${mismatches.map((f) => `${f}=${claimed[f]}`).join(", ")} vs computed ${mismatches.map((f) => `${f}=${c[f]}`).join(", ")} for activity '${id}'; both preserved, claim not verified`,
+      });
+    }
+  }
+
+  for (const [compId, path] of Object.entries(validatedTask.claimed.critical_paths)) {
+    const comp = computedByComponent.get(compId);
+    if (!comp || comp.status !== "READY") {
+      claimed_comparisons.push({
+        kind: "critical_path",
+        component_id: compId,
+        evidence_state: "unverifiable",
+        reason: `component '${compId}' has no feasible computed schedule; claimed path cannot be checked`,
+        claimed_path: path,
+        computed_critical_subgraph: null,
+      });
+      continue;
+    }
+    const critEdgeSet = new Set(comp.critical_subgraph.edges.map((eid) => {
+      const e = comp.edges.find((x) => x.id === eid);
+      return `${e.predecessor}|${e.successor}`;
+    }));
+    let ok = true;
+    let badStep = null;
+    for (let i = 0; i < path.length - 1; i++) {
+      if (!critEdgeSet.has(`${path[i]}|${path[i + 1]}`)) {
+        ok = false;
+        badStep = [path[i], path[i + 1]];
+        break;
+      }
+    }
+    // Every node on the path must itself be critical.
+    if (ok) {
+      const critActs = new Set(comp.critical_subgraph.activities);
+      for (const id of path) {
+        if (!critActs.has(id)) {
+          ok = false;
+          badStep = [id];
+          break;
+        }
+      }
+    }
+    claimed_comparisons.push({
+      kind: "critical_path",
+      component_id: compId,
+      evidence_state: ok ? "verified" : "mismatch",
+      reason: ok ? `claimed path matches directed tight critical edges` : `claimed path breaks at ${JSON.stringify(badStep)}: not a directed chain of tight critical edges`,
+      claimed_path: path,
+      computed_critical_subgraph: comp.critical_subgraph,
+    });
+    if (!ok) {
+      diagnostics.push({
+        code: "CLAIMED_PATH_MISMATCH",
+        severity: "error",
+        source_ref: null,
+        record_id: null,
+        reason: `claimed critical path for '${compId}' is not a directed chain of tight critical edges (breaks at ${JSON.stringify(badStep)}); computed subgraph preserved`,
+      });
+    }
+  }
+
+  const claimMismatches = claimed_comparisons.filter((c) => c.evidence_state === "mismatch").length;
+  const failedComponents = components.filter((c) => c.status !== "READY").length;
+
+  let status;
+  if (!anyReady) status = "PARTIAL";
+  else if (anyFailed || claimMismatches > 0) status = "PARTIAL";
+  else status = "REPORT_READY";
+
+  let coverageState;
+  if (populationVerified) coverageState = failedComponents === 0 && claimMismatches === 0 ? "COMPLETE" : "PARTIAL";
+  else coverageState = "UNKNOWN";
+
+  let summary = null;
+  if (status === "REPORT_READY" && populationVerified) {
+    const critCount = components.reduce((n, c) => n + c.critical_subgraph.activities.length, 0);
+    summary = {
+      component_count: components.length,
+      activity_count: components.reduce((n, c) => n + c.activities.length, 0),
+      tie_count: components.reduce((n, c) => n + c.edges.length, 0),
+      critical_activity_count: critCount,
+      claimed_checks: claimed_comparisons.length,
+      derivation_note: "synthetic recomputation only; never a project date commitment",
+    };
+  }
+
+  const report = {
+    components,
+    claimed_comparisons,
+    anomalies,
+    coverage: { state: coverageState, admitted_count: admittedCount, excluded_count: excludedCount },
+    summary,
+  };
+
+  const result = envelope(task, {
+    status,
+    complete: true,
+    source_refs: [sourceRefOut(validatedTask.network_bundle_ref)],
+    diagnostics,
+    quarantined_sources,
+    routing_flags: [],
+    report,
+  });
+
+  const outputRecords =
+    result.report.components.length +
+    result.report.claimed_comparisons.length +
+    result.report.anomalies.length +
+    result.diagnostics.length +
+    result.quarantined_sources.length +
+    result.source_refs.length +
+    result.report.components.reduce((n, c) => n + c.activities.length + c.edges.length, 0);
+  if (outputRecords > BUDGET_LIMITS.maxOutputRecords || canonicalByteLength(result) > BUDGET_LIMITS.maxOutputBytes) {
+    return refused(task, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
+  }
+  return result;
+}
+
+function sourceRefOut(r) {
+  return { repo: r.repo, path: r.path, commit: r.commit, blob: r.blob, algorithm: r.algorithm, revision: r.revision };
+}
+
+export { validateTask, validateContext, BUDGET_LIMITS, canonicalJson, sha256HexUtf8, makeBudget };
