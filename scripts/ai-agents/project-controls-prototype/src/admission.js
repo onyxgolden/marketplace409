@@ -48,7 +48,10 @@ export function getOwnData(obj, key) {
  */
 export function assertNoAccessors(obj, what) {
   if (obj === null || typeof obj !== 'object') return;
-  const keys = Object.keys(obj);
+  // PC650-001 (fourth fix round): use getOwnPropertyNames, not Object.keys.
+  // Object.keys only returns enumerable properties, so a non-enumerable
+  // getter (e.g. {enumerable:false, get(){...}}) would escape admission.
+  const keys = Object.getOwnPropertyNames(obj);
   for (const k of keys) {
     const desc = Object.getOwnPropertyDescriptor(obj, k);
     if (desc && (typeof desc.get === 'function' || typeof desc.set === 'function')) {

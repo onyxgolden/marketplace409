@@ -123,7 +123,19 @@ export class Resolver {
     // resolutions of the same fixture do not consume additional budget.
     // The per-ref budget is enforced during task admission (checkTask charges
     // each fixture_ref), so 65 refs refuse before resolution begins.
-    const entry = this.store[fixtureId];
+    //
+    // PC650-001 (fourth fix round): descriptor-safe entry admission. The
+    // store lookup and every consumed field must use own-data-descriptor
+    // reads. A getter-backed entry.bytes would otherwise execute during
+    // validation.
+    const storeDesc = Object.getOwnPropertyDescriptor(this.store, fixtureId);
+    if (!storeDesc || typeof storeDesc.get === 'function' || typeof storeDesc.set === 'function' || !('value' in storeDesc)) {
+      this.chargeObject();
+      const e = new Error(`READ_DENIED: fixture ${fixtureId} registry entry is not a plain data property`);
+      e.code = 'READ_DENIED';
+      throw e;
+    }
+    const entry = storeDesc.value;
     if (!entry) {
       // Charge a synthetic candidate for the failed lookup
       this.chargeObject();
@@ -132,16 +144,25 @@ export class Resolver {
       throw e;
     }
     this.chargeObject(entry);
-    this.chargeInputBytes(utf8Length(entry.bytes));
-    const actual = sha256Hex(entry.bytes);
-    if (actual !== entry.sha256) {
+    // Descriptor-safe field reads: bytes and sha256 must be own data properties.
+    const bytesDesc = Object.getOwnPropertyDescriptor(entry, 'bytes');
+    const shaDesc = Object.getOwnPropertyDescriptor(entry, 'sha256');
+    if (!bytesDesc || typeof bytesDesc.get === 'function' || typeof bytesDesc.set === 'function' || typeof bytesDesc.value !== 'string' ||
+        !shaDesc || typeof shaDesc.get === 'function' || typeof shaDesc.set === 'function' || typeof shaDesc.value !== 'string') {
+      const e = new Error(`READ_DENIED: fixture ${fixtureId} entry fields must be plain data properties`);
+      e.code = 'READ_DENIED';
+      throw e;
+    }
+    this.chargeInputBytes(utf8Length(bytesDesc.value));
+    const actual = sha256Hex(bytesDesc.value);
+    if (actual !== shaDesc.value) {
       const e = new Error(`HASH_MISMATCH: fixture ${fixtureId}`);
       e.code = 'HASH_MISMATCH';
       throw e;
     }
     let parsed;
     try {
-      parsed = parseWithSpans(entry.bytes);
+      parsed = parseWithSpans(bytesDesc.value);
     } catch {
       const e = new Error(`INVALID_INPUT: fixture ${fixtureId} is not JSON`);
       e.code = 'INVALID_INPUT';
@@ -172,7 +193,7 @@ export class Resolver {
       record: parsed.value,       // full record WITH source_ref (for validation)
       sourceRef: pin,            // the source_ref pin (may be undefined if absent)
       spans: parsed.spans,       // spans over full bytes (reference)
-      bytes: entry.bytes,        // full registered bytes
+      bytes: bytesDesc.value,  // full registered bytes
       citedRecord: cited.value,  // record WITHOUT source_ref
       citedBytes,                // canonical bytes WITHOUT source_ref (blob-authenticated)
       citedSpans: cited.spans,   // spans over citedBytes (for citations)
