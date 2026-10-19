@@ -130,13 +130,25 @@ async function main() {
   const taskId = task && typeof task.task_id === 'string' ? task.task_id : null;
 
   // Verify trust BEFORE spawning the worker (PM651-008/009).
-  // PM651-008 (fix round 5): builtins-only pre-import verification.
-  // The dynamic import below would execute the helper's top-level code;
-  // verify its bytes against the manifest BEFORE importing.
+  // PM651-008 (fix round 6): authenticate the manifest itself against the
+  // host root FIRST, before trusting any entry in it. Then verify the
+  // helper bytes against the authenticated manifest, before importing.
   {
     const { createHash } = await import('node:crypto');
+    const hostRoot = process.env.PM_TRUST_ROOT;
+    if (!hostRoot || !/^[0-9a-f]{64}$/.test(hostRoot)) {
+      console.error('TRUST-BOOTSTRAP FAILED: PM_TRUST_ROOT must be a 64-hex manifest digest');
+      process.exit(2);
+    }
     const manifestRaw = readFileSync(join(ROOT, 'corpus', 'manifest.json'), 'utf8');
     const manifestEntries = JSON.parse(manifestRaw);
+    // Authenticate the manifest BEFORE trusting any entry.
+    const manifestDigest = createHash('sha256').update(JSON.stringify(manifestEntries)).digest('hex');
+    if (manifestDigest !== hostRoot) {
+      console.error('TRUST-BOOTSTRAP FAILED: manifest digest mismatch — refusing before any candidate code');
+      process.exit(2);
+    }
+    // Manifest is now trusted. Verify the helper bytes before import.
     const bootstrapEntry = manifestEntries.find((e) => e.path === 'corpus/trust-bootstrap.js');
     if (!bootstrapEntry) {
       console.error('TRUST-BOOTSTRAP FAILED: bootstrap helper not pinned in manifest');

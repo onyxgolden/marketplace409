@@ -6,7 +6,7 @@
   "scripts": {
     "battery": "node tests/run-battery.js",
     "run": "node runner/run-manual.js",
-    "test": "node tests/run-tests.js"
+    "test": "node tests/run-verified.js"
   },
   "type": "module",
   "version": "1.0.0"
