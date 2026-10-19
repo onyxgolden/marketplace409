@@ -1,0 +1,62 @@
+[
+  {
+    "path": "README.md",
+    "sha256": "4084f3eddbe234f90904ff9ddabb6fe7cd6e62e540d09db3007cd7ce6e7cbae5"
+  },
+  {
+    "path": "corpus/battery.json",
+    "sha256": "efea3ffe3e4e13fe304a0c86dd476850bca60165a0aaba455eea9ecf8786acd1"
+  },
+  {
+    "path": "fixtures/keymap.json",
+    "sha256": "b3ad81011bf24cef02d27a2445b10d72f89ec11f2dd0f027491e61fcac0d48b6"
+  },
+  {
+    "path": "fixtures/store.json",
+    "sha256": "f23d03bbe80fcc1cdb2b599d2faba0581a48c08cb2002133c76ce12f7eb433e5"
+  },
+  {
+    "path": "package.json",
+    "sha256": "ab14fb1fdd015ae85b7990b71b211daa7d75dc141c541f2764591bdd0b763cfe"
+  },
+  {
+    "path": "runner/run-manual.js",
+    "sha256": "cb4309c25f3436a9555c630ebda7611fa009a255707842970746e07d75192062"
+  },
+  {
+    "path": "src/canonical.js",
+    "sha256": "72252ad15e7fa0d0f8ea991708eb30c540bd28f1a46461da7a733ab1608fcb9d"
+  },
+  {
+    "path": "src/index.js",
+    "sha256": "4a92b8c783c920d53a6ccbf9d01855ead06302fb7aa1f12d46d900855463bf54"
+  },
+  {
+    "path": "src/injection.js",
+    "sha256": "d72c82bede1f35789d2cacd1deaf9ea27baf961aeb69ec7417401b65a83ac0b7"
+  },
+  {
+    "path": "src/manager.js",
+    "sha256": "05c1c57edfb005c1fb0a02479611c164548609b5de063ad376fe03149580ffdf"
+  },
+  {
+    "path": "src/resolver.js",
+    "sha256": "03ca717d0579f0b2c5d31a52a28ee5f829eb699ad2ca83a26aea9a46afa8f016"
+  },
+  {
+    "path": "src/schemas.js",
+    "sha256": "21fc48889a291c49d09702a00409c69c7e2b20b7ce98b5ec6a8b6a6702bcd338"
+  },
+  {
+    "path": "tests/index.test.js",
+    "sha256": "bbe1f5c7e5026da96042e669f0fec24b0278c74d4f06a94ed98c6af9231377ab"
+  },
+  {
+    "path": "tests/manager.test.js",
+    "sha256": "916ad16f45516b491ef8c52a52d817d85b6e93d8e535e85cc695a06400586479"
+  },
+  {
+    "path": "tests/run-battery.js",
+    "sha256": "6b8d2c549b41ea4d95b67e26db66367f1ca5070aba118bbc7569e68db0993ed4"
+  }
+]
