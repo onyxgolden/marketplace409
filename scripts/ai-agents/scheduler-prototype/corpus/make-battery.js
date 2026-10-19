@@ -143,7 +143,7 @@ function oComponent(cid, acts, ties, cals, anchor, horizon, deadline, constraint
     EF[id] = es + dur[id];
   }
   const maxEF = ids.length ? Math.max(...ids.map((id) => EF[id])) : 0;
-  if (ids.length && maxEF > working.length) {
+  if (ids.length && maxEF >= working.length) {  // oracle mirrors the corrected bound
     return bad("CALENDAR_HORIZON_EXCEEDED", "horizon", { required: maxEF, available: working.length });
   }
   const D = deadline !== null && deadline !== undefined ? deadline : maxEF;

@@ -198,7 +198,7 @@ export function analyzeComponent(args) {
   }
 
   const maxEF = ids.length === 0 ? 0 : Math.max(...ids.map((id) => EF.get(id)));
-  if (ids.length > 0 && maxEF > working.length) {
+  if (ids.length > 0 && maxEF >= working.length) {  // EF tick e needs working[e]; valid indices are 0..working.length-1
     return fail(
       "CALENDAR_HORIZON_EXCEEDED",
       `component '${componentId}' needs tick ${maxEF} but only ${working.length} working days exist in the horizon; no dates guessed`,

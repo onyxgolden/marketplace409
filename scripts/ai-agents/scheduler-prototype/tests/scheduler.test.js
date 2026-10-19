@@ -130,6 +130,32 @@ test("dangling tie blocks the component with the missing id", () => {
   assert.deepEqual(r.activities, []);
 });
 
+test("horizon exact boundary: maxEF == working.length exceeds", () => {
+  // 2 working days in horizon (Mondays), activity d=2 => EF=2 needs working[2], which does not exist.
+  const r = analyzeComponent({
+    componentId: "c1",
+    activities: [{ id: "A", duration_workdays: 2, release_tick: 0 }],
+    ties: [],
+    calendars: [{ working_weekdays: [1], excluded_dates: [] }],
+    anchorDate: "2026-01-05", horizonDays: 14, deadlineTick: null, constraints: [],
+  });
+  assert.equal(r.status, "CALENDAR_HORIZON_EXCEEDED");
+  assert.deepEqual(r.activities, []);
+});
+
+test("horizon one tick inside: maxEF == working.length - 1 is fine", () => {
+  const r = analyzeComponent({
+    componentId: "c1",
+    activities: [{ id: "A", duration_workdays: 1, release_tick: 0 }],
+    ties: [],
+    calendars: [{ working_weekdays: [1], excluded_dates: [] }],
+    anchorDate: "2026-01-05", horizonDays: 14, deadlineTick: null, constraints: [],
+  });
+  assert.equal(r.status, "READY");
+  assert.equal(r.activities[0].civil_start, "2026-01-05");
+  assert.equal(r.activities[0].civil_finish_boundary, "2026-01-12"); // exclusive boundary: next working day
+});
+
 test("topoOrder respects dependencies", () => {
   const preds = new Map([["A", []], ["B", ["A"]], ["C", ["B"]]]);
   const succs = new Map([["A", ["B"]], ["B", ["C"]], ["C", []]]);

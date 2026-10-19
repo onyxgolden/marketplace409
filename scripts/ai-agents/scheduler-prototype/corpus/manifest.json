@@ -14,7 +14,7 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "08f16cf78d622ce46be1547b3ee14203fcb480c9676b457a53a47eab0fd60a2e"
+      "sha256": "61136fc515261bd91cd96912911ba7da37749ab80a79eb619fe31dd493cca8a5"
     },
     {
       "path": "fixtures/make-fixtures.js",
@@ -50,7 +50,7 @@
     },
     {
       "path": "src/scheduler.js",
-      "sha256": "542e7ee7fb41092c0a22414a2fd3aeec677f4420c2c2d07e08b461c23e6f8759"
+      "sha256": "af4fb23046915b7b0b6366264d0d6568bedd00311d5f0989067f3028c19fff78"
     },
     {
       "path": "src/schemas.js",
@@ -90,7 +90,7 @@
     },
     {
       "path": "tests/scheduler.test.js",
-      "sha256": "0cb4eaec8df9bf6770edfae38ea6f7e17a238ccb066e67d51024a1d689fd7315"
+      "sha256": "eee86da8db3f261278add73fb23b8388979a71a1b87eaa0f0f20c0a1a3b184e2"
     },
     {
       "path": "tests/schemas.test.js",
