@@ -12,6 +12,59 @@ export const AGENT = 'project-controls';
 export const SCHEMA_VERSION = '1';
 
 /**
+ * PC650-008: enforce the trusted principal / registered relay / scoped read
+ * permission contract BEFORE accessing source bytes.
+ *
+ * - request_authority must be a recognized trusted identity ('jason' or the
+ *   registered 'muse-relay'). A caller identity string alone is not
+ *   authorization.
+ * - principal.id must EQUAL request_authority. A principal claiming to be
+ *   'mallory' with authority 'jason' is impersonation and is refused.
+ * - Each fixture access requires a scoped read grant in context.grants:
+ *   {scope: 'read', fixture: <fixture_id|'*'>}. The grant check happens
+ *   BEFORE resolver.resolve(), so denied fixtures have zero byte access.
+ */
+const TRUSTED_IDENTITIES = new Set(['jason', 'muse-relay']);
+
+function checkAuthority(context) {
+  // Descriptor-safe reads (no getter invocation).
+  const authSlot = getOwnData(context, 'request_authority');
+  const princSlot = getOwnData(context, 'principal');
+  const authority = (!authSlot.isAccessor && typeof authSlot.value === 'string') ? authSlot.value : null;
+  const principal = (!princSlot.isAccessor && princSlot.value !== null && typeof princSlot.value === 'object')
+    ? princSlot.value : null;
+  const principalIdSlot = principal ? getOwnData(principal, 'id') : { present: false, isAccessor: false };
+  const principalId = (!principalIdSlot.isAccessor && typeof principalIdSlot.value === 'string')
+    ? principalIdSlot.value : null;
+
+  if (!authority || !TRUSTED_IDENTITIES.has(authority)) {
+    return { ok: false, reason: `request_authority ${JSON.stringify(authority)} is not a trusted identity` };
+  }
+  if (principalId !== authority) {
+    return { ok: false, reason: `principal.id ${JSON.stringify(principalId)} does not match trusted request_authority ${JSON.stringify(authority)}: impersonation refused` };
+  }
+  return { ok: true, authority, principalId };
+}
+
+function checkReadGrant(context, fixtureId) {
+  // Descriptor-safe grant scan. Returns true iff a {scope:'read'} grant
+  // covers this fixture id (exact match or '*' wildcard).
+  if (context === null || typeof context !== 'object') return false;
+  const grantsSlot = getOwnData(context, 'grants');
+  if (grantsSlot.isAccessor || !Array.isArray(grantsSlot.value)) return false;
+  for (const g of grantsSlot.value) {
+    if (g === null || typeof g !== 'object' || Array.isArray(g)) continue;
+    const scopeSlot = getOwnData(g, 'scope');
+    const fixtureSlot = getOwnData(g, 'fixture');
+    if (scopeSlot.isAccessor || fixtureSlot.isAccessor) continue;
+    if (scopeSlot.value === 'read' && (fixtureSlot.value === '*' || fixtureSlot.value === fixtureId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * run(task, context) -> result envelope.
  * context carries the injected host adapter: { clock, criteria_version,
  * principal, grants, request_authority, fixtureStore }.
@@ -33,7 +86,20 @@ function runInner(task, context, started) {
   // the task/context with the budget, charging each object BEFORE reading
   // its fields. If the 65th distinct object is reached, BudgetExceeded is
   // thrown BEFORE that object is read. Getters are rejected, not executed.
-  const resolver = new Resolver(context.fixtureStore || {});
+  //
+  // PC650-001: the fixtureStore is extracted with a descriptor-safe read.
+  // `context.fixtureStore || {}` would INVOKE a getter; getOwnData rejects
+  // accessors without executing them.
+  const storeSlot = (context !== null && typeof context === 'object')
+    ? getOwnData(context, 'fixtureStore')
+    : { present: false, isAccessor: false, value: undefined };
+  if (storeSlot.isAccessor) {
+    const e = new Error('INVALID_INPUT: context.fixtureStore accessor rejected');
+    e.code = 'INVALID_INPUT';
+    throw e;
+  }
+  const fixtureStore = storeSlot.present ? storeSlot.value : {};
+  const resolver = new Resolver(fixtureStore);
   measureInputBytes(task, resolver);
   // context metadata bytes (fixtureStore bytes are charged per resolve)
   // Use descriptor-safe read to separate fixtureStore from metadata.
@@ -55,9 +121,13 @@ function runInner(task, context, started) {
   const cc = checkContext(context, resolver);
   if (!cc.ok) return invalidInput(task, cc.errors);
 
-  // Authority: only jason or his registered muse relay.
-  if (!['jason', 'muse-relay'].includes(context.request_authority)) {
-    return denied(task, 'AUTH_UNVERIFIED', 'request authority not recognized');
+  // PC650-008: enforce trusted principal / registered relay / scoped grants.
+  // The principal must BE the trusted authority (no impersonation), and each
+  // fixture access requires a scoped read grant. Checked BEFORE any source
+  // byte access.
+  const auth = checkAuthority(context);
+  if (!auth.ok) {
+    return denied(task, 'AUTH_UNVERIFIED', auth.reason);
   }
 
   const options = task.options;
@@ -74,6 +144,13 @@ function runInner(task, context, started) {
   // enforces cross-package identity separation.
   const lineRegistry = new Set();
   for (const ref of task.fixture_refs) {
+    // PC650-008: scoped read permission checked BEFORE resolver.resolve().
+    // No grant => READ_DENIED with zero denied-byte access.
+    if (!checkReadGrant(context, ref)) {
+      const e = new Error(`READ_DENIED: no scoped read grant for fixture ${ref}`);
+      e.code = 'READ_DENIED';
+      throw e;
+    }
     let resolved;
     try {
       resolved = resolver.resolve(ref);
@@ -122,31 +199,37 @@ function runInner(task, context, started) {
       throw e;
     }
 
-    // 5. Provenance: verify the source_ref pin against the store.
-    const v = verifySourceRef(rec.source_ref, resolver);
+    // 5. Provenance: verify the source_ref pin against the cited bytes.
+    // PC650-004: the pin's blob authenticates the cited document (canonical
+    // bytes WITHOUT source_ref) — the exact bytes that citation spans refer
+    // to. resolved.citedBytes comes from the charged canonicalization in
+    // resolve(); verifySourceRef checks the git blob SHA-1 matches the pin.
+    const v = verifySourceRef(resolved.sourceRef, resolved.citedBytes);
     if (!v.ok) {
       const e = new Error(`SOURCE_UNVERIFIED: package ${rec.package_id}: ${v.reason}`);
       e.code = 'SOURCE_UNVERIFIED';
       throw e;
     }
-    sourceRefs.push({ ...rec.source_ref, verification: 'VERIFIED' });
+    sourceRefs.push({ ...resolved.sourceRef, verification: 'VERIFIED' });
 
-    // 6. Domain analysis (citations verified against source bytes).
+    // 6. Domain analysis (citations verified against cited source bytes).
+    // PC650-004: ctx.sourceBytes/sourceSpans are the cited document (without
+    // source_ref), so byte slices match the blob-authenticated bytes.
     const ctx = {
       evMode: options.ev_mode,
       eacFormulas: options.eac_formulas,
       includeContingency: options.include_contingency,
       compareHeaders: options.compare_headers,
       chargeSpan: () => resolver.chargeSpan(),
-      sourceBytes: resolved.bytes,
-      sourceSpans: resolved.spans,
-      sourceRef: rec.source_ref,
+      sourceBytes: resolved.citedBytes,
+      sourceSpans: resolved.citedSpans,
+      sourceRef: resolved.sourceRef,
     };
     try {
       const { result, diagnostics: d2 } = analyzePackage(rec, ctx);
       packages.push(result);
       for (const d of d2) diagnostics.push(d);
-      if (d2.some((d) => ['CONTINGENCY_EXCEEDED', 'HEADER_MISMATCH', 'PV_UNVERIFIABLE', 'EV_UNVERIFIABLE', 'CPI_INVALID'].includes(d.code))) partial = true;
+      if (d2.some((d) => ['CONTINGENCY_EXCEEDED', 'HEADER_MISMATCH', 'PV_UNVERIFIABLE', 'EV_UNVERIFIABLE', 'CPI_INVALID', 'AC_UNVERIFIABLE', 'CITATION_UNVERIFIED'].includes(d.code))) partial = true;
     } catch (e) {
       throw e; // budget errors propagate to refusal
     }
@@ -261,18 +344,43 @@ function stableDiagnostics(ds) {
     a.code < b.code ? -1 : a.code > b.code ? 1 : String(a.record_id) < String(b.record_id) ? -1 : 1);
 }
 
+/**
+ * PC650-001: descriptor-safe, bounded task_id extraction for refusal envelopes.
+ * Never invokes getters (uses getOwnData). Returns '[inadmissible-id]' when
+ * the task is not an object, task_id is missing/an accessor, or the ID is
+ * oversized — so a 300KB task_id cannot blow the 256KiB output cap via the
+ * refusal envelope echoing it.
+ */
+function safeTaskId(task) {
+  if (task === null || typeof task !== 'object') return '[inadmissible-id]';
+  const slot = getOwnData(task, 'task_id');
+  if (!slot.present || slot.isAccessor) return '[inadmissible-id]';
+  const id = slot.value;
+  if (typeof id !== 'string' || id.length === 0 || id.length > 200) return '[inadmissible-id]';
+  return id;
+}
+
+/**
+ * PC650-001: bound a refusal reason string so the envelope cannot exceed
+ * the output cap via an oversized reason.
+ */
+function boundReason(reason) {
+  const s = String(reason ?? '');
+  return s.length > 1000 ? s.slice(0, 1000) + '…[truncated]' : s;
+}
+
 function invalidInput(task, errors) {
   return {
     schema_version: SCHEMA_VERSION,
     agent: AGENT,
-    task_id: task && task.task_id ? task.task_id : 'unknown',
+    task_id: safeTaskId(task),
     advisory: true,
     fixture_only: true,
     authorization_granted: false,
     complete: false,
     status: 'REFUSED',
     source_refs: [],
-    diagnostics: errors.map((e) => mkdiag('INVALID_INPUT', 'high', null, e)),
+    diagnostics: errors.map((e) => mkdiag('INVALID_INPUT', 'high', null, boundReason(e))),
     quarantined_sources: [],
     routing_flags: [],
     report: { packages: [], pooled: [], coverage: { packages_analyzed: 0, packages_quarantined: 0, currencies: [] } },
@@ -288,8 +396,17 @@ function denied(task, code, reason) {
 function refusalEnvelope(task, e, started) {
   void started;
   const code = e && typeof e.code === 'string' ? e.code : 'INVALID_INPUT';
-  const env = invalidInput(task, [e && e.message ? e.message : String(e)]);
-  env.diagnostics = [mkdiag(code, 'high', null, e && e.message ? e.message : String(e))];
+  const env = invalidInput(task, [boundReason(e && e.message ? e.message : String(e))]);
+  env.diagnostics = [mkdiag(code, 'high', null, boundReason(e && e.message ? e.message : String(e)))];
   env.report = { packages: [], pooled: [], coverage: { packages_analyzed: 0, packages_quarantined: 0, currencies: [] } };
+  // PC650-001: the refusal envelope itself is bounded. task_id is already
+  // sanitized by safeTaskId; reasons are truncated by boundReason. Verify the
+  // final serialized size cannot exceed the output cap by construction.
+  const outBytes = utf8Length(canonicalStringify(env));
+  if (outBytes > LIMITS.maxOutputBytes) {
+    // Defense in depth: if somehow still over (should be impossible with
+    // bounded fields), replace diagnostics with a single truncation marker.
+    env.diagnostics = [mkdiag(code, 'high', null, '[refusal envelope truncated: output cap]')];
+  }
   return env;
 }

@@ -144,3 +144,30 @@ test('fractional percent rounds only at final display', () => {
   assert.equal(result.pv.n, '100000');
   assert.equal(result.pv.d, '3');
 });
+
+test('PC650-004: citations carry quoted_span equal to span.quoted_text', () => {
+  // Verdict: Citation shape requires quoted_span, span{start_byte, end_byte,
+  // quoted_text}, verification; the two quote fields equal the exact slice.
+  const pkg = { ...basePkg };
+  const { result } = analyzePackage(pkg, ctxBaseFor(pkg));
+  const bacCite = result.citations.bac_minor;
+  assert.equal(bacCite.status, 'VERIFIED');
+  assert.ok('quoted_span' in bacCite, 'citation missing quoted_span');
+  assert.equal(bacCite.quoted_span, bacCite.span.quoted_text,
+    'quoted_span must equal span.quoted_text');
+  assert.ok(typeof bacCite.span.start_byte === 'number');
+  assert.ok(typeof bacCite.span.end_byte === 'number');
+  assert.ok(bacCite.span.end_byte > bacCite.span.start_byte);
+});
+
+test('PC650-004: package citation has a byte span (not a bare label)', () => {
+  // Verdict: R.citations.package was VERIFIED with no span/quote. It must
+  // now be bound to the package_id byte span.
+  const pkg = { ...basePkg };
+  const { result } = analyzePackage(pkg, ctxBaseFor(pkg));
+  const pkgCite = result.citations.package;
+  assert.equal(pkgCite.status, 'VERIFIED');
+  assert.ok(pkgCite.span, 'package citation missing span');
+  assert.ok('quoted_span' in pkgCite, 'package citation missing quoted_span');
+  assert.equal(pkgCite.quoted_span, pkgCite.span.quoted_text);
+});

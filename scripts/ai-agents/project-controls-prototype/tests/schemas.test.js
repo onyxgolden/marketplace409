@@ -10,7 +10,7 @@ const goodTask = {
 };
 const goodCtx = {
   clock: { now: '2026-10-18T14:00:00Z' }, criteria_version: 'controls-v1',
-  principal: { id: 'h' }, grants: [], request_authority: 'muse-relay', fixtureStore: {},
+  principal: { id: 'muse-relay' }, grants: [{scope: 'read', fixture: '*'}], request_authority: 'muse-relay', fixtureStore: {},
 };
 
 test('valid task passes', () => assert.equal(checkTask(goodTask).ok, true));

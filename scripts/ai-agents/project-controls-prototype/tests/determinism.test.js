@@ -14,7 +14,7 @@ const keymap = JSON.parse(readFileSync(join(root, 'fixtures', 'keymap.json'), 'u
 function ctx() {
   return {
     clock: { now: '2026-10-18T14:00:00Z' }, criteria_version: 'controls-v1',
-    principal: { id: 'det' }, grants: [], request_authority: 'muse-relay',
+    principal: { id: 'muse-relay' }, grants: [{scope: 'read', fixture: '*'}], request_authority: 'muse-relay',
     fixtureStore: JSON.parse(JSON.stringify(store)),
   };
 }

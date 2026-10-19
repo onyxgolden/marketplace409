@@ -6,6 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Resolver } from '../src/resolver.js';
 import { measureInputBytes, getOwnData, assertDeepNoAccessors } from '../src/admission.js';
+import { run } from '../src/index.js';
+import { canonicalStringify, utf8Length } from '../src/canonical.js';
 
 test('PC650-001: 65th task object getter is never invoked', () => {
   // Build a task with 70 properties; the 65th must refuse BEFORE its getter runs.
@@ -86,4 +88,107 @@ test('PC650-001: exact-fit 64 objects succeed, 65th refuses', () => {
   });
   // The 65th object was not added to the charged set (refused before)
   assert.equal(r.objectsCharged, 65);
+});
+
+test('PC650-001: 65th candidate with accessor refuses BUDGET_EXCEEDED before descriptor inspection', () => {
+  // Verdict probe: Array root + 63 plain objects = 64 charged; the 65th has
+  // one own accessor. Must refuse BUDGET_EXCEEDED, NOT INVALID_INPUT naming
+  // the accessor (which would prove the 65th was inspected).
+  const r = new Resolver({});
+  const arr = [];
+  for (let i = 0; i < 63; i++) arr.push({ idx: i });
+  const evil = {};
+  Object.defineProperty(evil, 'x', { enumerable: true, get() { return 1; } });
+  arr.push(evil);
+  // arr (1) + 63 objects (63) = 64 charged; evil is the 65th.
+  try {
+    measureInputBytes(arr, r);
+    assert.fail('should have refused');
+  } catch (e) {
+    assert.equal(e.code, 'BUDGET_EXCEEDED', `expected BUDGET_EXCEEDED, got ${e.code}: ${e.message}`);
+  }
+  // The 65th candidate was never inspected: objectsCharged hit 65 (the
+  // charge that threw), but no INVALID_INPUT naming the accessor.
+});
+
+test('PC650-001: invalidInput does not invoke task.task_id getter', () => {
+  // Verdict probe: public task.task_id getter must not be invoked by the
+  // refusal path. invalidInput used to read task.task_id twice.
+    let calls = 0;
+  const task = {
+    schema_version: '1',
+    operation: 'analyze',
+    fixture_refs: [],
+    options: { ev_mode: 'claimed', eac_formulas: [], include_contingency: false, compare_headers: false },
+  };
+  Object.defineProperty(task, 'task_id', {
+    enumerable: true,
+    get() { calls++; return 'getter-id'; },
+  });
+  const context = {
+    clock: { now: '2026-10-18T14:00:00Z' },
+    criteria_version: 'controls-v1',
+    principal: { id: 'muse-relay' },
+    grants: [{ scope: 'read', fixture: '*' }],
+    request_authority: 'muse-relay',
+    fixtureStore: {},
+  };
+  const out = run(task, context);
+  // The getter is rejected (not invoked); task_id is the inadmissible marker.
+  assert.equal(calls, 0, `task_id getter invoked ${calls} times`);
+  assert.equal(out.task_id, '[inadmissible-id]');
+  assert.equal(out.status, 'REFUSED');
+});
+
+test('PC650-001: fixtureStore getter is not invoked before admission', () => {
+  // Verdict probe: new Resolver(context.fixtureStore||{}) invoked the getter.
+  // Must be descriptor-safe now: 0 invocations, and the request is refused
+  // (not REPORT_READY).
+    let calls = 0;
+  const task = {
+    schema_version: '1',
+    task_id: 'fs-getter-test',
+    operation: 'analyze',
+    fixture_refs: ['fx1'],
+    options: { ev_mode: 'claimed', eac_formulas: [], include_contingency: false, compare_headers: false },
+  };
+  const context = {
+    clock: { now: '2026-10-18T14:00:00Z' },
+    criteria_version: 'controls-v1',
+    principal: { id: 'muse-relay' },
+    grants: [{ scope: 'read', fixture: '*' }],
+    request_authority: 'muse-relay',
+  };
+  Object.defineProperty(context, 'fixtureStore', {
+    enumerable: true,
+    get() { calls++; return {}; },
+  });
+  const out = run(task, context);
+  assert.equal(calls, 0, `fixtureStore getter invoked ${calls} times`);
+  // Refused (accessor rejected), not REPORT_READY.
+  assert.equal(out.status, 'REFUSED');
+});
+
+test('PC650-001: 300KB task_id yields bounded refusal envelope', () => {
+  // Verdict probe: task_id="x".repeat(300000) must not produce a 300KB
+  // envelope. The refusal uses '[inadmissible-id]' and stays under the cap.
+        const task = {
+    schema_version: '1',
+    task_id: 'x'.repeat(300000),
+    operation: 'analyze',
+    fixture_refs: [],
+    options: { ev_mode: 'claimed', eac_formulas: [], include_contingency: false, compare_headers: false },
+  };
+  const context = {
+    clock: { now: '2026-10-18T14:00:00Z' },
+    criteria_version: 'controls-v1',
+    principal: { id: 'muse-relay' },
+    grants: [{ scope: 'read', fixture: '*' }],
+    request_authority: 'muse-relay',
+    fixtureStore: {},
+  };
+  const out = run(task, context);
+  assert.equal(out.task_id, '[inadmissible-id]');
+  const bytes = utf8Length(canonicalStringify(out));
+  assert.ok(bytes < 256 * 1024, `refusal envelope ${bytes} bytes exceeds 256KiB cap`);
 });

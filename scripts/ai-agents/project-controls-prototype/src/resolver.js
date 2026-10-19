@@ -110,6 +110,12 @@ export class Resolver {
    * Parses with byte-span tracking so every operand can carry a verified
    * citation. Returns { fixture_id, record, spans, bytes } or throws
    * {code: READ_DENIED|HASH_MISMATCH}.
+   *
+   * PC650-004: the CITED DOCUMENT is the canonical bytes of the record
+   * WITHOUT source_ref. The source_ref.blob pin authenticates EXACTLY these
+   * bytes (git blob SHA-1). Spans for citations are computed over the cited
+   * bytes, so the blob, the spans, and the quoted slices all refer to the
+   * same source document — no self-reference discrepancy.
    */
   resolve(fixtureId) {
     // PC650-001: charge the registry entry candidate BEFORE reading its fields.
@@ -141,8 +147,36 @@ export class Resolver {
       e.code = 'INVALID_INPUT';
       throw e;
     }
-    checkDepth(parsed.value, 0);
-    return { fixture_id: fixtureId, record: parsed.value, spans: parsed.spans, bytes: entry.bytes };
+    // PC650-001: charge the parsed record before inspection.
+    this.chargeObject(parsed.value);
+    // PC650-004: build the cited document (without source_ref) with charged
+    // canonicalization. The cited bytes are what the blob pin authenticates
+    // and what citation spans refer to.
+    const { source_ref: pin, ...rest } = parsed.value;
+    const citedBytes = chargedCanonicalOf(rest, this);
+    if (citedBytes === null) {
+      const e = new Error(`INVALID_INPUT: fixture ${fixtureId} cited-document admission failed`);
+      e.code = 'INVALID_INPUT';
+      throw e;
+    }
+    let cited;
+    try {
+      cited = parseWithSpans(citedBytes);
+    } catch {
+      const e = new Error(`INVALID_INPUT: fixture ${fixtureId} cited bytes unparseable`);
+      e.code = 'INVALID_INPUT';
+      throw e;
+    }
+    return {
+      fixture_id: fixtureId,
+      record: parsed.value,       // full record WITH source_ref (for validation)
+      sourceRef: pin,            // the source_ref pin (may be undefined if absent)
+      spans: parsed.spans,       // spans over full bytes (reference)
+      bytes: entry.bytes,        // full registered bytes
+      citedRecord: cited.value,  // record WITHOUT source_ref
+      citedBytes,                // canonical bytes WITHOUT source_ref (blob-authenticated)
+      citedSpans: cited.spans,   // spans over citedBytes (for citations)
+    };
   }
 }
 
@@ -159,45 +193,79 @@ function checkDepth(v, depth) {
   }
 }
 
-/** Verify a SourceRef pin against the resolver store (synthetic repo).
- *  The pin's blob is the git blob SHA-1 of the canonical record WITHOUT the
- *  source_ref itself (avoids self-reference); commit is the fixed synthetic id.
- *  PC650-001: charges the parsed record candidates before inspection.
+/** Verify a SourceRef pin against the cited document bytes.
+ *  PC650-004: the pin's blob is the git blob SHA-1 of the CITED BYTES — the
+ *  canonical record WITHOUT source_ref. This is the exact document that
+ *  citation spans refer to. The blob authenticates the cited bytes; no
+ *  self-reference workaround changes the source document.
+ *  ref: the source_ref pin {repo, path, commit, blob, algorithm, revision}.
+ *  citedBytes: canonical JSON string of the record without source_ref.
+ *  Returns {ok, reason}.
  */
-export function verifySourceRef(ref, resolver) {
-  const entry = resolver.store[ref.path];
-  if (!entry) return { ok: false, reason: 'unknown fixture path' };
-  // Charge the registry entry before reading its bytes
-  resolver.chargeObject(entry);
-  let record;
-  try { record = JSON.parse(entry.bytes); } catch { return { ok: false, reason: 'unparseable bytes' }; }
-  // Charge the parsed record and its top-level structure before walking.
-  // The parsed object is a new candidate distinct from the entry.
-  resolver.chargeObject(record);
-  const { source_ref, ...rest } = record;
-  void source_ref;
-  // Charge the rest object before canonicalization reads it
-  resolver.chargeObject(rest);
-  const blob = gitBlobSha1(canonicalOf(rest));
-  if (blob !== ref.blob) return { ok: false, reason: 'blob mismatch' };
+export function verifySourceRef(ref, citedBytes) {
+  if (!ref || typeof ref !== 'object') return { ok: false, reason: 'missing source_ref pin' };
+  if (typeof citedBytes !== 'string') return { ok: false, reason: 'missing cited bytes' };
+  const blob = gitBlobSha1(citedBytes);
+  if (blob !== ref.blob) return { ok: false, reason: `blob mismatch: pin ${ref.blob} != cited bytes ${blob}` };
   if (ref.commit !== SYNTHETIC_COMMIT) return { ok: false, reason: 'commit mismatch' };
   return { ok: true };
 }
 
 export const SYNTHETIC_COMMIT = '0'.repeat(40);
 
-function canonicalOf(v) {
-  // local stable stringify (resolver has no canonical.js dep cycle issue —
-  // canonical.js is standalone, but keep resolver dependency-free anyway)
-  return JSON.stringify(sortKeys(v));
+/**
+ * PC650-001: charged canonical serialization. Walks the value with the
+ * resolver budget, charging each object/array BEFORE reading its fields.
+ * Uses descriptor-safe reads (no getter invocation). Returns the canonical
+ * JSON string, or null if the budget is exceeded or an accessor is found.
+ * This ensures verifySourceRef's reparse consumes the same admission
+ * contract as the primary path — no uncharged descendant traversal.
+ */
+function chargedCanonicalOf(v, resolver, depth = 0) {
+  // PC650-001: BudgetExceeded propagates (it's a budget refusal, not an
+  // admission failure). Other errors (accessors, depth, type) return null.
+  try {
+    return chargedCanonicalInner(v, resolver, depth);
+  } catch (e) {
+    if (e && e.code === 'BUDGET_EXCEEDED') throw e;
+    return null;
+  }
 }
 
-function sortKeys(v) {
-  if (Array.isArray(v)) return v.map(sortKeys);
-  if (v !== null && typeof v === 'object') {
-    const out = {};
-    for (const k of Object.keys(v).sort()) out[k] = sortKeys(v[k]);
-    return out;
+function chargedCanonicalInner(v, resolver, depth) {
+  if (depth > LIMITS.maxDepth) throw new InputLimit('provenance: depth exceeds 32');
+  if (v === null) return 'null';
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) throw new InputLimit('provenance: non-finite number');
+    return String(v);
   }
-  return v;
+  if (typeof v === 'string') return JSON.stringify(v);
+  if (typeof v !== 'object') throw new InputLimit('provenance: unsupported value');
+  // Charge BEFORE any key/descriptor inspection.
+  resolver.chargeObject(v);
+  // Descriptor-safe: reject accessors without executing them.
+  const keys = Object.keys(v);
+  for (const k of keys) {
+    const desc = Object.getOwnPropertyDescriptor(v, k);
+    if (!desc || typeof desc.get === 'function' || typeof desc.set === 'function') {
+      throw new InputLimit('provenance: accessor or missing descriptor');
+    }
+  }
+  if (Array.isArray(v)) {
+    // Sparse check: every index must have a descriptor.
+    for (let i = 0; i < v.length; i++) {
+      if (!Object.getOwnPropertyDescriptor(v, i)) {
+        throw new InputLimit('provenance: sparse array');
+      }
+    }
+    const parts = v.map((x) => chargedCanonicalInner(x, resolver, depth + 1));
+    return '[' + parts.join(',') + ']';
+  }
+  const parts = [];
+  for (const k of keys.sort()) {
+    const desc = Object.getOwnPropertyDescriptor(v, k);
+    parts.push(JSON.stringify(k) + ':' + chargedCanonicalInner(desc.value, resolver, depth + 1));
+  }
+  return '{' + parts.join(',') + '}';
 }

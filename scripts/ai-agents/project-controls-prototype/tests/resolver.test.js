@@ -11,19 +11,24 @@ function storeOf(obj) {
   return { fx1: { bytes, sha256: sha256Hex(bytes), media_type: 'application/json' } };
 }
 
-test('resolve returns parsed record and charges one object', () => {
+test('resolve returns parsed record and charges entry+record+cited', () => {
   const r = new Resolver(storeOf({ a: 1 }));
   const { record } = r.resolve('fx1');
   assert.deepEqual(record, { a: 1 });
-  assert.equal(r.objectsCharged, 1);
+  // PC650-001/004: resolve charges the entry (1), the parsed record (1), and
+  // the cited-document descendants (1 for the stripped {a:1}). Each is a
+  // distinct candidate charged before inspection.
+  assert.equal(r.objectsCharged, 3);
 });
 
 test('65th distinct object throws BUDGET_EXCEEDED before inspection', () => {
-  // PC650-001: the budget counts DISTINCT objects. Resolving the same
-  // fixture repeatedly charges its entry once (idempotent).
+  // PC650-001: the budget counts DISTINCT objects. The registry entry is
+  // idempotent, but each re-parse creates new candidate objects that are
+  // charged (they must be inspected).
   const r = new Resolver(storeOf({ a: 1 }));
   for (let i = 0; i < 10; i++) r.resolve('fx1');
-  assert.equal(r.objectsCharged, 1); // same entry, charged once
+  // 1 entry (idempotent) + 10 parsed records + 10 cited documents = 21
+  assert.equal(r.objectsCharged, 21);
 
   // 65 distinct objects refuse on the 65th
   const r2 = new Resolver({});

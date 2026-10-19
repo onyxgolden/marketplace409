@@ -27,6 +27,7 @@
 
 import { BudgetExceeded, InputLimit, LIMITS } from './resolver.js';
 import { utf8Length } from './canonical.js';
+import { types } from 'node:util';
 
 /**
  * Get an own data property value without invoking getters.
@@ -79,6 +80,13 @@ export function assertNoAccessors(obj, what) {
  * Recursively verifies that a value and all its nested objects contain
  * no getters/setters. Used before worker thread creation to ensure the
  * parent thread never executes accessor code during structured cloning.
+ *
+ * PC650-007: Proxy values are rejected with a NON-EXECUTING primitive
+ * (util.types.isProxy) BEFORE any reflective operation. Object.keys and
+ * Object.getOwnPropertyDescriptor trigger Proxy traps (ownKeys,
+ * getOwnPropertyDescriptor) — on a Proxy with a hanging ownKeys trap, the
+ * parent would hang before the watchdog timer exists. isProxy() is a native
+ * V8 check that invokes no user code.
  */
 export function assertDeepNoAccessors(value, where, depth = 0, seen = new WeakSet()) {
   if (depth > 64) {
@@ -87,11 +95,20 @@ export function assertDeepNoAccessors(value, where, depth = 0, seen = new WeakSe
     throw e;
   }
   if (value === null || typeof value !== 'object') return;
+  // PC650-007: reject Proxies BEFORE any reflection. This check executes no
+  // user code (native V8 internal-slot test).
+  if (types.isProxy(value)) {
+    const e = new Error(`TRANSPORT_REFUSED: Proxy value at ${where} rejected: reflection-unsafe for parent transport`);
+    e.code = 'TRANSPORT_REFUSED';
+    throw e;
+  }
   if (seen.has(value)) return;
   seen.add(value);
   assertNoAccessors(value, where);
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
+      // isProxy already checked for `value`; children are checked on recursion.
+      // Use descriptor read (safe on non-Proxy) to avoid invoking getters.
       const slot = getOwnData(value, i);
       if (slot.present && !slot.isAccessor) {
         assertDeepNoAccessors(slot.value, `${where}[${i}]`, depth + 1, seen);
@@ -139,9 +156,13 @@ export function chargedStringify(value, budget, depth = 0) {
     throw new InputLimit('admission: unsupported value type');
   }
 
-  // Object or Array: charge BEFORE reading contents
-  assertNoAccessors(value, depth === 0 ? 'input' : 'nested');
+  // Object or Array: charge BEFORE reading contents.
+  // PC650-001: the budget charge comes FIRST, before any key/descriptor
+  // inspection. If this is the 65th distinct object, BudgetExceeded is thrown
+  // BEFORE the candidate is examined at all (no descriptor reads, no key
+  // listing). The over-limit candidate is never inspected.
   budget.chargeObject(value);
+  assertNoAccessors(value, depth === 0 ? 'input' : 'nested');
 
   if (Array.isArray(value)) {
     const parts = [];

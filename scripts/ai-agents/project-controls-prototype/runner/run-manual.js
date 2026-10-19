@@ -24,8 +24,10 @@ const store = JSON.parse(readFileSync(join(root, 'fixtures', 'store.json'), 'utf
 const context = {
   clock: { now: new Date().toISOString().replace(/\.\d+Z$/, 'Z') },
   criteria_version: 'controls-v1',
-  principal: { id: 'manual-host' },
-  grants: [],
+  // PC650-008: principal must match the trusted request_authority, and a
+  // scoped read grant is required for fixture access.
+  principal: { id: 'muse-relay' },
+  grants: [{ scope: 'read', fixture: '*' }],
   request_authority: 'muse-relay',
   fixtureStore: store,
 };

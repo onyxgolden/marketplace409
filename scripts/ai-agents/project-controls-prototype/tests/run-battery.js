@@ -48,8 +48,8 @@ function baseContext() {
   return {
     clock: { now: '2026-10-18T14:00:00Z' },
     criteria_version: 'controls-v1',
-    principal: { id: 'battery-host' },
-    grants: [],
+    principal: { id: 'muse-relay' },
+    grants: [{scope: 'read', fixture: '*'}],
     request_authority: 'muse-relay',
     fixtureStore: JSON.parse(JSON.stringify(store)),
   };

@@ -12,7 +12,7 @@ test('PC650-007: runGuarded returns result for normal task', async () => {
   };
   const context = {
     clock: { now: '2026-10-18T14:00:00Z' }, criteria_version: 'controls-v1',
-    principal: { id: 'test' }, grants: [], request_authority: 'muse-relay',
+    principal: { id: 'muse-relay' }, grants: [{scope: 'read', fixture: '*'}], request_authority: 'muse-relay',
     fixtureStore: {},
   };
   const out = await runGuarded(task, context, 2000);
@@ -34,7 +34,7 @@ test('PC650-007: runGuarded rejects accessor in transport', async () => {
   });
   const context = {
     clock: { now: '2026-10-18T14:00:00Z' }, criteria_version: 'controls-v1',
-    principal: { id: 'test' }, grants: [], request_authority: 'muse-relay',
+    principal: { id: 'muse-relay' }, grants: [{scope: 'read', fixture: '*'}], request_authority: 'muse-relay',
     fixtureStore: {},
   };
   const out = await runGuarded(task, context, 2000);
@@ -60,7 +60,7 @@ test('PC650-007: runGuarded rejects hanging getter inside worker', async () => {
     });
     const context = {
       clock: { now: '2026-10-18T14:00:00Z' }, criteria_version: 'controls-v1',
-      principal: { id: 'test' }, grants: [], request_authority: 'muse-relay',
+      principal: { id: 'muse-relay' }, grants: [{scope: 'read', fixture: '*'}], request_authority: 'muse-relay',
       fixtureStore: {},
     };
     return { task, context };

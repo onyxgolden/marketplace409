@@ -66,6 +66,10 @@ export function analyzePackage(pkg, ctx) {
     }
     return {
       status: 'VERIFIED',
+      // PC650-004: Citation shape per brief: quoted_span, span{start_byte,
+      // end_byte, quoted_text}, verification. The two quote fields equal the
+      // exact byte slice.
+      quoted_span: actual,
       span: { start_byte: span.start, end_byte: span.end, quoted_text: actual },
       source_ref: srcRef,
       verification: 'BYTE_SLICE_VERIFIED',
@@ -103,6 +107,7 @@ export function analyzePackage(pkg, ctx) {
     }
     return {
       status: 'VERIFIED',
+      quoted_span: actual,
       span: { start_byte: span.start, end_byte: span.end, quoted_text: actual },
       source_ref: srcRef,
       verification: 'BYTE_SLICE_VERIFIED',
@@ -114,17 +119,24 @@ export function analyzePackage(pkg, ctx) {
   R.provenance = {
     bac: 'declared-baseline',
     pv: 'derived-from-plan',
-    ev: ctx.evMode === 'evidenced' && pkg.evidenced_ev_minor != null ? 'evidenced' : 'derived-from-claim',
+    // R2 (local review): set after the EV branch resolves; evidenced mode
+    // without evidence must not claim 'derived-from-claim'.
+    ev: 'pending',
     note: 'All forecast values are SYNTHETIC ARITHMETIC EXERCISE — not a project forecast.',
   };
-  // PC650-004: cite the BAC operand
+  // PC650-004: the package identity citation is bound to the package_id byte
+  // span in the cited document (not a bare label). The source_ref pin itself
+  // is verified separately by verifySourceRef.
+  const pkgIdCitation = citeOperand('package_id', '$.package_id', pkg.package_id);
   R.citations = {
-    package: {
+    package: pkgIdCitation.status === 'VERIFIED' ? {
       status: 'VERIFIED',
+      quoted_span: pkgIdCitation.quoted_span,
+      span: pkgIdCitation.span,
       source_ref: srcRef,
-      verification: 'SOURCE_REF_PIN_VERIFIED',
-      note: 'package identity bound to verified source_ref pin',
-    },
+      verification: 'PACKAGE_IDENTITY_VERIFIED',
+      note: 'package identity bound to verified package_id byte span; source_ref pin verified separately',
+    } : pkgIdCitation,
     bac_minor: citeOperand('bac_minor', '$.bac_minor', pkg.bac_minor),
     lines: [],
   };
@@ -151,6 +163,7 @@ export function analyzePackage(pkg, ctx) {
     if (pkg.evidenced_ev_minor != null) {
       ev = ratFromInt(pkg.evidenced_ev_minor);
       R.ev_mode = 'evidenced';
+      R.provenance.ev = 'evidenced';
       R.citations.evidenced_ev_minor = citeOperand('evidenced_ev_minor', '$.evidenced_ev_minor', pkg.evidenced_ev_minor);
     } else {
       evUnavailable = true;
@@ -159,12 +172,15 @@ export function analyzePackage(pkg, ctx) {
       R.claimed_actual_percent_unverified = { ...pkg.claimed_actual_percent, note: 'claim preserved, not used computationally' };
       R.citations.evidenced_ev_minor = { status: 'UNAVAILABLE', reason: 'evidenced_ev_minor not supplied' };
       R.citations.claimed_actual_percent = citeOperand('claimed_actual_percent', '$.claimed_actual_percent', pkg.claimed_actual_percent);
+      // R2: provenance must not claim the claim was used.
+      R.provenance.ev = 'unverifiable-no-evidence';
       diagnostics.push(diag('EV_UNVERIFIABLE', 'high', pkg.package_id, 'evidenced EV mode selected but no evidenced_ev_minor supplied; EV and dependents unavailable',
         R.citations.evidenced_ev_minor));
     }
   } else {
     ev = percentOf(pkg.claimed_actual_percent, pkg.bac_minor);
     R.ev_mode = 'claimed';
+    R.provenance.ev = 'derived-from-claim';
     R.citations.claimed_actual_percent = citeOperand('claimed_actual_percent', '$.claimed_actual_percent', pkg.claimed_actual_percent);
   }
   if (!evUnavailable) {
@@ -454,8 +470,19 @@ export function poolByCurrency(pkgResults, ctx) {
     let bac = 0n, pvN = 0n, pvD = 1n, evN = 0n, evD = 1n, ac = 0n;
     let pvOk = true;
     let acOk = true;
-    // PC650-004: collect contributing member citations for the pooled basis
+    // PC650-009: track EV availability. If ANY member's EV is not ok, the
+    // pooled EV numerator is unknown — it must NOT default to 0 (which would
+    // produce a falsely verified 0.0000 CPI/SPI). Unavailable EV propagates
+    // to all dependent pooled ratios; independently supported BAC/AC/PV are
+    // still reported.
+    let evOk = true;
+    // PC650-004: collect ALL contributing member citations for the pooled
+    // basis — not just BAC. A verified BAC alone cannot support CPI/SPI which
+    // require AC lines, PV/planned operands, and EV operands. Each member
+    // contributes its full citation set; the pool basis is VERIFIED only if
+    // every member's every contributing citation is VERIFIED.
     const contributingCitations = [];
+    let allCitationsVerified = true;
     for (const m of members) {
       bac += BigInt(m.bac_minor);
       // Finding 1 (local review): AC may be UNVERIFIABLE (no ac_minor field).
@@ -467,13 +494,28 @@ export function poolByCurrency(pkgResults, ctx) {
         diagnostics.push(diag('AC_UNVERIFIABLE', 'high', m.package_id,
           'member AC unavailable; pooled AC unverifiable'));
       }
-      // Each member's BAC citation contributes to the pool
-      if (m.citations && m.citations.bac_minor) {
-        contributingCitations.push({
-          package_id: m.package_id,
-          bac_citation: m.citations.bac_minor,
-        });
+      // Collect the member's full citation set for the pooled basis.
+      const memberCites = { package_id: m.package_id };
+      if (m.citations) {
+        for (const [k, cite] of Object.entries(m.citations)) {
+          if (k === 'lines') {
+            // Line citations: record each line's citation status.
+            memberCites.lines = (cite || []).map((lc) => ({
+              line_id: lc.line_id,
+              status: lc.citation ? lc.citation.status : 'UNAVAILABLE',
+            }));
+            for (const lc of (cite || [])) {
+              if (!lc.citation || lc.citation.status !== 'VERIFIED') allCitationsVerified = false;
+            }
+          } else if (cite && typeof cite === 'object') {
+            memberCites[k] = { status: cite.status || 'UNAVAILABLE' };
+            if (cite.status !== 'VERIFIED') allCitationsVerified = false;
+          }
+        }
+      } else {
+        allCitationsVerified = false;
       }
+      contributingCitations.push(memberCites);
       if (m.pv.status === 'ok') {
         const t = ratAdd(rat(pvN, pvD), rat(BigInt(m.pv.n), BigInt(m.pv.d)));
         pvN = t.n; pvD = t.d;
@@ -481,6 +523,11 @@ export function poolByCurrency(pkgResults, ctx) {
       if (m.ev.status === 'ok') {
         const t = ratAdd(rat(evN, evD), rat(BigInt(m.ev.n), BigInt(m.ev.d)));
         evN = t.n; evD = t.d;
+      } else {
+        // PC650-009: member EV unavailable — pooled EV is unknown, not zero.
+        evOk = false;
+        diagnostics.push(diag('EV_UNVERIFIABLE', 'high', m.package_id,
+          'member EV unavailable; pooled EV/CPI/SPI unverifiable'));
       }
     }
     const pool = {
@@ -488,21 +535,32 @@ export function poolByCurrency(pkgResults, ctx) {
       member_count: members.length,
       bac_minor: bac.toString(),
       ac: acOk ? { status: 'ok', minor: ac.toString() } : { status: 'UNVERIFIABLE', reason: 'a member AC is unavailable' },
-      // PC650-004: pooled totals expose their contributing citation basis
+      // PC650-004: pooled totals expose their FULL contributing citation
+      // basis (every operand/line/rule per member), not just BAC. VERIFIED
+      // only if every member's every contributing citation is VERIFIED.
       citation_basis: {
-        status: contributingCitations.length === members.length ? 'VERIFIED' : 'PARTIAL',
+        status: allCitationsVerified ? 'VERIFIED' : 'PARTIAL',
         members: contributingCitations,
-        note: `${contributingCitations.length}/${members.length} members contributed verified BAC citations`,
+        note: allCitationsVerified
+          ? `all ${members.length} members contributed fully verified citation sets`
+          : 'one or more member citations are not VERIFIED; pooled basis is partial',
       },
     };
     // Keep ac_minor for backward compatibility when available.
     if (acOk) pool.ac_minor = ac.toString();
     const evR = rat(evN, evD);
-    if (!acOk) pool.cpi = { status: 'UNVERIFIABLE', reason: 'pooled AC unavailable' };
+    // PC650-009: pooled CPI/SPI require a KNOWN pooled EV. If any member's
+    // EV was unavailable, evOk is false and the ratios are UNVERIFIABLE —
+    // never computed from a zero-initialized numerator.
+    if (!evOk) {
+      pool.cpi = { status: 'UNVERIFIABLE', reason: 'pooled EV unavailable: a member EV is not ok' };
+    } else if (!acOk) pool.cpi = { status: 'UNVERIFIABLE', reason: 'pooled AC unavailable' };
     else if (ac === 0n) pool.cpi = { status: 'ZERO_DENOMINATOR', reason: 'pooled AC is zero' };
     else if (ac < 0n) pool.cpi = { status: 'UNVERIFIABLE', reason: 'nonpositive pooled AC' };
     else { const c = ratDiv(evR, ratFromInt(ac)); pool.cpi = { status: 'ok', display: formatRatio(c.n, c.d) }; }
-    if (!pvOk) pool.spi = { status: 'UNVERIFIABLE', reason: 'a member lacks PV' };
+    if (!evOk) {
+      pool.spi = { status: 'UNVERIFIABLE', reason: 'pooled EV unavailable: a member EV is not ok' };
+    } else if (!pvOk) pool.spi = { status: 'UNVERIFIABLE', reason: 'a member lacks PV' };
     else if (pvN === 0n) pool.spi = { status: 'ZERO_DENOMINATOR', reason: 'pooled PV is zero' };
     else { const s = ratDiv(evR, rat(pvN, pvD)); pool.spi = { status: 'ok', display: formatRatio(s.n, s.d) }; }
     pools.push(pool);

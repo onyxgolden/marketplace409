@@ -326,9 +326,23 @@ export function checkContext(ctx, budget) {
   else {
     if (budget) budget.chargeObject(ctx.grants);
     for (const g of ctx.grants) {
-      // Grant entries may be primitives or objects; charge objects only
+      // PC650-008: grants are scoped read permissions. Each grant must be
+      // an object {scope: 'read', fixture: <fixture_id|'*'>}. The shape is
+      // validated here; the authorization (does a grant cover this fixture?)
+      // is enforced in index.js before any byte access.
       if (budget && g !== null && typeof g === 'object') budget.chargeObject(g);
-      void g;
+      if (g === null || typeof g !== 'object' || Array.isArray(g)) {
+        errors.push('context: grants entries must be objects {scope, fixture}');
+        continue;
+      }
+      const gkeys = Object.keys(g);
+      for (const k of gkeys) {
+        if (k !== 'scope' && k !== 'fixture') errors.push(`context: grants entry unknown property ${k}`);
+      }
+      if (g.scope !== 'read') errors.push('context: grants entry scope must be "read"');
+      if (typeof g.fixture !== 'string' || g.fixture.length === 0) {
+        errors.push('context: grants entry fixture must be a non-empty string (fixture id or "*")');
+      }
     }
   }
   if (typeof ctx.request_authority !== 'string' || ctx.request_authority.length === 0) {
