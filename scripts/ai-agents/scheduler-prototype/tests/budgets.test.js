@@ -44,10 +44,23 @@ test("100-record bundle refuses BUDGET_EXCEEDED (no truncation)", () => {
   assert.deepEqual(r.report.components, []);
 });
 
-test("54 records fit exactly at the 64-object cap", () => {
-  // task(4) + context(5) + resolve(1) + 54 records = 64
-  const r = run(taskFor("boundary-54", 54), ctxFor("boundary-54"));
+test("45 records fit exactly at the 64-object cap (new taxonomy)", () => {
+  // S648-006: complete candidate taxonomy.
+  // Task(11): task, fixture_refs, fixture_refs.network_bundle, options,
+  //   population, anchors, anchors[c1], deadlines, claimed,
+  //   claimed.activities, claimed.critical_paths
+  // Context(7): context, sources, sources[key], sources[key]@commit,
+  //   readGrants[0], principal, criteria
+  // Resolve(1) + 45 records = 64
+  const r = run(taskFor("boundary-45", 45), ctxFor("boundary-45"));
   assert.equal(r.status, "REPORT_READY");
+});
+
+test("54 records refuse over budget with container charges", () => {
+  // 11 + 7 + 1 + 54 = 73 > 64 -> BUDGET_EXCEEDED
+  const r = run(taskFor("boundary-54", 54), ctxFor("boundary-54"));
+  assert.equal(r.status, "REFUSED");
+  assert.ok(diagCode(r).includes("BUDGET_EXCEEDED"));
 });
 
 test("55th record refuses before inspection (sentinel: invalid tail never decoded)", () => {
@@ -93,8 +106,12 @@ function taskWithConstraints(n, { invalidFrom = -1 } = {}) {
   };
 }
 
-test("task-side: 52 constraints fit exactly via full run (4+52+5+1+2=64)", () => {
-  const r = run(taskWithConstraints(52), ctxFor("single-activity"));
+test("task-side: 43 constraints fit exactly via full run (new taxonomy)", () => {
+  // S648-006: task(11 + 43 constraints) + context(7) + resolve(1) + 2 records = 64
+  // Task: task, fixture_refs, fixture_refs.network_bundle, options,
+  //   population, anchors, anchors[c1], deadlines, claimed,
+  //   claimed.activities, claimed.critical_paths (11) + 43 constraints
+  const r = run(taskWithConstraints(43), ctxFor("single-activity"));
   assert.equal(r.status, "REPORT_READY");
 });
 

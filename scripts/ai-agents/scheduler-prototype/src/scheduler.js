@@ -141,7 +141,18 @@ export function analyzeComponent(args) {
     deadline_tick: deadlineTick ?? null,
     activities: [],
     edges: [],
-    critical_subgraph: { activities: [], edges: [] },
+    // S648-005: no bare-null evidence. A non-computed subgraph carries an
+    // explicit unavailable state, never a missing citation.
+    critical_subgraph: {
+      activities: [],
+      edges: [],
+      citation: {
+        quoted_span: null,
+        span: null,
+        verification: "unavailable",
+        reason: "no critical subgraph computed; component did not reach READY",
+      },
+    },
   });
 
   if (calendars.length === 0) {
@@ -306,10 +317,40 @@ export function analyzeComponent(args) {
     return criticalIds.has(t.predecessor) && criticalIds.has(t.successor);
   }));
 
+  // S648-005: complete calculation basis. Each activity row cites not
+  // only its own record but the predecessor ties driving its ES, the
+  // calendar record mapping ticks to civil dates, and the applicable
+  // task constraints (task input — explicit unavailable span state).
+  const calendarCitation = citationOf(cal);
   const activityRows = ids.map((id) => {
     const a = actById.get(id);
     const es = ES.get(id);
     const ef = EF.get(id);
+    const drivingTies = [];
+    for (const p of preds.get(id)) {
+      for (const t of tieByPair.get(`${p}|${id}`) ?? []) {
+        if (es === ES.get(p) + weights.get(t.id)) {
+          drivingTies.push({
+            tie_id: t.id,
+            predecessor: p,
+            weight: weights.get(t.id),
+            citation: citationOf(t),
+          });
+        }
+      }
+    }
+    const applicableConstraints = constraints
+      .filter((c) => c.activity_id === id)
+      .map((c) => ({
+        kind: c.kind,
+        tick: c.tick,
+        citation: {
+          quoted_span: null,
+          span: null,
+          verification: "unavailable",
+          reason: "constraint from task input; no bundle source span",
+        },
+      }));
     return {
       id,
       es,
@@ -324,6 +365,12 @@ export function analyzeComponent(args) {
       // boundary.
       civil_finish_boundary: a.duration_workdays === 0 ? working[es] : working[ef],
       citation: citationOf(a),
+      calculation_basis: {
+        predecessor_ties: drivingTies,
+        calendar: calendarCitation,
+        anchor_date: anchorDate,
+        applicable_constraints: applicableConstraints,
+      },
     };
   });
 
@@ -338,7 +385,31 @@ export function analyzeComponent(args) {
     critical: criticalTieIds.has(t.id),
     driving: tightTieIds.has(t.id),
     citation: citationOf(t),
+    // S648-005: weight derivation basis — the endpoint activity records
+    // whose durations feed the weight formula.
+    calculation_basis: {
+      predecessor: { id: t.predecessor, citation: citationOf(actById.get(t.predecessor)) },
+      successor: { id: t.successor, citation: citationOf(actById.get(t.successor)) },
+    },
   }));
+
+  // S648-005: the critical subgraph carries a composite citation — the
+  // verified spans of every contributing activity and tie. No single
+  // source span covers a computed subgraph; the basis is explicit.
+  const subgraphCitation = {
+    quoted_span: null,
+    span: null,
+    verification: "verified",
+    basis: "composite",
+    reason: "critical subgraph derived from the contributing activity and tie records below; no single source span covers a computed subgraph",
+    contributing: [
+      ...[...criticalIds].sort().map((cid) => ({ record_id: cid, kind: "activity", citation: citationOf(actById.get(cid)) })),
+      ...[...criticalTieIds].sort().map((tid) => {
+        const t = ties.find((x) => x.id === tid);
+        return { record_id: tid, kind: "tie", citation: citationOf(t) };
+      }),
+    ],
+  };
 
   return {
     status: "READY",
@@ -355,6 +426,7 @@ export function analyzeComponent(args) {
     critical_subgraph: {
       activities: [...criticalIds].sort(),
       edges: [...criticalTieIds].sort(),
+      citation: subgraphCitation,
     },
   };
 }

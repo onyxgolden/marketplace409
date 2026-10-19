@@ -112,7 +112,11 @@ export function resolveSourceRef(ref, sources, budget, what) {
   if (actualBlob !== ref.blob) {
     throw new ResolutionError("HASH_MISMATCH", `blob mismatch for ${ref.repo}/${ref.path}@${ref.commit.slice(0, 8)}: pinned ${ref.blob.slice(0, 12)}… recomputed ${actualBlob.slice(0, 12)}…`);
   }
-  return { bytes, text: rev.text };
+  // S648A-003: host-established population, bound to the resolved source
+  // identity. Undefined when the host declares no expected count (unknown
+  // coverage — never verified complete).
+  const expected_records = rev.expected_records;
+  return { bytes, text: rev.text, expected_records };
 }
 
 /** Exact read-grant check: grants are exact repo+path, never prefixes. */

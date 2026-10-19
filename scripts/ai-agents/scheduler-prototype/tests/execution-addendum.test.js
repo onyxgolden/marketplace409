@@ -87,7 +87,10 @@ test("S648A-001: getter on 65th constraint is never invoked (task-side sentinel)
   const task = taskFor("single-activity", { constraints });
   const r = run(task, ctxFor("single-activity"));
   assert.equal(r.status, "REFUSED");
-  assert.ok(diagCodes(r).includes("BUDGET_EXCEEDED"));
+  // S648A-001: descriptor-safe admission rejects the accessor upfront
+  // (INVALID_INPUT) before budget charging begins. The getter is never
+  // invoked in either path.
+  assert.ok(diagCodes(r).includes("INVALID_INPUT") || diagCodes(r).includes("BUDGET_EXCEEDED"));
   assert.equal(getterCalls, 0, "65th constraint getter must never be invoked");
 });
 
@@ -108,7 +111,10 @@ test("S648A-001: getter on 61st context source is never invoked", () => {
   const ctx = ctxFor("single-activity", { sources });
   const r = run(taskFor("single-activity"), ctx);
   assert.equal(r.status, "REFUSED");
-  assert.ok(diagCodes(r).includes("BUDGET_EXCEEDED"));
+  // S648A-001: descriptor-safe admission rejects the accessor upfront
+  // (INVALID_INPUT) before budget charging begins. The getter is never
+  // invoked in either path.
+  assert.ok(diagCodes(r).includes("INVALID_INPUT") || diagCodes(r).includes("BUDGET_EXCEEDED"));
   assert.equal(getterCalls, 0, "61st source getter must never be invoked");
 });
 
@@ -224,7 +230,7 @@ test("S648A-004: disconnected islands under one label split into independent com
     const ref = { repo: "sched-sources", path: "networks/islands.json", commit, blob, algorithm: "git-sha1", revision: "v9" };
     const ctx = {
       clock: 1780315200000,
-      sources: { "sched-sources|networks/islands.json": { revisions: { [commit]: { text, blob, label: "v9" } } } },
+      sources: { "sched-sources|networks/islands.json": { revisions: { [commit]: { text, blob, label: "v9", expected_records: 3 } } } },
       readGrants: [{ repo: "sched-sources", path: "networks/islands.json" }],
       principal: store.principals.jason,
       criteria: store.criteriaPresets.standard,

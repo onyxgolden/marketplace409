@@ -82,6 +82,9 @@ if (typeof APPROVED_ROOT !== "string" || !/^[0-9a-f]{64}$/.test(APPROVED_ROOT)) 
 }
 
 const { run, canonicalJson } = await import("../src/index.js");
+// S648A-006: the official battery host routes through the guarded
+// execution path, not synchronous run() directly.
+const { runGuarded } = await import("../runner/run-guarded.js");
 const CASES = JSON.parse(readFileSync(join(ROOT, "corpus", "battery.json"), "utf8"));
 
 let pass = 0;
@@ -104,8 +107,10 @@ function actKey(a) {
 
 for (const c of CASES) {
   const exp = c.expected;
-  // Three consecutive runs must be byte-identical.
-  const runs = [run(c.task, c.context), run(c.task, c.context), run(c.task, c.context)];
+  // Three consecutive runs must be byte-identical. Each runs under the
+  // external watchdog; a hung case settles as EXECUTION_TIMEOUT, not a
+  // hung battery.
+  const runs = [await runGuarded(c.task, c.context), await runGuarded(c.task, c.context), await runGuarded(c.task, c.context)];
   const bytes = runs.map((r) => canonicalJson(r));
   let ok = check(c.case_id, bytes[0] === bytes[1] && bytes[1] === bytes[2], "three runs byte-identical", false);
   const result = runs[0];

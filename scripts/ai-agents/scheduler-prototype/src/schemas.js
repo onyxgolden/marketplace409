@@ -88,14 +88,69 @@ export function validateDate(value, where) {
  * S648A-001: descriptor-safe closed admission. Rejects objects carrying
  * accessor properties (getters/setters) — they are not plain data, and
  * reading them would execute request-supplied code during validation.
- * Uses getOwnPropertyDescriptor so the check itself never invokes accessors.
+ * Uses getOwnPropertyDescriptor over ALL own property names (not just
+ * enumerable keys) so the check itself never invokes accessors and cannot
+ * be bypassed with nonenumerable getters.
  */
 export function assertNoAccessors(obj, where) {
   if (obj === null || typeof obj !== "object") return;
-  for (const k of Object.keys(obj)) {
+  for (const k of Object.getOwnPropertyNames(obj)) {
     const desc = Object.getOwnPropertyDescriptor(obj, k);
     if (desc && (typeof desc.get === "function" || typeof desc.set === "function")) {
       fail(where, `accessor property '${k}' is not plain data; refusing`);
+    }
+  }
+}
+
+/**
+ * S648A-001 / S648A-006: deep descriptor-safe admission sweep. Walks the
+ * entire object graph with getOwnPropertyDescriptor (never invoking
+ * accessors), rejecting accessor properties, function values, and
+ * symbol-keyed properties at any depth. Depth-bounded and cycle-safe.
+ * This is the pre-transport and pre-validation gate: after it passes,
+ * structured-clone and field reads cannot execute request-supplied code.
+ */
+export function assertDeepNoAccessors(value, where, maxDepth = 64) {
+  const seen = new WeakSet();
+  const walk = (v, path, depth) => {
+    if (v === null || typeof v !== "object") return;
+    if (depth > maxDepth) fail(where, `object graph exceeds max depth ${maxDepth} at '${path}'; refusing`);
+    if (seen.has(v)) return;
+    seen.add(v);
+    for (const k of Object.getOwnPropertyNames(v)) {
+      const desc = Object.getOwnPropertyDescriptor(v, k);
+      if (!desc) continue;
+      if (typeof desc.get === "function" || typeof desc.set === "function") {
+        fail(where, `accessor property '${path}.${k}' is not plain data; refusing`);
+      }
+      if (typeof desc.value === "function") {
+        fail(where, `function property '${path}.${k}' is not plain data; refusing`);
+      }
+      if (typeof desc.value === "symbol") {
+        fail(where, `symbol property '${path}.${k}' is not plain data; refusing`);
+      }
+      if (desc.value !== null && typeof desc.value === "object") {
+        walk(desc.value, `${path}.${String(k)}`, depth + 1);
+      }
+    }
+    for (const s of Object.getOwnPropertySymbols(v)) {
+      fail(where, `symbol-keyed property '${path}.${String(s)}' is not plain data; refusing`);
+    }
+  };
+  walk(value, where, 0);
+}
+
+/**
+ * S648A-001: structural sparse-array rejection. Array holes (`new Array(1)`,
+ * `[,,]`) survive .map() validation and become undefined controls. Every
+ * index must be an own data property before the array is processed.
+ */
+export function assertDenseArray(arr, where) {
+  if (!Array.isArray(arr)) fail(where, "must be an array");
+  for (let i = 0; i < arr.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(arr, i);
+    if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
+      fail(where, `sparse or accessor array slot at index ${i}; refusing`);
     }
   }
 }
@@ -137,6 +192,10 @@ export function validatePrincipal(value, where) {
 export function validateCriteria(value, where, budget) {
   if (!budget || typeof budget.countObject !== "function") fail(where, "internal: validateCriteria requires a live budget");
   if (!isPlainObject(value)) fail(where, "criteria must be an object");
+  // S648A-001: criteria fields are control fields; accessors must be
+  // rejected before any field read (enumerable criteria.max_horizon_days
+  // getter probe).
+  assertNoAccessors(value, where);
   exactKeys(value, ["criteria_version", "max_horizon_days"], where);
   const criteria_version = reqStr(value, "criteria_version", where);
   if (!SLUG_RE.test(criteria_version)) fail(where, `invalid criteria_version '${criteria_version}'`);
@@ -157,6 +216,8 @@ export function validateReadGrant(value, where) {
 
 export function validateContext(context, budget) {
   if (!budget || typeof budget.countObject !== "function") fail("context", "internal: validateContext requires a live budget");
+  // S648-006: the context root itself is a consulted candidate.
+  budget.countObject("context");
   if (!isPlainObject(context)) fail("context", "must be an object");
   assertNoAccessors(context, "context");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria"], "context");
@@ -164,6 +225,8 @@ export function validateContext(context, budget) {
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
+  // S648-006: the sources container is consulted (key enumeration).
+  budget.countObject("context.sources");
   assertNoAccessors(context.sources, "context.sources");
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
@@ -197,14 +260,34 @@ export function validateContext(context, budget) {
       if (typeof rev.label !== "string" || rev.label.length === 0) {
         fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
       }
+      // S648-006: consulted registry metadata is byte-counted. A 300KB
+      // label alone exceeds the 256KiB input allowance; it must be charged.
+      budget.countPayload(rev.label, `context.sources[${sk}]@${commit} label`);
+      // S648A-003: host-established population. The host may declare the
+      // expected record count for this revision; run() binds it to the
+      // resolved source identity. Absent declaration means unknown coverage.
+      if (rev.expected_records !== undefined) {
+        if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
+          fail("context", `source '${sk}' revision '${commit}' expected_records must be a nonnegative integer`);
+        }
+      }
     }
   }
 
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
-  const readGrants = context.readGrants.map((g, i) => {
+  // S648A-001: descriptor-safe slot reads. Array.map obtains each slot
+  // before its callback runs; an index loop with an own-descriptor check
+  // charges and reads each grant safely. Sparse arrays refuse structurally.
+  assertDenseArray(context.readGrants, "context.readGrants");
+  const readGrants = [];
+  for (let i = 0; i < context.readGrants.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(context.readGrants, i);
+    if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
+      fail("context", `readGrants[${i}] must be a plain data property; refusing`);
+    }
     budget.countObject(`context.readGrants[${i}]`);
-    return validateReadGrant(g, `context.readGrants[${i}]`);
-  });
+    readGrants.push(validateReadGrant(desc.value, `context.readGrants[${i}]`));
+  }
 
   budget.countObject("context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
@@ -293,11 +376,14 @@ export function validateTask(task, budget = null) {
   const operation = reqStr(task, "operation", "task", { maxBytes: 256 });
 
   if (!isPlainObject(task.fixture_refs)) fail("task", "fixture_refs must be an object");
+  // S648-006: consulted containers are charged.
+  charge("task.fixture_refs");
   exactKeys(task.fixture_refs, ["network_bundle"], "task.fixture_refs");
   charge("task.fixture_refs.network_bundle");
   const network_bundle_ref = validateSourceRef(task.fixture_refs.network_bundle, "task.fixture_refs.network_bundle");
 
   if (!isPlainObject(task.options)) fail("task", "options must be an object");
+  charge("task.options");
   exactKeys(task.options, ["population", "anchors", "horizon_days", "deadlines", "constraints", "claimed"], "task.options");
 
   const pop = task.options.population;
@@ -309,6 +395,8 @@ export function validateTask(task, budget = null) {
 
   const anchors = task.options.anchors;
   if (!isPlainObject(anchors)) fail("task.options.anchors", "must be an object");
+  // S648-006: the anchors container is consulted (key enumeration).
+  charge("task.options.anchors");
   const anchorKeys = Object.keys(anchors);
   if (anchorKeys.length === 0 || anchorKeys.length > 16) fail("task.options.anchors", "must have 1..16 component anchors");
   const anchorsOut = {};
@@ -326,6 +414,8 @@ export function validateTask(task, budget = null) {
 
   const deadlinesIn = task.options.deadlines === undefined ? {} : task.options.deadlines;
   if (!isPlainObject(deadlinesIn)) fail("task.options.deadlines", "must be an object");
+  // S648-006: the deadlines container is consulted (key enumeration).
+  charge("task.options.deadlines");
   const deadlines = {};
   for (const c of Object.keys(deadlinesIn)) {
     charge(`task.options.deadlines[${c}]`);
@@ -337,8 +427,19 @@ export function validateTask(task, budget = null) {
 
   const constraintsIn = task.options.constraints === undefined ? [] : task.options.constraints;
   if (!Array.isArray(constraintsIn) || constraintsIn.length > 256) fail("task.options.constraints", "must be an array of at most 256 constraints");
-  const constraints = constraintsIn.map((c, i) => {
+  // S648A-001: descriptor-safe slot reads. Array.map obtains each slot
+  // before its callback charges the candidate; an index loop with an
+  // own-descriptor check charges candidate65 BEFORE its fields are read.
+  // Sparse arrays refuse structurally.
+  assertDenseArray(constraintsIn, "task.options.constraints");
+  const constraints = [];
+  for (let i = 0; i < constraintsIn.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(constraintsIn, i);
+    if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
+      fail("task.options.constraints", `slot ${i} must be a plain data property; refusing`);
+    }
     charge(`task.options.constraints[${i}]`);
+    const c = desc.value;
     const where = `task.options.constraints[${i}]`;
     if (!isPlainObject(c)) fail(where, "must be an object");
     assertNoAccessors(c, where);
@@ -348,14 +449,17 @@ export function validateTask(task, budget = null) {
     const kind = reqStr(c, "kind", where);
     if (!CONSTRAINT_KINDS.includes(kind)) fail(where, `kind must be one of ${CONSTRAINT_KINDS.join(",")}`);
     const tick = reqInt(c, "tick", where, { min: -ABS_TICK_LIMIT, max: ABS_TICK_LIMIT });
-    return { activity_id, kind, tick };
-  });
+    constraints.push({ activity_id, kind, tick });
+  }
 
   const claimedIn = task.options.claimed === undefined ? {} : task.options.claimed;
   if (!isPlainObject(claimedIn)) fail("task.options.claimed", "must be an object");
+  // S648-006: the claimed containers are consulted (key enumeration).
+  charge("task.options.claimed");
   exactKeys(claimedIn, ["activities", "critical_paths"], "task.options.claimed");
   const claimedActivitiesIn = claimedIn.activities === undefined ? {} : claimedIn.activities;
   if (!isPlainObject(claimedActivitiesIn)) fail("task.options.claimed.activities", "must be an object");
+  charge("task.options.claimed.activities");
   const claimedActivities = {};
   for (const id of Object.keys(claimedActivitiesIn)) {
     charge(`task.options.claimed.activities[${id}]`);
@@ -375,12 +479,16 @@ export function validateTask(task, budget = null) {
   }
   const claimedPathsIn = claimedIn.critical_paths === undefined ? {} : claimedIn.critical_paths;
   if (!isPlainObject(claimedPathsIn)) fail("task.options.claimed.critical_paths", "must be an object");
+  // S648-006: the critical_paths container is consulted (key enumeration).
+  charge("task.options.claimed.critical_paths");
   const claimedPaths = {};
   for (const c of Object.keys(claimedPathsIn)) {
     charge(`task.options.claimed.critical_paths[${c}]`);
     if (!COMPONENT_RE.test(c)) fail("task.options.claimed.critical_paths", `invalid component '${c}'`);
     const p = claimedPathsIn[c];
     if (!Array.isArray(p) || p.length === 0 || p.length > 256) fail("task.options.claimed.critical_paths", `path for '${c}' must be a non-empty array of at most 256 activity ids`);
+    // S648A-001: sparse path arrays refuse structurally.
+    assertDenseArray(p, `task.options.claimed.critical_paths[${c}]`);
     for (const id of p) {
       if (typeof id !== "string" || !RECORD_ID_RE.test(id)) fail("task.options.claimed.critical_paths", `invalid activity id in path for '${c}'`);
     }

@@ -13,7 +13,9 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const store = JSON.parse(readFileSync(join(ROOT, "fixtures", "store.json"), "utf8"));
-const { run, canonicalJson } = await import("../src/index.js");
+// S648A-006: the manual host routes through the guarded execution path,
+// not the synchronous run() directly.
+const { runGuarded } = await import("./run-guarded.js");
 
 const networkName = process.argv[2] ?? "fs-chain";
 const outdir = process.argv[3] ?? "/tmp/scheduler-manual";
@@ -49,7 +51,7 @@ const context = {
   criteria: store.criteriaPresets.standard,
 };
 
-const result = run(task, context);
+const result = await runGuarded(task, context);
 const out = join(outdir, `${networkName}-report.json`);
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(`status=${result.status} report -> ${out}`);

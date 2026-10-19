@@ -18,7 +18,7 @@
  */
 
 import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
-import { validateTask, validateContext, validateNetworkRecord, splitTopLevelArray, SchemaError } from "./schemas.js";
+import { validateTask, validateContext, validateNetworkRecord, splitTopLevelArray, assertDeepNoAccessors, SchemaError } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
 import { analyzeComponent } from "./scheduler.js";
@@ -30,10 +30,18 @@ export const SCHEMA_VERSION = "1";
  * S648-004: pre-validation task_id fallback. Preserves the caller's raw
  * task_id when it is a string; otherwise the documented "unavailable"
  * marker. Never hash-derived, never replaces a valid caller ID.
+ *
+ * S648A-001: single own-data-descriptor read. The prior two-step
+ * (typeof check, then read) invoked an enumerable getter twice on the
+ * refusal path; a nonenumerable getter bypassed detection entirely.
+ * getOwnPropertyDescriptor never invokes accessors.
  */
 function requestTaskId(task) {
-  if (task && typeof task === "object" && typeof task.task_id === "string") {
-    return task.task_id;
+  if (task !== null && typeof task === "object") {
+    const desc = Object.getOwnPropertyDescriptor(task, "task_id");
+    if (desc && typeof desc.get !== "function" && typeof desc.set !== "function" && typeof desc.value === "string") {
+      return desc.value;
+    }
   }
   return "unavailable";
 }
@@ -108,6 +116,18 @@ function emptyReport() {
 }
 
 export function run(task, context) {
+  // S648A-001: descriptor-safe closed admission FIRST, before the budget
+  // exists and before any field is read. Rejects accessor properties at
+  // any depth (enumerable or not); after this passes, no getter can fire
+  // during validation, cloning, or serialization.
+  try {
+    assertDeepNoAccessors(task, "task");
+    assertDeepNoAccessors(context, "context");
+  } catch (e) {
+    if (e instanceof SchemaError) return refused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
+    throw e;
+  }
+
   const clockRaw = context && typeof context === "object" ? context.clock : undefined;
   if (!Number.isFinite(clockRaw)) return refused(requestTaskId(task), "INVALID_INPUT", "error", "context.clock must be a finite number");
 
@@ -291,7 +311,18 @@ export function run(task, context) {
   }
 
   const totalRecords = spans.length;
-  const populationVerified = validatedTask.population.complete === true && validatedTask.population.declared_total === totalRecords;
+  // S648A-003: population completeness is host-established, never
+  // task-asserted. The host declares expected_records on the registered
+  // revision; it is bound to the resolved source identity here. The
+  // task's own declared_total/complete must ALSO agree, but a request
+  // header alone can never verify its own completeness. Absent host
+  // declaration, or any mismatch, means unknown/incomplete coverage.
+  const hostExpectedRecords = bundleResolved.expected_records;
+  const populationVerified =
+    Number.isInteger(hostExpectedRecords) &&
+    hostExpectedRecords === totalRecords &&
+    validatedTask.population.complete === true &&
+    validatedTask.population.declared_total === totalRecords;
   const admittedCount = admitted.length;
   const excludedCount = totalRecords - admittedCount;
 
@@ -329,8 +360,36 @@ export function run(task, context) {
   // multiple disconnected islands splits into independent components, each
   // with its own deadline (never a shared D creating false float). An
   // explicit deadline on a split label is ambiguous and refuses.
+  //
+  // Dangling/cross-label endpoints are validated HERE, before the island
+  // partitioner can drop them. A tie with an unresolved endpoint is a
+  // structural failure: the component is marked with the dangling evidence
+  // and its math is suppressed (analyzeComponent returns DANGLING_TIE).
+  // The evidence never disappears in partitioning.
   const componentGroups = [];
+  const admittedActivityIds = new Set(admitted.filter((r) => r.record === "activity").map((r) => r.id));
+  const activityComponentOf = new Map(admitted.filter((r) => r.record === "activity").map((r) => [r.id, r.component]));
   for (const [componentId, g] of [...byComponent.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    // S648A-004: endpoint validation before island splitting.
+    let danglingTie = null;
+    for (const t of g.ties) {
+      for (const [role, ref] of [["predecessor", t.predecessor], ["successor", t.successor]]) {
+        if (!admittedActivityIds.has(ref)) {
+          danglingTie = { tie: t, role, missing_id: ref, quarantined: quarantinedIds.has(ref) };
+          break;
+        }
+        if (activityComponentOf.get(ref) !== componentId) {
+          danglingTie = { tie: t, role, missing_id: ref, cross_label: activityComponentOf.get(ref) };
+          break;
+        }
+      }
+      if (danglingTie) break;
+    }
+    if (danglingTie) {
+      // Preserve the dangling evidence; math suppressed for this component.
+      componentGroups.push({ componentId, ...g, danglingTie });
+      continue;
+    }
     if (g.activities.length <= 1) {
       componentGroups.push({ componentId, ...g });
       continue;
@@ -408,6 +467,47 @@ export function run(task, context) {
   let anyFailed = false;
   for (const grp of componentGroups) {
     const baseId = grp.baseComponentId ?? grp.componentId;
+    // S648A-004: dangling evidence preserved from partitioning; math
+    // suppressed, component fails with DANGLING_TIE (never silently pruned).
+    if (grp.danglingTie) {
+      const dt = grp.danglingTie;
+      const failed = {
+        status: "DANGLING_TIE",
+        reason: `tie '${dt.tie.id}' references unknown ${dt.role} activity '${dt.missing_id}'` +
+          (dt.quarantined ? " (quarantined and excluded from the network)" : "") +
+          (dt.cross_label ? ` (in component '${dt.cross_label}')` : "") +
+          "; structural dependency endpoints must resolve",
+        detail: { tie_id: dt.tie.id, role: dt.role, missing_id: dt.missing_id },
+        component_id: grp.componentId,
+        anchor_date: validatedTask.anchors[baseId] ?? null,
+        horizon_days: validatedTask.horizon_days,
+        working_days: [],
+        tick_count: 0,
+        deadline_tick: validatedTask.deadlines[baseId] ?? null,
+        activities: [],
+        edges: [],
+        critical_subgraph: {
+          activities: [],
+          edges: [],
+          citation: {
+            quoted_span: null,
+            span: null,
+            verification: "unavailable",
+            reason: "no critical subgraph computed; dangling dependency suppressed math",
+          },
+        },
+      };
+      components.push(failed);
+      anyFailed = true;
+      diagnostics.push({
+        code: "DANGLING_TIE",
+        severity: "error",
+        source_ref: null,
+        record_id: grp.componentId,
+        reason: failed.reason,
+      });
+      continue;
+    }
     const result = analyzeComponent({
       componentId: grp.componentId,
       activities: grp.activities,
