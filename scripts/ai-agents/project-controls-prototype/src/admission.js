@@ -43,11 +43,44 @@ export function getOwnData(obj, key) {
 }
 
 /**
+ * Assert that an object's prototype is a safe built-in (Object.prototype,
+ * Array.prototype, or null). Rejects custom prototypes, class instances,
+ * and prototype-chain getters. Throws INVALID_INPUT on rejection.
+ *
+ * PC650-001 (fifth fix round): assertNoAccessors only inspects OWN property
+ * names. An inherited getter on a custom prototype survives admission and
+ * executes later during field reads (e.g. checkTask's direct task.operation
+ * read). This check runs AFTER the budget charge but BEFORE any field read,
+ * preserving the candidate-65 rule (over-limit candidates are refused before
+ * any descriptor or prototype inspection).
+ */
+export function assertSafePrototype(obj, what) {
+  if (obj === null || typeof obj !== 'object') return;
+  // getPrototypeOf on a Proxy would trigger the getPrototypeOf trap.
+  // Proxies are rejected earlier by assertDeepNoAccessors (PC650-007) and
+  // by the transport boundary; here we only see plain values that passed
+  // the proxy gate. A revoked-proxy edge would throw here, which is a
+  // safe refusal (INVALID_INPUT, no user code executed beyond the throw).
+  let proto;
+  try {
+    proto = Object.getPrototypeOf(obj);
+  } catch {
+    const e = new Error(`INVALID_INPUT: ${what} prototype unreadable, rejected`);
+    e.code = 'INVALID_INPUT';
+    throw e;
+  }
+  if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) {
+    const e = new Error(`INVALID_INPUT: ${what} has custom prototype, rejected`);
+    e.code = 'INVALID_INPUT';
+    throw e;
+  }
+}
+
+/**
  * Assert that an object has no getters/setters among its own properties.
  * Throws INVALID_INPUT if an accessor is found.
  */
-export function assertNoAccessors(obj, what) {
-  if (obj === null || typeof obj !== 'object') return;
+export function assertNoAccessors(obj, what) {  if (obj === null || typeof obj !== 'object') return;
   // PC650-001 (fourth fix round): use getOwnPropertyNames, not Object.keys.
   // Object.keys only returns enumerable properties, so a non-enumerable
   // getter (e.g. {enumerable:false, get(){...}}) would escape admission.
@@ -107,6 +140,9 @@ export function assertDeepNoAccessors(value, where, depth = 0, seen = new WeakSe
   }
   if (seen.has(value)) return;
   seen.add(value);
+  // PC650-001 (fifth fix round): reject custom prototypes here too, so the
+  // transport boundary never admits an inherited-getter carrier.
+  assertSafePrototype(value, where);
   assertNoAccessors(value, where);
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
@@ -165,6 +201,10 @@ export function chargedStringify(value, budget, depth = 0) {
   // BEFORE the candidate is examined at all (no descriptor reads, no key
   // listing). The over-limit candidate is never inspected.
   budget.chargeObject(value);
+  // Fifth fix round: reject custom prototypes AFTER charging but BEFORE any
+  // field/descriptor read. An inherited getter on a custom prototype would
+  // otherwise survive own-property checks and execute during later reads.
+  assertSafePrototype(value, depth === 0 ? 'input' : 'nested');
   assertNoAccessors(value, depth === 0 ? 'input' : 'nested');
 
   if (Array.isArray(value)) {

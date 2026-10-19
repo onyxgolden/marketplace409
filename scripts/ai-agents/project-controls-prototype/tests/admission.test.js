@@ -192,3 +192,63 @@ test('PC650-001: 300KB task_id yields bounded refusal envelope', () => {
   const bytes = utf8Length(canonicalStringify(out));
   assert.ok(bytes < 256 * 1024, `refusal envelope ${bytes} bytes exceeds 256KiB cap`);
 });
+
+test('PC650-001: inherited prototype getter is rejected with zero invocations', () => {
+  // Fifth fix round: a custom prototype carrying a getter for `operation`.
+  // chargedStringify must reject the custom prototype AFTER charging but
+  // BEFORE any field read, so the inherited getter never executes.
+  let getterCalls = 0;
+  const evilProto = {
+    get operation() { getterCalls++; return 'analyze'; },
+  };
+  const task = Object.create(evilProto);
+  task.schema_version = '1';
+  task.task_id = 'proto-1';
+  task.fixture_refs = [];
+  task.options = { ev_mode: 'claimed', eac_formulas: [], include_contingency: false, compare_headers: false };
+
+  const r = new Resolver({});
+  try {
+    measureInputBytes(task, r);
+    assert.fail('should have refused custom prototype');
+  } catch (e) {
+    assert.equal(e.code, 'INVALID_INPUT', `expected INVALID_INPUT, got ${e.code}: ${e.message}`);
+  }
+  assert.equal(getterCalls, 0, 'inherited prototype getter was invoked during admission');
+});
+
+test('PC650-001: assertDeepNoAccessors rejects custom prototype', () => {
+  let getterCalls = 0;
+  const evilProto = {
+    get x() { getterCalls++; return 1; },
+  };
+  const obj = Object.create(evilProto);
+  obj.y = 2;
+  try {
+    assertDeepNoAccessors(obj, 'transport-input');
+    assert.fail('should have refused custom prototype');
+  } catch (e) {
+    assert.equal(e.code, 'INVALID_INPUT', `expected INVALID_INPUT, got ${e.code}: ${e.message}`);
+  }
+  assert.equal(getterCalls, 0, 'inherited prototype getter was invoked during transport admission');
+});
+
+test('PC650-001: plain objects and arrays still admitted', () => {
+  // Positive control: Object.prototype / Array.prototype / null-prototype
+  // values must not be rejected by the new prototype check.
+  const r = new Resolver({});
+  const task = {
+    schema_version: '1',
+    task_id: 'plain-1',
+    operation: 'analyze',
+    fixture_refs: [],
+    options: { ev_mode: 'claimed', eac_formulas: [], include_contingency: false, compare_headers: false },
+    tags: ['a', 'b'],
+  };
+  const bytes = measureInputBytes(task, r);
+  assert.ok(bytes > 0, 'plain object should be admitted and measured');
+  const nullProto = Object.create(null);
+  nullProto.a = 1;
+  const bytes2 = measureInputBytes(nullProto, r);
+  assert.ok(bytes2 > 0, 'null-prototype object should be admitted');
+});
