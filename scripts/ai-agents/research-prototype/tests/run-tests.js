@@ -90,6 +90,7 @@ const testFiles = [
   "determinism.test.js",
   "injection.test.js",
   "execution-addendum.test.js",
+  "fixround4.test.js",
   "watchdog.test.js",
   "trust.test.js",
   "battery.test.js",

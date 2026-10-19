@@ -42,6 +42,42 @@ export class ResearchSpanError extends Error {
 }
 
 /**
+ * EXEC652-001: canonical claim identity bound to the exact source
+ * identity. The key binds the atom, the origin reference, AND the
+ * immutable source pin (bundle blob) plus the pinned passage bytes
+ * (passage SHA-256) and span. A changed source identity — different
+ * bundle bytes, different passage bytes, different span — yields a
+ * different canonical key; a changed source can never silently retain
+ * the prior claim identity. A byte-identical replay stays stable.
+ *
+ * @param {object} atom - the requested atom.
+ * @param {object|null} origin - {doc_id, passage_id, assertion_id,
+ *   passage_sha256, span_start, span_end} or null when no verified origin.
+ * @param {string|null} sourceBlob - git-sha1 of the exact consumed bundle
+ *   bytes (null only for direct unit tests without a consumed bundle).
+ */
+export function makeCanonicalKey(atom, origin, sourceBlob) {
+  return sha256HexUtf8(canonicalJson({
+    atom: [
+      atom.subject,
+      atom.predicate,
+      atom.value_type,
+      atom.value_type === "number" ? String(atom.value) : atom.value,
+      atom.scope,
+      atom.polarity,
+    ],
+    origin: origin ? {
+      doc_id: origin.doc_id,
+      passage_id: origin.passage_id,
+      assertion_id: origin.assertion_id,
+      passage_sha256: origin.passage_sha256 ?? null,
+      span: [origin.span_start, origin.span_end],
+    } : null,
+    source_blob: sourceBlob ?? null,
+  }));
+}
+
+/**
  * Exact typed assertion equality. Numbers and strings never match across
  * the type boundary ("5" !== 5); polarity is part of identity.
  */
@@ -259,8 +295,14 @@ export function classifyCorroboration(originRef, candRef, provenanceRegistry, ci
  *
  * Returns the atom result with fidelity, corroboration, contradictions,
  * and the final research_status.
+ *
+ * sourceBlob (EXEC652-001): git-sha1 of the exact consumed bundle bytes,
+ * bound into the canonical key. Null only for direct unit tests that do
+ * not consume a bundle. verifiedIndex entries carry passage_sha256 (the
+ * SHA-256 of the exact passage UTF-8 bytes the span was verified
+ * against).
  */
-export function evaluateAtom(atom, originRefs, verifiedIndex, provenanceRegistry, citationCycles, docCitations = new Map()) {
+export function evaluateAtom(atom, originRefs, verifiedIndex, provenanceRegistry, citationCycles, docCitations = new Map(), sourceBlob = null) {
   // ---- Fidelity: the atom must match a verified assertion in a declared
   // origin passage, byte-exact and typed. ----
   let fidelity = "NOT_FAITHFUL";
@@ -276,7 +318,17 @@ export function evaluateAtom(atom, originRefs, verifiedIndex, provenanceRegistry
       if (hit) {
         fidelity = "FAITHFUL";
         fidelityReason = null;
-        origin = { doc_id: hit.doc_id, passage_id: hit.passage_id, assertion_id: hit.assertion_id, citation: hit.citation };
+        origin = {
+          doc_id: hit.doc_id,
+          passage_id: hit.passage_id,
+          assertion_id: hit.assertion_id,
+          citation: hit.citation,
+          // EXEC652-001: the pinned passage identity travels with the
+          // origin so the canonical key binds the exact source bytes.
+          passage_sha256: hit.passage_sha256 ?? null,
+          span_start: hit.span?.start_byte ?? null,
+          span_end: hit.span?.end_byte ?? null,
+        };
         break;
       }
     }
@@ -336,12 +388,9 @@ export function evaluateAtom(atom, originRefs, verifiedIndex, provenanceRegistry
 
   return {
     claim_id: null, // filled by the caller
-    canonical_key: sha256HexUtf8(canonicalJson([
-      atom.subject, atom.predicate, atom.value_type,
-      atom.value_type === "number" ? String(atom.value) : atom.value,
-      atom.scope, atom.polarity,
-      origin ? `${origin.doc_id}|${origin.passage_id}` : null,
-    ])),
+    // EXEC652-001: canonical identity binds atom + origin ref + the
+    // exact source pin (bundle blob), pinned passage bytes and span.
+    canonical_key: makeCanonicalKey(atom, origin, sourceBlob),
     original_text: renderAssertionText(atom),
     atom: { ...atom },
     origin: origin === null

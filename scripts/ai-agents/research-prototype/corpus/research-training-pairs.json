@@ -34,11 +34,31 @@
     "provenance_registry": {
       "doc-t1|p1": {
         "provenance_group_id": "grp-doc-t1",
-        "derivation_links": []
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/supported.json",
+            "commit": "2791f1fe9eadd3a2012a9d3de87f869e22f83ba5",
+            "blob": "4a57cf9a342dcb28aca23ad1071ac375bfa7b9b7",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
       },
       "doc-t2|p1": {
         "provenance_group_id": "grp-doc-t2",
-        "derivation_links": []
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/supported.json",
+            "commit": "2791f1fe9eadd3a2012a9d3de87f869e22f83ba5",
+            "blob": "4a57cf9a342dcb28aca23ad1071ac375bfa7b9b7",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
       }
     },
     "expected_status": "supported",
@@ -79,7 +99,17 @@
     "provenance_registry": {
       "doc-t1|p1": {
         "provenance_group_id": "grp-doc-t1",
-        "derivation_links": []
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/attributed-only.json",
+            "commit": "7396933812b1d43a7cb3d7aa46e3fefe42efb08f",
+            "blob": "012e0d685f2b575376849adb6c20197ec2c6c223",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
       }
     },
     "expected_status": "attributed-only",
@@ -120,11 +150,31 @@
     "provenance_registry": {
       "doc-t1|p1": {
         "provenance_group_id": "grp-doc-t1",
-        "derivation_links": []
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/contradicted.json",
+            "commit": "38f5998027b89ad00aab00e14a21fa4c7434c43a",
+            "blob": "3ee0e8de3fefe4f5e1a11450f5e639b03d1eceaa",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
       },
       "doc-t2|p1": {
         "provenance_group_id": "grp-doc-t2",
-        "derivation_links": []
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/contradicted.json",
+            "commit": "38f5998027b89ad00aab00e14a21fa4c7434c43a",
+            "blob": "3ee0e8de3fefe4f5e1a11450f5e639b03d1eceaa",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
       }
     },
     "expected_status": "contradicted",
@@ -165,7 +215,17 @@
     "provenance_registry": {
       "doc-t1|p1": {
         "provenance_group_id": "grp-doc-t1",
-        "derivation_links": []
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/unsupported.json",
+            "commit": "e6f372f4983b61571377bb30bca4e992a0619a1d",
+            "blob": "012e0d685f2b575376849adb6c20197ec2c6c223",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
       }
     },
     "expected_status": "unsupported",

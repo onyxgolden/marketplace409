@@ -507,7 +507,12 @@ for (const [name, b] of Object.entries(bundles)) {
 }
 
 // Provenance registry: default group per doc; overrides/drops applied.
-const provenanceRegistry = {};
+// EXEC652-002: exact-source registration/applicability contract. Every
+// entry declares applies_to — the complete source-identity tuples
+// (SourceRef: repo/path/commit/blob/algorithm/revision) this
+// registration is valid for. A doc/passage ID reused under a changed
+// pin finds no applicable entry and stays conservative.
+const keyToPins = {}; // "doc|passage" -> [SourceRef, ...] of bundles containing it
 for (const [name, b] of Object.entries(bundles)) {
   let docs = null;
   try { docs = JSON.parse(b.text); } catch { docs = null; }
@@ -516,13 +521,23 @@ for (const [name, b] of Object.entries(bundles)) {
     if (!d || d.doc_id === undefined) continue;
     for (const p of d.passages || []) {
       const key = `${d.doc_id}|${p.passage_id}`;
-      if (registryDrops.has(key)) continue;
-      if (registryOverrides[key]) {
-        provenanceRegistry[key] = registryOverrides[key];
-      } else {
-        provenanceRegistry[key] = { provenance_group_id: `grp-${d.doc_id}`, derivation_links: [] };
-      }
+      (keyToPins[key] ??= []).push({ ...b.ref });
     }
+  }
+}
+const provenanceRegistry = {};
+for (const [key, pins] of Object.entries(keyToPins)) {
+  if (registryDrops.has(key)) continue;
+  const seenPin = new Set();
+  const applies_to = [];
+  for (const pin of pins) {
+    const id = `${pin.repo}|${pin.path}|${pin.commit}|${pin.blob}|${pin.algorithm}|${pin.revision}`;
+    if (!seenPin.has(id)) { seenPin.add(id); applies_to.push(pin); }
+  }
+  if (registryOverrides[key]) {
+    provenanceRegistry[key] = { ...registryOverrides[key], applies_to };
+  } else {
+    provenanceRegistry[key] = { provenance_group_id: `grp-${key.split("|")[0]}`, derivation_links: [], applies_to };
   }
 }
 
@@ -605,14 +620,20 @@ console.log(`store: ${Object.keys(bundles).length} bundles, ${Object.keys(proven
     ], [claimFor("tc-unsupported", A("x", "ACME-CORP", "q3-revenue", 9999999, "number", "fy-2026-q3"), "doc-t1", "p1")],
       "unsupported"),
   ];
-  // Training pairs carry their own provenance groups (one per doc).
+  // Training pairs carry their own provenance groups (one per doc),
+  // each bound to the pair's exact bundle pin (EXEC652-002).
   for (const pair of pairs) {
     pair.provenance_registry = {};
+    const pairPin = {
+      repo: pair.bundle.repo, path: pair.bundle.path, commit: pair.bundle.commit,
+      blob: pair.bundle.blob, algorithm: pair.bundle.algorithm, revision: pair.bundle.revision,
+    };
     for (const d of JSON.parse(pair.bundle.text)) {
       for (const p of d.passages) {
         pair.provenance_registry[`${d.doc_id}|${p.passage_id}`] = {
           provenance_group_id: `grp-${d.doc_id}`,
           derivation_links: [],
+          applies_to: [{ ...pairPin }],
         };
       }
     }

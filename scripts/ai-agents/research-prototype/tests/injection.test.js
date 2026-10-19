@@ -19,7 +19,11 @@ function ctxFor(bundle) {
   const reg = {};
   for (const d of docs) for (const p of d.passages || []) {
     const k = `${d.doc_id}|${p.passage_id}`;
-    if (store.provenanceRegistry[k]) reg[k] = store.provenanceRegistry[k];
+    if (store.provenanceRegistry[k]) {
+      // EXEC652-002: per-run host selection — bind this evaluation's
+      // registry entries to the evaluated bundle's exact source pin.
+      reg[k] = { ...store.provenanceRegistry[k], applies_to: [{ ...ref }] };
+    }
   }
   return {
     clock: 1780315200000,

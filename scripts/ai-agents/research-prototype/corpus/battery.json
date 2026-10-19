@@ -144,7 +144,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -237,11 +247,31 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cross-doc-support.json",
+              "commit": "e38339f078ecb7b6846b0288f4aa5e659ffaa772",
+              "blob": "16ed88c28ab615e56b9c6c59f37bbd4628c7d6fe",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-beta|p1": {
           "provenance_group_id": "grp-doc-beta",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cross-doc-support.json",
+              "commit": "e38339f078ecb7b6846b0288f4aa5e659ffaa772",
+              "blob": "16ed88c28ab615e56b9c6c59f37bbd4628c7d6fe",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -334,11 +364,31 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/contradiction.json",
+              "commit": "4c05b564be1206b334b32a834dd06a4e3374d579",
+              "blob": "f6a3ae833ab7254b71020224c64e1f9b16d37d5e",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-beta|p1": {
           "provenance_group_id": "grp-doc-beta",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/contradiction.json",
+              "commit": "4c05b564be1206b334b32a834dd06a4e3374d579",
+              "blob": "f6a3ae833ab7254b71020224c64e1f9b16d37d5e",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -450,11 +500,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/scope-diff.json",
+              "commit": "10ec8bb0f6dd44825670d8bf07e4590bc0e0fff3",
+              "blob": "e04af327c28eddb8ddcde89154f7c8a0a63fa738",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/scope-diff.json",
+              "commit": "10ec8bb0f6dd44825670d8bf07e4590bc0e0fff3",
+              "blob": "e04af327c28eddb8ddcde89154f7c8a0a63fa738",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -548,11 +618,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/typed-distinction.json",
+              "commit": "d146763dfaef4f0cb51c44b408edd08dec3c1392",
+              "blob": "31d9c6648fde2f70f0d5c85aaf39ae2fbf501298",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/typed-distinction.json",
+              "commit": "d146763dfaef4f0cb51c44b408edd08dec3c1392",
+              "blob": "31d9c6648fde2f70f0d5c85aaf39ae2fbf501298",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -645,7 +735,17 @@
       "provenance_registry": {
         "doc-uni|p1": {
           "provenance_group_id": "grp-doc-uni",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/unicode.json",
+              "commit": "d0a0d27fa980c95642bb5a9b4d440fe3271ba71d",
+              "blob": "8c66e2c6a48c5bd995c1bc0a8f4597750560fea1",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -738,7 +838,17 @@
       "provenance_registry": {
         "doc-url|p1": {
           "provenance_group_id": "grp-doc-url",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/url-literal.json",
+              "commit": "707a7601b3077a9ad4813a54b382581e6bb3281d",
+              "blob": "03f6876f4f4f136719fac5244604b183b890d2f4",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -831,11 +941,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/opposite-polarity.json",
+              "commit": "4a8e3bc6f38e0c242ac8ceaf7ffbef0785cab388",
+              "blob": "1f031a0235384253fa129b1075b142f2ef43a5eb",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/opposite-polarity.json",
+              "commit": "4a8e3bc6f38e0c242ac8ceaf7ffbef0785cab388",
+              "blob": "1f031a0235384253fa129b1075b142f2ef43a5eb",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -928,15 +1058,45 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/supported-opposed.json",
+              "commit": "f1e9e8b1530399e5ae1405b85ec9e5dd9192ada6",
+              "blob": "02d63212b2cb39f53828102b30fca372c762d9a1",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/supported-opposed.json",
+              "commit": "f1e9e8b1530399e5ae1405b85ec9e5dd9192ada6",
+              "blob": "02d63212b2cb39f53828102b30fca372c762d9a1",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-c|p1": {
           "provenance_group_id": "grp-doc-c",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/supported-opposed.json",
+              "commit": "f1e9e8b1530399e5ae1405b85ec9e5dd9192ada6",
+              "blob": "02d63212b2cb39f53828102b30fca372c762d9a1",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1029,7 +1189,17 @@
       "provenance_registry": {
         "doc-cert|p1": {
           "provenance_group_id": "grp-doc-cert",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/certification.json",
+              "commit": "dc0685c81dbdae21e84408aa793abe2d8ad79fe2",
+              "blob": "3f01ea9a2753d69fceac8fe5b321988236bc0a00",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1122,7 +1292,17 @@
       "provenance_registry": {
         "doc-cert|p1": {
           "provenance_group_id": "grp-doc-cert",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/certification.json",
+              "commit": "dc0685c81dbdae21e84408aa793abe2d8ad79fe2",
+              "blob": "3f01ea9a2753d69fceac8fe5b321988236bc0a00",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1215,7 +1395,17 @@
       "provenance_registry": {
         "doc-s|p1": {
           "provenance_group_id": "grp-doc-s",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/self-cert.json",
+              "commit": "75406aa6a1e55a478d9e2ece3e7248117cba13dc",
+              "blob": "dc86c36e28489e87551f53355b221dd3919aa827",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1308,11 +1498,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cert-only-support.json",
+              "commit": "19eb93f858801c5f5443ace460b447387c47aa4c",
+              "blob": "d86fd4ce41159ca75f018101b8cbdab446376173",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cert-only-support.json",
+              "commit": "19eb93f858801c5f5443ace460b447387c47aa4c",
+              "blob": "d86fd4ce41159ca75f018101b8cbdab446376173",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1405,11 +1615,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/citation-cycle.json",
+              "commit": "64968c93a4802438ff80a40f7547873c260944a2",
+              "blob": "48727cb1fa2539713d8390e3958098b9de930cf9",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/citation-cycle.json",
+              "commit": "64968c93a4802438ff80a40f7547873c260944a2",
+              "blob": "48727cb1fa2539713d8390e3958098b9de930cf9",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1504,11 +1734,31 @@
       "provenance_registry": {
         "doc-sgc-a|p1": {
           "provenance_group_id": "grp-shared",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/same-group-copy.json",
+              "commit": "973413f2ab38b4956d4c65440c222f75a928c261",
+              "blob": "d301c076650c49d07d915312033b61ce71d77afd",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-sgc-b|p1": {
           "provenance_group_id": "grp-shared",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/same-group-copy.json",
+              "commit": "973413f2ab38b4956d4c65440c222f75a928c261",
+              "blob": "d301c076650c49d07d915312033b61ce71d77afd",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1601,7 +1851,17 @@
       "provenance_registry": {
         "doc-ur-a|p1": {
           "provenance_group_id": "grp-doc-ur-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/unregistered.json",
+              "commit": "a9bbb7d46c0ef8f2cbcb95fb2daaf5607121bd67",
+              "blob": "210dcfbcb46d398cc4ebc5f51f963182d6704c23",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1694,7 +1954,17 @@
       "provenance_registry": {
         "doc-dl-a|p1": {
           "provenance_group_id": "grp-doc-dl-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/derivation-link.json",
+              "commit": "daba0c912d4c397d92d67c99565a4c17fcfc6a08",
+              "blob": "12b7859401317c81a4d4c3ec2fa7fd00894d1e60",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-dl-b|p1": {
           "provenance_group_id": "grp-dl-b",
@@ -1703,6 +1973,16 @@
               "from_doc": "doc-dl-a",
               "from_passage": "p1",
               "kind": "copy"
+            }
+          ],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/derivation-link.json",
+              "commit": "daba0c912d4c397d92d67c99565a4c17fcfc6a08",
+              "blob": "12b7859401317c81a4d4c3ec2fa7fd00894d1e60",
+              "algorithm": "git-sha1",
+              "revision": "v1"
             }
           ]
         }
@@ -1797,11 +2077,31 @@
       "provenance_registry": {
         "doc-dup-a|p1": {
           "provenance_group_id": "grp-dup-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/duplicate-source.json",
+              "commit": "0aab5fe059cf424a661b1077ec3e9b875249d523",
+              "blob": "a60a15bf7b33b91a6ecf9285f421cc569d8894ab",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-dup-a-copy|p1": {
           "provenance_group_id": "grp-dup-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/duplicate-source.json",
+              "commit": "0aab5fe059cf424a661b1077ec3e9b875249d523",
+              "blob": "a60a15bf7b33b91a6ecf9285f421cc569d8894ab",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -1902,7 +2202,17 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multipart.json",
+              "commit": "3862307834e28fc137b3e3e2d51e2facbb4185de",
+              "blob": "d9eb233a0cd62d1bd9041107726b10fdd2ce923a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2004,7 +2314,17 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multipart.json",
+              "commit": "3862307834e28fc137b3e3e2d51e2facbb4185de",
+              "blob": "d9eb233a0cd62d1bd9041107726b10fdd2ce923a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2098,7 +2418,17 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/distorted.json",
+              "commit": "d53c1b20636d07091c811ce65ae4c99d7cb3b0bd",
+              "blob": "07f0d3d23548a87779cf76250c6129713b9ba381",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2229,15 +2559,45 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multi-claim.json",
+              "commit": "33809717125aa5258bbc9122bfdedc911b87916d",
+              "blob": "d710b2ebcca4364160e69dff4d7e581f7fd65b3f",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multi-claim.json",
+              "commit": "33809717125aa5258bbc9122bfdedc911b87916d",
+              "blob": "d710b2ebcca4364160e69dff4d7e581f7fd65b3f",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-c|p1": {
           "provenance_group_id": "grp-doc-c",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multi-claim.json",
+              "commit": "33809717125aa5258bbc9122bfdedc911b87916d",
+              "blob": "d710b2ebcca4364160e69dff4d7e581f7fd65b3f",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2327,7 +2687,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2420,7 +2790,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2581,7 +2961,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2672,15 +3062,45 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/many-citations.json",
+              "commit": "6fa6d4aa4f0dccfe916bea09e3c8f8705a586d03",
+              "blob": "81cce0e967f11694daa6baea13d8bab7c40fd243",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/many-citations.json",
+              "commit": "6fa6d4aa4f0dccfe916bea09e3c8f8705a586d03",
+              "blob": "81cce0e967f11694daa6baea13d8bab7c40fd243",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-c|p1": {
           "provenance_group_id": "grp-doc-c",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/many-citations.json",
+              "commit": "6fa6d4aa4f0dccfe916bea09e3c8f8705a586d03",
+              "blob": "81cce0e967f11694daa6baea13d8bab7c40fd243",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2773,11 +3193,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/opposite-polarity.json",
+              "commit": "4a8e3bc6f38e0c242ac8ceaf7ffbef0785cab388",
+              "blob": "1f031a0235384253fa129b1075b142f2ef43a5eb",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/opposite-polarity.json",
+              "commit": "4a8e3bc6f38e0c242ac8ceaf7ffbef0785cab388",
+              "blob": "1f031a0235384253fa129b1075b142f2ef43a5eb",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2870,11 +3310,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cert-only-support.json",
+              "commit": "19eb93f858801c5f5443ace460b447387c47aa4c",
+              "blob": "d86fd4ce41159ca75f018101b8cbdab446376173",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cert-only-support.json",
+              "commit": "19eb93f858801c5f5443ace460b447387c47aa4c",
+              "blob": "d86fd4ce41159ca75f018101b8cbdab446376173",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -2967,11 +3427,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3134,7 +3614,17 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/span-mismatch.json",
+              "commit": "e758aef4a9d8c2e4327c66e49c992df8d199b1b9",
+              "blob": "14873fc27f16a02c2974f5fc38fe65ad27ab2534",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3230,11 +3720,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/quarantine-origin.json",
+              "commit": "7ca3211b2184bf1cb0fd6ec38da1a2696981035f",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/quarantine-origin.json",
+              "commit": "7ca3211b2184bf1cb0fd6ec38da1a2696981035f",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3351,11 +3861,31 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cross-doc-support.json",
+              "commit": "e38339f078ecb7b6846b0288f4aa5e659ffaa772",
+              "blob": "16ed88c28ab615e56b9c6c59f37bbd4628c7d6fe",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-beta|p1": {
           "provenance_group_id": "grp-doc-beta",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cross-doc-support.json",
+              "commit": "e38339f078ecb7b6846b0288f4aa5e659ffaa772",
+              "blob": "16ed88c28ab615e56b9c6c59f37bbd4628c7d6fe",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3453,11 +3983,31 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cross-doc-support.json",
+              "commit": "e38339f078ecb7b6846b0288f4aa5e659ffaa772",
+              "blob": "16ed88c28ab615e56b9c6c59f37bbd4628c7d6fe",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-beta|p1": {
           "provenance_group_id": "grp-doc-beta",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/cross-doc-support.json",
+              "commit": "e38339f078ecb7b6846b0288f4aa5e659ffaa772",
+              "blob": "16ed88c28ab615e56b9c6c59f37bbd4628c7d6fe",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3588,15 +4138,45 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multi-claim.json",
+              "commit": "33809717125aa5258bbc9122bfdedc911b87916d",
+              "blob": "d710b2ebcca4364160e69dff4d7e581f7fd65b3f",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multi-claim.json",
+              "commit": "33809717125aa5258bbc9122bfdedc911b87916d",
+              "blob": "d710b2ebcca4364160e69dff4d7e581f7fd65b3f",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-c|p1": {
           "provenance_group_id": "grp-doc-c",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/multi-claim.json",
+              "commit": "33809717125aa5258bbc9122bfdedc911b87916d",
+              "blob": "d710b2ebcca4364160e69dff4d7e581f7fd65b3f",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3691,11 +4271,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/typed-distinction.json",
+              "commit": "d146763dfaef4f0cb51c44b408edd08dec3c1392",
+              "blob": "31d9c6648fde2f70f0d5c85aaf39ae2fbf501298",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/typed-distinction.json",
+              "commit": "d146763dfaef4f0cb51c44b408edd08dec3c1392",
+              "blob": "31d9c6648fde2f70f0d5c85aaf39ae2fbf501298",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3788,11 +4388,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/scope-diff.json",
+              "commit": "10ec8bb0f6dd44825670d8bf07e4590bc0e0fff3",
+              "blob": "e04af327c28eddb8ddcde89154f7c8a0a63fa738",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/scope-diff.json",
+              "commit": "10ec8bb0f6dd44825670d8bf07e4590bc0e0fff3",
+              "blob": "e04af327c28eddb8ddcde89154f7c8a0a63fa738",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3885,7 +4505,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -3958,7 +4588,17 @@
       "provenance_registry": {
         "doc-dup|p1": {
           "provenance_group_id": "grp-doc-dup",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/duplicate-doc.json",
+              "commit": "284ef27391cf8d065eca0b3d6fa07b4fd16c7b2c",
+              "blob": "c88dd1e08de2a01e2da0b43275d40db914f3f5f3",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4235,7 +4875,17 @@
       "provenance_registry": {
         "doc-dup|p1": {
           "provenance_group_id": "grp-doc-dup",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/duplicate-passage.json",
+              "commit": "35f5223aac539ee4b23739fba54a94ac731be94b",
+              "blob": "a66ad00e9daacd54a1efdca46fcd63775bf3e6b4",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4308,7 +4958,17 @@
       "provenance_registry": {
         "doc-dup|p1": {
           "provenance_group_id": "grp-doc-dup",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/duplicate-assertion.json",
+              "commit": "4d01bc22036e1fa5842a74d8a58449ef5282a68c",
+              "blob": "59adbe97b6d9a92c507d483d635749b4f0e9847b",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4401,7 +5061,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4494,7 +5164,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4587,7 +5267,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4699,7 +5389,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4792,7 +5492,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4885,7 +5595,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -4969,7 +5689,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5062,7 +5792,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5135,7 +5875,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5187,7 +5937,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5261,7 +6021,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5334,7 +6104,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5406,7 +6186,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -5470,7 +6260,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6075,7 +6875,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6168,7 +6978,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6261,7 +7081,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6354,7 +7184,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6489,7 +7329,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6562,7 +7412,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6635,7 +7495,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6728,7 +7598,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6840,11 +7720,31 @@
       "provenance_registry": {
         "doc-a|p1": {
           "provenance_group_id": "grp-doc-a",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/scope-diff.json",
+              "commit": "10ec8bb0f6dd44825670d8bf07e4590bc0e0fff3",
+              "blob": "e04af327c28eddb8ddcde89154f7c8a0a63fa738",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b|p1": {
           "provenance_group_id": "grp-doc-b",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/scope-diff.json",
+              "commit": "10ec8bb0f6dd44825670d8bf07e4590bc0e0fff3",
+              "blob": "e04af327c28eddb8ddcde89154f7c8a0a63fa738",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6918,7 +7818,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -6991,7 +7901,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7064,7 +7984,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7137,7 +8067,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7210,7 +8150,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7283,7 +8233,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7356,7 +8316,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7429,7 +8399,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7502,7 +8482,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7575,7 +8565,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7648,7 +8648,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7721,7 +8731,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7794,7 +8814,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7887,11 +8917,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -7988,11 +9038,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8089,11 +9159,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8190,11 +9280,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/quarantine-origin.json",
+              "commit": "7ca3211b2184bf1cb0fd6ec38da1a2696981035f",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/quarantine-origin.json",
+              "commit": "7ca3211b2184bf1cb0fd6ec38da1a2696981035f",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8272,11 +9382,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8351,7 +9481,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8444,11 +9584,31 @@
       "provenance_registry": {
         "doc-inj|p1": {
           "provenance_group_id": "grp-doc-inj",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-clean|p1": {
           "provenance_group_id": "grp-doc-clean",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/injection.json",
+              "commit": "1e998fe81c607e8816b6f6b35f946d8860019e13",
+              "blob": "8f592ff4550416abe1bc6e2b0d2a1365138f9b7a",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8526,7 +9686,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8599,7 +9769,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8672,7 +9852,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8740,7 +9930,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8813,7 +10013,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8886,7 +10096,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -8959,7 +10179,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9031,7 +10261,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9104,7 +10344,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9177,7 +10427,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9250,7 +10510,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9312,7 +10582,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9385,7 +10665,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9683,7 +10973,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       },
       "test_hooks": {
@@ -9759,7 +11059,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9832,7 +11142,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9905,7 +11225,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -9978,403 +11308,1403 @@
       "provenance_registry": {
         "doc-b000|p1": {
           "provenance_group_id": "grp-doc-b000",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b001|p1": {
           "provenance_group_id": "grp-doc-b001",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b002|p1": {
           "provenance_group_id": "grp-doc-b002",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b003|p1": {
           "provenance_group_id": "grp-doc-b003",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b004|p1": {
           "provenance_group_id": "grp-doc-b004",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b005|p1": {
           "provenance_group_id": "grp-doc-b005",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b006|p1": {
           "provenance_group_id": "grp-doc-b006",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b007|p1": {
           "provenance_group_id": "grp-doc-b007",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b008|p1": {
           "provenance_group_id": "grp-doc-b008",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b009|p1": {
           "provenance_group_id": "grp-doc-b009",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b010|p1": {
           "provenance_group_id": "grp-doc-b010",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b011|p1": {
           "provenance_group_id": "grp-doc-b011",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b012|p1": {
           "provenance_group_id": "grp-doc-b012",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b013|p1": {
           "provenance_group_id": "grp-doc-b013",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b014|p1": {
           "provenance_group_id": "grp-doc-b014",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b015|p1": {
           "provenance_group_id": "grp-doc-b015",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b016|p1": {
           "provenance_group_id": "grp-doc-b016",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b017|p1": {
           "provenance_group_id": "grp-doc-b017",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b018|p1": {
           "provenance_group_id": "grp-doc-b018",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b019|p1": {
           "provenance_group_id": "grp-doc-b019",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b020|p1": {
           "provenance_group_id": "grp-doc-b020",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b021|p1": {
           "provenance_group_id": "grp-doc-b021",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b022|p1": {
           "provenance_group_id": "grp-doc-b022",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b023|p1": {
           "provenance_group_id": "grp-doc-b023",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b024|p1": {
           "provenance_group_id": "grp-doc-b024",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b025|p1": {
           "provenance_group_id": "grp-doc-b025",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b026|p1": {
           "provenance_group_id": "grp-doc-b026",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b027|p1": {
           "provenance_group_id": "grp-doc-b027",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b028|p1": {
           "provenance_group_id": "grp-doc-b028",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b029|p1": {
           "provenance_group_id": "grp-doc-b029",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b030|p1": {
           "provenance_group_id": "grp-doc-b030",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b031|p1": {
           "provenance_group_id": "grp-doc-b031",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b032|p1": {
           "provenance_group_id": "grp-doc-b032",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b033|p1": {
           "provenance_group_id": "grp-doc-b033",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b034|p1": {
           "provenance_group_id": "grp-doc-b034",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b035|p1": {
           "provenance_group_id": "grp-doc-b035",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b036|p1": {
           "provenance_group_id": "grp-doc-b036",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b037|p1": {
           "provenance_group_id": "grp-doc-b037",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b038|p1": {
           "provenance_group_id": "grp-doc-b038",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b039|p1": {
           "provenance_group_id": "grp-doc-b039",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b040|p1": {
           "provenance_group_id": "grp-doc-b040",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b041|p1": {
           "provenance_group_id": "grp-doc-b041",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b042|p1": {
           "provenance_group_id": "grp-doc-b042",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b043|p1": {
           "provenance_group_id": "grp-doc-b043",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b044|p1": {
           "provenance_group_id": "grp-doc-b044",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b045|p1": {
           "provenance_group_id": "grp-doc-b045",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b046|p1": {
           "provenance_group_id": "grp-doc-b046",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b047|p1": {
           "provenance_group_id": "grp-doc-b047",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b048|p1": {
           "provenance_group_id": "grp-doc-b048",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b049|p1": {
           "provenance_group_id": "grp-doc-b049",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b050|p1": {
           "provenance_group_id": "grp-doc-b050",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b051|p1": {
           "provenance_group_id": "grp-doc-b051",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b052|p1": {
           "provenance_group_id": "grp-doc-b052",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b053|p1": {
           "provenance_group_id": "grp-doc-b053",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b054|p1": {
           "provenance_group_id": "grp-doc-b054",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b055|p1": {
           "provenance_group_id": "grp-doc-b055",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b056|p1": {
           "provenance_group_id": "grp-doc-b056",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b057|p1": {
           "provenance_group_id": "grp-doc-b057",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b058|p1": {
           "provenance_group_id": "grp-doc-b058",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b059|p1": {
           "provenance_group_id": "grp-doc-b059",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b060|p1": {
           "provenance_group_id": "grp-doc-b060",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b061|p1": {
           "provenance_group_id": "grp-doc-b061",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b062|p1": {
           "provenance_group_id": "grp-doc-b062",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b063|p1": {
           "provenance_group_id": "grp-doc-b063",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b064|p1": {
           "provenance_group_id": "grp-doc-b064",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b065|p1": {
           "provenance_group_id": "grp-doc-b065",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b066|p1": {
           "provenance_group_id": "grp-doc-b066",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b067|p1": {
           "provenance_group_id": "grp-doc-b067",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b068|p1": {
           "provenance_group_id": "grp-doc-b068",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b069|p1": {
           "provenance_group_id": "grp-doc-b069",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b070|p1": {
           "provenance_group_id": "grp-doc-b070",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b071|p1": {
           "provenance_group_id": "grp-doc-b071",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b072|p1": {
           "provenance_group_id": "grp-doc-b072",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b073|p1": {
           "provenance_group_id": "grp-doc-b073",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b074|p1": {
           "provenance_group_id": "grp-doc-b074",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b075|p1": {
           "provenance_group_id": "grp-doc-b075",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b076|p1": {
           "provenance_group_id": "grp-doc-b076",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b077|p1": {
           "provenance_group_id": "grp-doc-b077",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b078|p1": {
           "provenance_group_id": "grp-doc-b078",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b079|p1": {
           "provenance_group_id": "grp-doc-b079",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b080|p1": {
           "provenance_group_id": "grp-doc-b080",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b081|p1": {
           "provenance_group_id": "grp-doc-b081",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b082|p1": {
           "provenance_group_id": "grp-doc-b082",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b083|p1": {
           "provenance_group_id": "grp-doc-b083",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b084|p1": {
           "provenance_group_id": "grp-doc-b084",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b085|p1": {
           "provenance_group_id": "grp-doc-b085",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b086|p1": {
           "provenance_group_id": "grp-doc-b086",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b087|p1": {
           "provenance_group_id": "grp-doc-b087",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b088|p1": {
           "provenance_group_id": "grp-doc-b088",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b089|p1": {
           "provenance_group_id": "grp-doc-b089",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b090|p1": {
           "provenance_group_id": "grp-doc-b090",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b091|p1": {
           "provenance_group_id": "grp-doc-b091",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b092|p1": {
           "provenance_group_id": "grp-doc-b092",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b093|p1": {
           "provenance_group_id": "grp-doc-b093",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b094|p1": {
           "provenance_group_id": "grp-doc-b094",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b095|p1": {
           "provenance_group_id": "grp-doc-b095",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b096|p1": {
           "provenance_group_id": "grp-doc-b096",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b097|p1": {
           "provenance_group_id": "grp-doc-b097",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b098|p1": {
           "provenance_group_id": "grp-doc-b098",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         },
         "doc-b099|p1": {
           "provenance_group_id": "grp-doc-b099",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/over-budget-docs.json",
+              "commit": "71cf2889f0bb239277a1977af1ae80d4f4453290",
+              "blob": "f2ff5eaa9e038e2fcc27ccd30d6b0d28a0c538e5",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -12550,7 +14880,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -12643,7 +14983,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       },
       "test_hooks": {
@@ -12739,7 +15089,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       },
       "test_hooks": {
@@ -12835,7 +15195,17 @@
       "provenance_registry": {
         "doc-alpha|p1": {
           "provenance_group_id": "grp-doc-alpha",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/single-passage.json",
+              "commit": "79e9cd54a201a4a59fa05bfdf645ce0c852bedd6",
+              "blob": "e52e74a30a72be23ab8a1b70d7fb9469c92c9872",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },
@@ -12908,7 +15278,17 @@
       "provenance_registry": {
         "doc-huge|p1": {
           "provenance_group_id": "grp-doc-huge",
-          "derivation_links": []
+          "derivation_links": [],
+          "applies_to": [
+            {
+              "repo": "research-sources",
+              "path": "bundles/huge-text.json",
+              "commit": "70c2535b56401e2dd4259356c4ce9b49e31dac79",
+              "blob": "390b290b8cf3fc24fa9076037da2df65838cae03",
+              "algorithm": "git-sha1",
+              "revision": "v1"
+            }
+          ]
         }
       }
     },

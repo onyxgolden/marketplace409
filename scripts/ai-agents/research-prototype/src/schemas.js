@@ -26,6 +26,7 @@
  */
 
 import { HEX40, isRealDate, isRealInstant } from "./canonical.js";
+import { types } from "node:util";
 
 export class SchemaError extends Error {
   constructor(message) {
@@ -93,6 +94,58 @@ export function validateDate(value, where) {
 }
 
 /**
+ * EXEC652-003: trap-free native Proxy detection sweep.
+ *
+ * `types.isProxy` is a native V8 map check — it invokes zero traps, even
+ * on a Proxy whose every trap is instrumented. This walk checks
+ * isProxy on EVERY reachable object BEFORE any reflective operation
+ * touches that object, so a Proxy's traps execute zero times —
+ * top-level or nested. All reflection below runs only on provably
+ * non-Proxy objects, where the native internal methods are trap-free
+ * (ordinary objects/arrays; exotic non-Proxy builtins admit only native
+ * trap-free reflection too).
+ *
+ * A Proxy is not plain data: detection refuses with SchemaError
+ * (INVALID_INPUT at the run boundary), never by invoking its traps.
+ * The walk is deterministic (getOwnPropertyNames order), cycle-safe
+ * (WeakSet), and depth-bounded at 32 like admitGraph.
+ *
+ * NOTE: this sweep must run before the phase's reflective operations,
+ * and only over subgraphs the phase actually admits. In particular it
+ * must NOT descend into denied source entries pre-grant (RA652-006);
+ * use a shallow isProxy check for the sources map itself.
+ */
+export function assertNoNativeProxies(value, where, maxDepth = 32) {
+  const seen = new WeakSet();
+  const walk = (v, path, depth) => {
+    if (v === null || typeof v !== "object") return;
+    // Trap-free native detection FIRST — before any reflective
+    // operation on v. Zero traps fire, even instrumented ones.
+    if (types.isProxy(v)) {
+      fail(where, `native Proxy at '${path}' is not plain data; refusing without invoking its traps`);
+    }
+    if (seen.has(v)) return;
+    seen.add(v);
+    if (depth > maxDepth) {
+      fail(where, `object graph exceeds max depth ${maxDepth} at '${path}'; refusing`);
+    }
+    // v is provably not a Proxy: native reflection here is trap-free.
+    for (const k of Object.getOwnPropertyNames(v)) {
+      const desc = Object.getOwnPropertyDescriptor(v, k);
+      if (!desc) continue;
+      if (typeof desc.get === "function" || typeof desc.set === "function") {
+        fail(where, `accessor property '${path}.${k}' is not plain data; refusing`);
+      }
+      walk(desc.value, `${path}.${String(k)}`, depth + 1);
+    }
+    for (const s of Object.getOwnPropertySymbols(v)) {
+      fail(where, `symbol-keyed property '${path}.${String(s)}' is not plain data; refusing`);
+    }
+  };
+  walk(value, where, 0);
+}
+
+/**
  * Descriptor-safe closed admission. Rejects objects carrying accessor
  * properties (getters/setters) — they are not plain data, and reading them
  * would execute request-supplied code during validation. Uses
@@ -132,6 +185,12 @@ export function admitGraph(value, where, budget, maxDepth = 32) {
   const seen = new WeakSet();
   const walk = (v, path, depth) => {
     if (v === null || typeof v !== "object") return;
+    // EXEC652-003: trap-free native Proxy detection BEFORE any
+    // reflective operation on v — including the prototype read below.
+    // types.isProxy invokes zero traps.
+    if (types.isProxy(v)) {
+      fail(where, `native Proxy at '${path}' is not plain data; refusing without invoking its traps`);
+    }
     if (depth > maxDepth) {
       fail(where, `object graph exceeds max depth ${maxDepth} at '${path}'; refusing`);
     }
@@ -267,23 +326,49 @@ export function validateReadGrant(value, where, budget) {
   const path = reqStr(value, "path", where);
   if (!PATH_RE.test(path)) fail(where, `invalid path '${path}'`);
   if (budget) {
-    budget.countPayload(repo, `${where} repo`);
-    budget.countPayload(path, `${where} path`);
+    // EXEC652-003: exact aggregate accounting — charge the serialized
+    // (canonical JSON) bytes of the admitted grant metadata: structure,
+    // key names and escaping, not selected raw string lengths.
+    budget.countSerialized({ repo, path }, `${where} grant`);
   }
   return { repo, path };
 }
 
 /**
  * Host-registered provenance entry for one passage: the independence
- * group plus derivation links. Independence is never asserted by a
- * passage; it is registered here by the host and budgeted.
+ * group plus derivation links.
+ *
+ * EXEC652-002: exact-source registration/applicability contract. Each
+ * entry declares `applies_to`: the complete source-identity tuples
+ * (SourceRef: repo/path/commit/blob/algorithm/revision) this
+ * registration is valid for. Independence is never asserted by a
+ * passage; it is registered here by the host, bound to exact source
+ * pins. The run admits only entries whose applies_to includes the
+ * actually consumed bundle pin; a reused doc/passage ID under a
+ * changed pin finds no applicable entry and stays conservative
+ * (unregistered => UNCORROBORATED). Unknown or incompletely
+ * registered lineage never upgrades to independent.
  */
 export function validateProvenanceEntry(value, where, budget) {
   if (!isPlainObject(value)) fail(where, "provenance entry must be an object");
   assertNoAccessors(value, where);
-  exactKeys(value, ["provenance_group_id", "derivation_links"], where);
+  exactKeys(value, ["provenance_group_id", "derivation_links", "applies_to"], where);
   const provenance_group_id = reqStr(value, "provenance_group_id", where);
   if (!GROUP_ID_RE.test(provenance_group_id)) fail(where, `invalid provenance_group_id '${provenance_group_id}'`);
+  const appliesIn = value.applies_to;
+  if (!Array.isArray(appliesIn) || appliesIn.length === 0 || appliesIn.length > 64) {
+    fail(where, "applies_to must be a non-empty array of at most 64 SourceRefs binding this registration to exact source pins");
+  }
+  assertDenseArray(appliesIn, `${where}.applies_to`);
+  const applies_to = [];
+  for (let i = 0; i < appliesIn.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(appliesIn, i);
+    if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
+      fail(where, `applies_to[${i}] must be a plain data property; refusing`);
+    }
+    if (budget) budget.chargeObjectOnce(desc.value, `${where}.applies_to[${i}]`);
+    applies_to.push(validateSourceRef(desc.value, `${where}.applies_to[${i}]`));
+  }
   const linksIn = value.derivation_links === undefined ? [] : value.derivation_links;
   if (!Array.isArray(linksIn) || linksIn.length > 64) fail(where, "derivation_links must be an array of at most 64 links");
   assertDenseArray(linksIn, `${where}.derivation_links`);
@@ -307,7 +392,26 @@ export function validateProvenanceEntry(value, where, budget) {
     if (!DERIVATION_KINDS.includes(kind)) fail(lw, `kind must be one of ${DERIVATION_KINDS.join(",")}`);
     derivation_links.push({ from_doc, from_passage, kind });
   }
-  return { provenance_group_id, derivation_links };
+  return { provenance_group_id, derivation_links, applies_to };
+}
+
+/**
+ * EXEC652-002: exact-source applicability. True iff the provenance
+ * entry's applies_to lists the exact consumed source pin (all six
+ * SourceRef fields). A registration for a different repo, path,
+ * commit, blob, algorithm or revision does not apply — the passage
+ * keeps conservative unregistered treatment.
+ */
+export function entryAppliesToSource(entry, ref) {
+  const pins = (entry && entry.applies_to) || [];
+  return pins.some((p) =>
+    p.repo === ref.repo &&
+    p.path === ref.path &&
+    p.commit === ref.commit &&
+    p.blob === ref.blob &&
+    p.algorithm === ref.algorithm &&
+    p.revision === ref.revision
+  );
 }
 
 /**
@@ -335,15 +439,33 @@ export function validateGrantGateContext(context, budget) {
   const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
+  // EXEC652-003: trap-free native Proxy sweeps over every subgraph this
+  // gate inspects — before any reflective operation on them. The
+  // sources map gets a shallow check only (its entries stay untouched
+  // pre-grant, RA652-006); readGrants/principal/criteria/test_hooks are
+  // fully admitted here, so they are swept deeply. types.isProxy is a
+  // native V8 check: zero traps fire.
+  assertNoNativeProxies(context.readGrants, "context.readGrants");
+  assertNoNativeProxies(context.principal, "context.principal");
+  assertNoNativeProxies(context.criteria, "context.criteria");
+  if (context.test_hooks !== undefined) assertNoNativeProxies(context.test_hooks, "context.test_hooks");
+
   // Sources map: key set only. Entries are NOT read here — a denied
   // source's revision metadata and payload stay untouched until the
-  // grant check passes.
+  // grant check passes. EXEC652-003: shallow native-Proxy check on the
+  // map itself (trap-free); entries are never descended into here.
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
+  if (types.isProxy(context.sources)) {
+    fail("context", "context.sources must not be a native Proxy; refusing without invoking its traps");
+  }
   charge(context.sources, "context.sources");
   assertNoAccessors(context.sources, "context.sources");
   const sourceKeys = Object.keys(context.sources);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
-  for (const sk of sourceKeys) budget.countPayload(sk, "context.sources key");
+  // EXEC652-003: exact aggregate accounting — the consulted key set is
+  // charged in serialized (canonical JSON) form: structure, key names
+  // and escaping, not selected raw string lengths.
+  budget.countSerialized(sourceKeys, "context.sources keys");
 
   if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
   assertDenseArray(context.readGrants, "context.readGrants");
@@ -377,6 +499,11 @@ export function validateGrantGateContext(context, budget) {
 function validateSourceEntry(sources, sk, budget) {
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   const entry = sources[sk];
+  // EXEC652-003: trap-free native Proxy sweep over the selected entry
+  // BEFORE any reflective operation on it — nested/selected-source
+  // traps execute zero times. This is post-grant admission, so touching
+  // the selected entry is allowed here (RA652-006).
+  assertNoNativeProxies(entry, `context.sources[${sk}]`);
   charge(entry, `context.sources[${sk}]`);
   if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
   assertNoAccessors(entry, `context.sources[${sk}]`);
@@ -387,7 +514,6 @@ function validateSourceEntry(sources, sk, budget) {
   for (const commit of Object.keys(revs)) {
     const rev = revs[commit];
     charge(rev, `context.sources[${sk}]@${commit}`);
-    budget.countPayload(commit, `context.sources[${sk}] commit`);
     if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
     assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
     exactKeys(rev, ["text", "blob", "label", "expected_records"], `context.sources[${sk}]@${commit}`);
@@ -400,12 +526,21 @@ function validateSourceEntry(sources, sk, budget) {
     if (typeof rev.label !== "string" || rev.label.length === 0) {
       fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
     }
-    budget.countPayload(rev.label, `context.sources[${sk}]@${commit} label`);
     if (rev.expected_records !== undefined) {
       if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
         fail("context", `source '${sk}' revision '${commit}' expected_records must be a nonnegative integer`);
       }
     }
+    // EXEC652-003: exact aggregate accounting — the admitted revision
+    // metadata is charged in serialized (canonical JSON) form: all
+    // fields, structure, key names and escaping. Replaces the old
+    // selected raw string lengths (commit, label). The revision text
+    // bytes are charged separately as selected source bytes on
+    // resolution — nonduplicating: metadata here, bytes there.
+    budget.countSerialized(
+      { commit, blob: rev.blob, label: rev.label, expected_records: rev.expected_records ?? null },
+      `context.sources[${sk}]@${commit} metadata`
+    );
   }
 }
 
@@ -433,6 +568,10 @@ export function validateProvenanceRegistry(context, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateProvenanceRegistry requires a live budget");
   const regIn = context.provenance_registry;
   if (!isPlainObject(regIn)) fail("context", "provenance_registry must be an object");
+  // EXEC652-003: trap-free native Proxy sweep before any reflective
+  // operation on the registry. Post-grant required metadata: touching
+  // it here is allowed.
+  assertNoNativeProxies(regIn, "context.provenance_registry");
   budget.chargeObjectOnce(regIn, "context.provenance_registry");
   assertNoAccessors(regIn, "context.provenance_registry");
   const regKeys = Object.keys(regIn);
@@ -442,10 +581,18 @@ export function validateProvenanceRegistry(context, budget) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\|[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(rk)) {
       fail("context", `invalid provenance registry key '${rk}'; expected 'doc_id|passage_id'`);
     }
-    budget.countPayload(rk, "context.provenance_registry key");
     const entry = regIn[rk];
     budget.chargeObjectOnce(entry, `context.provenance_registry[${rk}]`);
-    provenance_registry[rk] = validateProvenanceEntry(entry, `context.provenance_registry[${rk}]`, budget);
+    const validated = validateProvenanceEntry(entry, `context.provenance_registry[${rk}]`, budget);
+    // EXEC652-003: exact aggregate accounting — each admitted registry
+    // entry is charged in serialized (canonical JSON) form: key,
+    // structure, escaping and all fields (including the applies_to
+    // SourceRef pins). Replaces the old raw key string length.
+    budget.countSerialized(
+      { key: rk, provenance_group_id: validated.provenance_group_id, derivation_links: validated.derivation_links, applies_to: validated.applies_to },
+      `context.provenance_registry[${rk}]`
+    );
+    provenance_registry[rk] = validated;
   }
   return provenance_registry;
 }

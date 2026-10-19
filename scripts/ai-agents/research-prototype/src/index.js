@@ -27,11 +27,13 @@ import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.j
 import {
   validateTask, validateGrantGateContext, validateSelectedSourceEntry,
   validateProvenanceRegistry, validateDocumentRecord, splitTopLevelArray,
-  admitGraph, renderAssertionText, SchemaError,
+  admitGraph, renderAssertionText, assertNoNativeProxies,
+  entryAppliesToSource, SchemaError,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
-import { verifyAssertionSpan, evaluateAtom, detectCitationCycles, ResearchSpanError } from "./research.js";
+import { verifyAssertionSpan, evaluateAtom, detectCitationCycles, makeCanonicalKey, ResearchSpanError } from "./research.js";
+import { types } from "node:util";
 
 export const AGENT_ID = "research-agent";
 export const SCHEMA_VERSION = "1";
@@ -41,10 +43,12 @@ export const SCHEMA_VERSION = "1";
  * when it is a string; otherwise the documented "unavailable" marker.
  * Byte-bounded: an oversized ID becomes a documented marker, never a
  * 300KB refusal envelope. Descriptor-safe: a single own-data-descriptor
- * read, never invoking accessors.
+ * read, never invoking accessors. EXEC652-003: proxy-safe — a native
+ * Proxy task yields "unavailable" via the trap-free types.isProxy
+ * check, never by reflecting on the proxy (zero trap executions).
  */
 function requestTaskId(task) {
-  if (task !== null && typeof task === "object") {
+  if (task !== null && typeof task === "object" && !types.isProxy(task)) {
     const desc = Object.getOwnPropertyDescriptor(task, "task_id");
     if (desc && typeof desc.get !== "function" && typeof desc.set !== "function" && typeof desc.value === "string") {
       if (Buffer.byteLength(desc.value, "utf8") > 256) {
@@ -274,11 +278,28 @@ export function run(task, context) {
   // provenance metadata admitted.
   const budget = makeBudget();
   try {
+    // EXEC652-003: trap-free native Proxy detection BEFORE every
+    // reflective operation on the task. assertNoNativeProxies checks
+    // types.isProxy (a native V8 map check — zero traps) on every
+    // reachable task object before admitGraph reflects on any of them;
+    // admitGraph itself re-checks per object as a second layer. A Proxy
+    // task refuses here with INVALID_INPUT and zero trap executions.
+    assertNoNativeProxies(task, "task");
     admitGraph(task, "task", budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);
     if (e instanceof SchemaError) return boundedRefused(requestTaskId(task), "INVALID_INPUT", "error", e.message);
     throw e;
+  }
+
+  // EXEC652-003: the context top-level gets a trap-free native-Proxy
+  // check before the clock descriptor read below. Deeper context
+  // subgraphs are swept at their own admission points
+  // (validateGrantGateContext / validateSelectedSourceEntry /
+  // validateProvenanceRegistry); denied source entries stay untouched
+  // pre-grant (RA652-006).
+  if (context !== null && typeof context === "object" && types.isProxy(context)) {
+    return boundedRefused(requestTaskId(task), "INVALID_INPUT", "error", "context must not be a native Proxy; refusing without invoking its traps");
   }
 
   // Clock must be an own data property; validateContext enforces this,
@@ -499,13 +520,51 @@ export function run(task, context) {
   const excludedCount = 0; // documents are admitted or the run refuses; passages quarantine explicitly
 
   if (provisional.length === 0) {
+    // EXEC652-005: zero extracted claims AND requested claims reported
+    // unsupported — with no fabricated supporting source. Each
+    // requested atom keeps its NOT_FAITHFUL / UNCORROBORATED /
+    // unsupported result, its canonical identity (bound to the consumed
+    // bundle pin), and conservative coverage. The origin carries no
+    // passage reference and a null citation: the empty bundle is never
+    // presented as invented supporting evidence.
+    const emptyClaims = [];
+    const sortedEmpty = [...validatedTask.requested_claims].sort((a, b) => (a.claim_id < b.claim_id ? -1 : 1));
+    for (const rc of sortedEmpty) {
+      for (let ai = 0; ai < rc.atoms.length; ai++) {
+        const atom = rc.atoms[ai];
+        emptyClaims.push({
+          claim_id: `${rc.claim_id}#${ai + 1}`,
+          canonical_key: makeCanonicalKey(atom, null, validatedTask.evidence_bundle_ref.blob),
+          original_text: renderAssertionText(atom),
+          atom: { ...atom },
+          origin: {
+            fidelity: "NOT_FAITHFUL",
+            reason: "empty evidence bundle: zero extracted claims; no passage exists to attribute this atom",
+            citation: null,
+          },
+          fidelity: "NOT_FAITHFUL",
+          corroboration: {
+            state: "UNCORROBORATED",
+            evidence: [],
+            same_group_occurrences: [],
+            unregistered_candidates: [],
+            derivation_linked_candidates: [],
+            cycle_defeated_candidates: [],
+          },
+          contradictions: [],
+          citation_cycle: false,
+          research_status: "unsupported",
+        });
+      }
+    }
     const report = emptyReport();
+    report.claims = emptyClaims;
     report.coverage = {
       state: populationVerified ? "COMPLETE_EMPTY" : "UNKNOWN_EMPTY",
       admitted_count: 0,
       excluded_count: 0,
     };
-    return envelope(taskId, {
+    const result = envelope(taskId, {
       status: "EMPTY",
       complete: populationVerified && quarantinedPassages.size === 0,
       source_refs: [sourceRefOut(validatedTask.evidence_bundle_ref)],
@@ -513,6 +572,15 @@ export function run(task, context) {
       quarantined_sources,
       report,
     });
+    // EXEC652-005: output limits run on the empty path too — a large
+    // requested-claim set on an empty bundle cannot overflow the
+    // public envelope.
+    const emptyPrefill = ctx.test_hooks?.prefill_output_records ?? 0;
+    const emptyRecords = emptyPrefill + countFinalEnvelopeRecords(result);
+    if (emptyRecords > BUDGET_LIMITS.maxOutputRecords || canonicalByteLength(result) > BUDGET_LIMITS.maxOutputBytes) {
+      return boundedRefused(taskId, "OUTPUT_LIMIT", "error", `final output envelope exceeds the ${BUDGET_LIMITS.maxOutputRecords}-record / ${BUDGET_LIMITS.maxOutputBytes}-byte output bounds`);
+    }
+    return result;
   }
 
   // ---- Verified assertion index: every assertion's byte span is
@@ -520,6 +588,15 @@ export function run(task, context) {
   // passage bytes under the live span budget. A span mismatch excludes
   // that assertion from all evidence (PARTIAL with affected claims
   // unverified — never a faithful attribution from a bad span). ----
+  // EXEC652-001: every emitted citation carries a PINNED PASSAGE
+  // IDENTITY (byte_identity): the SHA-256 of the exact passage UTF-8
+  // bytes the span was verified against. The span coordinates are
+  // half-open byte offsets INTO THOSE PINNED BYTES — never into the
+  // bundle bytes named by source_ref (which is provenance: the
+  // registered bundle this passage was extracted from). An independent
+  // verifier resolves the bundle via source_ref, locates the passage,
+  // checks sha256(passage bytes) == byte_identity.digest, then slices
+  // [start_byte, end_byte) and must obtain quoted_span exactly.
   const verifiedIndex = [];
   const spanMismatchDocs = new Set();
   for (const d of provisional) {
@@ -527,6 +604,7 @@ export function run(task, context) {
       const qid = `${d.doc_id}#${p.passage_id}`;
       if (quarantinedPassages.has(qid)) continue;
       const passageBytes = Buffer.from(p.text, "utf8");
+      const passageSha256 = sha256HexUtf8(p.text);
       for (const a of p.assertions) {
         let verified;
         try {
@@ -557,8 +635,20 @@ export function run(task, context) {
           atom: { subject: a.subject, predicate: a.predicate, value: a.value, value_type: a.value_type, scope: a.scope, polarity: a.polarity },
           span: verified,
           quoted_text: verified.quoted_text,
+          // EXEC652-001: the passage bytes this span was verified
+          // against, pinned by SHA-256. evaluateAtom binds this into
+          // the canonical key.
+          passage_sha256: passageSha256,
           citation: {
             source_ref: sourceRefOut(validatedTask.evidence_bundle_ref),
+            // Pinned passage identity: the immutable bytes the span
+            // coordinates address. Artifact bytes use SHA-256 (never a
+            // mislabeled Git SHA).
+            byte_identity: {
+              algorithm: "sha256",
+              digest: passageSha256,
+              byte_length: passageBytes.length,
+            },
             quoted_span: verified.quoted_text,
             span: { start_byte: verified.start_byte, end_byte: verified.end_byte, quoted_text: verified.quoted_text },
             verification: "verified",
@@ -580,12 +670,26 @@ export function run(task, context) {
   const citationCycles = detectCitationCycles(docCitations);
 
   // ---- Evaluate each requested claim, atom by atom. ----
+  // EXEC652-002: exact-source applicability. Only provenance entries
+  // whose applies_to includes the actually consumed bundle pin are
+  // admitted to classification; a reused doc/passage ID under a changed
+  // pin finds no applicable entry and keeps conservative unregistered
+  // treatment (unknown independence => UNCORROBORATED, never independent).
+  const applicableRegistry = {};
+  for (const [rk, entry] of Object.entries(ctx.provenance_registry)) {
+    if (entryAppliesToSource(entry, validatedTask.evidence_bundle_ref)) {
+      applicableRegistry[rk] = entry;
+    }
+  }
+  // EXEC652-001: the exact consumed bundle identity (git-sha1 of the
+  // verified bundle bytes) is bound into every canonical claim key.
+  const sourceBlob = validatedTask.evidence_bundle_ref.blob;
   const claims = [];
   const sortedClaims = [...validatedTask.requested_claims].sort((a, b) => (a.claim_id < b.claim_id ? -1 : 1));
   for (const rc of sortedClaims) {
     for (let ai = 0; ai < rc.atoms.length; ai++) {
       const atom = rc.atoms[ai];
-      const res = evaluateAtom(atom, rc.origin_passage_refs, verifiedIndex, ctx.provenance_registry, citationCycles, docCitations);
+      const res = evaluateAtom(atom, rc.origin_passage_refs, verifiedIndex, applicableRegistry, citationCycles, docCitations, sourceBlob);
       res.claim_id = `${rc.claim_id}#${ai + 1}`;
       // A quarantined or span-mismatched origin can never yield a
       // faithful attribution; surface the coverage change explicitly.

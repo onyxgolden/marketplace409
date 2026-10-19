@@ -66,8 +66,9 @@ candidate — is inspected at all:
 | Candidate | Charged |
 |---|---|
 | Every object/array in `task` (admission walk) | once each, before descriptor inspection |
-| Every object/array in `context`: sources, revisions, read grants, principal, criteria, provenance-registry entries, derivation links | once each, before field reads |
-| The resolved evidence-bundle source | once, at resolve time |
+| Every object/array in `context`: sources, revisions, read grants, principal, criteria, provenance-registry entries, derivation links, `applies_to` pins | once each, before field reads |
+| Admitted context/registry metadata bytes (grant fields, source keys, revision metadata, registry entries incl. `applies_to` pins) | serialized (canonical JSON) bytes via `countSerialized` — structure, key names, escaping and all SourceRef/SHA-256 fields; never raw string lengths |
+| The resolved evidence-bundle source | once, at resolve time (text bytes; metadata counted above — nonduplicating) |
 | Each document record | once, before its span is decoded |
 | Each `passages`, `assertions`, `citations` array | once, before iteration |
 | Each passage, assertion, citation, assertion span object | once, before field reads |
@@ -124,6 +125,61 @@ explicitly validated, closed-schema `context.test_hooks.
 prefill_output_records` field (0..1024). It is inert in production —
 hosts never set it — and exists only for the 256-allowed / 257-refused
 boundary test through the real `run()` path.
+
+## Fix round 4: carried EXEC652 findings
+
+**Pinned citation byte identity (EXEC652-001).** An emitted citation's
+`span` addresses the *passage* bytes — never the bundle bytes named by
+`source_ref` (which is provenance: the registered bundle the passage
+was extracted from). Every citation carries `byte_identity`
+`{algorithm:"sha256", digest, byte_length}`: the SHA-256 of the exact
+passage UTF-8 bytes the span was verified against. Independent
+verification: resolve the bundle via `source_ref`, locate the passage,
+check `sha256(passage bytes) == byte_identity.digest`, then slice
+`[start_byte, end_byte)` and require the exact `quoted_span`. The
+canonical claim key (`makeCanonicalKey` in `src/research.js`) binds the
+atom, the origin reference, the consumed bundle's git-sha1 pin, the
+passage SHA-256 and the span — a changed source identity can never
+silently retain the prior canonical identity; a byte-identical replay
+stays stable.
+
+**Exact-source provenance applicability (EXEC652-002).** Every
+provenance-registry entry declares `applies_to`: the complete source
+pins (`SourceRef` tuples) the registration is valid for. `run()` admits
+only entries whose `applies_to` includes the actually consumed bundle
+pin; a reused `doc_id|passage_id` under a changed repo, path, commit,
+blob, algorithm or revision finds no applicable entry and keeps
+conservative unregistered treatment (unknown independence ⇒
+`UNCORROBORATED`, never independent). Derivation/transitive-copy
+positives are preserved when the pins match. Per-run host builders bind
+each evaluation's entries to the evaluated bundle's exact pin (the
+fixture store keeps the full multi-bundle master record).
+
+**Trap-free Proxy rejection + serialized accounting (EXEC652-003).**
+`types.isProxy` (a native V8 map check — zero trap invocations, verified
+by instrumented-trap tests) runs before every reflective operation:
+the task is swept before admission, the context top-level before the
+clock read, and each admitted subgraph (grants/principal/criteria,
+selected source entry, provenance registry) at its own admission point.
+A native Proxy anywhere in the admitted graph refuses `INVALID_INPUT`
+with zero trap executions — top-level, nested, or selected-source.
+(Denied source entries stay completely untouched pre-grant, RA652-006:
+only a shallow map-level check runs before the grant gate.) Aggregate
+metadata accounting uses `budget.countSerialized`: admitted
+context/registry metadata (keys, structure, JSON escaping, all
+SourceRef/SHA-256 fields) is charged in canonical-JSON serialized
+bytes — never selected raw string lengths — under the single 256-KiB
+serialized representation. A source resolved twice is charged twice
+(cumulative; no dedup refunds).
+
+**Empty source preserves requested claims (EXEC652-005).** An empty
+bundle returns `EMPTY` with zero extracted claims *and* each requested
+atom reported `NOT_FAITHFUL` / `UNCORROBORATED` / `unsupported`, with a
+null citation and no passage reference — the empty bundle is never
+presented as fabricated supporting evidence. Coverage stays
+conservative (`COMPLETE_EMPTY` / `UNKNOWN_EMPTY`). Output limits
+(record + byte bounds, including the host prefill) run on the empty
+path too.
 
 ## Layout
 

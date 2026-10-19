@@ -12,7 +12,7 @@
  * budget and must never be called without one.
  */
 
-import { gitBlobId, HEX40 } from "./canonical.js";
+import { gitBlobId, HEX40, canonicalByteLength } from "./canonical.js";
 import { validateSourceRef, SchemaError } from "./schemas.js";
 
 export const BUDGET_LIMITS = {
@@ -54,6 +54,24 @@ export function makeBudget() {
       used.payloadBytes += Buffer.byteLength(bytes, "utf8");
       if (used.payloadBytes > BUDGET_LIMITS.maxPayloadBytes) {
         throw new BudgetError("INPUT_LIMIT", `${what ?? "payload"} exceeds ${BUDGET_LIMITS.maxPayloadBytes} bytes`);
+      }
+    },
+    /**
+     * EXEC652-003: exact aggregate metadata accounting. Charges the
+     * SERIALIZED (canonical JSON, UTF-8) bytes of admitted context /
+     * registry metadata — structure, key names, JSON escaping and all
+     * SourceRef / SHA-256 fields — never selected raw string lengths.
+     * This implements the brief's single 256-KiB serialized
+     * representation: one aggregate budget over task + consulted
+     * context/registry metadata + selected source bytes, in a
+     * nonduplicating representation (each admitted value is charged
+     * once, in serialized form).
+     */
+    countSerialized(value, what) {
+      const bytes = canonicalByteLength(value);
+      used.payloadBytes += bytes;
+      if (used.payloadBytes > BUDGET_LIMITS.maxPayloadBytes) {
+        throw new BudgetError("INPUT_LIMIT", `${what ?? "payload"} exceeds ${BUDGET_LIMITS.maxPayloadBytes} serialized bytes`);
       }
     },
     countObject(what) {

@@ -40,7 +40,8 @@ function goodContext() {
     readGrants: [{ repo: ref.repo, path: ref.path }],
     principal: store.principals.jason,
     criteria: store.criteriaPresets.standard,
-    provenance_registry: { "doc-alpha|p1": { provenance_group_id: "g", derivation_links: [] } },
+    // EXEC652-002: provenance entries bind their exact source pin.
+    provenance_registry: { "doc-alpha|p1": { provenance_group_id: "g", derivation_links: [], applies_to: [{ ...ref }] } },
   };
 }
 

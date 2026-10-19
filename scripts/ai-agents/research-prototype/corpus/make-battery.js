@@ -258,8 +258,43 @@ function oCountJson(v) {
   else { for (const k of Object.keys(v)) n += oCountJson(v[k]); }
   return n;
 }
+function oRegistryCost(reg) {
+  // Mirrors src/schemas.js validateProvenanceRegistry +
+  // validateProvenanceEntry object charging exactly: 1 (registry
+  // object) + per entry 1 (entry) + 1 per applies_to pin + 1 per
+  // derivation link. (The applies_to / derivation_links arrays
+  // themselves are not object-charged by the implementation; their
+  // serialized bytes are payload-charged instead.)
+  let n = 1;
+  for (const k of Object.keys(reg || {})) {
+    n += 1;
+    n += (reg[k].applies_to || []).length;
+    n += (reg[k].derivation_links || []).length;
+  }
+  return n;
+}
+function oContextCost(context) {
+  // Mirrors the implementation's context admission charging exactly
+  // (validateGrantGateContext + validateSelectedSourceEntry +
+  // validateProvenanceRegistry). Only the SELECTED source entry is
+  // admitted (RA652-006); denied/non-selected entries cost nothing.
+  const grants = context.readGrants || [];
+  let n = 1; // context
+  n += 1; // sources map (key set only; entries untouched pre-grant)
+  n += 1 + grants.length; // readGrants array + grants
+  n += 1; // principal
+  n += 1; // criteria
+  if (context.test_hooks) n += 1;
+  n += 1; // selected source entry
+  n += 1; // revisions map
+  n += 1; // revision (single-revision fixtures)
+  n += oRegistryCost(context.provenance_registry);
+  return n;
+}
 function oBudgetOk(task, context, docs) {
-  const total = oCountJson(task) + oCountJson(context) + 1 + docs.reduce((n, d) => n + oDocCost(d), 0);
+  // Task: admitGraph charges every distinct object/array occurrence.
+  // Context: oContextCost mirrors the validators. Docs: oDocCost.
+  const total = oCountJson(task) + oContextCost(context) + 1 + docs.reduce((n, d) => n + oDocCost(d), 0);
   return total <= 64;
 }
 
@@ -267,10 +302,15 @@ function oBudgetOk(task, context, docs) {
 function registryFor(bundleNames) {
   const reg = {};
   for (const n of bundleNames) {
+    const ref = store.bundleRefs[n];
     for (const d of docsFor(n)) {
       for (const p of d.passages || []) {
         const k = `${d.doc_id}|${p.passage_id}`;
-        if (store.provenanceRegistry[k]) reg[k] = store.provenanceRegistry[k];
+        if (store.provenanceRegistry[k]) {
+          // EXEC652-002: per-run host selection — bind this evaluation's
+          // registry entries to the evaluated bundle's exact source pin.
+          reg[k] = { ...store.provenanceRegistry[k], applies_to: [{ ...ref }] };
+        }
       }
     }
   }
