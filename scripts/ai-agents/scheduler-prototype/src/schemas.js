@@ -268,7 +268,7 @@ export function validateCriteria(value, where, budget) {
   return { criteria_version, max_horizon_days };
 }
 
-export function validateReadGrant(value, where) {
+export function validateReadGrant(value, where, budget) {
   if (!isPlainObject(value)) fail(where, "read grant must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path"], where);
@@ -276,6 +276,12 @@ export function validateReadGrant(value, where) {
   if (!REPO_RE.test(repo)) fail(where, `invalid repo '${repo}'`);
   const path = reqStr(value, "path", where);
   if (!PATH_RE.test(path)) fail(where, `invalid path '${path}'`);
+  // S648-006 (fifth fix round): read-grant repo/path are consulted
+  // metadata and must be byte-counted.
+  if (budget) {
+    budget.countPayload(repo, `${where} repo`);
+    budget.countPayload(path, `${where} path`);
+  }
   return { repo, path };
 }
 
@@ -307,6 +313,10 @@ export function validateContext(context, budget) {
   for (const sk of sourceKeys) {
     const entry = context.sources[sk];
     charge(entry, `context.sources[${sk}]`);
+    // S648-006 (fifth fix round): source registry keys are consulted
+    // metadata and must be byte-counted. A 90KB path as a key would
+    // otherwise bypass the aggregate budget.
+    budget.countPayload(sk, `context.sources key`);
     if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
     assertNoAccessors(entry, `context.sources[${sk}]`);
     const revs = entry.revisions;
@@ -316,6 +326,8 @@ export function validateContext(context, budget) {
     for (const commit of Object.keys(revs)) {
       const rev = revs[commit];
       charge(rev, `context.sources[${sk}]@${commit}`);
+      // S648-006 (fifth fix round): commit hashes are consulted metadata.
+      budget.countPayload(commit, `context.sources[${sk}] commit`);
       if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
       assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
       // S648-006: closed registration schema. Unknown metadata fields are
@@ -366,7 +378,7 @@ export function validateContext(context, budget) {
       fail("context", `readGrants[${i}] must be a plain data property; refusing`);
     }
     charge(desc.value, `context.readGrants[${i}]`);
-    readGrants.push(validateReadGrant(desc.value, `context.readGrants[${i}]`));
+    readGrants.push(validateReadGrant(desc.value, `context.readGrants[${i}]`, budget));
   }
 
   charge(context.principal, "context.principal");

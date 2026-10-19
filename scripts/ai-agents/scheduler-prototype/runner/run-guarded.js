@@ -156,6 +156,23 @@ export function runGuarded(taskJson, contextJson, timeoutMs = GUARD_TIMEOUT_MS, 
         );
         return;
       }
+      // S648-006 (fifth fix round): aggregate input byte budget. The
+      // individual caps above do not imply an invocation-wide cap — a
+      // 200KiB task + 200KiB context would pass both but exceed the
+      // 256KiB aggregate budget. Enforce the combined total here.
+      if (
+        Buffer.byteLength(taskJson, "utf8") +
+          Buffer.byteLength(contextJson, "utf8") >
+        GUARD_MAX_TRANSPORT_BYTES
+      ) {
+        finish(
+          transportEnvelope(
+            "TRANSPORT_REFUSED",
+            `aggregate serialized input exceeds ${GUARD_MAX_TRANSPORT_BYTES} bytes; refusing before worker creation`
+          )
+        );
+        return;
+      }
       // Strings are inert: structured-clone of workerData cannot execute
       // code. Parsing and admission happen inside the supervised worker.
       workerDataPayload = { taskJson, contextJson };
