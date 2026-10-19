@@ -14,6 +14,12 @@ function diag(code, severity, record_id, reason) {
   return { code, severity, record_id, source_ref: null, reason };
 }
 
+function gcd(a, b) {
+  a = Math.abs(a); b = Math.abs(b);
+  while (b) { const t = a % b; a = b; b = t; }
+  return a || 1;
+}
+
 /**
  * Analyze one plan package. Returns { status, math, findings, orphans,
  * milestones, resources, completion, header } where status is
@@ -38,7 +44,9 @@ export function analyzePlan(pkg, resolver) {
   const edges = [];
   const seenEdgeIds = new Set();
   const preds = new Map(); // task_id -> [{from, lag}]
-  for (const t of tasks.keys()) preds.set(t, []);
+  const succs = new Map(); // task_id -> [to] (built here, charged)
+  const indeg = new Map();
+  for (const t of tasks.keys()) { preds.set(t, []); succs.set(t, []); indeg.set(t, 0); }
   let dangling = null;
   for (const e of pkg.edges || []) {
     charge();
@@ -52,31 +60,31 @@ export function analyzePlan(pkg, resolver) {
         `edge references unknown task: ${!tasks.has(e.from_task) ? e.from_task : e.to_task}`));
     } else {
       edges.push(e);
+      // Adjacency derived ONCE here, under charge. All later traversals use
+      // these maps and never re-read edge fields (S648-001 strict).
       preds.get(e.to_task).push({ from: e.from_task, lag: e.lag_ticks, edge_id: e.edge_id });
+      succs.get(e.from_task).push(e.to_task);
+      indeg.set(e.to_task, indeg.get(e.to_task) + 1);
     }
   }
 
   // ---- 2. forward pass (Kahn); cycle -> PARTIAL, math null ----
   const es = new Map(); // task_id -> earliest start
   const ef = new Map(); // task_id -> earliest finish
-  const indeg = new Map();
-  for (const t of tasks.keys()) indeg.set(t, 0);
-  for (const e of edges) indeg.set(e.to_task, indeg.get(e.to_task) + 1);
 
   const queue = [];
   for (const [id, d] of indeg) if (d === 0) queue.push(id);
   const order = [];
+  const indegWork = new Map(indeg);
   while (queue.length) {
     // deterministic: lexical order
     queue.sort();
     const id = queue.shift();
     order.push(id);
-    for (const e of edges) {
-      if (e.from_task === id) {
-        const d = indeg.get(e.to_task) - 1;
-        indeg.set(e.to_task, d);
-        if (d === 0) queue.push(e.to_task);
-      }
+    for (const to of succs.get(id)) {
+      const d = indegWork.get(to) - 1;
+      indegWork.set(to, d);
+      if (d === 0) queue.push(to);
     }
   }
 
@@ -152,18 +160,15 @@ export function analyzePlan(pkg, resolver) {
   }
 
   // ---- 4. orphans: tasks with no directed path to any milestone requirement ----
-  // Build reverse reachability from milestone requirements.
-  const succs = new Map();
-  for (const t of tasks.keys()) succs.set(t, []);
-  for (const e of edges) succs.get(e.from_task).push(e.to_task);
+  // Reverse reachability via the charged preds adjacency — no edge re-reads.
   const reaches = new Set(milestoneTaskIds);
   const stack = [...milestoneTaskIds].filter((id) => tasks.has(id));
   while (stack.length) {
     const id = stack.pop();
-    for (const e of edges) {
-      if (e.to_task === id && !reaches.has(e.from_task)) {
-        reaches.add(e.from_task);
-        stack.push(e.from_task);
+    for (const p of preds.get(id)) {
+      if (!reaches.has(p.from)) {
+        reaches.add(p.from);
+        stack.push(p.from);
       }
     }
   }
@@ -239,9 +244,15 @@ export function analyzePlan(pkg, resolver) {
       // active demands on [a,b): start <= a < end
       const active = demands.filter((d) => d.start <= a && a < d.end);
       if (!active.length) continue;
-      // sum as rational: common denominator via product (small ints in fixtures)
+      // sum as reduced rational: GCD reduction each step keeps numerator and
+      // denominator within safe-integer range for fixture-scale inputs.
       let num = 0, den = 1;
-      for (const d of active) { num = num * d.den + d.num * den; den = den * d.den; }
+      for (const d of active) {
+        num = num * d.den + d.num * den;
+        den = den * d.den;
+        const g = gcd(num, den);
+        num /= g; den /= g;
+      }
       // capacity at cutpoint: window containing a
       const w = wins.find((x) => x.start_tick <= a && a < x.end_tick);
       const cap = w ? w.capacity : 0;

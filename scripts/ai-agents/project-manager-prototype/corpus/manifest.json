@@ -37,7 +37,7 @@
   },
   {
     "path": "src/manager.js",
-    "sha256": "05c1c57edfb005c1fb0a02479611c164548609b5de063ad376fe03149580ffdf"
+    "sha256": "e356c25cf4cc2581f1444157e54ba62f5da3536c40a715f576a22759562a59d9"
   },
   {
     "path": "src/resolver.js",
