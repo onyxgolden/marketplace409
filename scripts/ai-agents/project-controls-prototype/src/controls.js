@@ -27,12 +27,43 @@ function percentOf(pct, minor) { return { n: BigInt(pct.num) * BigInt(minor), d:
 
 /**
  * Analyze one validated package. ctx: {evMode, eacFormulas, includeContingency,
- * compareHeaders, chargeSpan, quarantine}.
+ * compareHeaders, chargeSpan, sourceBytes, sourceRef}.
  * Returns { result, diagnostics } where result fields carry status tags.
+ * Every operand citation is verified against source bytes (PC650-004); failures
+ * yield explicit unavailable states, never unverified labels.
  */
 export function analyzePackage(pkg, ctx) {
   const diagnostics = [];
   const R = { package_id: pkg.package_id, currency: pkg.currency };
+  const srcBytes = ctx.sourceBytes || '';
+  const srcRef = ctx.sourceRef || null;
+
+  // Helper: derive and verify a money line's citation from source byte spans.
+  // Returns a verified Citation or an unavailable marker. Charges the span
+  // budget before checking. The byte slice must equal the amount's canonical
+  // form; the citation is bound to the verified SourceRef.
+  const citeLine = (ln, field, spanPath) => {
+    ctx.chargeSpan();
+    const span = ctx.sourceSpans ? ctx.sourceSpans.get(spanPath) : undefined;
+    if (!span) {
+      diagnostics.push(diag('CITATION_UNVERIFIED', 'high', pkg.package_id,
+        `${field} ${ln.line_id}: no byte span for ${spanPath}`));
+      return { status: 'UNAVAILABLE', reason: 'missing byte span' };
+    }
+    const expected = String(ln.amount_minor);
+    const actual = srcBytes.slice(span.start, span.end).toString('utf8');
+    if (actual !== expected) {
+      diagnostics.push(diag('CITATION_UNVERIFIED', 'high', pkg.package_id,
+        `${field} ${ln.line_id}: byte slice ${JSON.stringify(actual)} != amount ${expected}`));
+      return { status: 'UNAVAILABLE', reason: 'span/amount mismatch' };
+    }
+    return {
+      status: 'VERIFIED',
+      span: { start_byte: span.start, end_byte: span.end, quoted_text: actual },
+      source_ref: srcRef,
+      verification: 'BYTE_SLICE_VERIFIED',
+    };
+  };
 
   R.bac_minor = pkg.bac_minor;
   R.bac_display = formatMinor(pkg.bac_minor);
@@ -53,49 +84,77 @@ export function analyzePackage(pkg, ctx) {
     R.pv = { status: 'ok', n: pv.n.toString(), d: pv.d.toString(), display: formatMinor(roundRational(pv.n, pv.d, 0)) };
   }
 
-  // EV
-  let ev;
-  if (ctx.evMode === 'evidenced' && pkg.evidenced_ev_minor != null) {
-    ev = ratFromInt(pkg.evidenced_ev_minor);
-    R.ev_mode = 'evidenced';
+  // EV — PC650-005: evidenced mode without cited evidence yields typed
+  // UNVERIFIABLE for EV and all dependents; the claimed percent is preserved
+  // as a separate unverified claim, never a computational fallback.
+  let ev = null;
+  let evUnavailable = false;
+  if (ctx.evMode === 'evidenced') {
+    if (pkg.evidenced_ev_minor != null) {
+      ev = ratFromInt(pkg.evidenced_ev_minor);
+      R.ev_mode = 'evidenced';
+    } else {
+      evUnavailable = true;
+      R.ev_mode = 'evidenced';
+      R.ev = { status: 'UNVERIFIABLE', reason: 'evidenced EV mode selected but no evidenced_ev_minor supplied; no fallback to claimed percent' };
+      R.claimed_actual_percent_unverified = { ...pkg.claimed_actual_percent, note: 'claim preserved, not used computationally' };
+      diagnostics.push(diag('EV_UNVERIFIABLE', 'high', pkg.package_id, 'evidenced EV mode selected but no evidenced_ev_minor supplied; EV and dependents unavailable'));
+    }
   } else {
     ev = percentOf(pkg.claimed_actual_percent, pkg.bac_minor);
     R.ev_mode = 'claimed';
-    if (ctx.evMode === 'evidenced' && pkg.evidenced_ev_minor == null) {
-      diagnostics.push(diag('EV_UNVERIFIABLE', 'medium', pkg.package_id, 'evidenced EV mode selected but no evidenced_ev_minor supplied; fell back to claimed percent'));
-      R.ev_mode = 'claimed-fallback';
-    }
   }
-  R.ev = { status: 'ok', n: ev.n.toString(), d: ev.d.toString(), display: formatMinor(roundRational(ev.n, ev.d, 0)) };
+  if (!evUnavailable) {
+    R.ev = { status: 'ok', n: ev.n.toString(), d: ev.d.toString(), display: formatMinor(roundRational(ev.n, ev.d, 0)) };
+  }
   R.claim_note = 'claimed progress remains a claim: exact arithmetic never upgrades physical completion';
 
-  // AC
+  // AC — each line's citation verified; unverified lines are excluded with
+  // explicit accounting (never silently dropped).
   let ac = 0n;
-  const lineIds = [];
-  for (const ln of pkg.actual_cost_lines) {
+  const lineCitations = [];
+  let acUnavailable = false;
+  for (let i = 0; i < pkg.actual_cost_lines.length; i++) {
+    const ln = pkg.actual_cost_lines[i];
     ctx.chargeSpan();
-    ac += BigInt(ln.amount_minor);
-    lineIds.push(ln.line_id);
+    const c = citeLine(ln, 'actual_cost_lines', `$.actual_cost_lines[${i}].amount_minor`);
+    lineCitations.push({ line_id: ln.line_id, citation: c });
+    if (c.status !== 'VERIFIED') {
+      acUnavailable = true;
+    } else {
+      ac += BigInt(ln.amount_minor);
+    }
   }
-  R.ac_minor = ac.toString();
-  R.ac_display = formatMinor(ac);
-  R.citations.lines = lineIds;
+  R.citations.lines = lineCitations;
+  if (acUnavailable) {
+    R.ac = { status: 'UNVERIFIABLE', reason: 'one or more actual-cost line citations unverified' };
+    diagnostics.push(diag('AC_UNVERIFIABLE', 'high', pkg.package_id, 'actual-cost total unavailable: citation verification failed'));
+  } else {
+    R.ac_minor = ac.toString();
+    R.ac_display = formatMinor(ac);
+  }
 
-  // CV = EV - AC
-  const cv = ratSub(ev, ratFromInt(ac));
-  R.cv = { status: 'ok', n: cv.n.toString(), d: cv.d.toString(), display: formatMinor(roundRational(cv.n, cv.d, 0)) };
+  // CV = EV - AC (needs both)
+  if (evUnavailable || acUnavailable) {
+    R.cv = { status: 'UNVERIFIABLE', reason: 'EV or AC unavailable' };
+  } else {
+    const cv = ratSub(ev, ratFromInt(ac));
+    R.cv = { status: 'ok', n: cv.n.toString(), d: cv.d.toString(), display: formatMinor(roundRational(cv.n, cv.d, 0)) };
+  }
 
-  // SV = EV - PV (needs PV)
-  if (R.pv.status === 'ok') {
+  // SV = EV - PV (needs both)
+  if (evUnavailable || R.pv.status !== 'ok') {
+    R.sv = { status: 'UNVERIFIABLE', reason: 'EV or PV unavailable' };
+  } else {
     const pv = rat(BigInt(R.pv.n), BigInt(R.pv.d));
     const sv = ratSub(ev, pv);
     R.sv = { status: 'ok', n: sv.n.toString(), d: sv.d.toString(), display: formatMinor(roundRational(sv.n, sv.d, 0)) };
-  } else {
-    R.sv = { status: 'UNVERIFIABLE', reason: 'missing PV blocks SV' };
   }
 
-  // CPI = EV / AC — nonpositive pooled AC invalidates
-  if (ac === 0n) {
+  // CPI = EV / AC (needs both, AC > 0)
+  if (evUnavailable || acUnavailable) {
+    R.cpi = { status: 'UNVERIFIABLE', reason: 'EV or AC unavailable' };
+  } else if (ac === 0n) {
     R.cpi = { status: 'ZERO_DENOMINATOR', reason: 'AC is zero' };
   } else if (ac < 0n) {
     R.cpi = { status: 'UNVERIFIABLE', reason: 'nonpositive AC invalidates CPI' };
@@ -105,9 +164,9 @@ export function analyzePackage(pkg, ctx) {
     R.cpi = { status: 'ok', n: cpi.n.toString(), d: cpi.d.toString(), display: formatRatio(cpi.n, cpi.d) };
   }
 
-  // SPI = EV / PV (needs PV)
-  if (R.pv.status !== 'ok') {
-    R.spi = { status: 'UNVERIFIABLE', reason: 'missing PV blocks SPI' };
+  // SPI = EV / PV (needs both)
+  if (evUnavailable || R.pv.status !== 'ok') {
+    R.spi = { status: 'UNVERIFIABLE', reason: 'EV or PV unavailable' };
   } else {
     const pv = rat(BigInt(R.pv.n), BigInt(R.pv.d));
     if (ratIsZero(pv)) {
@@ -118,16 +177,23 @@ export function analyzePackage(pkg, ctx) {
     }
   }
 
-  // EAC variants
+  // EAC variants (each needs EV unless noted)
   R.eac = {};
   R.formula_version = FORMULA_VERSION;
+  const eacBase = {
+    bac: ratFromInt(pkg.bac_minor), ev, ac, acUnavailable, evUnavailable,
+    pv: R.pv.status === 'ok' ? rat(BigInt(R.pv.n), BigInt(R.pv.d)) : null,
+    cpi: R.cpi, spi: R.spi, etcLines: pkg.etc_lines,
+    chargeSpan: ctx.chargeSpan, packageId: pkg.package_id, diagnostics,
+    citeLine, srcBytes,
+  };
   for (const variant of ctx.eacFormulas) {
-    R.eac[variant] = computeEac(variant, { bac: ratFromInt(pkg.bac_minor), ev, ac, pv: R.pv.status === 'ok' ? rat(BigInt(R.pv.n), BigInt(R.pv.d)) : null, cpi: R.cpi, spi: R.spi, etcLines: pkg.etc_lines, chargeSpan: ctx.chargeSpan, packageId: pkg.package_id, diagnostics });
+    R.eac[variant] = computeEac(variant, eacBase);
   }
 
-  // Contingency
+  // Contingency (citations verified per line)
   if (ctx.includeContingency && pkg.contingency) {
-    R.contingency = analyzeContingency(pkg.contingency, ctx, pkg.package_id, diagnostics);
+    R.contingency = analyzeContingency(pkg.contingency, { ...ctx, citeLine }, pkg.package_id, diagnostics);
   }
 
   // Header comparison — exact rational compare, no display tolerance
@@ -173,12 +239,21 @@ function compareHeaderMoney(R, h, field, computed, packageId, diagnostics) {
 }
 
 function computeEac(variant, p) {
-  const { bac, ev, ac, cpi, spi, etcLines } = p;
+  const { bac, ev, ac, acUnavailable, evUnavailable, cpi, spi, etcLines } = p;
   const fail = (code, reason) => {
     p.diagnostics.push(diag(code, 'medium', p.packageId, `EAC ${variant}: ${reason}`));
     return { status: code === 'UNSUPPORTED_FORMULA' ? 'UNSUPPORTED_FORMULA' : 'UNVERIFIABLE', reason };
   };
   const okOut = (r) => ({ status: 'ok', n: r.n.toString(), d: r.d.toString(), display: formatMinor(roundRational(r.n, r.d, 0)) });
+
+  // PC650-005: dependents of unavailable EV/AC are unavailable, never computed
+  // from a fallback.
+  if (evUnavailable) return fail('UNVERIFIABLE', 'EV unavailable');
+  if (acUnavailable && variant !== 'AC_PLUS_REMAINING_BUDGET') {
+    // AC_PLUS_REMAINING_BUDGET also needs AC; all variants need it here
+    return fail('UNVERIFIABLE', 'AC unavailable');
+  }
+  if (acUnavailable) return fail('UNVERIFIABLE', 'AC unavailable');
 
   switch (variant) {
     case 'BAC_OVER_CPI': {
@@ -203,10 +278,19 @@ function computeEac(variant, p) {
     }
     case 'BOTTOM_UP_ETC': {
       let etc = 0n;
-      for (const ln of etcLines) {
+      let etcUnavailable = false;
+      for (let i = 0; i < etcLines.length; i++) {
+        const ln = etcLines[i];
         p.chargeSpan();
-        etc += BigInt(ln.amount_minor);
+        const c = p.citeLine(ln, 'etc_lines', `$.etc_lines[${i}].amount_minor`);
+        if (c.status !== 'VERIFIED') {
+          etcUnavailable = true;
+          p.diagnostics.push(diag('CITATION_UNVERIFIED', 'high', p.packageId, `etc_lines ${ln.line_id}: citation unverified`));
+        } else {
+          etc += BigInt(ln.amount_minor);
+        }
       }
+      if (etcUnavailable) return fail('UNVERIFIABLE', 'ETC line citation unverified');
       return okOut(ratAdd(ratFromInt(ac), ratFromInt(etc)));
     }
     default:
@@ -216,10 +300,26 @@ function computeEac(variant, p) {
 
 function analyzeContingency(c, ctx, packageId, diagnostics) {
   let additions = 0n;
-  const drawIds = [];
   let draws = 0n;
-  for (const a of c.additions) { ctx.chargeSpan(); additions += BigInt(a.amount_minor); }
-  for (const d of c.draws) { ctx.chargeSpan(); draws += BigInt(d.amount_minor); drawIds.push(d.line_id); }
+  let contUnavailable = false;
+  for (let i = 0; i < c.additions.length; i++) {
+    const a = c.additions[i];
+    ctx.chargeSpan();
+    const ci = ctx.citeLine(a, 'contingency.additions', `$.contingency.additions[${i}].amount_minor`);
+    if (ci.status !== 'VERIFIED') contUnavailable = true;
+    else additions += BigInt(a.amount_minor);
+  }
+  for (let i = 0; i < c.draws.length; i++) {
+    const d = c.draws[i];
+    ctx.chargeSpan();
+    const ci = ctx.citeLine(d, 'contingency.draws', `$.contingency.draws[${i}].amount_minor`);
+    if (ci.status !== 'VERIFIED') contUnavailable = true;
+    else draws += BigInt(d.amount_minor);
+  }
+  if (contUnavailable) {
+    diagnostics.push(diag('CITATION_UNVERIFIED', 'high', packageId, 'contingency line citation unverified'));
+    return { status: 'UNVERIFIABLE', reason: 'contingency line citation unverified' };
+  }
   const original = BigInt(c.original_minor);
   const remaining = original + additions - draws;
   const out = {
@@ -228,7 +328,6 @@ function analyzeContingency(c, ctx, packageId, diagnostics) {
     draws_minor: draws.toString(),
     remaining_minor: remaining.toString(),
     remaining_display: formatMinor(remaining),
-    draw_line_ids: drawIds,
     attribution_note: 'additions carry simulated approval attribution only, not authority to spend',
   };
   const denom = original + additions;

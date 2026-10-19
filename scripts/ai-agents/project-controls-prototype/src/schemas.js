@@ -46,7 +46,8 @@ function checkPercent(p, field, errors) {
 }
 
 /** Validate a SourceRef pin. */
-export function checkSourceRef(ref, errors, prefix) {
+export function checkSourceRef(ref, errors, prefix, budget) {
+  if (budget) budget.chargeObject();
   if (!isRecord(ref)) { errors.push(`${prefix}: source_ref must be an object`); return false; }
   const allowed = new Set(['repo', 'path', 'commit', 'blob', 'algorithm', 'revision']);
   for (const k of Object.keys(ref)) {
@@ -64,8 +65,22 @@ export function checkSourceRef(ref, errors, prefix) {
   return ok;
 }
 
-/** Validate one work-package record. Returns {ok, errors}. */
-export function checkPackage(pkg, errors, seenIds) {
+/** Validate a citation label. The runtime derives the VERIFIED citation from
+ * source byte spans; the input label is descriptive only. */
+function checkCitation(c, prefix, errors) {
+  if (typeof c !== 'string' || c.length === 0) { errors.push(`${prefix}: citation must be a non-empty string label`); return false; }
+  return true;
+}
+
+// Closed kind for negative actual-cost adjustments. Negative amounts are
+// only permitted on actual-cost lines with this kind and a verified citation.
+export const ADJUSTMENT_KIND = 'ADJUSTMENT';
+
+/** Validate one work-package record. Returns {ok, errors}.
+ * budget: Resolver for per-candidate charging (PC650-001). lineRegistry: a
+ * package-wide Set for line-identity separation (PC650-006). */
+export function checkPackage(pkg, errors, seenIds, budget, lineRegistry) {
+  if (budget) budget.chargeObject();
   const p = `package ${pkg && pkg.package_id ? JSON.stringify(pkg.package_id) : '?'}`;
   if (!isRecord(pkg)) { errors.push(`${p}: must be an object`); return false; }
   const allowed = new Set([
@@ -91,52 +106,75 @@ export function checkPackage(pkg, errors, seenIds) {
     errors.push(`${p}: bac_minor must be a non-negative safe integer`); ok = false;
   }
   if (pkg.planned_percent !== undefined && pkg.planned_percent !== null) {
+    if (budget) budget.chargeObject();
     if (!checkPercent(pkg.planned_percent, `${p}.planned_percent`, errors)) ok = false;
   }
+  if (budget) budget.chargeObject();
   if (!checkPercent(pkg.claimed_actual_percent, `${p}.claimed_actual_percent`, errors)) ok = false;
   if (pkg.evidenced_ev_minor !== undefined && pkg.evidenced_ev_minor !== null) {
+    if (budget) budget.chargeObject();
     if (!isSafeInt(pkg.evidenced_ev_minor) || pkg.evidenced_ev_minor < 0) {
       errors.push(`${p}: evidenced_ev_minor must be non-negative safe integer`); ok = false;
     }
   }
-  ok = checkMoneyLines(pkg.actual_cost_lines, `${p}.actual_cost_lines`, errors, false) && ok;
-  ok = checkMoneyLines(pkg.etc_lines, `${p}.etc_lines`, errors, true) && ok;
+  const lr = lineRegistry || new Set();
+  ok = checkMoneyLines(pkg.actual_cost_lines, `${p}.actual_cost_lines`, errors, { budget, registry: lr, population: 'actual_cost', allowNegative: ADJUSTMENT_KIND }) && ok;
+  ok = checkMoneyLines(pkg.etc_lines, `${p}.etc_lines`, errors, { budget, registry: lr, population: 'etc', allowNegative: null }) && ok;
   if (pkg.contingency !== undefined && pkg.contingency !== null) {
-    ok = checkContingency(pkg.contingency, `${p}.contingency`, errors) && ok;
+    ok = checkContingency(pkg.contingency, `${p}.contingency`, errors, budget, lr) && ok;
   }
   if (pkg.header_claims !== undefined && pkg.header_claims !== null) {
-    ok = checkHeaderClaims(pkg.header_claims, `${p}.header_claims`, errors) && ok;
+    if (budget) budget.chargeObject();
+    ok = checkHeaderClaims(pkg.header_claims, `${p}.header_claims`, errors, budget) && ok;
   }
-  if (!checkSourceRef(pkg.source_ref, errors, p)) ok = false;
+  if (!checkSourceRef(pkg.source_ref, errors, p, budget)) ok = false;
   if (pkg.label !== undefined && typeof pkg.label !== 'string') {
     errors.push(`${p}: label must be string`); ok = false;
   }
   return ok;
 }
 
-function checkMoneyLines(lines, prefix, errors, allowZero) {
+function checkMoneyLines(lines, prefix, errors, opts) {
+  const { budget, registry, population, allowNegative } = opts || {};
+  if (budget) budget.chargeObject();
   if (!Array.isArray(lines)) { errors.push(`${prefix}: must be an array`); return false; }
   let ok = true;
-  const seen = new Set();
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
     const lp = `${prefix}[${i}]`;
+    if (budget) budget.chargeObject();
     if (!isRecord(ln)) { errors.push(`${lp}: must be an object`); ok = false; continue; }
     const allowed = new Set(['line_id', 'amount_minor', 'kind', 'citation']);
     for (const k of Object.keys(ln)) {
       if (!allowed.has(k)) { errors.push(`${lp}: unknown property ${k}`); ok = false; }
     }
     if (typeof ln.line_id !== 'string' || ln.line_id.length === 0) { errors.push(`${lp}: line_id required`); ok = false; }
-    else if (seen.has(ln.line_id)) { errors.push(`${lp}: duplicate line_id`); ok = false; }
-    else seen.add(ln.line_id);
+    else if (registry && registry.has(`${population}:${ln.line_id}`)) {
+      // same id reused inside one population — duplicate
+      errors.push(`${lp}: duplicate line_id within ${population}`); ok = false;
+    } else if (registry && [...registry].some((k) => k.endsWith(`:${ln.line_id}`))) {
+      // same bare id in a DIFFERENT population — ambiguous overlap (PC650-006)
+      errors.push(`${lp}: line_id ${JSON.stringify(ln.line_id)} overlaps another accounting population; ambiguous`); ok = false;
+    } else if (registry) {
+      registry.add(`${population}:${ln.line_id}`);
+    }
     if (!isSafeInt(ln.amount_minor)) { errors.push(`${lp}: amount_minor must be a safe integer`); ok = false; }
+    else if (ln.amount_minor < 0) {
+      // Negative amounts: only actual-cost adjustments with the closed kind.
+      if (population === 'actual_cost' && ln.kind === allowNegative) {
+        // permitted: cited adjustment; citation verified at runtime
+      } else {
+        errors.push(`${lp}: negative amount_minor only permitted for actual-cost kind ${JSON.stringify(ADJUSTMENT_KIND)}`); ok = false;
+      }
+    }
     if (typeof ln.kind !== 'string' || ln.kind.length === 0) { errors.push(`${lp}: kind required`); ok = false; }
-    if (typeof ln.citation !== 'string' || ln.citation.length === 0) { errors.push(`${lp}: citation required`); ok = false; }
+    if (!checkCitation(ln.citation, `${lp}.citation`, errors)) ok = false;
   }
   return ok;
 }
 
-function checkContingency(c, prefix, errors) {
+function checkContingency(c, prefix, errors, budget, lineRegistry) {
+  if (budget) budget.chargeObject();
   if (!isRecord(c)) { errors.push(`${prefix}: must be an object`); return false; }
   const allowed = new Set(['original_minor', 'additions', 'draws', 'citation']);
   let ok = true;
@@ -146,14 +184,15 @@ function checkContingency(c, prefix, errors) {
   if (!isSafeInt(c.original_minor) || c.original_minor < 0) { errors.push(`${prefix}: original_minor must be non-negative safe integer`); ok = false; }
   if (!Array.isArray(c.additions) || !Array.isArray(c.draws)) { errors.push(`${prefix}: additions/draws must be arrays`); ok = false; }
   else {
-    ok = checkMoneyLines(c.additions, `${prefix}.additions`, errors, true) && ok;
-    ok = checkMoneyLines(c.draws, `${prefix}.draws`, errors, true) && ok;
+    ok = checkMoneyLines(c.additions, `${prefix}.additions`, errors, { budget, registry: lineRegistry, population: 'contingency_addition', allowNegative: null }) && ok;
+    ok = checkMoneyLines(c.draws, `${prefix}.draws`, errors, { budget, registry: lineRegistry, population: 'contingency_draw', allowNegative: null }) && ok;
   }
-  if (typeof c.citation !== 'string' || c.citation.length === 0) { errors.push(`${prefix}: citation required`); ok = false; }
+  if (!checkCitation(c.citation, `${prefix}.citation`, errors)) ok = false;
   return ok;
 }
 
-function checkHeaderClaims(h, prefix, errors) {
+function checkHeaderClaims(h, prefix, errors, budget) {
+  if (budget) budget.chargeObject();
   if (!isRecord(h)) { errors.push(`${prefix}: must be an object`); return false; }
   const allowed = new Set(['cpi', 'spi', 'cv_minor', 'sv_minor', 'eac_minor', 'source']);
   let ok = true;
@@ -162,23 +201,30 @@ function checkHeaderClaims(h, prefix, errors) {
   }
   for (const f of ['cpi', 'spi']) {
     if (h[f] !== undefined && h[f] !== null) {
+      if (budget) budget.chargeObject();
       if (!isRecord(h[f]) || !isSafeInt(h[f].num) || !isSafeInt(h[f].den) || h[f].den <= 0) {
         errors.push(`${prefix}.${f}: must be rational {num, den}, den > 0`); ok = false;
       }
     }
   }
   for (const f of ['cv_minor', 'sv_minor', 'eac_minor']) {
-    if (h[f] !== undefined && h[f] !== null && !isSafeInt(h[f])) {
-      errors.push(`${prefix}.${f}: must be safe integer minor units`); ok = false;
+    if (h[f] !== undefined && h[f] !== null) {
+      if (budget) budget.chargeObject();
+      if (!isSafeInt(h[f])) {
+        errors.push(`${prefix}.${f}: must be safe integer minor units`); ok = false;
+      }
     }
   }
   if (h.source !== undefined && typeof h.source !== 'string') { errors.push(`${prefix}.source must be string`); ok = false; }
   return ok;
 }
 
-/** Validate the task envelope. Returns {ok, errors}. */
-export function checkTask(task) {
+/** Validate the task envelope. Returns {ok, errors}.
+ * budget: charged for the task root, each fixture ref and the options
+ * candidate before inspection (PC650-001). */
+export function checkTask(task, budget) {
   const errors = [];
+  if (budget) budget.chargeObject();
   if (!isRecord(task)) return { ok: false, errors: ['task: must be an object'] };
   const allowed = new Set(['schema_version', 'task_id', 'operation', 'fixture_refs', 'options']);
   for (const k of Object.keys(task)) {
@@ -191,12 +237,14 @@ export function checkTask(task) {
     errors.push('task: fixture_refs must be a non-empty array');
   } else {
     for (const r of task.fixture_refs) {
+      if (budget) budget.chargeObject();
       if (typeof r !== 'string' || r.length === 0) errors.push('task: fixture_refs entries must be non-empty strings');
     }
   }
   if (!isRecord(task.options)) {
     errors.push('task: options must be an object');
   } else {
+    if (budget) budget.chargeObject();
     const oallowed = new Set(['ev_mode', 'eac_formulas', 'include_contingency', 'compare_headers']);
     for (const k of Object.keys(task.options)) {
       if (!oallowed.has(k)) errors.push(`task.options: unknown property ${k}`);
@@ -208,6 +256,7 @@ export function checkTask(task) {
       errors.push('task.options: eac_formulas must be an array');
     } else {
       for (const f of task.options.eac_formulas) {
+        if (budget) budget.chargeObject();
         if (!EAC_VARIANTS.has(f)) errors.push(`task.options: unknown eac_formula ${JSON.stringify(f)}`);
       }
     }
@@ -217,20 +266,30 @@ export function checkTask(task) {
   return { ok: errors.length === 0, errors };
 }
 
-/** Validate the host-injected context envelope. Returns {ok, errors}. */
-export function checkContext(ctx) {
+/** Validate the host-injected context envelope. Returns {ok, errors}.
+ * budget: charged per candidate before inspection (PC650-001). */
+export function checkContext(ctx, budget) {
   const errors = [];
+  if (budget) budget.chargeObject();
   if (!isRecord(ctx)) return { ok: false, errors: ['context: must be an object'] };
   const allowed = new Set(['clock', 'criteria_version', 'principal', 'grants', 'request_authority', 'fixtureStore']);
   for (const k of Object.keys(ctx)) {
     if (!allowed.has(k)) errors.push(`context: unknown property ${k}`);
   }
+  if (budget) budget.chargeObject();
   if (!isRecord(ctx.clock) || typeof ctx.clock.now !== 'string' || !checkInstant(ctx.clock.now)) {
     errors.push('context: clock.now must be a UTC instant with Z');
   }
   if (ctx.criteria_version !== 'controls-v1') errors.push('context: criteria_version must be "controls-v1"');
+  if (budget) budget.chargeObject();
   if (!isRecord(ctx.principal) || typeof ctx.principal.id !== 'string') errors.push('context: principal.id required');
   if (!Array.isArray(ctx.grants)) errors.push('context: grants must be an array');
+  else {
+    for (const g of ctx.grants) {
+      if (budget) budget.chargeObject();
+      void g;
+    }
+  }
   if (typeof ctx.request_authority !== 'string' || ctx.request_authority.length === 0) {
     errors.push('context: request_authority must be a non-empty string');
   }

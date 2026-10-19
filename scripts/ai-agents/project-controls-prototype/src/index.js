@@ -26,10 +26,19 @@ export function run(task, context) {
 }
 
 function runInner(task, context, started) {
-  // 1. Validate task + context envelopes.
-  const tc = checkTask(task);
+  // 0. Invocation-wide budget BEFORE any traversal (PC650-001). Every
+  // candidate below is charged before inspection under one monotonic counter.
+  const resolver = new Resolver(context.fixtureStore || {});
+  resolver.chargeInputBytes(utf8Length(canonicalStringify(task)));
+  // context metadata bytes (fixtureStore bytes are charged per resolve)
+  const { fixtureStore, ...ctxMeta } = context || {};
+  void fixtureStore;
+  resolver.chargeInputBytes(utf8Length(canonicalStringify(ctxMeta)));
+
+  // 1. Validate task + context envelopes (charged per candidate).
+  const tc = checkTask(task, resolver);
   if (!tc.ok) return invalidInput(task, tc.errors);
-  const cc = checkContext(context);
+  const cc = checkContext(context, resolver);
   if (!cc.ok) return invalidInput(task, cc.errors);
 
   // Authority: only jason or his registered muse relay.
@@ -38,7 +47,6 @@ function runInner(task, context, started) {
   }
 
   const options = task.options;
-  const resolver = new Resolver(context.fixtureStore || {});
   const diagnostics = [];
   const quarantined = [];
   const sourceRefs = [];
@@ -52,18 +60,17 @@ function runInner(task, context, started) {
     try {
       resolved = resolver.resolve(ref);
     } catch (e) {
-      if (e.code === 'READ_DENIED') {
-        diagnostics.push(mkdiag('READ_DENIED', 'high', null, `fixture ${ref}: not registered`));
-        partial = true;
-        continue;
+      if (e.code === 'READ_DENIED' || e.code === 'HASH_MISMATCH' || e.code === 'INVALID_INPUT') {
+        // PC650-003: denial/corruption refuses the whole invocation.
+        throw e;
       }
-      throw e; // BUDGET_EXCEEDED / INPUT_LIMIT / HASH_MISMATCH -> refusal
+      throw e; // BUDGET_EXCEEDED / INPUT_LIMIT -> refusal
     }
     const rec = resolved.record;
     if (!rec || rec.kind !== 'work-package') {
-      diagnostics.push(mkdiag('INVALID_INPUT', 'high', ref, 'fixture is not a work-package record'));
-      partial = true;
-      continue;
+      const e = new Error(`INVALID_INPUT: fixture ${ref} is not a work-package record`);
+      e.code = 'INVALID_INPUT';
+      throw e;
     }
 
     // 3. Injection scan over textual fields (one span per package sweep).
@@ -78,35 +85,41 @@ function runInner(task, context, started) {
       diagnostics.push(mkdiag('INSTRUCTION_INJECTION', 'high', rec.package_id || ref,
         `quarantined ${qHits.length} seeded injection hit(s): ${[...new Set(qHits.map((h) => h.family_id))].join(',')}`));
       // Quarantined sources cannot support claims: skip package analysis, keep accounting.
+      // PARTIAL is reserved for valid records with quarantine/insufficient evidence.
       partial = true;
       continue;
     }
 
-    // 4. Schema validation of the package record.
+    // 4. Schema validation of the package record (charged per candidate).
+    // PC650-003: structural corruption refuses; never a partial domain payload.
+    // PC650-006: package-wide line-identity registry across populations.
     const errs = [];
-    if (!checkPackage(rec, errs, seenPkgIds)) {
-      const dup = errs.some((e) => e.includes('duplicate'));
-      diagnostics.push(mkdiag(dup ? 'INVALID_INPUT' : 'INVALID_INPUT', 'high', rec.package_id || ref, errs.join('; ')));
-      partial = true;
-      continue;
+    const lineRegistry = new Set();
+    if (!checkPackage(rec, errs, seenPkgIds, resolver, lineRegistry)) {
+      const e = new Error(`INVALID_INPUT: package ${rec.package_id || ref}: ${errs.join('; ')}`);
+      e.code = 'INVALID_INPUT';
+      throw e;
     }
 
     // 5. Provenance: verify the source_ref pin against the store.
     const v = verifySourceRef(rec.source_ref, resolver);
     if (!v.ok) {
-      diagnostics.push(mkdiag('SOURCE_UNVERIFIED', 'high', rec.package_id, `source_ref pin failed: ${v.reason}`));
-      partial = true;
-      continue;
+      const e = new Error(`SOURCE_UNVERIFIED: package ${rec.package_id}: ${v.reason}`);
+      e.code = 'SOURCE_UNVERIFIED';
+      throw e;
     }
     sourceRefs.push({ ...rec.source_ref, verification: 'VERIFIED' });
 
-    // 6. Domain analysis.
+    // 6. Domain analysis (citations verified against source bytes).
     const ctx = {
       evMode: options.ev_mode,
       eacFormulas: options.eac_formulas,
       includeContingency: options.include_contingency,
       compareHeaders: options.compare_headers,
       chargeSpan: () => resolver.chargeSpan(),
+      sourceBytes: resolved.bytes,
+      sourceSpans: resolved.spans,
+      sourceRef: rec.source_ref,
     };
     try {
       const { result, diagnostics: d2 } = analyzePackage(rec, ctx);
@@ -126,8 +139,20 @@ function runInner(task, context, started) {
     for (const d of pr.diagnostics) diagnostics.push(d);
   }
 
-  // 8. Output budget: records + bytes on the exact final envelope.
-  for (const p of packages) resolver.chargeOutputRecord();
+  // 8. Output budget: EVERY public output record counts (PC650-001).
+  // packages, EAC entries, header comparisons, contingency, pools,
+  // diagnostics, quarantined sources, source refs.
+  for (const p of packages) {
+    resolver.chargeOutputRecord(); // the package record
+    for (const k of Object.keys(p.eac || {})) { resolver.chargeOutputRecord(); void k; }
+    for (const hc of p.header_comparison || []) { resolver.chargeOutputRecord(); void hc; }
+    if (p.contingency) resolver.chargeOutputRecord();
+  }
+  for (const pl of pools) { resolver.chargeOutputRecord(); void pl; }
+  for (const d of diagnostics) { resolver.chargeOutputRecord(); void d; }
+  for (const q of quarantined) { resolver.chargeOutputRecord(); void q; }
+  for (const s of sourceRefs) { resolver.chargeOutputRecord(); void s; }
+
   const report = {
     formula_note: 'All forecast values are SYNTHETIC ARITHMETIC EXERCISE — not a project forecast.',
     packages,

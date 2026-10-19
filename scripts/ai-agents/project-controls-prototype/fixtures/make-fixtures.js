@@ -79,7 +79,7 @@ pkg({
 pkg({
   kind: 'work-package', package_id: 'pkg-negadj-01', currency: 'USD', bac_minor: 1000000,
   planned_percent: { num: 1, den: 1 }, claimed_actual_percent: { num: 9, den: 10 },
-  actual_cost_lines: [L('ac-30', 950000, 'labor'), L('ac-31', -50000, 'credit-memo')],
+  actual_cost_lines: [L('ac-30', 950000, 'labor'), L('ac-31', -50000, 'ADJUSTMENT')],
   etc_lines: [], contingency: null, header_claims: null, label: 'SYNTHETIC credit-adjustment package',
 });
 

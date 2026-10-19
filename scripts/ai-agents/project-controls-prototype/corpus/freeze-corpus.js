@@ -16,11 +16,16 @@ const files = [
   'fixtures/make-fixtures.js',
   'corpus/battery.json',
   'corpus/make-battery.js',
+  'corpus/freeze-corpus.js',
   'tests/run-battery.js',
+  'tests/bootstrap.js',
   'runner/run-manual.js',
   'package.json',
   'README.md',
 ];
+for (const f of readdirSync(join(root, 'src'))) {
+  if (f.endsWith('.js')) files.push(`src/${f}`);
+}
 for (const f of readdirSync(join(root, 'tests'))) {
   if (f.endsWith('.test.js')) files.push(`tests/${f}`);
 }

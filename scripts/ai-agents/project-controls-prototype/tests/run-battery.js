@@ -10,9 +10,22 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sha256File = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 
-// 1. Manifest verification first.
+// 0. Host-approved digest is mandatory (PC650-002); the repo file is not a
+// trust root by itself.
+const approved = process.env.PC_APPROVED_DIGEST;
+if (!approved || !/^[0-9a-f]{64}$/.test(approved)) {
+  console.error('PC_APPROVED_DIGEST (64-hex) required from host — refusing to run');
+  process.exit(3);
+}
+
+// 1. Manifest verification first: repo digest file must match the host root,
+// then every listed file must match its pin.
 const manifest = JSON.parse(readFileSync(join(root, 'corpus', 'manifest.json'), 'utf8'));
 const manifestDigest = readFileSync(join(root, 'corpus', 'corpus_digest.txt'), 'utf8').trim();
+if (manifestDigest !== approved) {
+  console.error('MANIFEST DIGEST MISMATCH vs host-approved root — refusing to run');
+  process.exit(2);
+}
 if (sha256File(join(root, 'corpus', 'manifest.json')) !== manifestDigest) {
   console.error('MANIFEST DIGEST MISMATCH — refusing to run');
   process.exit(2);

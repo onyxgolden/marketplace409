@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { utf8Length } from './canonical.js';
+import { parseWithSpans } from './spans.js';
 
 export const LIMITS = {
   maxInputBytes: 256 * 1024,
@@ -86,7 +87,9 @@ export class Resolver {
   /**
    * Resolve a fixture ref to its parsed object. Charges the object and its
    * bytes BEFORE inspection; verifies SHA-256 of registered bytes.
-   * Returns { fixture_id, record } or throws {code: READ_DENIED|HASH_MISMATCH}.
+   * Parses with byte-span tracking so every operand can carry a verified
+   * citation. Returns { fixture_id, record, spans, bytes } or throws
+   * {code: READ_DENIED|HASH_MISMATCH}.
    */
   resolve(fixtureId) {
     this.chargeObject();
@@ -103,16 +106,16 @@ export class Resolver {
       e.code = 'HASH_MISMATCH';
       throw e;
     }
-    let record;
+    let parsed;
     try {
-      record = JSON.parse(entry.bytes);
+      parsed = parseWithSpans(entry.bytes);
     } catch {
       const e = new Error(`INVALID_INPUT: fixture ${fixtureId} is not JSON`);
       e.code = 'INVALID_INPUT';
       throw e;
     }
-    checkDepth(record, 0);
-    return { fixture_id: fixtureId, record };
+    checkDepth(parsed.value, 0);
+    return { fixture_id: fixtureId, record: parsed.value, spans: parsed.spans, bytes: entry.bytes };
   }
 }
 
