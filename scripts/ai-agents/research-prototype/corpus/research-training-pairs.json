@@ -1,0 +1,234 @@
+[
+  {
+    "name": "supported",
+    "bundle_ref": {
+      "repo": "research-sources",
+      "path": "training/supported.json",
+      "commit": "2791f1fe9eadd3a2012a9d3de87f869e22f83ba5",
+      "blob": "4a57cf9a342dcb28aca23ad1071ac375bfa7b9b7",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "bundle_text": "[{\"record\":\"document\",\"doc_id\":\"doc-t1\",\"title\":\"Training T1\",\"passages\":[{\"passage_id\":\"p1\",\"text\":\"Synthetic evaluation prose. All entities, figures and events in this passage are invented for prototype testing. ACME-CORP | q3-revenue | 1200000 | fy-2026-q3\",\"assertions\":[{\"assertion_id\":\"a1\",\"subject\":\"ACME-CORP\",\"predicate\":\"q3-revenue\",\"value\":1200000,\"value_type\":\"number\",\"scope\":\"fy-2026-q3\",\"polarity\":\"positive\",\"span\":{\"start_byte\":113,\"end_byte\":158}}],\"citations\":[]}]},{\"record\":\"document\",\"doc_id\":\"doc-t2\",\"title\":\"Training T2\",\"passages\":[{\"passage_id\":\"p1\",\"text\":\"Second synthetic paragraph, likewise invented. No real-world facts are asserted anywhere in this fixture. ACME-CORP | q3-revenue | 1200000 | fy-2026-q3\",\"assertions\":[{\"assertion_id\":\"a2\",\"subject\":\"ACME-CORP\",\"predicate\":\"q3-revenue\",\"value\":1200000,\"value_type\":\"number\",\"scope\":\"fy-2026-q3\",\"polarity\":\"positive\",\"span\":{\"start_byte\":106,\"end_byte\":151}}],\"citations\":[]}]}]",
+    "requested_claims": [
+      {
+        "claim_id": "tc-supported",
+        "atoms": [
+          {
+            "subject": "ACME-CORP",
+            "predicate": "q3-revenue",
+            "value": 1200000,
+            "value_type": "number",
+            "scope": "fy-2026-q3",
+            "polarity": "positive"
+          }
+        ],
+        "origin_passage_refs": [
+          {
+            "doc_id": "doc-t1",
+            "passage_id": "p1"
+          }
+        ]
+      }
+    ],
+    "provenance_registry": {
+      "doc-t1|p1": {
+        "provenance_group_id": "grp-doc-t1",
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/supported.json",
+            "commit": "2791f1fe9eadd3a2012a9d3de87f869e22f83ba5",
+            "blob": "4a57cf9a342dcb28aca23ad1071ac375bfa7b9b7",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
+      },
+      "doc-t2|p1": {
+        "provenance_group_id": "grp-doc-t2",
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/supported.json",
+            "commit": "2791f1fe9eadd3a2012a9d3de87f869e22f83ba5",
+            "blob": "4a57cf9a342dcb28aca23ad1071ac375bfa7b9b7",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
+      }
+    },
+    "expected_status": "supported",
+    "note": "Invented training fixture. Statuses are relative to the synthetic bundle only; never real-world truth."
+  },
+  {
+    "name": "attributed-only",
+    "bundle_ref": {
+      "repo": "research-sources",
+      "path": "training/attributed-only.json",
+      "commit": "7396933812b1d43a7cb3d7aa46e3fefe42efb08f",
+      "blob": "012e0d685f2b575376849adb6c20197ec2c6c223",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "bundle_text": "[{\"record\":\"document\",\"doc_id\":\"doc-t1\",\"title\":\"Training T1\",\"passages\":[{\"passage_id\":\"p1\",\"text\":\"Synthetic evaluation prose. All entities, figures and events in this passage are invented for prototype testing. ACME-CORP | q3-revenue | 1200000 | fy-2026-q3\",\"assertions\":[{\"assertion_id\":\"a1\",\"subject\":\"ACME-CORP\",\"predicate\":\"q3-revenue\",\"value\":1200000,\"value_type\":\"number\",\"scope\":\"fy-2026-q3\",\"polarity\":\"positive\",\"span\":{\"start_byte\":113,\"end_byte\":158}}],\"citations\":[]}]}]",
+    "requested_claims": [
+      {
+        "claim_id": "tc-attributed",
+        "atoms": [
+          {
+            "subject": "ACME-CORP",
+            "predicate": "q3-revenue",
+            "value": 1200000,
+            "value_type": "number",
+            "scope": "fy-2026-q3",
+            "polarity": "positive"
+          }
+        ],
+        "origin_passage_refs": [
+          {
+            "doc_id": "doc-t1",
+            "passage_id": "p1"
+          }
+        ]
+      }
+    ],
+    "provenance_registry": {
+      "doc-t1|p1": {
+        "provenance_group_id": "grp-doc-t1",
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/attributed-only.json",
+            "commit": "7396933812b1d43a7cb3d7aa46e3fefe42efb08f",
+            "blob": "012e0d685f2b575376849adb6c20197ec2c6c223",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
+      }
+    },
+    "expected_status": "attributed-only",
+    "note": "Invented training fixture. Statuses are relative to the synthetic bundle only; never real-world truth."
+  },
+  {
+    "name": "contradicted",
+    "bundle_ref": {
+      "repo": "research-sources",
+      "path": "training/contradicted.json",
+      "commit": "38f5998027b89ad00aab00e14a21fa4c7434c43a",
+      "blob": "3ee0e8de3fefe4f5e1a11450f5e639b03d1eceaa",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "bundle_text": "[{\"record\":\"document\",\"doc_id\":\"doc-t1\",\"title\":\"Training T1\",\"passages\":[{\"passage_id\":\"p1\",\"text\":\"Synthetic evaluation prose. All entities, figures and events in this passage are invented for prototype testing. ACME-CORP | q3-revenue | 1200000 | fy-2026-q3\",\"assertions\":[{\"assertion_id\":\"a1\",\"subject\":\"ACME-CORP\",\"predicate\":\"q3-revenue\",\"value\":1200000,\"value_type\":\"number\",\"scope\":\"fy-2026-q3\",\"polarity\":\"positive\",\"span\":{\"start_byte\":113,\"end_byte\":158}}],\"citations\":[]}]},{\"record\":\"document\",\"doc_id\":\"doc-t2\",\"title\":\"Training T2\",\"passages\":[{\"passage_id\":\"p1\",\"text\":\"Second synthetic paragraph, likewise invented. No real-world facts are asserted anywhere in this fixture. ACME-CORP | q3-revenue | 800000 | fy-2026-q3\",\"assertions\":[{\"assertion_id\":\"a2\",\"subject\":\"ACME-CORP\",\"predicate\":\"q3-revenue\",\"value\":800000,\"value_type\":\"number\",\"scope\":\"fy-2026-q3\",\"polarity\":\"positive\",\"span\":{\"start_byte\":106,\"end_byte\":150}}],\"citations\":[]}]}]",
+    "requested_claims": [
+      {
+        "claim_id": "tc-contradicted",
+        "atoms": [
+          {
+            "subject": "ACME-CORP",
+            "predicate": "q3-revenue",
+            "value": 1200000,
+            "value_type": "number",
+            "scope": "fy-2026-q3",
+            "polarity": "positive"
+          }
+        ],
+        "origin_passage_refs": [
+          {
+            "doc_id": "doc-t1",
+            "passage_id": "p1"
+          }
+        ]
+      }
+    ],
+    "provenance_registry": {
+      "doc-t1|p1": {
+        "provenance_group_id": "grp-doc-t1",
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/contradicted.json",
+            "commit": "38f5998027b89ad00aab00e14a21fa4c7434c43a",
+            "blob": "3ee0e8de3fefe4f5e1a11450f5e639b03d1eceaa",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
+      },
+      "doc-t2|p1": {
+        "provenance_group_id": "grp-doc-t2",
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/contradicted.json",
+            "commit": "38f5998027b89ad00aab00e14a21fa4c7434c43a",
+            "blob": "3ee0e8de3fefe4f5e1a11450f5e639b03d1eceaa",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
+      }
+    },
+    "expected_status": "contradicted",
+    "note": "Invented training fixture. Statuses are relative to the synthetic bundle only; never real-world truth."
+  },
+  {
+    "name": "unsupported",
+    "bundle_ref": {
+      "repo": "research-sources",
+      "path": "training/unsupported.json",
+      "commit": "e6f372f4983b61571377bb30bca4e992a0619a1d",
+      "blob": "012e0d685f2b575376849adb6c20197ec2c6c223",
+      "algorithm": "git-sha1",
+      "revision": "v1"
+    },
+    "bundle_text": "[{\"record\":\"document\",\"doc_id\":\"doc-t1\",\"title\":\"Training T1\",\"passages\":[{\"passage_id\":\"p1\",\"text\":\"Synthetic evaluation prose. All entities, figures and events in this passage are invented for prototype testing. ACME-CORP | q3-revenue | 1200000 | fy-2026-q3\",\"assertions\":[{\"assertion_id\":\"a1\",\"subject\":\"ACME-CORP\",\"predicate\":\"q3-revenue\",\"value\":1200000,\"value_type\":\"number\",\"scope\":\"fy-2026-q3\",\"polarity\":\"positive\",\"span\":{\"start_byte\":113,\"end_byte\":158}}],\"citations\":[]}]}]",
+    "requested_claims": [
+      {
+        "claim_id": "tc-unsupported",
+        "atoms": [
+          {
+            "subject": "ACME-CORP",
+            "predicate": "q3-revenue",
+            "value": 9999999,
+            "value_type": "number",
+            "scope": "fy-2026-q3",
+            "polarity": "positive"
+          }
+        ],
+        "origin_passage_refs": [
+          {
+            "doc_id": "doc-t1",
+            "passage_id": "p1"
+          }
+        ]
+      }
+    ],
+    "provenance_registry": {
+      "doc-t1|p1": {
+        "provenance_group_id": "grp-doc-t1",
+        "derivation_links": [],
+        "applies_to": [
+          {
+            "repo": "research-sources",
+            "path": "training/unsupported.json",
+            "commit": "e6f372f4983b61571377bb30bca4e992a0619a1d",
+            "blob": "012e0d685f2b575376849adb6c20197ec2c6c223",
+            "algorithm": "git-sha1",
+            "revision": "v1"
+          }
+        ]
+      }
+    },
+    "expected_status": "unsupported",
+    "note": "Invented training fixture. Statuses are relative to the synthetic bundle only; never real-world truth."
+  }
+]

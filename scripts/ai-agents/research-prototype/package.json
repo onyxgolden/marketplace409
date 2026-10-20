@@ -1,0 +1,6 @@
+{
+  "description": "Research Agent Phase 2 slice 1 synthetic prototype — claim-by-claim attribution with separate fidelity and corroboration axes, precedence-based research status (contradicted > supported > attributed-only > unsupported), contradiction surfacing, citation-cycle and self-certification neutralization. Pure Node 24 ESM, zero runtime dependencies, offline, fixture-only.",
+  "name": "research-agent-prototype",
+  "type": "module",
+  "version": "1.0.0"
+}
