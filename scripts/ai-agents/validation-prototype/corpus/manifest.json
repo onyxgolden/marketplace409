@@ -1,0 +1,89 @@
+{
+  "manifest_version": "1",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "fa53190a38f54ecfbd8fdb52f29037850398784fa11d86aa0da62a43315f45eb"
+    },
+    {
+      "path": "corpus/battery.json",
+      "sha256": "86cf877f934ecefccb9b09100ab0047e262a973835a597e10167c38b1ba34fc0"
+    },
+    {
+      "path": "corpus/freeze-corpus.js",
+      "sha256": "6f53d76232d3476a54d3c154904354ae3cbb507e7ead406142654196b59fdb4a"
+    },
+    {
+      "path": "corpus/make-battery.js",
+      "sha256": "376124c0711fa1324b13d1b0df46615b7b0b06f4a94ab7f192799d49713ee36e"
+    },
+    {
+      "path": "corpus/oracle.js",
+      "sha256": "b5ce5aaa4f996dbed99c2032d9fcad25b10e197a6b213e7a0516c16b534f42ae"
+    },
+    {
+      "path": "fixtures/make-fixtures.js",
+      "sha256": "21f4ca58140592717b95e912dec4edeedac0d3190603b26d639dd87f0ac81c56"
+    },
+    {
+      "path": "fixtures/runs.json",
+      "sha256": "7da78a788d72dfb31edd0577efd27a07266fe2267a5f0724f8c4d18ca3d6d71a"
+    },
+    {
+      "path": "fixtures/store.json",
+      "sha256": "b6369a62932b5891b25175bbde11cbf7a017a6d34763451d95c8f3340978034b"
+    },
+    {
+      "path": "package.json",
+      "sha256": "d4009ecabf1574d020852207ada74dad560c54eb138e1c161b2a53f87d2380f8"
+    },
+    {
+      "path": "runner/guarded-worker.js",
+      "sha256": "4c1c033c1e4cca51705359c899b4bbdb020a7f99c2082b79f78b40f5dea73adb"
+    },
+    {
+      "path": "runner/run-guarded.js",
+      "sha256": "db5601f053dbc26b1f56ac6d041db267b9708af93c3d4ca419377a2498f97b9d"
+    },
+    {
+      "path": "runner/run-manual.js",
+      "sha256": "18d1dbb0ba2881e4613416ff29c13d58a8685f119e766f3cb60c2bc66eb94c2b"
+    },
+    {
+      "path": "runner/timeout-hang-worker.js",
+      "sha256": "42cd09f55f23697a5188e5507457ff0c6b81cbda029c28f39cafc018042a7d7b"
+    },
+    {
+      "path": "src/canonical.js",
+      "sha256": "671e177c9bf9d86bc2225dc3601a5390e725c4d978a23e0a3b12a98b4696919b"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "7c3a11dc91870b86569291fe70a4f489253341750210606c107c10438d5bb3ef"
+    },
+    {
+      "path": "src/injection.js",
+      "sha256": "8045bf15c2c1a64c13eef998b31df2731085a89bd247232439056fda1bd90025"
+    },
+    {
+      "path": "src/resolver.js",
+      "sha256": "3cba9faa302abe82bc42ca6e7a7f3c36cddf4122214c420990db7c380242aa23"
+    },
+    {
+      "path": "src/schemas.js",
+      "sha256": "53d7da4724f7166d35930cf87b0f9079f0b3d5c3133a2fb93bad36586070dca6"
+    },
+    {
+      "path": "src/verify.js",
+      "sha256": "a8ce3b874f9166787165033c8a1042784add47e35347b79a99589ca3b28f36bf"
+    },
+    {
+      "path": "tests/run-battery.js",
+      "sha256": "94e1dc09e174f7025b0ba65c20e5fb87daffe1427433d44b7e6992c486153a63"
+    },
+    {
+      "path": "tests/run-tests.js",
+      "sha256": "d9aeb0511606fcaba95c77430df438c22414c1e8dba117847a3ec78049147bca"
+    }
+  ]
+}
