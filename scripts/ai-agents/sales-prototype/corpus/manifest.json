@@ -1,0 +1,124 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "68817c1f71ae348e131ff1109c7711a0136d7bcf7ed10e1c92e45febc80b7ad9"
+    },
+    {
+      "path": "corpus/battery.json",
+      "sha256": "b12528900d2ebc852f57529afcacca5516707004ed1070ecd68f49fe6e44acf1"
+    },
+    {
+      "path": "corpus/freeze-corpus.js",
+      "sha256": "4fdf2331a84542d6bedd04ae7a08a05af6b1a48faa5c4430077e89ee839d0d66"
+    },
+    {
+      "path": "corpus/make-battery.js",
+      "sha256": "faf7d1ec4e6f91e6ec88c14a29eed5f4612393668fd669eaac6678c264325a6a"
+    },
+    {
+      "path": "fixtures/make-fixtures.js",
+      "sha256": "8cedf86514ad739de3347d42922e7b1ebbf74250a40e6272b293889a5a4ea889"
+    },
+    {
+      "path": "fixtures/store.json",
+      "sha256": "7539463bc0e21e547841b2e17d3cd0b4363f857dd8d88946ca3fff77136eb855"
+    },
+    {
+      "path": "package.json",
+      "sha256": "70cd2ebd9f98b4436531a3cd2126ee45b7f75c4fd9727a3f13cec44d23657897"
+    },
+    {
+      "path": "runner/guarded-worker.js",
+      "sha256": "0a9f4f317efd96742fb287bc0aa60a5595d129bea30820bbecb5ec748c1cd743"
+    },
+    {
+      "path": "runner/run-guarded.js",
+      "sha256": "c2d5ac52fa39594cf593f1e5fbe1d3e6953683be912c6fe0b150d8aff825eb04"
+    },
+    {
+      "path": "runner/run-manual.js",
+      "sha256": "035512a9943ea546761aa662989c63732171e349e571623727c9a20708fd5b0e"
+    },
+    {
+      "path": "src/canonical.js",
+      "sha256": "840bdf9f2fa5c0ac2e651f1192b30606fce355891ced930195bb294fc48e81b7"
+    },
+    {
+      "path": "src/index.js",
+      "sha256": "85d7ca9b966fec0fa3d1c091805c4fe6a6f24000cf6351bfa2b004dc7a8437b5"
+    },
+    {
+      "path": "src/injection.js",
+      "sha256": "28592612115a8e5521fcd658e63a078f71b671479d1e261aa9ad9c4c43aab63b"
+    },
+    {
+      "path": "src/resolver.js",
+      "sha256": "c977a7c4deac17581638e530cacbdd19ea043400674533d471c3a1feef403638"
+    },
+    {
+      "path": "src/sales.js",
+      "sha256": "127001d650739e7b13d43a768e9ae0cc4c22e3283ab0ee4e67d3a642f28ee303"
+    },
+    {
+      "path": "src/schemas.js",
+      "sha256": "8f25459c5244283be7b3349f2b4e35b6bdc5d9f820dbb2afe91943cafa22c1c4"
+    },
+    {
+      "path": "tests/budgets.test.js",
+      "sha256": "88100167f5e1b501f777b17af9df7fe0f806d6a162ffc93c96abfa3664f02fe3"
+    },
+    {
+      "path": "tests/canonical.test.js",
+      "sha256": "1dc72a85c271813b41603d72a07d9939422548f881320c566dc8b3c80671fc61"
+    },
+    {
+      "path": "tests/determinism.test.js",
+      "sha256": "fdb49854b32c9f40a095bd4cd96b1f18626fcfb3c81919490442a98149dda0e6"
+    },
+    {
+      "path": "tests/execution-addendum.test.js",
+      "sha256": "d9868f9218cf5db19681e4276cb90a81205c90e16fc216e3a8a06a577b096e34"
+    },
+    {
+      "path": "tests/hang-worker.js",
+      "sha256": "baa72229d1a0f28371f7b8b32e0e7b084b570a267d2e68e9c5500e2ee55ae912"
+    },
+    {
+      "path": "tests/helpers.js",
+      "sha256": "4c8a041192a1d9c37cbcadca5164001957f38d06760008e59d13babb22be5850"
+    },
+    {
+      "path": "tests/injection.test.js",
+      "sha256": "b683200abf3101f493fd4546498d68f51ac4f0ca5bc91cb0fb5583c17d71bdaf"
+    },
+    {
+      "path": "tests/resolver.test.js",
+      "sha256": "e5d4bb64d1be69544f0dc61e6b606272ff6d6f801b21b7ef70c78aa73d238c48"
+    },
+    {
+      "path": "tests/run-battery.js",
+      "sha256": "60aac4e57a11bd69cc07df988e40a8ce4dc51be969d5084aae90ca96771ba0dc"
+    },
+    {
+      "path": "tests/run-tests.js",
+      "sha256": "77dae793f67972605a60f514e0e0eab400655658430126782e896bbd8af5866e"
+    },
+    {
+      "path": "tests/sales.test.js",
+      "sha256": "74d7b45d2fc5762d2f4e8dc10e81b0ba9565c93479cdd7996c5cf01a50446a00"
+    },
+    {
+      "path": "tests/schemas.test.js",
+      "sha256": "5b7f117dff734bb0ec3233e39b5442fb9ec809c95d35d630ab7674716e5ddd91"
+    },
+    {
+      "path": "tests/trust.test.js",
+      "sha256": "868bf96f755010c5a02d3c38b971d4c54d5bab7e3582b3478fcfd0560f3eecb5"
+    },
+    {
+      "path": "tests/watchdog.test.js",
+      "sha256": "92d35de78ed7538ce6a3f0a617dfefb3c5d1929ac18f4bb8d71e04bb95a86549"
+    }
+  ]
+}
