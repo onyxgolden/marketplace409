@@ -1,0 +1,1 @@
+{"description":"Validation Agent Phase 2 slice 1 prototype: fixture-only synthetic runner-evidence verification. Ships with zero npm scripts by design — dispatch runs through the host trust bootstrap, never npm.","engines":{"node":">=24"},"name":"validation-agent-prototype","private":true,"type":"module","version":"0.1.0"}
