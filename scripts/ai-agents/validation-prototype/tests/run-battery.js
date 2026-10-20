@@ -11,7 +11,7 @@
  * launcher boundary rejects non-string transports before reflective
  * inspection, so no executable content can reach the runner.
  *
- * Exit 0: all 120 cases pass x3 with byte-identical runs.
+ * Exit 0: all cases pass x3 with byte-identical runs.
  * Exit 1: any case fails (details to stdout).
  */
 
@@ -81,7 +81,7 @@ const perCategory = {};
 for (const c of battery) perCategory[c.category] = (perCategory[c.category] ?? 0) + 1;
 console.log(`battery: ${battery.length} cases (${Object.entries(perCategory).map(([k, v]) => `${k} ${v}`).join(", ")}), 3 runs each`);
 if (failures.length === 0) {
-  console.log("BATTERY PASS: all 120 cases x3 byte-identical, outcomes match frozen expectations");
+  console.log(`BATTERY PASS: all ${battery.length} cases x3 byte-identical, outcomes match frozen expectations`);
 } else {
   console.log(`BATTERY FAIL: ${failures.length} failures`);
   for (const f of failures) console.log("  " + f);

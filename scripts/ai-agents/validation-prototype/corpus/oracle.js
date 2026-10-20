@@ -152,7 +152,7 @@ export function oracleDecision(task, context) {
     const rev = context.sources[key]?.revisions[artRef.commit];
     if (rev) {
       artText = rev.text;
-      const injected = INJ.some((re) => re.test(artText.slice(0, 65536)));
+      const injected = INJ.some((re) => re.test(artText));
       if (injected) {
         artQuarantined = true;
         quarantined.push(`artifact:${artRef.repo}/${artRef.path}`);

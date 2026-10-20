@@ -7,7 +7,7 @@
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "86cf877f934ecefccb9b09100ab0047e262a973835a597e10167c38b1ba34fc0"
+      "sha256": "e236c88827dafd313a89fa8139aa385eacbe5edaefb6122f30896b3b3e8050eb"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,11 +15,11 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "376124c0711fa1324b13d1b0df46615b7b0b06f4a94ab7f192799d49713ee36e"
+      "sha256": "b38ea025529f68fbf88cc551388ae6be64579a8eaa0f1c1132bb518d3c93533e"
     },
     {
       "path": "corpus/oracle.js",
-      "sha256": "b5ce5aaa4f996dbed99c2032d9fcad25b10e197a6b213e7a0516c16b534f42ae"
+      "sha256": "add9208833a1e40f2b1bf1978a82892d144083e85ee81e13a4862129453af106"
     },
     {
       "path": "fixtures/make-fixtures.js",
@@ -59,7 +59,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "7c3a11dc91870b86569291fe70a4f489253341750210606c107c10438d5bb3ef"
+      "sha256": "4ec35fd0a7599beae171f0b75a20cb35c41743f04b7216acb3a28597c702a10f"
     },
     {
       "path": "src/injection.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "tests/run-battery.js",
-      "sha256": "94e1dc09e174f7025b0ba65c20e5fb87daffe1427433d44b7e6992c486153a63"
+      "sha256": "a2d1295e39a906a93df6b8607d38b6cbee8b244514a912ec4899f776be1cb4e2"
     },
     {
       "path": "tests/run-tests.js",

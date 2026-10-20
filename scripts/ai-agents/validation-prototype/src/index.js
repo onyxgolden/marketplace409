@@ -373,8 +373,11 @@ export function run(task, context) {
     artifactSha256 = sha256HexUtf8(artifactResolved.text);
     // Quarantine: seeded directive families in the artifact bytes make
     // the artifact unusable as evidence. Its bytes are excluded; the
-    // parse below does not happen.
-    const scan = scanTexts([artifactResolved.text.slice(0, 65536)]);
+    // parse below does not happen. The scan covers the FULL resolved
+    // text (V654-001): the artifact is already bounded by the 256 KiB
+    // aggregate input budget, so a 64 KiB window would leave the tail
+    // of a large artifact unscanned.
+    const scan = scanTexts([artifactResolved.text]);
     if (scan.injected) {
       artifactQuarantined = true;
       const qid = `artifact:${artifactRef.repo}/${artifactRef.path}`;
