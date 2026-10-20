@@ -35,7 +35,7 @@
     },
     {
       "path": "runner/guarded-worker.js",
-      "sha256": "4c1c033c1e4cca51705359c899b4bbdb020a7f99c2082b79f78b40f5dea73adb"
+      "sha256": "01c612871a5a82a4c9f1a9114609bf9a97682d6974fb7dfd7950e739914196e3"
     },
     {
       "path": "runner/run-guarded.js",
