@@ -84,6 +84,9 @@ function assertRetentionDisposition(value) {
 // unparseable / structure / recordedAt / rank), TB223 is malformed
 // verification evidence at close (UNVERIFIED_EVIDENCE), and TB224 is
 // invalid transition metadata on close/revoke/retention (INVALID_FIELD).
+// Fix round 4 (TBP1-002C): TB225 is a retention operation conflict — the
+// same operation identity replayed with a different disposition — mapped
+// onto CONFLICTING_REPLAY.
 function mapGuardError(err, kindCode = CODES.ILLEGAL_STATE_TRANSITION) {
   const map = {
     TB201: CODES.UNKNOWN_OBLIGATION,
@@ -107,6 +110,7 @@ function mapGuardError(err, kindCode = CODES.ILLEGAL_STATE_TRANSITION) {
     TB222: CODES.INVALID_OVERRIDE,
     TB223: CODES.UNVERIFIED_EVIDENCE,
     TB224: CODES.INVALID_FIELD,
+    TB225: CODES.CONFLICTING_REPLAY,
   };
   const mapped = err && typeof err.code === "string" ? map[err.code] : undefined;
   if (mapped) {

@@ -1557,6 +1557,360 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       expect(projection.overrides[0].authorityRef).toBe("grant-valid");
     });
 
+    // Fix round 4 (TBP1-002A.1): the timestamptz cast normalizes
+    // out-of-range civil components (10:00:60Z, 24:00:00Z) and the JS
+    // round-trip refuses 1-2-digit fractions ('.1Z') while the stored
+    // string stays invalid — the string-first strict-UTC contract refuses
+    // all of these with TB221 before any cast, and nothing is stored.
+    test("tb_upsert_override refuses normalized-out-of-range and JS-rejected fractional timestamps (TB221, TBP1-002A.1)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr-ts"));
+      await seedGrants(task.id);
+      const probes = [
+        "2026-10-21T10:00:60Z", // leap-second spelling: PG normalizes, JS refuses
+        "2026-10-21T24:00:00Z", // hour 24: PG rolls to next day, JS refuses
+        "2026-10-21T10:00:00.1Z", // 1-digit fraction: JS round-trip refuses
+        "2026-10-21T10:00:00.12Z", // 2-digit fraction: JS round-trip refuses
+        "2026-10-21T10:99:00Z", // minute 99
+        "2026-13-01T10:00:00Z", // month 13
+      ];
+      for (const recordedAt of probes) {
+        await expect(
+          worker.query("select team_brain.tb_upsert_override($1, $2)", [
+            task.id,
+            overrideJson({ recordedAt }),
+          ]),
+        ).rejects.toMatchObject({ code: "TB221" });
+      }
+      // Every refusal stored nothing.
+      const res = await admin.query(
+        "select count(*)::int as n from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].n).toBe(0);
+      // The spellings the JS contract accepts are still accepted, and the
+      // persisted payload passes queue projection (no MALFORMED_TIMESTAMP).
+      const { projectQueue } = await import("../queue/projection.mjs");
+      for (const recordedAt of ["2026-10-21T10:00:00Z", "2026-10-21T10:00:00.123Z"]) {
+        await worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({ recordedAt }),
+        ]);
+        const stored = await admin.query(
+          "select override_json from team_brain.obligation_overrides where obligation_id = $1",
+          [task.id],
+        );
+        const projection = projectQueue({
+          obligations: [
+            {
+              id: task.id,
+              kind: "TASK",
+              filedAt: T0,
+              state: "OPEN",
+              override: JSON.parse(stored.rows[0].override_json),
+            },
+          ],
+          now: T3,
+          trustedAuthorizations: [
+            { id: "grant-valid", granter: "Jason", itemId: task.id, rank: 1, revoked: false },
+          ],
+        });
+        expect(projection.overrides.length).toBe(1);
+      }
+      // A timestamp refusal after a valid store preserves the prior
+      // override byte-for-byte.
+      const good = overrideJson({ recordedAt: "2026-10-21T10:00:00.123Z" });
+      await worker.query("select team_brain.tb_upsert_override($1, $2)", [task.id, good]);
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({ recordedAt: "2026-10-21T10:00:60Z" }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB221" });
+      const kept = await admin.query(
+        "select override_json from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(kept.rows[0].override_json).toBe(good);
+    });
+
+    // Fix round 4 (TBP1-002A.1): the same string-first contract guards
+    // claimed_at on the transition functions (TB224 path).
+    test("transition functions refuse normalized-out-of-range and JS-rejected fractional claimed_at (TB224, TBP1-002A.1)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-meta-ts"));
+      for (const claimedAt of [
+        "2026-10-21T10:00:60Z",
+        "2026-10-21T24:00:00Z",
+        "2026-10-21T10:00:00.1Z",
+      ]) {
+        await expect(
+          worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+            task.id,
+            "RETAIN_1Y",
+            "t",
+            "t",
+            claimedAt,
+          ]),
+        ).rejects.toMatchObject({ code: "TB224" });
+      }
+      // Refusals wrote nothing: no event, disposition and version untouched.
+      const ev = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(ev.rows[0].n).toBe(0);
+      const st = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(st.rows[0].retention_disposition).toBe("PERMANENT");
+      expect(Number(st.rows[0].row_version)).toBe(1);
+    });
+
+    // Fix round 4 (TBP1-002A.2 / TBP1-002B): btrim() strips only 0x20; the
+    // DB boundary now enforces the JS String.trim() whitespace class
+    // (TAB/LF/VT/FF/CR + U+00A0 U+1680 U+2000–U+200A U+2028 U+2029 U+202F
+    // U+205F U+3000 U+FEFF) via team_brain.tb_is_blank. Whitespace-only
+    // actor/reason/refs/members refuse; ordinary nonblank values still
+    // pass and are stored byte-for-byte (no trim-and-store).
+    test("nonblank checks enforce the JS trim() whitespace class at the DB boundary (TBP1-002A.2/002B)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ws"));
+      await seedGrants(task.id);
+      const ws = {
+        tab: "\u0009",
+        lf: "\u000a",
+        nbsp: "\u00a0",
+        emspace: "\u2003",
+        crff: "\u000d\u000c",
+      };
+      // actor/reason on the override path (TB220).
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({ actor: ws.tab }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB220" });
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({ reason: ws.lf }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB220" });
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({ actor: ws.nbsp }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB220" });
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({ reason: ws.emspace }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB220" });
+      const ovr = await admin.query(
+        "select count(*)::int as n from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(ovr.rows[0].n).toBe(0);
+      // actor/reason on the transition path (TB224).
+      await expect(
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          "RETAIN_1Y",
+          ws.tab,
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB224" });
+      await expect(
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          "RETAIN_1Y",
+          "t",
+          ws.nbsp,
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB224" });
+      // Requested refs must be nonblank (TB205) and verification evidence
+      // members must be valid reference strings (TB223).
+      const closeTask = await filed(adminRepo, admin, taskRecord("g-ws-close"));
+      await insertVerificationEvent(closeTask.id, JSON.stringify([ws.tab]));
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          closeTask.id,
+          ["artifact"],
+          "t",
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB223" });
+      const closeRef = await filed(adminRepo, admin, taskRecord("g-ws-ref"));
+      await insertVerificationEvent(closeRef.id, JSON.stringify(["artifact"]));
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          closeRef.id,
+          [ws.tab],
+          "t",
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB205" });
+      // Refusals changed nothing: both tasks still OPEN, no transition events.
+      for (const id of [closeTask.id, closeRef.id]) {
+        expect(await obligationState(id)).toBe("OPEN");
+      }
+      const ev = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = any($1) and event_type = 'CLOSED'`,
+        [[closeTask.id, closeRef.id]],
+      );
+      expect(ev.rows[0].n).toBe(0);
+      // Positive: padded-but-nonblank values are accepted AND stored
+      // verbatim — the boundary never trims and restores evidence identity.
+      const padded = overrideJson({ actor: " padded actor ", reason: " padded reason " });
+      await worker.query("select team_brain.tb_upsert_override($1, $2)", [task.id, padded]);
+      const stored = await admin.query(
+        "select override_json from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(stored.rows[0].override_json).toBe(padded);
+    });
+
+    // Fix round 4 (TBP1-002C): retention idempotency is keyed by the
+    // OPERATION — retention:<obligation_id>:<actor>:<reason>:<claimed_at>.
+    // Distinct decisions (A→B→A) each persist exactly one immutable event;
+    // an exact replay is an idempotent no-op (no new event, no version
+    // increment, no raw 23505); the same operation identity with a
+    // different disposition refuses atomically with TB225.
+    test("tb_set_retention_disposition is idempotent by operation identity: A→B→A, exact replay, TB225 conflict (TBP1-002C)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ret-idem"));
+      const TA = "2026-10-15T18:10:00.000Z";
+      const TB = "2026-10-15T18:11:00.000Z";
+      const TC = "2026-10-15T18:12:00.000Z";
+      const call = (disposition, actor, reason, claimedAt) =>
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          disposition,
+          actor,
+          reason,
+          claimedAt,
+        ]);
+      await call("RETAIN_1Y", "reviewer", "first decision", TA);
+      await call("PERMANENT", "reviewer", "second decision", TB);
+      await call("RETAIN_1Y", "reviewer", "third decision", TC);
+      // A→B→A persisted three events with operation keys and per-event
+      // dispositions; the projection reflects the last decision.
+      const events = await admin.query(
+        `select idempotency_key, retention_disposition from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED' order by seq`,
+        [task.id],
+      );
+      expect(events.rows.map((r) => r.idempotency_key)).toEqual([
+        `retention:${task.id}:reviewer:first decision:${TA}`,
+        `retention:${task.id}:reviewer:second decision:${TB}`,
+        `retention:${task.id}:reviewer:third decision:${TC}`,
+      ]);
+      expect(events.rows.map((r) => r.retention_disposition)).toEqual([
+        "RETAIN_1Y",
+        "PERMANENT",
+        "RETAIN_1Y",
+      ]);
+      const after3 = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(after3.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      expect(Number(after3.rows[0].row_version)).toBe(4);
+      // Exact replay of the first operation: success, no new event, no
+      // version increment.
+      await call("RETAIN_1Y", "reviewer", "first decision", TA);
+      const replayed = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(replayed.rows[0].n).toBe(3);
+      const afterReplay = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(afterReplay.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      expect(Number(afterReplay.rows[0].row_version)).toBe(4);
+      // Same operation identity, different disposition: named TB225
+      // refusal, atomically — nothing persisted, nothing changed.
+      await expect(call("PERMANENT", "reviewer", "first decision", TA)).rejects.toMatchObject({
+        code: "TB225",
+      });
+      const conflicted = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(conflicted.rows[0].n).toBe(3);
+      const afterConflict = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(afterConflict.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      expect(Number(afterConflict.rows[0].row_version)).toBe(4);
+    });
+
+    // Fix round 4 (TBP1-002C): the adapter inherits the operation
+    // idempotency — A→B→A through setRetentionDisposition, retry no-op,
+    // and the TB225 conflict surfaces as typed CONFLICTING_REPLAY.
+    test("adapter setRetentionDisposition: A→B→A persists three events, retry is a no-op, conflict maps to CONFLICTING_REPLAY (TBP1-002C)", async () => {
+      const task = await filed(workerRepo, admin, taskRecord("g-ret-adapter"));
+      const TA = "2026-10-15T18:20:00.000Z";
+      const TB = "2026-10-15T18:21:00.000Z";
+      const TC = "2026-10-15T18:22:00.000Z";
+      const set = (disposition, reason, recordedAt) =>
+        workerRepo.setRetentionDisposition(task.id, {
+          actor: "reviewer",
+          recordedAt,
+          reason,
+          disposition,
+        });
+      await set("RETAIN_1Y", "first decision", TA);
+      await set("PERMANENT", "second decision", TB);
+      await set("RETAIN_1Y", "third decision", TC);
+      const events = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(events.rows[0].n).toBe(3);
+      const after3 = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(after3.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      const v3 = Number(after3.rows[0].row_version);
+      // Exact retry: still three events, version untouched.
+      await set("RETAIN_1Y", "first decision", TA);
+      const retried = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(retried.rows[0].n).toBe(3);
+      const afterRetry = await admin.query(
+        "select row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(Number(afterRetry.rows[0].row_version)).toBe(v3);
+      // Changed payload under the same operation: typed conflict.
+      await expect(set("PERMANENT", "first decision", TA)).rejects.toMatchObject({
+        code: "CONFLICTING_REPLAY",
+      });
+      const afterConflict = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(afterConflict.rows[0].n).toBe(3);
+    });
+
     test("tb_record_obligation_supersession refuses verdict endpoints (TB212)", async () => {
       await filed(adminRepo, admin, verdictRecord("g-r1", T0, HEX40("a")));
       await filed(adminRepo, admin, verdictRecord("g-r2", T1, HEX40("b")));

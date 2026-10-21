@@ -178,6 +178,12 @@ create table if not exists team_brain.obligation_events (
   evidence_links text not null default '[]',
   auth_record_id text,
   idempotency_key text,
+  -- Fix round 4 (TBP1-002C): the disposition decided by THIS operation.
+  -- Lets the retention idempotency check distinguish an exact replay of an
+  -- operation (same identity, same disposition → idempotent no-op) from a
+  -- conflicting replay (same operation identity, different disposition →
+  -- TB225). Set only on RETENTION_DECIDED events.
+  retention_disposition text,
   canonical_payload_sha256 text check (
     canonical_payload_sha256 is null or canonical_payload_sha256 ~ '^[0-9a-f]{64}$'
   ),
@@ -601,13 +607,20 @@ revoke all on team_brain.retrieval_evaluations from public;
 --         containing a non-string/blank member) — fix round 3, TBP1-002B
 --   TB224 transition metadata invalid (actor/reason blank, or claimed_at
 --         missing / not a valid strict UTC timestamp) for close, revoke,
---         and retention — fix round 3, TBP1-002C
+--         and retention — fix round 3, TBP1-002C; fix round 4 re-keys
+--         retention to the operation identity, TBP1-002C
 --
 -- Fix round 3 (TBP1-002C): the close / revoke / retention functions also
 -- append their immutable obligation_events row inside the same guarded
 -- transaction (the tb_supersede_verdict pattern), so a direct call can no
 -- longer change state without lifecycle history. Event idempotency keys:
--- 'close:<id>', 'revoke:<id>', 'retention:<id>:<disposition>'.
+-- 'close:<id>', 'revoke:<id>'.
+-- Fix round 4 (TBP1-002C): the retention key identifies the OPERATION, not
+-- the target value — 'retention:<obligation_id>:<actor>:<reason>:<claimed_at>'.
+-- The per-operation disposition is recorded on the RETENTION_DECIDED event
+-- row (obligation_events.retention_disposition) so an exact replay is an
+-- idempotent no-op while a changed payload under the same operation
+-- identity refuses with TB225.
 
 -- Idempotency: signatures that changed (or were removed) in fix rounds 2
 -- and 3 are dropped first so a replayed migration never leaves a stale
@@ -617,6 +630,28 @@ drop function if exists team_brain.tb_mark_superseded(text);
 drop function if exists team_brain.tb_close_task(text, text[]);
 drop function if exists team_brain.tb_revoke_authorization(text);
 drop function if exists team_brain.tb_set_retention_disposition(text, text);
+
+-- Fix round 4 (TBP1-002A.2 / TBP1-002B): the single shared nonblank
+-- contract at the DB boundary. PostgreSQL btrim() with no explicit
+-- character set strips only ASCII space (0x20); the application contract
+-- is JavaScript String.prototype.trim(), which additionally strips
+-- TAB/LF/VT/FF/CR and the Unicode spaces U+00A0 U+1680 U+2000–U+200A
+-- U+2028 U+2029 U+202F U+205F U+3000 U+FEFF. A value is blank iff it
+-- contains NO character outside that class — one explicit
+-- character-class regex, never trim-and-store (callers keep the original
+-- strings byte-for-byte; evidence identity is never silently rewritten).
+-- Called only from inside SECURITY DEFINER guarded functions, so no
+-- worker-role grant is needed; PUBLIC is still revoked for hygiene.
+create or replace function team_brain.tb_is_blank(p_value text)
+returns boolean
+language sql immutable
+set search_path = team_brain, pg_temp
+as $$
+  select p_value is null
+      or not (p_value ~ E'[^\\u0009\\u000A\\u000B\\u000C\\u000D\\u0020\\u00A0\\u1680\\u2000\\u2001\\u2002\\u2003\\u2004\\u2005\\u2006\\u2007\\u2008\\u2009\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]');
+$$;
+alter function team_brain.tb_is_blank(text) owner to tb_owner;
+revoke all on function team_brain.tb_is_blank(text) from public;
 
 -- Retention disposition is a closed policy set, not free text. The values map
 -- to the persistence contract (Section 1) language:
@@ -641,6 +676,9 @@ as $$
 declare
   v_row team_brain.obligations%rowtype;
   v_claimed_ts timestamptz;
+  v_key text;
+  v_existing_type text;
+  v_existing_disposition text;
 begin
   select * into v_row from team_brain.obligations
    where obligation_id = p_obligation_id for update;
@@ -649,14 +687,17 @@ begin
   end if;
   -- Transition metadata (TBP1-002C): the immutable RETENTION_DECIDED event
   -- written below is only as trustworthy as its actor/reason/claimed_at, so
-  -- all three are validated here, before any write.
-  if p_actor_principal is null or btrim(p_actor_principal) = ''
-     or p_reason is null or btrim(p_reason) = '' then
+  -- all three are validated here, before any write. Nonblank uses the
+  -- shared JS-trim contract (team_brain.tb_is_blank, fix round 4,
+  -- TBP1-002A.2); claimed_at uses the string-first strict-UTC contract
+  -- (fix round 4, TBP1-002A.1) — see tb_upsert_override for the rationale.
+  if team_brain.tb_is_blank(p_actor_principal)
+     or team_brain.tb_is_blank(p_reason) then
     raise exception 'retention transition for % requires a nonblank actor and reason',
       p_obligation_id using errcode = 'TB224';
   end if;
   if p_claimed_at is null
-     or p_claimed_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+     or p_claimed_at !~ '^[0-9]{4}-(0[1-9]|1[0-2])-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{3})?Z$' then
     raise exception 'retention transition for % requires a valid UTC claimed_at timestamp',
       p_obligation_id using errcode = 'TB224';
   end if;
@@ -679,16 +720,36 @@ begin
     raise exception 'retention disposition % is not in the policy set', p_disposition
       using errcode = 'TB208';
   end if;
+  -- Fix round 4 (TBP1-002C): the idempotency key identifies the OPERATION
+  -- (actor + reason + claimed_at), not the target disposition. Looked up
+  -- under the row lock held above, so the check-and-insert is atomic:
+  -- an exact replay (same operation, same disposition) is an idempotent
+  -- no-op — no new event, no version increment, no raw 23505; the same
+  -- operation identity with a different disposition refuses with TB225.
+  -- Distinct decisions (including A→B→A) each persist their own event.
+  v_key := 'retention:' || p_obligation_id || ':' || p_actor_principal
+           || ':' || p_reason || ':' || p_claimed_at;
+  select e.event_type, e.retention_disposition
+    into v_existing_type, v_existing_disposition
+    from team_brain.obligation_events e
+   where e.idempotency_key = v_key;
+  if found then
+    if v_existing_type = 'RETENTION_DECIDED'
+       and v_existing_disposition is not distinct from p_disposition then
+      return;
+    end if;
+    raise exception 'retention operation % already recorded with a different disposition',
+      v_key using errcode = 'TB225';
+  end if;
   update team_brain.obligations
      set retention_disposition = p_disposition,
          row_version = row_version + 1
    where obligation_id = p_obligation_id;
   insert into team_brain.obligation_events
     (event_id, obligation_id, actor_principal, claimed_at, event_type, reason,
-     evidence_links, idempotency_key)
+     evidence_links, retention_disposition, idempotency_key)
   values (gen_random_uuid()::text, p_obligation_id, p_actor_principal, v_claimed_ts,
-          'RETENTION_DECIDED', p_reason, '[]',
-          'retention:' || p_obligation_id || ':' || p_disposition);
+          'RETENTION_DECIDED', p_reason, '[]', p_disposition, v_key);
 end;
 $$;
 alter function team_brain.tb_set_retention_disposition(text, text, text, text, text) owner to tb_owner;
@@ -739,13 +800,17 @@ begin
       using errcode = 'TB203';
   end if;
   -- Transition metadata (TBP1-002C), validated before any write.
-  if p_actor_principal is null or btrim(p_actor_principal) = ''
-     or p_reason is null or btrim(p_reason) = '' then
+  -- Nonblank uses the shared JS-trim contract (team_brain.tb_is_blank,
+  -- fix round 4, TBP1-002A.2); claimed_at uses the string-first
+  -- strict-UTC contract (fix round 4, TBP1-002A.1) — see
+  -- tb_upsert_override for the rationale.
+  if team_brain.tb_is_blank(p_actor_principal)
+     or team_brain.tb_is_blank(p_reason) then
     raise exception 'close transition for % requires a nonblank actor and reason',
       p_obligation_id using errcode = 'TB224';
   end if;
   if p_claimed_at is null
-     or p_claimed_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+     or p_claimed_at !~ '^[0-9]{4}-(0[1-9]|1[0-2])-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{3})?Z$' then
     raise exception 'close transition for % requires a valid UTC claimed_at timestamp',
       p_obligation_id using errcode = 'TB224';
   end if;
@@ -760,7 +825,9 @@ begin
       using errcode = 'TB205';
   end if;
   foreach v_ref in array p_evidence_refs loop
-    if v_ref is null or btrim(v_ref) = '' then
+    -- Requested refs use the shared JS-trim contract (fix round 4,
+    -- TBP1-002A.2): a tab/newline/NBSP-only ref is blank, never coverage.
+    if team_brain.tb_is_blank(v_ref) then
       raise exception 'task % cannot close: evidence references must be nonblank strings',
         p_obligation_id using errcode = 'TB205';
     end if;
@@ -790,7 +857,9 @@ begin
     end if;
     if v_parse_ok then
       for v_member in select elem from jsonb_array_elements_text(v_parsed) as elem loop
-        if btrim(v_member) = '' then
+        -- Evidence members use the shared JS-trim contract (fix round 4,
+        -- TBP1-002B): a whitespace-only member is blank, never a reference.
+        if team_brain.tb_is_blank(v_member) then
           v_parse_ok := false;
           exit;
         end if;
@@ -870,13 +939,17 @@ begin
       using errcode = 'TB203';
   end if;
   -- Transition metadata (TBP1-002C), validated before any write.
-  if p_actor_principal is null or btrim(p_actor_principal) = ''
-     or p_reason is null or btrim(p_reason) = '' then
+  -- Nonblank uses the shared JS-trim contract (team_brain.tb_is_blank,
+  -- fix round 4, TBP1-002A.2); claimed_at uses the string-first
+  -- strict-UTC contract (fix round 4, TBP1-002A.1) — see
+  -- tb_upsert_override for the rationale.
+  if team_brain.tb_is_blank(p_actor_principal)
+     or team_brain.tb_is_blank(p_reason) then
     raise exception 'revoke transition for % requires a nonblank actor and reason',
       p_obligation_id using errcode = 'TB224';
   end if;
   if p_claimed_at is null
-     or p_claimed_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+     or p_claimed_at !~ '^[0-9]{4}-(0[1-9]|1[0-2])-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{3})?Z$' then
     raise exception 'revoke transition for % requires a valid UTC claimed_at timestamp',
       p_obligation_id using errcode = 'TB224';
   end if;
@@ -1102,28 +1175,39 @@ begin
       p_obligation_id using errcode = 'TB220';
   end if;
   if jsonb_typeof(v_override -> 'authorityRef') is distinct from 'string'
-     or btrim(v_override ->> 'authorityRef') = '' then
+     or team_brain.tb_is_blank(v_override ->> 'authorityRef') then
     raise exception 'override payload for % is missing a nonblank string authorityRef',
       p_obligation_id using errcode = 'TB220';
   end if;
   v_authority_ref := v_override ->> 'authorityRef';
   if jsonb_typeof(v_override -> 'actor') is distinct from 'string'
-     or btrim(v_override ->> 'actor') = '' then
+     or team_brain.tb_is_blank(v_override ->> 'actor') then
     raise exception 'override payload for % is missing a nonblank string actor',
       p_obligation_id using errcode = 'TB220';
   end if;
   if jsonb_typeof(v_override -> 'reason') is distinct from 'string'
-     or btrim(v_override ->> 'reason') = '' then
+     or team_brain.tb_is_blank(v_override ->> 'reason') then
     raise exception 'override payload for % is missing a nonblank string reason',
       p_obligation_id using errcode = 'TB220';
   end if;
   if jsonb_typeof(v_override -> 'recordedAt') is distinct from 'string'
-     or btrim(v_override ->> 'recordedAt') = '' then
+     or team_brain.tb_is_blank(v_override ->> 'recordedAt') then
     raise exception 'override payload for % is missing a nonblank string recordedAt',
       p_obligation_id using errcode = 'TB221';
   end if;
   v_recorded_at := v_override ->> 'recordedAt';
-  if v_recorded_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+  -- Fix round 4 (TBP1-002A.1): validate the ORIGINAL STRING against the
+  -- strict-UTC contract FIRST, mirroring JS assertUtcIso exactly. The
+  -- regex pins every civil component the timestamptz cast would silently
+  -- NORMALIZE (hour 24 rolls to the next day, second 60 rolls to the
+  -- next minute — both poison the queue projection while the stored
+  -- string stays invalid) and admits only the fractional spellings the
+  -- JS round-trip accepts (none, or exactly three digits — '.1' / '.12'
+  -- are refused by the consumer). The cast below then catches only
+  -- genuinely nonexistent calendar times (Feb 30). The stored
+  -- override_json keeps the original string byte-for-byte, so the cast
+  -- must never be the only guard.
+  if v_recorded_at !~ '^[0-9]{4}-(0[1-9]|1[0-2])-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{3})?Z$' then
     raise exception 'override payload for % has a malformed recordedAt timestamp',
       p_obligation_id using errcode = 'TB221';
   end if;

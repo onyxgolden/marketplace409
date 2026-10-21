@@ -46,6 +46,9 @@ export const CODES = {
   // TB223 (malformed verification evidence, TBP1-002B) onto
   // UNVERIFIED_EVIDENCE, and TB224 (transition metadata, TBP1-002C) onto
   // INVALID_FIELD — all in postgres/repository.mjs mapGuardError.
+  // Fix round 4: TB225 (retention operation conflict — the same operation
+  // identity replayed with a different disposition, TBP1-002C) maps onto
+  // CONFLICTING_REPLAY in postgres/repository.mjs mapGuardError.
   UNKNOWN_SOURCE: "UNKNOWN_SOURCE",
   INCOMPLETE_PROVENANCE: "INCOMPLETE_PROVENANCE",
   INVALID_RETENTION_DISPOSITION: "INVALID_RETENTION_DISPOSITION",
