@@ -786,3 +786,8 @@ test("mutation: tampered package.json (npm scripts) refuses at the bootstrap", {
   assert.equal(r.status, 3);
   assert.ok(String(r.stderr).includes("npm scripts"));
 });
+
+// PER-008 round 2 focused tests (admission primitive, verdict probes,
+// exact-64 accounting, round-1 candidate-65 proof). Imported here so
+// the official trust-bootstrap "tests" entrypoint runs them.
+await import("./per008.test.js");

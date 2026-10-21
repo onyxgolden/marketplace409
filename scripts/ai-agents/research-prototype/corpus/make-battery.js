@@ -262,14 +262,18 @@ function oCountJson(v) {
 function oRegistryCost(reg) {
   // Mirrors src/schemas.js validateProvenanceRegistry +
   // validateProvenanceEntry object charging exactly: 1 (registry
-  // object) + per entry 1 (entry) + 1 per applies_to pin + 1 per
-  // derivation link. (The applies_to / derivation_links arrays
-  // themselves are not object-charged by the implementation; their
-  // serialized bytes are payload-charged instead.)
+  // object) + per entry 1 (entry) + 1 (applies_to array container) +
+  // 1 per applies_to pin + 1 (derivation_links array container, when
+  // the host supplied the array) + 1 per derivation link. PER-008
+  // round 2: the containing arrays are consulted containers and are
+  // charged — they are not free. (Their serialized bytes are
+  // payload-charged instead — separate budget.)
   let n = 1;
   for (const k of Object.keys(reg || {})) {
-    n += 1;
+    n += 1; // entry
+    n += 1; // applies_to array container
     n += (reg[k].applies_to || []).length;
+    if (reg[k].derivation_links !== undefined) n += 1; // derivation_links array container
     n += (reg[k].derivation_links || []).length;
   }
   return n;
@@ -690,9 +694,41 @@ addEval("bud-010-boundary-fit-plus-claim", "budget_replay", "boundary-fit",
   [mkClaim("c1", [mkAtom("SUBJ-0", "metric", 0, "number", "s1")], [{ doc_id: "doc-b000", passage_id: "p1" }])],
   {}, { provenance_registry: {} });
 
+// ---------- PER-008 round 2 hostile admission cases ----------
+// These cases cannot be expressed as JSON (native Proxies and
+// inherited getters do not survive serialization). They are frozen
+// here as {base, transform} references: the battery runner clones
+// the named base case's task/context IN-PROCESS, applies the named
+// hostile transform (defined in tests/run-battery.js), and runs the
+// result through run() 3x (in-process — executable fixtures cannot
+// cross the JSON guarded transport; attempting to serialize them
+// would fire the getters in the harness, which is exactly what the
+// agent must never do). Expectations are hard-coded (REFUSED /
+// INVALID_INPUT), like the malformed/budget cases; the oracle is
+// bypassed. expect_zero names the instrumented counters that must
+// stay at zero.
+function addHostile(case_id, category, baseCaseId, transform, expectZero) {
+  CASES.push({
+    case_id, category,
+    hostile: { base: baseCaseId, transform, expect_zero: expectZero },
+    expected: { status: "REFUSED", diagnostic_codes: ["INVALID_INPUT"], claim_statuses: [], quarantined_ids: [], coverage_state: "UNKNOWN" },
+  });
+}
+// H01/H02: the verdict's exact inherited-getter probes — an
+// inherited enumerable getter principal_id / revisions on a custom
+// prototype must refuse with ZERO getter calls.
+addHostile("hst-001-inherited-principal", "hostile_admission", "nom-002-single-attributed", "inherited-principal-getter", ["getter_calls"]);
+addHostile("hst-002-inherited-revisions", "hostile_admission", "nom-002-single-attributed", "inherited-revisions-getter", ["getter_calls"]);
+// H03: the verdict's exact nested-Proxy probe — a forwarding native
+// Proxy around a valid applies_to array must refuse with ZERO traps.
+addHostile("hst-003-nested-applies-to-proxy", "hostile_admission", "nom-002-single-attributed", "nested-applies-to-proxy", ["traps"]);
+// H04: the derivation-links analog — a forwarding native Proxy
+// around a valid derivation_links array must refuse with ZERO traps.
+addHostile("hst-004-nested-derivation-link-proxy", "hostile_admission", "nom-018-derivation-link", "nested-derivation-link-proxy", ["traps"]);
+
 // ================= Write battery.json =================
-if (CASES.length !== 120) {
-  console.error(`battery case count is ${CASES.length}, expected 120`);
+if (CASES.length !== 124) {
+  console.error(`battery case count is ${CASES.length}, expected 124`);
   process.exit(1);
 }
 const byCat = {};

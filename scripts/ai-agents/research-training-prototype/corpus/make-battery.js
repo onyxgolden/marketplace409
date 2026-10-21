@@ -607,14 +607,18 @@ wf("N38", "nominal", (() => {
 // N39 larger bundle: 4 sources in the host bundle, mixed topics
 // (kept inside the 64-object budget). PER-003 round 2 budget
 // repair: CP remains a fully-registered host source (sources,
-// grants and a complete applies_to provenance entry naming its
-// own pin) but is no longer a CONSUMED task ref — no assertion
-// ever consumed it, and the extra consumed pin's resolution
-// charges (selected entry, revision, resolver charge) pushed the
-// bundle past the 64-object budget once each legitimate
-// registration gained its applies_to pin object. The taught
-// domain outcome (quizzes, composite, coverage) is unchanged.
-wf("N39", "nominal", buildTask({
+// N39 PER-008 round 2: honest container charging refuses this bundle.
+// The case keeps 4 grant paths (K, NI, FR, CP) with a complete
+// applies_to provenance entry naming its own pin for the unconsumed
+// CP grant — but each legitimate registration's applies_to ARRAY is
+// now a charged consulted container (PER-008 round 2: new containers
+// are not free), which pushes the bundle past the 64-object budget.
+// The verdict explicitly forbids widening caps to preserve the old
+// (under-counted) calibration, so the expectation moves
+// REPORT_READY -> REFUSED/BUDGET_EXCEEDED. The taught domain outcome
+// (quizzes, composite, coverage) is unchanged — only the admission
+// accounting refuses first.
+rf("N39", "nominal", buildTask({
   id: "N39", refs: [srcRef(K), srcRef(NI), srcRef(FR)],
   topics: [topic("t-pumps", ["default port", "startup sequence"]), topic("t-beacon", ["fréquence défaut"])],
   asserts: [
@@ -624,7 +628,7 @@ wf("N39", "nominal", buildTask({
     A({ id: "a-freq", subject: "Phare", predicate: "fréquence défaut", value: "868", scope: "global", polarity: "positive", path: FR, line: 1 }),
   ],
   composites: [{ item_id: "c-pair", atom_refs: ["a-port", "a-freq"] }],
-}), buildCtx({ grantPaths: [K, NI, FR, CP], templatesFor: ["default port", "startup sequence", "fréquence défaut"], provenanceOverride: { [CP]: `${REPO}|${K}` } }));
+}), buildCtx({ grantPaths: [K, NI, FR, CP], templatesFor: ["default port", "startup sequence", "fréquence défaut"], provenanceOverride: { [CP]: `${REPO}|${K}` } }), "BUDGET_EXCEEDED");
 
 // N40 full nominal bundle with proposed correct key + composite
 wf("N40", "nominal", buildTask({
@@ -1789,9 +1793,79 @@ wf("B05", "budget", buildTask({
   rf("B14", "budget", t, c, "OUTPUT_LIMIT");
 }
 
+// B15 PER-010 round 2: exact N06-shaped envelope (one composite)
+ // with prefill landing exactly on 256 -> REPORT_READY. The corrected
+// walk counts the composite KEY WRAPPER (36 natural: was 35), so
+// prefill 220 lands exactly on the cap.
+{
+  const c = buildCtx({ grantPaths: [NI, K], templatesFor: ["default port", "shutdown sequence"] });
+  c.test_hooks = { prefill_output_records: 220 };
+  wf("B15", "budget", buildTask({
+    id: "B15", refs: [srcRef(K), srcRef(NI)],
+    topics: [topic("t-pumps", ["default port"]), topic("t-shutdown", ["shutdown sequence"])],
+    asserts: [
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-shut", subject: "Pump", predicate: "shutdown sequence", value: "vent, isolate, cool", scope: "global", polarity: "positive", path: NI, line: 2 }),
+    ],
+    composites: [{ item_id: "c-pair", atom_refs: ["a-port-n", "a-shut"] }],
+  }), c);
+}
+
+// B16 PER-010 round 2: exact N06-shaped envelope one record over
+// (prefill 221 -> 36+221=257) -> OUTPUT_LIMIT with no partial domain
+// artifact. Guards the exact composite-key-wrapper boundary: the
+// pre-round-2 walk (35 natural) would have wrongly accepted this as
+// 256.
+{
+  const c = buildCtx({ grantPaths: [NI, K], templatesFor: ["default port", "shutdown sequence"] });
+  c.test_hooks = { prefill_output_records: 221 };
+  rf("B16", "budget", buildTask({
+    id: "B16", refs: [srcRef(K), srcRef(NI)],
+    topics: [topic("t-pumps", ["default port"]), topic("t-shutdown", ["shutdown sequence"])],
+    asserts: [
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-shut", subject: "Pump", predicate: "shutdown sequence", value: "vent, isolate, cool", scope: "global", polarity: "positive", path: NI, line: 2 }),
+    ],
+    composites: [{ item_id: "c-pair", atom_refs: ["a-port-n", "a-shut"] }],
+  }), c, "OUTPUT_LIMIT");
+}
+
+// ---------- PER-008 round 2 hostile admission cases ----------
+// These cases cannot be expressed as JSON (native Proxies and
+// inherited getters do not survive serialization). They are frozen
+// here as {base, transform} references: the battery runner clones
+// the named base case's task/context IN-PROCESS, applies the named
+// hostile transform (defined in tests/run-battery.js), and runs the
+// result through run() 3x (in-process — executable fixtures cannot
+// cross the JSON guarded transport; attempting to serialize them
+// would fire the getters in the harness, which is exactly what the
+// agent must never do). Expectations are hard-coded (REFUSED /
+// INVALID_INPUT), like the malformed/budget cases; the oracle is
+// bypassed. expect_zero names the instrumented counters that must
+// stay at zero.
+const addHostile = (id, kind, baseId, transform, expectZero) =>
+  CASES.push({
+    id, kind,
+    hostile: { base: baseId, transform, expect_zero: expectZero },
+    expected: { status: "REFUSED", diagnostics: ["INVALID_INPUT"] },
+  });
+// H01/H02: the verdict's exact inherited-getter probes — an
+// inherited enumerable getter principal_id / revisions on a custom
+// prototype must refuse with ZERO getter calls.
+addHostile("H01", "hostile", "N02", "inherited-principal-getter", ["getter_calls"]);
+addHostile("H02", "hostile", "N02", "inherited-revisions-getter", ["getter_calls"]);
+// H03: the verdict's exact nested-Proxy probe — a forwarding native
+// Proxy around a valid applies_to array must refuse with ZERO traps.
+addHostile("H03", "hostile", "N02", "nested-applies-to-proxy", ["traps"]);
+// H04: the nested pin-record analog — a forwarding native Proxy
+// around one applies_to SourceRef pin must refuse with ZERO traps.
+addHostile("H04", "hostile", "N02", "nested-pin-proxy", ["traps"]);
+
 // ---- write ----
-if (CASES.length !== 144) {
-  throw new Error(`battery must hold exactly 144 cases; built ${CASES.length}`);
+if (CASES.length !== 150) {
+  throw new Error(`battery must hold exactly 150 cases; built ${CASES.length}`);
 }
 const counts = {};
 for (const c of CASES) counts[c.kind] = (counts[c.kind] ?? 0) + 1;

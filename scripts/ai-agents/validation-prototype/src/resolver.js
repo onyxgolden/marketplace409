@@ -108,6 +108,12 @@ function sourceKeyOf(ref) {
 export function resolveSourceRef(ref, sources, budget, what) {
   budget.countObject(what);
   try {
+    // PER-008 round 2: the pin gets the trap-free, prototype and
+    // own-data discipline (budget-less path — the attempt is already
+    // charged by countObject above and the pin by the task admitGraph;
+    // the fresh validated copy is not a new consulted host object, so
+    // it takes no additional charge, preserving the exact-fit
+    // calibration).
     validateSourceRef(ref, "source pin");
   } catch (e) {
     if (e instanceof SchemaError) throw new ResolutionError("SOURCE_UNVERIFIED", `pin failed validation: ${e.message}`);

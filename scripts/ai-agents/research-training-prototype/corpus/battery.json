@@ -4,7 +4,8 @@
     "contradiction": 30,
     "injection": 20,
     "schema": 40,
-    "budget": 14
+    "budget": 16,
+    "hostile": 4
   },
   "cases": [
     {
@@ -6272,20 +6273,10 @@
         "test_hooks": {}
       },
       "expected": {
-        "status": "REPORT_READY",
-        "quizzes": [
-          "a-port",
-          "a-start",
-          "a-freq"
-        ],
-        "composites": [
-          "c-pair"
-        ],
-        "gaps": [],
-        "rejected_codes": [],
-        "contradictions": [],
-        "quarantined": [],
-        "diagnostics": []
+        "status": "REFUSED",
+        "diagnostics": [
+          "BUDGET_EXCEEDED"
+        ]
       }
     },
     {
@@ -23171,6 +23162,491 @@
         "status": "REFUSED",
         "diagnostics": [
           "OUTPUT_LIMIT"
+        ]
+      }
+    },
+    {
+      "id": "B15",
+      "kind": "budget",
+      "task": {
+        "schema_version": "1",
+        "task_id": "batt-B15",
+        "operation": "analyze",
+        "fixture_refs": {
+          "source_refs": [
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/kestrel9-manual.md",
+              "commit": "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec",
+              "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/nimbus-protocol.md",
+              "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+              "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            }
+          ]
+        },
+        "options": {
+          "request": {
+            "module_id": "mod-b15",
+            "question_format": "short_answer",
+            "topics": [
+              {
+                "topic_id": "t-pumps",
+                "predicates": [
+                  "default port"
+                ]
+              },
+              {
+                "topic_id": "t-shutdown",
+                "predicates": [
+                  "shutdown sequence"
+                ]
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "a-port-n",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-n-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 56,
+                  "end_byte": 91,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-port",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-p",
+                "source_index": 0,
+                "span": {
+                  "start_byte": 59,
+                  "end_byte": 94,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-shut",
+                "subject": "Pump",
+                "predicate": "shutdown sequence",
+                "value": "vent, isolate, cool",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-shut-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 92,
+                  "end_byte": 147,
+                  "quoted_text": "Pump | shutdown sequence | vent, isolate, cool | global"
+                }
+              }
+            ],
+            "proposed_keys": [],
+            "composite_requests": [
+              {
+                "item_id": "c-pair",
+                "atom_refs": [
+                  "a-port-n",
+                  "a-shut"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "context": {
+        "clock": 1792454400000,
+        "sources": {
+          "forge-fixtures|manuals/nimbus-protocol.md": {
+            "revisions": {
+              "f3d047331d3b421a0cff31e821550a39f62bf4ab": {
+                "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                "label": "rev-1",
+                "text": "Nimbus relay control protocol — lab notes (SYNTHETIC)\nPump | default port | 8080 | global\nPump | shutdown sequence | vent, isolate, cool | global\nRelay | safe voltage | 24 | rack\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          }
+        },
+        "readGrants": [
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/nimbus-protocol.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-manual.md"
+          }
+        ],
+        "principal": {
+          "principal_id": "muse-relay-01",
+          "role": "MUSE_RELAY",
+          "registered_by": "jason",
+          "valid_from": "2026-01-01",
+          "expires_at": "2027-01-01",
+          "revoked": false
+        },
+        "aliases": {
+          "muse-relay-01": "muse-relay-01"
+        },
+        "criteria": {
+          "criteria_version": "rt-1",
+          "templates": {
+            "default port": {
+              "question_form": "What is the default port of {subject} ({scope})?",
+              "lesson_heading": "Core configuration"
+            },
+            "shutdown sequence": {
+              "question_form": "What is the shutdown sequence of {subject} ({scope})?",
+              "lesson_heading": "Shutdown"
+            }
+          }
+        },
+        "provenance": {
+          "sources": {
+            "forge-fixtures|manuals/nimbus-protocol.md": {
+              "group": "lab-notes",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/nimbus-protocol.md",
+                  "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+                  "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/kestrel9-manual.md": {
+              "group": "vendor-docs",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-manual.md",
+                  "commit": "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            }
+          }
+        },
+        "test_hooks": {
+          "prefill_output_records": 220
+        }
+      },
+      "expected": {
+        "status": "REPORT_READY",
+        "quizzes": [
+          "a-port-n",
+          "a-shut"
+        ],
+        "composites": [
+          "c-pair"
+        ],
+        "gaps": [],
+        "rejected_codes": [],
+        "contradictions": [],
+        "quarantined": [],
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "B16",
+      "kind": "budget",
+      "task": {
+        "schema_version": "1",
+        "task_id": "batt-B16",
+        "operation": "analyze",
+        "fixture_refs": {
+          "source_refs": [
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/kestrel9-manual.md",
+              "commit": "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec",
+              "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/nimbus-protocol.md",
+              "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+              "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            }
+          ]
+        },
+        "options": {
+          "request": {
+            "module_id": "mod-b16",
+            "question_format": "short_answer",
+            "topics": [
+              {
+                "topic_id": "t-pumps",
+                "predicates": [
+                  "default port"
+                ]
+              },
+              {
+                "topic_id": "t-shutdown",
+                "predicates": [
+                  "shutdown sequence"
+                ]
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "a-port-n",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-n-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 56,
+                  "end_byte": 91,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-port",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-p",
+                "source_index": 0,
+                "span": {
+                  "start_byte": 59,
+                  "end_byte": 94,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-shut",
+                "subject": "Pump",
+                "predicate": "shutdown sequence",
+                "value": "vent, isolate, cool",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-shut-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 92,
+                  "end_byte": 147,
+                  "quoted_text": "Pump | shutdown sequence | vent, isolate, cool | global"
+                }
+              }
+            ],
+            "proposed_keys": [],
+            "composite_requests": [
+              {
+                "item_id": "c-pair",
+                "atom_refs": [
+                  "a-port-n",
+                  "a-shut"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "context": {
+        "clock": 1792454400000,
+        "sources": {
+          "forge-fixtures|manuals/nimbus-protocol.md": {
+            "revisions": {
+              "f3d047331d3b421a0cff31e821550a39f62bf4ab": {
+                "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                "label": "rev-1",
+                "text": "Nimbus relay control protocol — lab notes (SYNTHETIC)\nPump | default port | 8080 | global\nPump | shutdown sequence | vent, isolate, cool | global\nRelay | safe voltage | 24 | rack\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          }
+        },
+        "readGrants": [
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/nimbus-protocol.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-manual.md"
+          }
+        ],
+        "principal": {
+          "principal_id": "muse-relay-01",
+          "role": "MUSE_RELAY",
+          "registered_by": "jason",
+          "valid_from": "2026-01-01",
+          "expires_at": "2027-01-01",
+          "revoked": false
+        },
+        "aliases": {
+          "muse-relay-01": "muse-relay-01"
+        },
+        "criteria": {
+          "criteria_version": "rt-1",
+          "templates": {
+            "default port": {
+              "question_form": "What is the default port of {subject} ({scope})?",
+              "lesson_heading": "Core configuration"
+            },
+            "shutdown sequence": {
+              "question_form": "What is the shutdown sequence of {subject} ({scope})?",
+              "lesson_heading": "Shutdown"
+            }
+          }
+        },
+        "provenance": {
+          "sources": {
+            "forge-fixtures|manuals/nimbus-protocol.md": {
+              "group": "lab-notes",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/nimbus-protocol.md",
+                  "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+                  "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/kestrel9-manual.md": {
+              "group": "vendor-docs",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-manual.md",
+                  "commit": "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            }
+          }
+        },
+        "test_hooks": {
+          "prefill_output_records": 221
+        }
+      },
+      "expected": {
+        "status": "REFUSED",
+        "diagnostics": [
+          "OUTPUT_LIMIT"
+        ]
+      }
+    },
+    {
+      "id": "H01",
+      "kind": "hostile",
+      "hostile": {
+        "base": "N02",
+        "transform": "inherited-principal-getter",
+        "expect_zero": [
+          "getter_calls"
+        ]
+      },
+      "expected": {
+        "status": "REFUSED",
+        "diagnostics": [
+          "INVALID_INPUT"
+        ]
+      }
+    },
+    {
+      "id": "H02",
+      "kind": "hostile",
+      "hostile": {
+        "base": "N02",
+        "transform": "inherited-revisions-getter",
+        "expect_zero": [
+          "getter_calls"
+        ]
+      },
+      "expected": {
+        "status": "REFUSED",
+        "diagnostics": [
+          "INVALID_INPUT"
+        ]
+      }
+    },
+    {
+      "id": "H03",
+      "kind": "hostile",
+      "hostile": {
+        "base": "N02",
+        "transform": "nested-applies-to-proxy",
+        "expect_zero": [
+          "traps"
+        ]
+      },
+      "expected": {
+        "status": "REFUSED",
+        "diagnostics": [
+          "INVALID_INPUT"
+        ]
+      }
+    },
+    {
+      "id": "H04",
+      "kind": "hostile",
+      "hostile": {
+        "base": "N02",
+        "transform": "nested-pin-proxy",
+        "expect_zero": [
+          "traps"
+        ]
+      },
+      "expected": {
+        "status": "REFUSED",
+        "diagnostics": [
+          "INVALID_INPUT"
         ]
       }
     }

@@ -1204,3 +1204,9 @@ test("PER-011: mixed clean/quarantined fixture keeps clean refs only, with expli
   assert.deepEqual(out.source_refs.map((r) => r.path), [K], "only the clean pin is emitted");
   assert.ok(out.report.quizzes.length > 0, "clean evidence still teaches");
 });
+
+// PER-008 round 2 focused tests (admission primitive, verdict probes,
+// exact-64 accounting, round-1 candidate-65 proof) plus PER-010 round 2
+// (N06 prefill 220/221 boundary). Imported here so the official
+// trust-bootstrap "tests" entrypoint runs them.
+await import("./per008.test.js");

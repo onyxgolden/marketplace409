@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 /**
  * run-battery.js — standalone battery runner: `npm run battery`.
- * Runs all 120 frozen cases through the agent and compares structural
+ * Runs all 124 frozen cases through the agent and compares structural
  * output against the independently-derived expectations. Every case is
  * executed three times; the three outputs must be byte-identical.
  * Exits nonzero on any mismatch.
  * Requires RESEARCH_APPROVED_ROOT (same trust gate as run-tests.js).
+ *
+ * PER-008 round 2: the four hostile_admission cases (hst-001..004)
+ * carry a {base, transform} reference instead of JSON task/context —
+ * native Proxies and inherited getters cannot survive serialization.
+ * The runner clones the base case in-process, applies the hostile
+ * transform, and runs it through run() 3x (in-process only:
+ * executable fixtures cannot cross the JSON guarded transport).
  */
 
 import { readFileSync, readdirSync } from "node:fs";
@@ -85,7 +92,57 @@ const { canonicalJson } = await import("../src/index.js");
 // The official battery host routes through the guarded execution path,
 // not synchronous run() directly.
 const { runGuarded } = await import("../runner/run-guarded.js");
+const { run } = await import("../src/index.js");
 const CASES = JSON.parse(readFileSync(join(ROOT, "corpus", "battery.json"), "utf8"));
+const byId = new Map(CASES.map((c) => [c.case_id, c]));
+
+/**
+ * PER-008 round 2 hostile transforms. Each takes the CLONED base
+ * task/context and an instrumented counters object, and installs one
+ * hostile fixture IN-PROCESS (native Proxy or inherited getter).
+ * These fixtures cannot cross the JSON guarded transport — so
+ * hostile cases run through run() in-process, 3x, byte-identical.
+ * Attempting to JSON-serialize them would fire the getters/traps in
+ * the harness, which is exactly what the agent must never do.
+ */
+const HOSTILE = {
+  "inherited-principal-getter"(task, context, counters) {
+    const pid = context.principal.principal_id;
+    const proto = { ...context.principal };
+    Object.defineProperty(proto, "principal_id", {
+      enumerable: true,
+      get() { counters.getter_calls = (counters.getter_calls ?? 0) + 1; return pid; },
+    });
+    context.principal = Object.create(proto);
+  },
+  "inherited-revisions-getter"(task, context, counters) {
+    const key = Object.keys(context.sources)[0];
+    const entry = context.sources[key];
+    const prot = {};
+    Object.defineProperty(prot, "revisions", {
+      enumerable: true,
+      get() { counters.getter_calls = (counters.getter_calls ?? 0) + 1; return entry.revisions; },
+    });
+    context.sources[key] = Object.create(prot);
+  },
+  "nested-applies-to-proxy"(task, context, counters) {
+    const key = Object.keys(context.provenance_registry)[0];
+    const arr = context.provenance_registry[key].applies_to;
+    context.provenance_registry[key].applies_to = new Proxy(arr, {
+      get(t, k, r) { counters.traps = (counters.traps ?? 0) + 1; return Reflect.get(t, k, r); },
+      getOwnPropertyDescriptor(t, k) { counters.traps = (counters.traps ?? 0) + 1; return Reflect.getOwnPropertyDescriptor(t, k); },
+    });
+  },
+  "nested-derivation-link-proxy"(task, context, counters) {
+    const key = Object.keys(context.provenance_registry).find((k) => (context.provenance_registry[k].derivation_links ?? []).length > 0)
+      ?? Object.keys(context.provenance_registry)[0];
+    const arr = context.provenance_registry[key].derivation_links ?? [];
+    context.provenance_registry[key].derivation_links = new Proxy(arr, {
+      get(t, k, r) { counters.traps = (counters.traps ?? 0) + 1; return Reflect.get(t, k, r); },
+      getOwnPropertyDescriptor(t, k) { counters.traps = (counters.traps ?? 0) + 1; return Reflect.getOwnPropertyDescriptor(t, k); },
+    });
+  },
+};
 
 let pass = 0;
 let fail = 0;
@@ -102,16 +159,41 @@ function check(caseId, cond, label, actual) {
 
 for (const c of CASES) {
   const exp = c.expected;
-  // Three consecutive runs must be byte-identical. Each runs under the
-  // external watchdog; a hung case settles as EXECUTION_TIMEOUT, not a
-  // hung battery. The guarded transport takes serialized JSON strings
-  // (inert); stringify once per case.
-  const taskJson = JSON.stringify(c.task);
-  const contextJson = JSON.stringify(c.context);
-  const runs = [await runGuarded(taskJson, contextJson), await runGuarded(taskJson, contextJson), await runGuarded(taskJson, contextJson)];
-  const bytes = runs.map((r) => canonicalJson(r));
-  let ok = check(c.case_id, bytes[0] === bytes[1] && bytes[1] === bytes[2], "three runs byte-identical", false);
-  const result = runs[0];
+  let result;
+  let ok = true;
+  if (c.hostile) {
+    // PER-008 round 2: hostile cases run in-process through run()
+    // (3x, byte-identical). The base case is cloned fresh, the
+    // hostile transform applied, and the instrumented counters must
+    // stay at zero — proving no user code executed during admission.
+    const base = byId.get(c.hostile.base);
+    if (!base || !base.task || !HOSTILE[c.hostile.transform]) {
+      check(c.case_id, false, "hostile base/transform resolves", c.hostile);
+      continue;
+    }
+    const task = structuredClone(base.task);
+    const context = structuredClone(base.context);
+    const counters = {};
+    HOSTILE[c.hostile.transform](task, context, counters);
+    const runs = [run(task, context), run(task, context), run(task, context)];
+    const bytes = runs.map((r) => canonicalJson(r));
+    ok = check(c.case_id, bytes[0] === bytes[1] && bytes[1] === bytes[2], "three runs byte-identical", false) && ok;
+    result = runs[0];
+    for (const k of c.hostile.expect_zero ?? []) {
+      ok = check(c.case_id, (counters[k] ?? 0) === 0, `instrumented counter '${k}' stays zero`, counters[k] ?? 0) && ok;
+    }
+  } else {
+    // Three consecutive runs must be byte-identical. Each runs under the
+    // external watchdog; a hung case settles as EXECUTION_TIMEOUT, not a
+    // hung battery. The guarded transport takes serialized JSON strings
+    // (inert); stringify once per case.
+    const taskJson = JSON.stringify(c.task);
+    const contextJson = JSON.stringify(c.context);
+    const runs = [await runGuarded(taskJson, contextJson), await runGuarded(taskJson, contextJson), await runGuarded(taskJson, contextJson)];
+    const bytes = runs.map((r) => canonicalJson(r));
+    ok = check(c.case_id, bytes[0] === bytes[1] && bytes[1] === bytes[2], "three runs byte-identical", false);
+    result = runs[0];
+  }
 
   ok = check(c.case_id, result.status === exp.status, `status expected ${exp.status}`, result.status) && ok;
 

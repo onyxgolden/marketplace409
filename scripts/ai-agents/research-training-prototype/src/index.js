@@ -121,7 +121,8 @@ function diagnostic(code, severity, reason, record_id = null, source_ref = null)
  *   quiz records .................... each quizzes[] element
  *   quiz-key records ................ each quiz's key object (PER-010)
  *   composite records ............... each composites[] element
- *   composite-key-part records ...... key.first / key.second of each
+ *   composite-key wrapper ........... each composite's key object (PER-010 round 2)
+ *   composite-key-part records ...... key.first / key.second of each composite
  *   citation records ................ every emitted citation
  *   span records .................... every span nested in a citation
  *   source-ref records .............. every emitted source_ref
@@ -190,6 +191,7 @@ export function countFinalEnvelopeRecords(env) {
       for (const c of r.composites ?? []) obj(c, () => {
         rec(); // composite record
         obj(c.key, (k) => {
+          rec(); // composite-key wrapper record (PER-010 round 2)
           obj(k.first, () => rec()); // key-part record
           obj(k.second, () => rec()); // key-part record
         });

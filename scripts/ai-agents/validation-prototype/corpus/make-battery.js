@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * make-battery.js — AUTHORING TOOL (not part of the scored path).
- * Builds corpus/battery.json: 129 frozen cases (40 nominal/boundary,
+ * Builds corpus/battery.json: 132 frozen cases (40 nominal/boundary,
  * 30 contradiction/incomplete/duplicate, 21 injection/prohibited-
  * operation, 28 schema/provenance/permission, 10 budget/replay/
- * mutation). Each case is one primary category.
+ * mutation, 3 hostile_admission). Each case is one primary category.
  *
  * Expected outcomes: computed by the independent corpus/oracle.js for
  * well-formed cases; hard-coded for refusal/boundary/transport cases
@@ -631,6 +631,37 @@ const B04_PREFILL = 230;
   const ctx = buildContext(R("run-00001"), { noRegistry: true, extraRegistry: registry });
   addCase("B10", "budget", buildTask(R("run-00001")), ctx);
 }
+
+// ------------------------------------------------------------------
+// PER-008 round 2 hostile admission cases. These cannot be expressed
+// as JSON (native Proxies and inherited getters do not survive
+// serialization). They are frozen here as {base, transform}
+// references: the battery runner clones the named base case's
+// task/context IN-PROCESS, applies the named hostile transform
+// (defined in tests/run-battery.js), and runs the result through
+// run() 3x (in-process — executable fixtures cannot cross the JSON
+// guarded transport; attempting to serialize them would fire the
+// getters in the harness, which is exactly what the agent must never
+// do). Expectations are hard-coded (REFUSED / INVALID_INPUT), like
+// the malformed/budget cases; the oracle is bypassed. expect_zero
+// names the instrumented counters that must stay at zero.
+function addHostile(case_id, category, baseCaseId, transform, expectZero) {
+  cases.push({
+    case_id, category,
+    hostile: { base: baseCaseId, transform, expect_zero: expectZero },
+    expected: { status: "REFUSED", diagnostic_codes: ["INVALID_INPUT"] },
+  });
+}
+// H01/H02: the verdict's exact inherited-getter probes — an
+// inherited enumerable getter principal_id / revisions on a custom
+// prototype must refuse with ZERO getter calls.
+addHostile("H01", "hostile_admission", "N01", "inherited-principal-getter", ["getter_calls"]);
+addHostile("H02", "hostile_admission", "N01", "inherited-revisions-getter", ["getter_calls"]);
+// H03: the nested pin-record analog — a forwarding native Proxy
+// around one registry entry's implementation_ref pin must refuse
+// with ZERO traps (the containing entry is Proxy-checked before any
+// own-data read of the pin).
+addHostile("H03", "hostile_admission", "N01", "nested-pin-proxy", ["traps"]);
 
 // ------------------------------------------------------------------
 const counts = {};
