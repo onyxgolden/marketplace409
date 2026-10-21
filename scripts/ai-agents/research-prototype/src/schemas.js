@@ -164,6 +164,23 @@ export function assertNoAccessors(obj, where) {
 }
 
 /**
+ * PER-008: trap-free native-Proxy check for one consulted host object.
+ * types.isProxy is a native V8 map check — zero traps fire. Runs BEFORE
+ * any reflective operation on the object (Object.keys,
+ * getOwnPropertyDescriptor, ...), at every level the charged
+ * validators descend to. This replaces the old uncharged
+ * assertNoNativeProxies sweeps: each consulted object is Proxy-checked
+ * and then charged BEFORE its descriptors are inspected, so candidate
+ * #65 refuses before its descriptors are touched, while a Proxy still
+ * refuses immediately with INVALID_INPUT and zero trap executions.
+ */
+function rejectHostProxy(obj, where) {
+  if (types.isProxy(obj)) {
+    fail(where, `native Proxy at '${where}' is not plain data; refusing without invoking its traps`);
+  }
+}
+
+/**
  * Budget-integrated descriptor-safe admission. Walks the object graph with
  * getOwnPropertyDescriptor (never invoking accessors), charging each
  * distinct object against the live monotonic budget BEFORE any of its
@@ -275,6 +292,8 @@ export function assertDenseArray(arr, where) {
 
 /** SourceRef = {repo, path, commit, blob, algorithm:"git-sha1", revision}. */
 export function validateSourceRef(value, where) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "SourceRef must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path", "commit", "blob", "algorithm", "revision"], where);
@@ -292,6 +311,8 @@ export function validateSourceRef(value, where) {
 }
 
 export function validatePrincipal(value, where) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "principal must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["principal_id", "role", "registered_by", "valid_from", "expires_at", "revoked"], where);
@@ -309,6 +330,8 @@ export function validatePrincipal(value, where) {
 /** Trusted criteria: versioned policy record. Host-injected only. */
 export function validateCriteria(value, where, budget) {
   if (!budget || typeof budget.countObject !== "function") fail(where, "internal: validateCriteria requires a live budget");
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "criteria must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["criteria_version"], where);
@@ -318,6 +341,8 @@ export function validateCriteria(value, where, budget) {
 }
 
 export function validateReadGrant(value, where, budget) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "read grant must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path"], where);
@@ -350,6 +375,8 @@ export function validateReadGrant(value, where, budget) {
  * registered lineage never upgrades to independent.
  */
 export function validateProvenanceEntry(value, where, budget) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "provenance entry must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["provenance_group_id", "derivation_links", "applies_to"], where);
@@ -427,6 +454,9 @@ export function entryAppliesToSource(entry, ref) {
  */
 export function validateGrantGateContext(context, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateGrantGateContext requires a live budget");
+  // PER-008: trap-free Proxy check on the context root before any
+  // reflective operation on it.
+  rejectHostProxy(context, "context");
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   charge(context, "context");
   if (!isPlainObject(context)) fail("context", "must be an object");
@@ -439,16 +469,18 @@ export function validateGrantGateContext(context, budget) {
   const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
-  // EXEC652-003: trap-free native Proxy sweeps over every subgraph this
-  // gate inspects — before any reflective operation on them. The
-  // sources map gets a shallow check only (its entries stay untouched
-  // pre-grant, RA652-006); readGrants/principal/criteria/test_hooks are
-  // fully admitted here, so they are swept deeply. types.isProxy is a
-  // native V8 check: zero traps fire.
-  assertNoNativeProxies(context.readGrants, "context.readGrants");
-  assertNoNativeProxies(context.principal, "context.principal");
-  assertNoNativeProxies(context.criteria, "context.criteria");
-  if (context.test_hooks !== undefined) assertNoNativeProxies(context.test_hooks, "context.test_hooks");
+  // PER-008: the old uncharged assertNoNativeProxies sweeps are gone.
+  // Each consulted host subtree root gets a trap-free native-Proxy
+  // check here; every deeper object is Proxy-checked inside its
+  // charged validator (validateReadGrant, validatePrincipal,
+  // validateCriteria, validateTestHooks), which charges each object
+  // BEFORE inspecting its descriptors. Candidate #65 refuses before
+  // its descriptors are touched; a Proxy still refuses immediately
+  // with INVALID_INPUT and zero trap executions.
+  rejectHostProxy(context.readGrants, "context.readGrants");
+  rejectHostProxy(context.principal, "context.principal");
+  rejectHostProxy(context.criteria, "context.criteria");
+  if (context.test_hooks !== undefined) rejectHostProxy(context.test_hooks, "context.test_hooks");
 
   // Sources map: key set only. Entries are NOT read here — a denied
   // source's revision metadata and payload stay untouched until the
@@ -499,20 +531,23 @@ export function validateGrantGateContext(context, budget) {
 function validateSourceEntry(sources, sk, budget) {
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   const entry = sources[sk];
-  // EXEC652-003: trap-free native Proxy sweep over the selected entry
-  // BEFORE any reflective operation on it — nested/selected-source
-  // traps execute zero times. This is post-grant admission, so touching
-  // the selected entry is allowed here (RA652-006).
-  assertNoNativeProxies(entry, `context.sources[${sk}]`);
+  // PER-008: the old uncharged sweep is replaced by per-object
+  // trap-free Proxy checks integrated with charging — each object is
+  // checked and charged BEFORE its descriptors are inspected.
+  // Post-grant admission, so touching the selected entry is allowed
+  // here (RA652-006).
+  rejectHostProxy(entry, `context.sources[${sk}]`);
   charge(entry, `context.sources[${sk}]`);
   if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
   assertNoAccessors(entry, `context.sources[${sk}]`);
   const revs = entry.revisions;
   if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+  rejectHostProxy(revs, `context.sources[${sk}].revisions`);
   charge(revs, `context.sources[${sk}].revisions`);
   assertNoAccessors(revs, `context.sources[${sk}].revisions`);
   for (const commit of Object.keys(revs)) {
     const rev = revs[commit];
+    rejectHostProxy(rev, `context.sources[${sk}]@${commit}`);
     charge(rev, `context.sources[${sk}]@${commit}`);
     if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
     assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
@@ -568,10 +603,11 @@ export function validateProvenanceRegistry(context, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateProvenanceRegistry requires a live budget");
   const regIn = context.provenance_registry;
   if (!isPlainObject(regIn)) fail("context", "provenance_registry must be an object");
-  // EXEC652-003: trap-free native Proxy sweep before any reflective
-  // operation on the registry. Post-grant required metadata: touching
-  // it here is allowed.
-  assertNoNativeProxies(regIn, "context.provenance_registry");
+  // PER-008: the old uncharged sweep is replaced by per-object
+  // trap-free Proxy checks integrated with charging — each object is
+  // checked and charged BEFORE its descriptors are inspected.
+  // Post-grant required metadata: touching it here is allowed.
+  rejectHostProxy(regIn, "context.provenance_registry");
   budget.chargeObjectOnce(regIn, "context.provenance_registry");
   assertNoAccessors(regIn, "context.provenance_registry");
   const regKeys = Object.keys(regIn);
@@ -582,6 +618,9 @@ export function validateProvenanceRegistry(context, budget) {
       fail("context", `invalid provenance registry key '${rk}'; expected 'doc_id|passage_id'`);
     }
     const entry = regIn[rk];
+    // PER-008: trap-free Proxy check before the object is charged or
+    // any of its descriptors is inspected.
+    rejectHostProxy(entry, `context.provenance_registry[${rk}]`);
     budget.chargeObjectOnce(entry, `context.provenance_registry[${rk}]`);
     const validated = validateProvenanceEntry(entry, `context.provenance_registry[${rk}]`, budget);
     // EXEC652-003: exact aggregate accounting — each admitted registry
@@ -625,6 +664,8 @@ export function validateContext(context, budget) {
  */
 function validateTestHooks(value, where, budget) {
   if (value === undefined) return undefined;
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "test_hooks must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["prefill_output_records"], where);

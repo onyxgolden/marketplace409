@@ -2,11 +2,11 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "0be95766de3b435c25cdcfbe64edf12525931321db2e3ba0b2ac3fc597133879"
+      "sha256": "23aa92ffcfd1362d80ef3e74b57b23d5f3f563661affe93be576a777324e96e7"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "f92ee068117711eac96d099bff435e859f4f2ccf54e7cf6708fc493c4a0cdfe7"
+      "sha256": "39cdd263cc354676e3b7cc3b320b756120899c03c457434f8c41e9bd375d70a5"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -14,7 +14,7 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "ee05514233d6b08379b6147d79e7bbf47a2c89b3d03a817bf3e6079b13fbb3ab"
+      "sha256": "6ec55c38daf5c383bb5698f6c20dfb6fed539cd0a86869ca410701e958f6d080"
     },
     {
       "path": "corpus/research-training-pairs.json",
@@ -54,7 +54,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "20886fd5207128ddfea50037cc15871ac34b149444f525d3d7fe4ab2f50c0353"
+      "sha256": "a46fb1709589b4672d6fd6b9cd5149c5b73298ecd1ad33467d524a50481d7987"
     },
     {
       "path": "src/injection.js",
@@ -70,7 +70,7 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "01ce34682c75b3b3dcdd62c31d223ee8d81cd06ba4f1d807d1e042476732591f"
+      "sha256": "e9a45caddc20a7c6508f43757aea2c64764194687bd18c203e0f39df2e9219d8"
     },
     {
       "path": "tests/battery.test.js",
@@ -78,7 +78,7 @@
     },
     {
       "path": "tests/budgets.test.js",
-      "sha256": "9672fd828397e29e3fddc5e7704c53b8e1c888f388fd0398b7cbed4c0e97d913"
+      "sha256": "93564ab0c0402bbf26f7563153e13526edcd5ab96716124eba95232847711aed"
     },
     {
       "path": "tests/canonical.test.js",

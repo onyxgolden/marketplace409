@@ -99,6 +99,14 @@ production): `test_hooks.prefill_output_records` (0–1024) and
 `test_hooks.prefill_spans` (0–512), for exercising the output and
 span boundaries through real runs.
 
+**PER-008 (2026-10-21 retrospective audit):** every consulted host
+object is Proxy/accessor/function/symbol/prototype/depth-checked per
+object and charged BEFORE its fields are read — the uncharged
+recursive preflight sweep over unknown subtrees is removed, so an
+over-budget child (e.g. an accessor sentinel at candidate 79) refuses
+`BUDGET_EXCEEDED` at candidate 65 with zero descriptor visits or
+getter invocations.
+
 ## Running the official suites
 
 The prototype ships with **zero npm scripts**; dispatch runs through

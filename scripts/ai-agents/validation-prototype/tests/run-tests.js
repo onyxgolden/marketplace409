@@ -557,6 +557,34 @@ test("candidate-65 sentinel: over-budget entry never inspected", () => {
   assert.ok(codes(r).includes("BUDGET_EXCEEDED"));
   assert.ok(!canonicalJson(r).includes("SHOULD_NEVER_BE_READ"));
 });
+test("PER-008: unknown options.padding with an accessor sentinel on child 79 refuses at candidate 65 without inspecting the sentinel", () => {
+  const task = positiveTask(R1);
+  task.options.padding = Array.from({ length: 80 }, () => ({ ok: 1 }));
+  let getterRan = false;
+  let descriptorVisits = 0;
+  const sentinel = task.options.padding[79];
+  Object.defineProperty(sentinel, "poison", {
+    enumerable: true,
+    get() { getterRan = true; throw new Error("GETTER_RAN"); },
+  });
+  const origGOPD = Object.getOwnPropertyDescriptor;
+  let r;
+  try {
+    Object.getOwnPropertyDescriptor = function (o, k) {
+      if (o === sentinel) descriptorVisits++;
+      return origGOPD.call(this, o, k);
+    };
+    r = run(task, positiveContext(R1));
+    assert.equal(r.status, "REFUSED");
+    assert.ok(codes(r).includes("BUDGET_EXCEEDED"), "must refuse at candidate 65 with BUDGET_EXCEEDED");
+    assert.ok(!r.diagnostics.some((d) => String(d.reason).includes("padding.79")), "refusal must not name the uninspected sentinel");
+  } finally {
+    Object.getOwnPropertyDescriptor = origGOPD;
+  }
+  assert.equal(getterRan, false, "the sentinel getter must never run");
+  assert.equal(descriptorVisits, 0, "the sentinel's descriptors must never be visited");
+  assert.equal(r.report, null, "no partial domain artifact");
+});
 test("output boundary: prefill 230 + 26 natural = 256 records fit", () => {
   const ctx = positiveContext(R1, { test_hooks: { prefill_output_records: 230 } });
   const r = run(positiveTask(R1), ctx);

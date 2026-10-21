@@ -99,6 +99,7 @@ public records. Unserializable (cyclic) input fails closed to
 | nested basis records | each claim's `atom` and `origin` |
 | citation records | every emitted `citation` |
 | span records | every `span` nested in a citation |
+| byte-identity records | every emitted `citation.byte_identity` (PER-010 fix: previously omitted) |
 | source-ref records | every emitted `source_ref` (nested and top-level) |
 | resource records | each corroboration `evidence` / `same_group_occurrences` / `unregistered_candidates` / `derivation_linked_candidates` / `cycle_defeated_candidates` entry |
 | corroboration records | each claim's `corroboration` object itself |
@@ -142,6 +143,23 @@ atom, the origin reference, the consumed bundle's git-sha1 pin, the
 passage SHA-256 and the span — a changed source identity can never
 silently retain the prior canonical identity; a byte-identical replay
 stays stable.
+
+## Slice 3: bounded-report-completion repairs (PER-008, PER-010,
+2026-10-21 retrospective audit)
+
+**Trap-free candidate admission (PER-008).** Every consulted host
+object is Proxy/accessor/function/symbol/prototype/depth-checked per
+object and charged BEFORE its fields are read — the uncharged
+recursive preflight sweep over unknown subtrees is removed, so an
+over-budget child (e.g. an accessor sentinel at candidate 79) refuses
+`BUDGET_EXCEEDED` at candidate 65 with zero descriptor visits or
+getter invocations.
+
+**Complete output counting (PER-010).** The output walk's record
+taxonomy now includes every emitted `citation.byte_identity` record
+(see the taxonomy table above). The corrected natural counts: the
+single-passage 1-claim envelope counts 12 public records, the
+contradiction envelope 16.
 
 **Exact-source provenance applicability (EXEC652-002).** Every
 provenance-registry entry declares `applies_to`: the complete source

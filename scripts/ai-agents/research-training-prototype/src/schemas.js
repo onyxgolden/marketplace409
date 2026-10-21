@@ -124,6 +124,23 @@ export function assertNoAccessors(obj, where) {
 }
 
 /**
+ * PER-008: trap-free native-Proxy check for one consulted host object.
+ * types.isProxy is a native V8 map check — zero traps fire. Runs BEFORE
+ * any reflective operation on the object (Object.keys,
+ * getOwnPropertyDescriptor, ...), at every level the charged
+ * validators descend to. This replaces the old uncharged
+ * assertNoNativeProxies sweeps: each consulted object is Proxy-checked
+ * and then charged BEFORE its descriptors are inspected, so candidate
+ * #65 refuses before its descriptors are touched, while a Proxy still
+ * refuses immediately with INVALID_INPUT and zero trap executions.
+ */
+function rejectHostProxy(obj, where) {
+  if (types.isProxy(obj)) {
+    fail(where, `native Proxy at '${where}' is not plain data; refusing without invoking its traps`);
+  }
+}
+
+/**
  * Budget-integrated descriptor-safe admission. Charges each distinct
  * object BEFORE any descriptor field is examined; candidate #65
  * refuses without touching that candidate. Rejects accessors,
@@ -182,6 +199,8 @@ export function assertDenseArray(arr, where) {
 
 /** SourceRef = {repo, path, commit, blob, algorithm:"git-sha1", revision}. */
 export function validateSourceRef(value, where) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "SourceRef must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path", "commit", "blob", "algorithm", "revision"], where);
@@ -208,6 +227,8 @@ export function sourceRefEquals(a, b) {
 }
 
 export function validatePrincipal(value, where) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "principal must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["principal_id", "role", "registered_by", "valid_from", "expires_at", "revoked"], where);
@@ -223,6 +244,8 @@ export function validatePrincipal(value, where) {
 }
 
 export function validateReadGrant(value, where, budget) {
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "read grant must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["repo", "path"], where);
@@ -240,6 +263,8 @@ export function validateReadGrant(value, where, budget) {
  */
 export function validateAliases(value, where, budget) {
   if (!budget || typeof budget.countObject !== "function") fail(where, "internal: validateAliases requires a live budget");
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "aliases must be an object");
   assertNoAccessors(value, where);
   const keys = Object.keys(value);
@@ -249,6 +274,9 @@ export function validateAliases(value, where, budget) {
     if (!RECORD_ID_RE.test(k)) fail(where, `invalid alias key '${k}'`);
     const v = value[k];
     if (typeof v !== "string" || !RECORD_ID_RE.test(v)) fail(where, `invalid canonical id for alias '${k}'`);
+    // PER-009: charge the consulted alias record in serialized form
+    // before it is copied into the validated context.
+    budget.countSerialized({ alias: k, canonical: v }, `${where} alias record`);
     out[k] = v;
   }
   return out;
@@ -261,12 +289,19 @@ export function validateAliases(value, where, budget) {
  */
 export function validateCriteria(value, where, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail(where, "internal: validateCriteria requires a live budget");
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "criteria must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["criteria_version", "templates"], where);
   const criteria_version = reqStr(value, "criteria_version", where);
   if (!SLUG_RE.test(criteria_version)) fail(where, `invalid criteria_version '${criteria_version}'`);
+  // PER-009: the consulted criteria container header is charged in
+  // serialized form before the templates are used or copied.
+  budget.countSerialized({ criteria_version }, `${where} container`);
   const templatesIn = value.templates;
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(templatesIn, "criteria.templates");
   if (!isPlainObject(templatesIn)) fail(where, "criteria.templates must be an object");
   assertNoAccessors(templatesIn, "criteria.templates");
   budget.chargeObjectOnce(templatesIn, "criteria.templates");
@@ -274,7 +309,14 @@ export function validateCriteria(value, where, budget) {
   if (predKeys.length > 256) fail(where, "criteria.templates must have at most 256 entries");
   const templates = {};
   for (const pred of predKeys) {
+    // PER-009: bound the template key shape BEFORE the key is used in
+    // any label or charged record — a 300,000-character key is refused
+    // here without ever entering budget labels.
+    if (Buffer.byteLength(pred, "utf8") > 256) fail("criteria.templates", "template key exceeds 256 bytes");
     const t = templatesIn[pred];
+    // PER-008: trap-free Proxy check before the object is charged or
+    // any of its descriptors is inspected.
+    rejectHostProxy(t, "criteria.templates entry");
     budget.chargeObjectOnce(t, `criteria.templates[${pred}]`);
     const tw = `criteria.templates[${pred}]`;
     if (!isPlainObject(t)) fail(tw, "template must be an object");
@@ -282,6 +324,11 @@ export function validateCriteria(value, where, budget) {
     exactKeys(t, ["question_form", "lesson_heading"], tw);
     const question_form = reqStr(t, "question_form", tw, { maxBytes: 1024 });
     const lesson_heading = reqStr(t, "lesson_heading", tw, { maxBytes: 1024 });
+    // PER-009: charge the complete serialized record (key, structure,
+    // escaping, values) before it is consulted or copied, so the
+    // template registry can no longer ride the 256-KiB input contract
+    // uncharged.
+    budget.countSerialized({ predicate: pred, question_form, lesson_heading }, `${tw} record`);
     templates[pred] = { question_form, lesson_heading };
   }
   return { criteria_version, templates };
@@ -307,10 +354,14 @@ export function validateCriteria(value, where, budget) {
  */
 export function validateProvenance(value, where, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail(where, "internal: validateProvenance requires a live budget");
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "provenance must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["sources"], where);
   const srcIn = value.sources;
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(srcIn, "provenance.sources");
   if (!isPlainObject(srcIn)) fail(where, "provenance.sources must be an object");
   assertNoAccessors(srcIn, "provenance.sources");
   budget.chargeObjectOnce(srcIn, "provenance.sources");
@@ -318,7 +369,13 @@ export function validateProvenance(value, where, budget) {
   if (keys.length > 64) fail(where, "provenance.sources must have at most 64 entries");
   const sources = {};
   for (const k of keys) {
+    // PER-009: bound the provenance source-key shape BEFORE the key
+    // is used in any label or charged record.
+    if (Buffer.byteLength(k, "utf8") > 256) fail("provenance.sources", "provenance source key exceeds 256 bytes");
     const entry = srcIn[k];
+    // PER-008: trap-free Proxy check before the object is charged or
+    // any of its descriptors is inspected.
+    rejectHostProxy(entry, "provenance.sources entry");
     budget.chargeObjectOnce(entry, `provenance.sources[${k}]`);
     const w = `provenance.sources[${k}]`;
     if (!isPlainObject(entry)) fail(w, "provenance entry must be an object");
@@ -345,6 +402,14 @@ export function validateProvenance(value, where, budget) {
       }
       out.applies_to = refs;
     }
+    // PER-009: charge the complete serialized record (key, structure,
+    // escaping, metadata) before it is consulted or copied, so
+    // provenance metadata can no longer ride the 256-KiB input
+    // contract uncharged.
+    budget.countSerialized(
+      { source_key: k, group, copied_from, applies_to: out.applies_to ?? null },
+      `${w} record`
+    );
     sources[k] = out;
   }
   return { sources };
@@ -357,6 +422,8 @@ export function validateProvenance(value, where, budget) {
  */
 export function validateTestHooks(value, where, budget) {
   if (value === undefined) return undefined;
+  // PER-008: trap-free Proxy check before any reflective operation.
+  rejectHostProxy(value, where);
   if (!isPlainObject(value)) fail(where, "test_hooks must be an object");
   assertNoAccessors(value, where);
   exactKeys(value, ["prefill_output_records", "prefill_spans"], where);
@@ -387,6 +454,9 @@ export function validateTestHooks(value, where, budget) {
  */
 export function validateGrantGateContext(context, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateGrantGateContext requires a live budget");
+  // PER-008: trap-free Proxy check on the context root before any
+  // reflective operation on it.
+  rejectHostProxy(context, "context");
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   charge(context, "context");
   if (!isPlainObject(context)) fail("context", "must be an object");
@@ -399,12 +469,21 @@ export function validateGrantGateContext(context, budget) {
   const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
-  assertNoNativeProxies(context.readGrants, "context.readGrants");
-  assertNoNativeProxies(context.principal, "context.principal");
-  assertNoNativeProxies(context.aliases, "context.aliases");
-  assertNoNativeProxies(context.criteria, "context.criteria");
-  assertNoNativeProxies(context.provenance, "context.provenance");
-  if (context.test_hooks !== undefined) assertNoNativeProxies(context.test_hooks, "context.test_hooks");
+  // PER-008: the old uncharged assertNoNativeProxies sweeps are gone.
+  // Each consulted host subtree root gets a trap-free native-Proxy
+  // check here; every deeper object is Proxy-checked inside its
+  // charged validator (validateReadGrant, validatePrincipal,
+  // validateAliases, validateCriteria, validateProvenance,
+  // validateTestHooks), which charges each object BEFORE inspecting
+  // its descriptors. Candidate #65 refuses before its descriptors are
+  // touched; a Proxy still refuses immediately with INVALID_INPUT and
+  // zero trap executions.
+  rejectHostProxy(context.readGrants, "context.readGrants");
+  rejectHostProxy(context.principal, "context.principal");
+  rejectHostProxy(context.aliases, "context.aliases");
+  rejectHostProxy(context.criteria, "context.criteria");
+  rejectHostProxy(context.provenance, "context.provenance");
+  if (context.test_hooks !== undefined) rejectHostProxy(context.test_hooks, "context.test_hooks");
 
   if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
   if (types.isProxy(context.sources)) {
@@ -431,6 +510,9 @@ export function validateGrantGateContext(context, budget) {
 
   charge(context.principal, "context.principal");
   const principal = validatePrincipal(context.principal, "context.principal");
+  // PER-009: the consulted principal record is charged in serialized
+  // form (its schema-bounded fields) before it is used.
+  budget.countSerialized(principal, "context.principal record");
   charge(context.aliases, "context.aliases");
   const aliases = validateAliases(context.aliases, "context.aliases", budget);
   charge(context.criteria, "context.criteria");
@@ -445,16 +527,21 @@ export function validateGrantGateContext(context, budget) {
 function validateSourceEntry(sources, sk, budget) {
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
   const entry = sources[sk];
-  assertNoNativeProxies(entry, `context.sources[${sk}]`);
+  // PER-008: the old uncharged sweep is replaced by per-object
+  // trap-free Proxy checks integrated with charging — each object is
+  // checked and charged BEFORE its descriptors are inspected.
+  rejectHostProxy(entry, `context.sources[${sk}]`);
   charge(entry, `context.sources[${sk}]`);
   if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
   assertNoAccessors(entry, `context.sources[${sk}]`);
   const revs = entry.revisions;
   if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
+  rejectHostProxy(revs, `context.sources[${sk}].revisions`);
   charge(revs, `context.sources[${sk}].revisions`);
   assertNoAccessors(revs, `context.sources[${sk}].revisions`);
   for (const commit of Object.keys(revs)) {
     const rev = revs[commit];
+    rejectHostProxy(rev, `context.sources[${sk}]@${commit}`);
     charge(rev, `context.sources[${sk}]@${commit}`);
     if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
     assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);

@@ -3,7 +3,7 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "23c10aea369c78fff9ccaeb9c8ff04a93bb8e7f30cf2ce7e89905dc24d40136f"
+      "sha256": "10f31f450be233ebdc4cf325fa38a6829dde25866d6a8c47e80f642d3522dd7e"
     },
     {
       "path": "corpus/battery.json",
@@ -59,7 +59,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "463946ac87cc4adf7073d78a1f4adce121a311cba17617f2d5c73fe19d21063b"
+      "sha256": "7b37fa9c9b71748ff76ece8e62a5a3f845a223f42a123d1e962f8f0b497d40a4"
     },
     {
       "path": "src/injection.js",
@@ -71,7 +71,7 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "53d7da4724f7166d35930cf87b0f9079f0b3d5c3133a2fb93bad36586070dca6"
+      "sha256": "63e68f2c0e43d59729c0fa95eabe78ac35f763b7382f866e5a2ed858e7574186"
     },
     {
       "path": "src/verify.js",
@@ -83,7 +83,7 @@
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "bac81c141fe6e15cdfd336f4ad142865401c111ff3271e48b30cac3ade3ba334"
+      "sha256": "b3bd13dcbcbed19bf4e95699ebba6efd36a4473249a75afd10603ad5c9b73557"
     }
   ]
 }

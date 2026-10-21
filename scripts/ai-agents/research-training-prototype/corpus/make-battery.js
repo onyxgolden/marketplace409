@@ -1572,6 +1572,33 @@ wf("S37", "schema", s35Task("S37"), s35CtxWithAncestorPin({ ...srcRef(K), commit
 // registered label is rev-1).
 wf("S38", "schema", s35Task("S38"), s35CtxWithAncestorPin({ ...srcRef(K), revision: "rev-999" }));
 
+// S39 PER-009: a 300,000-character host template key never reaches
+// the worker — the guarded transport refuses the oversized JSON with
+// TRANSPORT_REFUSED before any candidate byte runs (fail-closed, and
+// the behavior the audit requires the public object API to match).
+// The in-process refusal (INVALID_INPUT from the 256-byte template-key
+// shape bound, before any serialized-charging) is frozen as a focused
+// test through run() directly, since battery cases are JSON-serialized.
+{
+  const c = buildCtx({ grantPaths: [K], templatesFor: ["default port"] });
+  c.criteria.templates["z".repeat(300000)] = { question_form: "unused", lesson_heading: "unused" };
+  rf("S39", "schema", baseN01Task(), c, "TRANSPORT_REFUSED");
+}
+
+// S40 PER-007: topic requests two predicates but only "default port"
+// is taught — the missing "startup sequence" predicate is an explicit
+// gap and the envelope is PARTIAL, never "full" by topic-level
+// any-match. (Positive partner: N03 teaches both predicates and stays
+// REPORT_READY with no gaps.)
+wf("S40", "schema", buildTask({
+  id: "S40", refs: [srcRef(K), srcRef(NI)],
+  topics: [topic("t-pumps", ["default port", "startup sequence"])],
+  asserts: [
+    A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+    A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+  ],
+}), buildCtx({ grantPaths: [K, NI], templatesFor: ["default port", "startup sequence"] }));
+
 // =================================================== BUDGET / REPLAY / MUTATION (10)
 // B01 exact-fit input payload (calibrated at authoring) -> taught
 // Launcher-level boundary (binary-searched at authoring, scratch): the
@@ -1656,16 +1683,19 @@ wf("B05", "budget", buildTask({
 })());
 
 // B06 output records exact-fit: prefill so envelope = 256 -> taught
+// (PER-010 recalibration: the N01-shaped envelope now counts its
+// quiz.key and report.provenance records, natural 14, so prefill 242
+// lands exactly on 256.)
 {
   const c = buildCtx({ grantPaths: [K], templatesFor: ["default port"] });
-  c.test_hooks = { prefill_output_records: 244 };
+  c.test_hooks = { prefill_output_records: 242 };
   wf("B06", "budget", baseN01Task(), c);
 }
 
-// B07 output records 257 -> OUTPUT_LIMIT (minimal N01 shape with prefill 245)
+// B07 output records 257 -> OUTPUT_LIMIT (minimal N01 shape with prefill 243)
 {
   const c = buildCtx({ grantPaths: [K], templatesFor: ["default port"] });
-  c.test_hooks = { prefill_output_records: 245 };
+  c.test_hooks = { prefill_output_records: 243 };
   rf("B07", "budget", baseN01Task(), c, "OUTPUT_LIMIT");
 }
 
@@ -1705,9 +1735,63 @@ wf("B05", "budget", buildTask({
   wf("B10", "budget", t, buildCtx({ grantPaths: [K], templatesFor: ["default port"] }));
 }
 
+// B11 PER-008: unknown options.padding with 80 plain children — the
+// single charged admission traversal refuses at candidate 65
+// (BUDGET_EXCEEDED) before the later children are inspected. The
+// accessor-sentinel variant (a getter on child 79 must never be
+// visited, let alone invoked) is frozen as an in-process focused test
+// — accessors cannot survive battery JSON serialization.
+{
+  const t = baseN01Task();
+  t.options.padding = Array.from({ length: 80 }, () => ({ ok: 1 }));
+  rf("B11", "budget", t, buildCtx({ grantPaths: [K], templatesFor: ["default port"] }), "BUDGET_EXCEEDED");
+}
+
+// B12 PER-010: N02-shaped envelope with prefill landing exactly on 256
+// -> REPORT_READY. The natural count (15: quiz.key and
+// report.provenance included) plus prefill 241 is the corrected
+// exact-fit boundary.
+{
+  const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"] });
+  c.test_hooks = { prefill_output_records: 241 };
+  wf("B12", "budget", buildTask({
+    id: "B12", refs: [srcRef(K), srcRef(NI)],
+    topics: [topic("t-pumps", ["default port"])],
+    asserts: [
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+    ],
+  }), c);
+}
+
+// B13 PER-010: N02-shaped envelope one record over (prefill 242 ->
+// 257) -> OUTPUT_LIMIT with no partial domain artifact.
+{
+  const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"] });
+  c.test_hooks = { prefill_output_records: 242 };
+  rf("B13", "budget", buildTask({
+    id: "B13", refs: [srcRef(K), srcRef(NI)],
+    topics: [topic("t-pumps", ["default port"])],
+    asserts: [
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+    ],
+  }), c, "OUTPUT_LIMIT");
+}
+
+// B14 PER-010: the truly-empty fast path is not exempt from the
+// final-envelope bounds — prefill 255 pushes the empty envelope
+// (natural 2: report + provenance) to 257 -> OUTPUT_LIMIT.
+{
+  const c = buildCtx({ grantPaths: [], templatesFor: [] });
+  c.test_hooks = { prefill_output_records: 255 };
+  const t = buildTask({ id: "B14", refs: [], topics: [], asserts: [] });
+  rf("B14", "budget", t, c, "OUTPUT_LIMIT");
+}
+
 // ---- write ----
-if (CASES.length !== 138) {
-  throw new Error(`battery must hold exactly 138 cases; built ${CASES.length}`);
+if (CASES.length !== 144) {
+  throw new Error(`battery must hold exactly 144 cases; built ${CASES.length}`);
 }
 const counts = {};
 for (const c of CASES) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
