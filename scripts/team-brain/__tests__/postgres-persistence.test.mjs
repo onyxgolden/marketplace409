@@ -25,6 +25,18 @@
 //   8. Adapter provenance boundary (fix round 2, TBP1-004): the normalized
 //      filing contract — sourceId or a REGISTERED source identity only;
 //      incomplete or unregistered provenance is refused, never synthesized
+//   9. Fix round 3 (TBP1-002A/B/C): the full override structure enforced
+//      inside tb_upsert_override (TB220/TB221/TB222 refusals, prior row
+//      preserved byte-for-byte, accepted payloads project cleanly);
+//      tb_close_task coverage requires a JSON array of valid reference
+//      strings (TB223 — object/scalar/malformed/invalid-member evidence
+//      fails closed); close/revoke/retention append their immutable event
+//      inside the guarded function (exactly one event per transition,
+//      TB224 metadata refusals, repeat close refused with no second event)
+//  10. Two test-authoring fixes from Claude's round-2 receipt (47/49 raw):
+//      the TDZ shadowing of the `filed` helper in the idempotency test,
+//      and the auth-override test asserting a typed code against the
+//      error message instead of its .code property
 
 import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -467,9 +479,14 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         expect(a1).toBeTruthy();
         // Same logical annotation again is a new event (no key), but the
         // FILED event's idempotency key prevents double-filing.
+        // (Fix round 3 test-authoring fix, per Claude's round-2 receipt:
+        // the local was named `filed`, shadowing the module-scope helper
+        // `filed(repo, pool, record)` for the whole block via TDZ and
+        // throwing ReferenceError before this assertion could run. Renamed
+        // to `filedEvents`.)
         const events = await repo.getEvents("p1-idem");
-        const filed = events.filter((e) => e.eventType === "FILED");
-        expect(filed.length).toBe(1);
+        const filedEvents = events.filter((e) => e.eventType === "FILED");
+        expect(filedEvents.length).toBe(1);
       } finally {
         await pool.end();
       }
@@ -494,6 +511,13 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           "select row_version from team_brain.obligations where obligation_id = 'p1-rv'",
         );
         expect(Number(v1.rows[0].row_version)).toBeGreaterThan(Number(v0.rows[0].row_version));
+        // Fix round 3 (TBP1-002C): the RETENTION_DECIDED event is written
+        // by the guarded function itself — exactly one, no adapter
+        // duplicate.
+        const retEvents = (await repo.getEvents("p1-rv")).filter(
+          (e) => e.eventType === "RETENTION_DECIDED",
+        );
+        expect(retEvents.length).toBe(1);
         void before;
       } finally {
         await pool.end();
@@ -529,6 +553,14 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           evidenceRefs: ["ev-1"],
         });
         expect(closed.state).toBe("CLOSED");
+        // Fix round 3 (TBP1-002C): exactly one CLOSED event, written by
+        // the guarded function — the adapter no longer adds a second.
+        const closedEvents = (await repo.getEvents("p1-close")).filter(
+          (e) => e.eventType === "CLOSED",
+        );
+        expect(closedEvents.length).toBe(1);
+        expect(closedEvents[0].actor).toBe("tester");
+        expect(closedEvents[0].reason).toBe("done");
       } finally {
         await pool.end();
       }
@@ -545,6 +577,11 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         // team_brain.trusted_authorizations itself, and this test database
         // has no rows in it, so "unknown-grant" cannot resolve.
         const repo = createPostgresRepository(pool);
+        // (Fix round 3 test-authoring fix, per Claude's round-2 receipt:
+        // this asserted the typed code against the error MESSAGE via
+        // toThrow(/UNKNOWN_AUTHORITY|INVALID_OVERRIDE/), but neither
+        // literal appears in the message text — the code lives on the
+        // error's .code property. Assert on .code instead.)
         await expect(
           filed(
             repo,
@@ -559,7 +596,9 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
               },
             }),
           ),
-        ).rejects.toThrow(/UNKNOWN_AUTHORITY|INVALID_OVERRIDE/);
+        ).rejects.toMatchObject({
+          code: expect.stringMatching(/^(UNKNOWN_AUTHORITY|INVALID_OVERRIDE)$/),
+        });
         const res = await pool.query(
           "select count(*)::int as n from team_brain.obligations where obligation_id = 'p1-auth'",
         );
@@ -778,6 +817,12 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           reason: "test",
         });
         expect(revoked.state).toBe("REVOKED");
+        // Fix round 3 (TBP1-002C): exactly one REVOKED event, written by
+        // the guarded function — the adapter no longer adds a second.
+        const revokedEvents = (await repo.getEvents("p1-a1")).filter(
+          (e) => e.eventType === "REVOKED",
+        );
+        expect(revokedEvents.length).toBe(1);
       } finally {
         await pool.end();
       }
@@ -892,6 +937,50 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       });
     }
 
+    // Fix round 3 (TBP1-002A): build an override payload from the valid
+    // base with fields patched or omitted entirely.
+    function overrideJson(patch = {}, omit = []) {
+      const o = {
+        authorityRef: "grant-valid",
+        actor: "t",
+        recordedAt: T0,
+        reason: "t",
+        rank: 1,
+        ...patch,
+      };
+      for (const k of omit) delete o[k];
+      return JSON.stringify(o);
+    }
+
+    // Insert a VERIFICATION event directly (admin pool), bypassing the
+    // adapter's recordVerification contract — the exact direct-write path
+    // TBP1-002B is about.
+    async function insertVerificationEvent(id, evidenceLinks) {
+      await admin.query(
+        `insert into team_brain.obligation_events
+           (event_id, obligation_id, actor_principal, event_type, reason, evidence_links)
+         values ($1, $2, 't', 'VERIFICATION', 't', $3)`,
+        [randomUUID(), id, evidenceLinks],
+      );
+    }
+
+    async function obligationState(id) {
+      const res = await admin.query(
+        "select state from team_brain.obligations where obligation_id = $1",
+        [id],
+      );
+      return res.rows[0].state;
+    }
+
+    async function transitionEventCount(id, eventType) {
+      const res = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = $2`,
+        [id, eventType],
+      );
+      return res.rows[0].n;
+    }
+
     beforeAll(async () => {
       admin = await freshMigratedPool();
       // Test-only credential, provisioned outside the migration (TBP1-001)
@@ -922,19 +1011,38 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
     test("tb_close_task refuses a non-TASK obligation (TB202) and changes nothing", async () => {
       const auth = await filed(adminRepo, admin, { ...taskRecord("g-auth"), kind: "AUTHORIZATION" });
       await expect(
-        worker.query("select team_brain.tb_close_task($1, $2)", [auth.id, ["e1"]]),
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          auth.id,
+          ["e1"],
+          "t",
+          "t",
+          T2,
+        ]),
       ).rejects.toMatchObject({ code: "TB202" });
       const res = await admin.query(
         "select state from team_brain.obligations where obligation_id = $1",
         [auth.id],
       );
       expect(res.rows[0].state).toBe("OPEN");
+      // Fix round 3 (TBP1-002C): a refused transition writes zero events.
+      const ev = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'CLOSED'`,
+        [auth.id],
+      );
+      expect(ev.rows[0].n).toBe(0);
     });
 
     test("tb_close_task refuses a task with no verification event (TB204)", async () => {
       const task = await filed(adminRepo, admin, taskRecord("g-noverify"));
       await expect(
-        worker.query("select team_brain.tb_close_task($1, $2)", [task.id, ["e1"]]),
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          task.id,
+          ["e1"],
+          "t",
+          "t",
+          T2,
+        ]),
       ).rejects.toMatchObject({ code: "TB204" });
     });
 
@@ -947,8 +1055,26 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         evidenceRefs: ["e1"],
       });
       await expect(
-        worker.query("select team_brain.tb_close_task($1, $2)", [task.id, ["e2"]]),
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          task.id,
+          ["e2"],
+          "t",
+          "t",
+          T2,
+        ]),
       ).rejects.toMatchObject({ code: "TB206" });
+      // Refused: state unchanged, zero CLOSED events (TBP1-002C).
+      const res = await admin.query(
+        "select state from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].state).toBe("OPEN");
+      const ev = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'CLOSED'`,
+        [task.id],
+      );
+      expect(ev.rows[0].n).toBe(0);
     });
 
     test("tb_close_task closes directly when verification covers the evidence", async () => {
@@ -959,18 +1085,101 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         reason: "t",
         evidenceRefs: ["e1"],
       });
-      await worker.query("select team_brain.tb_close_task($1, $2)", [task.id, ["e1"]]);
+      await worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+        task.id,
+        ["e1"],
+        "closer",
+        "direct close",
+        T2,
+      ]);
       const res = await admin.query(
         "select state from team_brain.obligations where obligation_id = $1",
         [task.id],
       );
       expect(res.rows[0].state).toBe("CLOSED");
+      // Fix round 3 (TBP1-002C): the direct call itself appends exactly
+      // one CLOSED event carrying the supplied actor/reason/evidence.
+      const ev = await admin.query(
+        `select actor_principal, reason, evidence_links from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'CLOSED'`,
+        [task.id],
+      );
+      expect(ev.rows.length).toBe(1);
+      expect(ev.rows[0].actor_principal).toBe("closer");
+      expect(ev.rows[0].reason).toBe("direct close");
+      expect(JSON.parse(ev.rows[0].evidence_links)).toEqual(["e1"]);
+      // Repeat direct close: terminal-state refusal (TB203), no second
+      // event.
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          task.id,
+          ["e1"],
+          "closer",
+          "direct close again",
+          T3,
+        ]),
+      ).rejects.toMatchObject({ code: "TB203" });
+      const ev2 = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'CLOSED'`,
+        [task.id],
+      );
+      expect(ev2.rows[0].n).toBe(1);
+    });
+
+    test("tb_close_task refuses object evidence_links: object keys are not array coverage (TB223, TBP1-002B probe case)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ev-object"));
+      // The ChatGPT/Claude probe case: a VERIFICATION event whose
+      // evidence_links is a JSON OBJECT. The round-2 `?` predicate matched
+      // the object key 'artifact' and closed the task.
+      await insertVerificationEvent(task.id, '{"artifact":false}');
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          task.id,
+          ["artifact"],
+          "t",
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB223" });
+      expect(await obligationState(task.id)).toBe("OPEN");
+      expect(await transitionEventCount(task.id, "CLOSED")).toBe(0);
+    });
+
+    test("tb_close_task refuses scalar, malformed, and invalid-member evidence (TB223, TBP1-002B)", async () => {
+      const cases = [
+        ["g-ev-scalar", '"artifact"'],
+        ["g-ev-malformed", "not json{"],
+        ["g-ev-nonstr", '["artifact",42]'],
+        ["g-ev-blank", '["artifact"," "]'],
+        ["g-ev-nullmember", '["artifact",null]'],
+      ];
+      for (const [id, links] of cases) {
+        const task = await filed(adminRepo, admin, taskRecord(id));
+        await insertVerificationEvent(task.id, links);
+        await expect(
+          worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+            task.id,
+            ["artifact"],
+            "t",
+            "t",
+            T2,
+          ]),
+        ).rejects.toMatchObject({ code: "TB223" });
+        expect(await obligationState(task.id)).toBe("OPEN");
+        expect(await transitionEventCount(task.id, "CLOSED")).toBe(0);
+      }
     });
 
     test("tb_revoke_authorization refuses a non-AUTHORIZATION obligation (TB202)", async () => {
       const task = await filed(adminRepo, admin, taskRecord("g-task"));
       await expect(
-        worker.query("select team_brain.tb_revoke_authorization($1)", [task.id]),
+        worker.query("select team_brain.tb_revoke_authorization($1, $2, $3, $4)", [
+          task.id,
+          "t",
+          "t",
+          T2,
+        ]),
       ).rejects.toMatchObject({ code: "TB202" });
     });
 
@@ -978,8 +1187,36 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       const auth = await filed(adminRepo, admin, { ...taskRecord("g-auth2"), kind: "AUTHORIZATION" });
       await adminRepo.revokeAuthorization(auth.id, { actor: "t", recordedAt: T1, reason: "t" });
       await expect(
-        worker.query("select team_brain.tb_revoke_authorization($1)", [auth.id]),
+        worker.query("select team_brain.tb_revoke_authorization($1, $2, $3, $4)", [
+          auth.id,
+          "t",
+          "t",
+          T2,
+        ]),
       ).rejects.toMatchObject({ code: "TB203" });
+    });
+
+    test("tb_revoke_authorization revokes directly and appends exactly one REVOKED event (TBP1-002C)", async () => {
+      const auth = await filed(adminRepo, admin, { ...taskRecord("g-revoke-ok"), kind: "AUTHORIZATION" });
+      await worker.query("select team_brain.tb_revoke_authorization($1, $2, $3, $4)", [
+        auth.id,
+        "revoker",
+        "direct revoke",
+        T2,
+      ]);
+      const res = await admin.query(
+        "select state from team_brain.obligations where obligation_id = $1",
+        [auth.id],
+      );
+      expect(res.rows[0].state).toBe("REVOKED");
+      const ev = await admin.query(
+        `select actor_principal, reason from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'REVOKED'`,
+        [auth.id],
+      );
+      expect(ev.rows.length).toBe(1);
+      expect(ev.rows[0].actor_principal).toBe("revoker");
+      expect(ev.rows[0].reason).toBe("direct revoke");
     });
 
     test("tb_supersede_verdict refuses a same-head supersession (TB209)", async () => {
@@ -1049,17 +1286,109 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
     test("tb_set_retention_disposition enforces the policy set (TB208)", async () => {
       const task = await filed(adminRepo, admin, taskRecord("g-ret"));
       await expect(
-        worker.query("select team_brain.tb_set_retention_disposition($1, $2)", [task.id, "whenever lol"]),
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          "whenever lol",
+          "t",
+          "t",
+          T2,
+        ]),
       ).rejects.toMatchObject({ code: "TB208" });
-      await worker.query("select team_brain.tb_set_retention_disposition($1, $2)", [
+      // Refused: zero RETENTION_DECIDED events (TBP1-002C).
+      const ev0 = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(ev0.rows[0].n).toBe(0);
+      await worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
         task.id,
         "RETAIN_1Y",
+        "decider",
+        "direct retention",
+        T2,
       ]);
       const res = await admin.query(
         "select retention_disposition from team_brain.obligations where obligation_id = $1",
         [task.id],
       );
       expect(res.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      // Fix round 3 (TBP1-002C): the direct call appends exactly one
+      // RETENTION_DECIDED event carrying the supplied actor/reason.
+      const ev = await admin.query(
+        `select actor_principal, reason from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(ev.rows.length).toBe(1);
+      expect(ev.rows[0].actor_principal).toBe("decider");
+      expect(ev.rows[0].reason).toBe("direct retention");
+    });
+
+    test("transition functions refuse invalid transition metadata (TB224) and write nothing", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-meta"));
+      await adminRepo.recordVerification(task.id, {
+        verifier: "t",
+        verifiedAt: T1,
+        reason: "t",
+        evidenceRefs: ["e1"],
+      });
+      // Blank actor on close.
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          task.id,
+          ["e1"],
+          "  ",
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB224" });
+      // Malformed claimed_at on close.
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+          task.id,
+          ["e1"],
+          "t",
+          "t",
+          "not-a-timestamp",
+        ]),
+      ).rejects.toMatchObject({ code: "TB224" });
+      const auth = await filed(adminRepo, admin, { ...taskRecord("g-meta-auth"), kind: "AUTHORIZATION" });
+      // Blank reason on revoke.
+      await expect(
+        worker.query("select team_brain.tb_revoke_authorization($1, $2, $3, $4)", [
+          auth.id,
+          "t",
+          "",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB224" });
+      // Missing claimed_at on retention.
+      await expect(
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          "RETAIN_1Y",
+          "t",
+          "t",
+          null,
+        ]),
+      ).rejects.toMatchObject({ code: "TB224" });
+      // Nothing changed, no transition events.
+      const t = await admin.query(
+        "select state from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(t.rows[0].state).toBe("OPEN");
+      const a = await admin.query(
+        "select state, retention_disposition from team_brain.obligations where obligation_id = $1",
+        [auth.id],
+      );
+      expect(a.rows[0].state).toBe("OPEN");
+      const ev = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where event_type in ('CLOSED', 'REVOKED', 'RETENTION_DECIDED')`,
+      );
+      expect(ev.rows[0].n).toBe(0);
     });
 
     test("tb_upsert_override refuses an unknown authority grant (TB215)", async () => {
@@ -1119,6 +1448,113 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         [task.id],
       );
       expect(res.rows[0].n).toBe(1);
+    });
+
+    test("tb_upsert_override refuses the probe payload {authorityRef, rank} and stores nothing (TBP1-002A)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr-probe"));
+      await seedGrants(task.id);
+      // The exact ChatGPT/Claude probe payload: valid grant + rank, but no
+      // actor / recordedAt / reason. Round 2 persisted it verbatim and the
+      // queue projection then failed INVALID_OVERRIDE.
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          JSON.stringify({ authorityRef: "grant-valid", rank: 1 }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB220" });
+      const res = await admin.query(
+        "select count(*)::int as n from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].n).toBe(0);
+    });
+
+    test("tb_upsert_override enforces the full structural contract (TB220/TB221/TB222, TBP1-002A)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr-struct"));
+      await seedGrants(task.id);
+      const cases = [
+        // [payload, expected errcode]
+        [overrideJson({}, ["actor"]), "TB220"],
+        [overrideJson({}, ["reason"]), "TB220"],
+        [overrideJson({ actor: " " }), "TB220"],
+        [overrideJson({ reason: "" }), "TB220"],
+        [overrideJson({ authorityRef: 42 }), "TB220"],
+        [overrideJson({ authority: "Jason said so" }), "TB220"],
+        [overrideJson({}, ["recordedAt"]), "TB221"],
+        [overrideJson({ recordedAt: "not-a-date" }), "TB221"],
+        [overrideJson({ recordedAt: "2026-02-30T00:00:00.000Z" }), "TB221"],
+        [overrideJson({}, ["rank"]), "TB222"],
+        [overrideJson({ rank: "1" }), "TB222"],
+        [overrideJson({ rank: 1.5 }), "TB222"],
+        [overrideJson({ rank: -1 }), "TB222"],
+        ["[]", "TB220"],
+        ['"just-a-string"', "TB220"],
+      ];
+      for (const [payload, code] of cases) {
+        await expect(
+          worker.query("select team_brain.tb_upsert_override($1, $2)", [task.id, payload]),
+        ).rejects.toMatchObject({ code });
+      }
+      // Every refusal left state unchanged: no override row was stored.
+      const res = await admin.query(
+        "select count(*)::int as n from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].n).toBe(0);
+    });
+
+    test("a refused tb_upsert_override preserves the prior override byte-for-byte (TBP1-002A)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr-keep"));
+      await seedGrants(task.id);
+      const good = overridePayload();
+      await worker.query("select team_brain.tb_upsert_override($1, $2)", [task.id, good]);
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overrideJson({}, ["actor"]),
+        ]),
+      ).rejects.toMatchObject({ code: "TB220" });
+      const res = await admin.query(
+        "select override_json from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows.length).toBe(1);
+      expect(res.rows[0].override_json).toBe(good);
+    });
+
+    test("a valid full override payload is accepted and passes queue projection (TBP1-002A)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr-project"));
+      await seedGrants(task.id);
+      await worker.query("select team_brain.tb_upsert_override($1, $2)", [
+        task.id,
+        overridePayload(),
+      ]);
+      const res = await admin.query(
+        "select override_json from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows.length).toBe(1);
+      // The persisted payload must survive the JS queue projection — no
+      // INVALID_OVERRIDE (the round-2 queue-poison failure mode).
+      const { projectQueue } = await import("../queue/projection.mjs");
+      const projection = projectQueue({
+        obligations: [
+          {
+            id: task.id,
+            kind: "TASK",
+            filedAt: T0,
+            state: "OPEN",
+            override: JSON.parse(res.rows[0].override_json),
+          },
+        ],
+        now: T3,
+        trustedAuthorizations: [
+          { id: "grant-valid", granter: "Jason", itemId: task.id, rank: 1, revoked: false },
+        ],
+      });
+      expect(projection.overrides.length).toBe(1);
+      expect(projection.overrides[0].rank).toBe(1);
+      expect(projection.overrides[0].authorityRef).toBe("grant-valid");
     });
 
     test("tb_record_obligation_supersession refuses verdict endpoints (TB212)", async () => {

@@ -565,7 +565,8 @@ alter table team_brain.retrieval_evaluations owner to tb_owner;
 revoke all on team_brain.retrieval_evaluations from public;
 
 -- ============================================================================
--- Guarded transition functions (fix round 2, TBP1-002)
+-- Guarded transition functions (fix round 2, TBP1-002; fix round 3,
+-- TBP1-002A/B/C)
 -- ============================================================================
 --
 -- tb_coordinator gets SELECT/INSERT on obligations and obligation_dependencies
@@ -581,19 +582,41 @@ revoke all on team_brain.retrieval_evaluations from public;
 --   TB202 wrong kind                    TB212 verdict endpoint in generic
 --   TB203 not in an open state                supersession recorder
 --   TB204 no verification event         TB213 duplicate supersession relation
---   TB205 missing evidence refs         TB214 override payload invalid
---   TB206 evidence not covered by             (unparseable / no authorityRef)
---         verification                  TB215 unknown authority grant
---   TB207 supersession binding mismatch TB216 grant not from Jason
---   TB208 retention disposition not     TB217 grant revoked
---         in the policy set             TB218 grant bound to a different item
---   TB209 same-head supersession        TB219 grant rank mismatch
---   TB210 stale (not later) supersession
+--   TB205 missing evidence refs         TB214 override payload unparseable
+--   TB206 evidence not covered by       TB215 unknown authority grant
+--         verification                  TB216 grant not from Jason
+--   TB207 supersession binding mismatch TB217 grant revoked
+--   TB208 retention disposition not     TB218 grant bound to a different item
+--         in the policy set             TB219 grant rank mismatch
+--   TB209 same-head supersession        TB220 override structure invalid
+--   TB210 stale (not later) supersession      (non-object payload, forbidden
+--         free-text authority, or authorityRef/actor/reason missing,
+--         wrong-typed, or blank) — fix round 3, TBP1-002A
+--   TB221 override recordedAt missing or not a valid strict UTC timestamp
+--         — fix round 3, TBP1-002A
+--   TB222 override rank missing, not a JSON number, fractional, or negative
+--         — fix round 3, TBP1-002A
+--   TB223 VERIFICATION evidence_links is not a JSON array of valid
+--         reference strings (unparseable, object, scalar, or an array
+--         containing a non-string/blank member) — fix round 3, TBP1-002B
+--   TB224 transition metadata invalid (actor/reason blank, or claimed_at
+--         missing / not a valid strict UTC timestamp) for close, revoke,
+--         and retention — fix round 3, TBP1-002C
+--
+-- Fix round 3 (TBP1-002C): the close / revoke / retention functions also
+-- append their immutable obligation_events row inside the same guarded
+-- transaction (the tb_supersede_verdict pattern), so a direct call can no
+-- longer change state without lifecycle history. Event idempotency keys:
+-- 'close:<id>', 'revoke:<id>', 'retention:<id>:<disposition>'.
 
--- Idempotency: signatures that changed (or were removed) in fix round 2 are
--- dropped first so a replayed migration never leaves a stale overload behind.
+-- Idempotency: signatures that changed (or were removed) in fix rounds 2
+-- and 3 are dropped first so a replayed migration never leaves a stale
+-- overload behind.
 drop function if exists team_brain.tb_close_task(text);
 drop function if exists team_brain.tb_mark_superseded(text);
+drop function if exists team_brain.tb_close_task(text, text[]);
+drop function if exists team_brain.tb_revoke_authorization(text);
+drop function if exists team_brain.tb_set_retention_disposition(text, text);
 
 -- Retention disposition is a closed policy set, not free text. The values map
 -- to the persistence contract (Section 1) language:
@@ -605,7 +628,11 @@ drop function if exists team_brain.tb_mark_superseded(text);
 --   RETAIN_1Y / RETAIN_7Y         — fixed retention windows
 --   ARCHIVE_AFTER_30D             — short-lived working state
 create or replace function team_brain.tb_set_retention_disposition(
-  p_obligation_id text, p_disposition text
+  p_obligation_id text,
+  p_disposition text,
+  p_actor_principal text,
+  p_reason text,
+  p_claimed_at text
 ) returns void
 language plpgsql
 security definer
@@ -613,12 +640,32 @@ set search_path = team_brain, pg_temp
 as $$
 declare
   v_row team_brain.obligations%rowtype;
+  v_claimed_ts timestamptz;
 begin
   select * into v_row from team_brain.obligations
    where obligation_id = p_obligation_id for update;
   if not found then
     raise exception 'unknown obligation: %', p_obligation_id using errcode = 'TB201';
   end if;
+  -- Transition metadata (TBP1-002C): the immutable RETENTION_DECIDED event
+  -- written below is only as trustworthy as its actor/reason/claimed_at, so
+  -- all three are validated here, before any write.
+  if p_actor_principal is null or btrim(p_actor_principal) = ''
+     or p_reason is null or btrim(p_reason) = '' then
+    raise exception 'retention transition for % requires a nonblank actor and reason',
+      p_obligation_id using errcode = 'TB224';
+  end if;
+  if p_claimed_at is null
+     or p_claimed_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+    raise exception 'retention transition for % requires a valid UTC claimed_at timestamp',
+      p_obligation_id using errcode = 'TB224';
+  end if;
+  begin
+    v_claimed_ts := p_claimed_at::timestamptz;
+  exception when others then
+    raise exception 'retention transition for % requires a valid UTC claimed_at timestamp',
+      p_obligation_id using errcode = 'TB224';
+  end;
   if p_disposition is null or p_disposition not in (
     'PERMANENT',
     'UNTIL_VERIFIED_COMPLETION',
@@ -636,16 +683,34 @@ begin
      set retention_disposition = p_disposition,
          row_version = row_version + 1
    where obligation_id = p_obligation_id;
+  insert into team_brain.obligation_events
+    (event_id, obligation_id, actor_principal, claimed_at, event_type, reason,
+     evidence_links, idempotency_key)
+  values (gen_random_uuid()::text, p_obligation_id, p_actor_principal, v_claimed_ts,
+          'RETENTION_DECIDED', p_reason, '[]',
+          'retention:' || p_obligation_id || ':' || p_disposition);
 end;
 $$;
-alter function team_brain.tb_set_retention_disposition(text, text) owner to tb_owner;
-revoke all on function team_brain.tb_set_retention_disposition(text, text) from public;
+alter function team_brain.tb_set_retention_disposition(text, text, text, text, text) owner to tb_owner;
+revoke all on function team_brain.tb_set_retention_disposition(text, text, text, text, text) from public;
 
 -- Close a TASK only from an open state, only with completion-evidence refs,
 -- and only when every ref is covered by a recorded VERIFICATION event's
--- evidence_links (a JSON array held as text).
+-- evidence_links. Coverage semantics (fix round 3, TBP1-002B) mirror the JS
+-- recordVerification/closeTask contract exactly: evidence_links must parse
+-- as a JSON ARRAY whose members are all valid reference strings (nonblank
+-- strings), and a requested ref is covered only by explicit array
+-- membership. The round-2 predicate `evidence_links::jsonb ? v_ref` also
+-- matched JSON OBJECT keys, so {"artifact":false} "covered" the ref
+-- 'artifact' — objects, scalars, malformed JSON, and arrays with invalid
+-- members now fail closed with TB223 and leave state unchanged.
+-- The CLOSED event is appended in this same transaction (TBP1-002C).
 create or replace function team_brain.tb_close_task(
-  p_obligation_id text, p_evidence_refs text[]
+  p_obligation_id text,
+  p_evidence_refs text[],
+  p_actor_principal text,
+  p_reason text,
+  p_claimed_at text
 ) returns void
 language plpgsql
 security definer
@@ -654,6 +719,11 @@ as $$
 declare
   v_row team_brain.obligations%rowtype;
   v_ref text;
+  v_links text;
+  v_parsed jsonb;
+  v_parse_ok boolean;
+  v_member text;
+  v_claimed_ts timestamptz;
 begin
   select * into v_row from team_brain.obligations
    where obligation_id = p_obligation_id for update;
@@ -668,10 +738,33 @@ begin
     raise exception 'obligation % is already terminal (%)', p_obligation_id, v_row.state
       using errcode = 'TB203';
   end if;
+  -- Transition metadata (TBP1-002C), validated before any write.
+  if p_actor_principal is null or btrim(p_actor_principal) = ''
+     or p_reason is null or btrim(p_reason) = '' then
+    raise exception 'close transition for % requires a nonblank actor and reason',
+      p_obligation_id using errcode = 'TB224';
+  end if;
+  if p_claimed_at is null
+     or p_claimed_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+    raise exception 'close transition for % requires a valid UTC claimed_at timestamp',
+      p_obligation_id using errcode = 'TB224';
+  end if;
+  begin
+    v_claimed_ts := p_claimed_at::timestamptz;
+  exception when others then
+    raise exception 'close transition for % requires a valid UTC claimed_at timestamp',
+      p_obligation_id using errcode = 'TB224';
+  end;
   if p_evidence_refs is null or cardinality(p_evidence_refs) = 0 then
     raise exception 'task % cannot close without completion-evidence references', p_obligation_id
       using errcode = 'TB205';
   end if;
+  foreach v_ref in array p_evidence_refs loop
+    if v_ref is null or btrim(v_ref) = '' then
+      raise exception 'task % cannot close: evidence references must be nonblank strings',
+        p_obligation_id using errcode = 'TB205';
+    end if;
+  end loop;
   if not exists (
     select 1 from team_brain.obligation_events
      where obligation_id = p_obligation_id and event_type = 'VERIFICATION'
@@ -679,12 +772,55 @@ begin
     raise exception 'task % cannot close without a recorded verification event', p_obligation_id
       using errcode = 'TB204';
   end if;
+  -- Every VERIFICATION event's evidence_links must be a JSON array of
+  -- valid reference strings before any of it can contribute coverage
+  -- (TBP1-002B). Parsing is exception-safe: malformed JSON fails closed.
+  for v_links in
+    select e.evidence_links from team_brain.obligation_events e
+     where e.obligation_id = p_obligation_id and e.event_type = 'VERIFICATION'
+  loop
+    v_parse_ok := true;
+    begin
+      v_parsed := v_links::jsonb;
+    exception when others then
+      v_parse_ok := false;
+    end;
+    if v_parse_ok and jsonb_typeof(v_parsed) is distinct from 'array' then
+      v_parse_ok := false;
+    end if;
+    if v_parse_ok then
+      for v_member in select elem from jsonb_array_elements_text(v_parsed) as elem loop
+        if btrim(v_member) = '' then
+          v_parse_ok := false;
+          exit;
+        end if;
+      end loop;
+      -- jsonb_array_elements_text yields NULL for a JSON null member and
+      -- text for numbers/booleans; only genuine JSON strings are valid
+      -- reference strings, so verify member types element by element too.
+      if v_parse_ok and exists (
+        select 1 from jsonb_array_elements(v_parsed) as elem
+         where jsonb_typeof(elem) <> 'string'
+      ) then
+        v_parse_ok := false;
+      end if;
+    end if;
+    if not v_parse_ok then
+      raise exception 'task % cannot close: verification evidence % is not a JSON array of valid reference strings',
+        p_obligation_id, v_links using errcode = 'TB223';
+    end if;
+  end loop;
+  -- Coverage by explicit array membership only — never the ? operator,
+  -- which also matches object keys.
   foreach v_ref in array p_evidence_refs loop
     if not exists (
       select 1 from team_brain.obligation_events e
        where e.obligation_id = p_obligation_id
          and e.event_type = 'VERIFICATION'
-         and e.evidence_links::jsonb ? v_ref
+         and exists (
+           select 1 from jsonb_array_elements_text(e.evidence_links::jsonb) as member
+            where member = v_ref
+         )
     ) then
       raise exception 'task % cannot close: evidence % is not covered by a recorded verification',
         p_obligation_id, v_ref using errcode = 'TB206';
@@ -693,19 +829,32 @@ begin
   update team_brain.obligations
      set state = 'CLOSED', row_version = row_version + 1
    where obligation_id = p_obligation_id;
+  insert into team_brain.obligation_events
+    (event_id, obligation_id, actor_principal, claimed_at, event_type, reason,
+     evidence_links, idempotency_key)
+  values (gen_random_uuid()::text, p_obligation_id, p_actor_principal, v_claimed_ts,
+          'CLOSED', p_reason, to_jsonb(p_evidence_refs)::text,
+          'close:' || p_obligation_id);
 end;
 $$;
-alter function team_brain.tb_close_task(text, text[]) owner to tb_owner;
-revoke all on function team_brain.tb_close_task(text, text[]) from public;
+alter function team_brain.tb_close_task(text, text[], text, text, text) owner to tb_owner;
+revoke all on function team_brain.tb_close_task(text, text[], text, text, text) from public;
 
--- Revoke an AUTHORIZATION only while it is in an open state.
-create or replace function team_brain.tb_revoke_authorization(p_obligation_id text) returns void
+-- Revoke an AUTHORIZATION only while it is in an open state. The REVOKED
+-- event is appended in this same transaction (fix round 3, TBP1-002C).
+create or replace function team_brain.tb_revoke_authorization(
+  p_obligation_id text,
+  p_actor_principal text,
+  p_reason text,
+  p_claimed_at text
+) returns void
 language plpgsql
 security definer
 set search_path = team_brain, pg_temp
 as $$
 declare
   v_row team_brain.obligations%rowtype;
+  v_claimed_ts timestamptz;
 begin
   select * into v_row from team_brain.obligations
    where obligation_id = p_obligation_id for update;
@@ -720,13 +869,36 @@ begin
     raise exception 'authorization % is not in an open state (%)', p_obligation_id, v_row.state
       using errcode = 'TB203';
   end if;
+  -- Transition metadata (TBP1-002C), validated before any write.
+  if p_actor_principal is null or btrim(p_actor_principal) = ''
+     or p_reason is null or btrim(p_reason) = '' then
+    raise exception 'revoke transition for % requires a nonblank actor and reason',
+      p_obligation_id using errcode = 'TB224';
+  end if;
+  if p_claimed_at is null
+     or p_claimed_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+    raise exception 'revoke transition for % requires a valid UTC claimed_at timestamp',
+      p_obligation_id using errcode = 'TB224';
+  end if;
+  begin
+    v_claimed_ts := p_claimed_at::timestamptz;
+  exception when others then
+    raise exception 'revoke transition for % requires a valid UTC claimed_at timestamp',
+      p_obligation_id using errcode = 'TB224';
+  end;
   update team_brain.obligations
      set state = 'REVOKED', row_version = row_version + 1
    where obligation_id = p_obligation_id;
+  insert into team_brain.obligation_events
+    (event_id, obligation_id, actor_principal, claimed_at, event_type, reason,
+     evidence_links, idempotency_key)
+  values (gen_random_uuid()::text, p_obligation_id, p_actor_principal, v_claimed_ts,
+          'REVOKED', p_reason, '[]',
+          'revoke:' || p_obligation_id);
 end;
 $$;
-alter function team_brain.tb_revoke_authorization(text) owner to tb_owner;
-revoke all on function team_brain.tb_revoke_authorization(text) from public;
+alter function team_brain.tb_revoke_authorization(text, text, text, text) owner to tb_owner;
+revoke all on function team_brain.tb_revoke_authorization(text, text, text, text) from public;
 
 -- Verdict supersession as ONE guarded transaction: both endpoints must be
 -- VERDICTs bound to the same resource repo/scope, the old verdict must be
@@ -878,6 +1050,22 @@ revoke all on function team_brain.tb_record_obligation_supersession(text, text, 
 -- parseable JSON naming an authorityRef that resolves to a live Jason grant
 -- bound to this obligation at a matching rank. Arbitrary override JSON from
 -- the worker role is refused.
+--
+-- Fix round 3 (TBP1-002A): the FULL structural contract the queue
+-- projection enforces (assertOverrideStructure in ledger/validation.mjs)
+-- is validated here, inside the privileged function, BEFORE any write —
+-- so a payload the projection would reject can never persist and poison
+-- it, and a refusal leaves any prior override row byte-for-byte intact:
+--   - payload is a JSON object (TB220);
+--   - no free-text `authority` key — caller self-attestation, exactly as
+--     the JS contract rejects it (TB220);
+--   - authorityRef, actor, reason: present, JSON-string typed, nonblank
+--     (TB220);
+--   - recordedAt: present, JSON-string typed, and a valid strict UTC
+--     ISO-8601 timestamp (the JS assertUtcIso shape) (TB221);
+--   - rank: present, a JSON number (jsonb_typeof = 'number' — a string
+--     rank is never text→int coerced), nonnegative and integral (TB222);
+--     the validated numeric rank feeds the TB219 grant-rank comparison.
 create or replace function team_brain.tb_upsert_override(
   p_obligation_id text, p_override_json text
 ) returns void
@@ -888,6 +1076,9 @@ as $$
 declare
   v_override jsonb;
   v_authority_ref text;
+  v_recorded_at text;
+  v_recorded_ts timestamptz;
+  v_rank numeric;
   v_grant team_brain.trusted_authorizations%rowtype;
 begin
   perform 1 from team_brain.obligations
@@ -902,10 +1093,55 @@ begin
       raise exception 'override payload for % is not valid JSON', p_obligation_id
         using errcode = 'TB214';
   end;
+  if v_override is null or jsonb_typeof(v_override) is distinct from 'object' then
+    raise exception 'override payload for % must be a JSON object', p_obligation_id
+      using errcode = 'TB220';
+  end if;
+  if v_override ? 'authority' then
+    raise exception 'override payload for % rejected: free-text authority is caller self-attestation; supply authorityRef',
+      p_obligation_id using errcode = 'TB220';
+  end if;
+  if jsonb_typeof(v_override -> 'authorityRef') is distinct from 'string'
+     or btrim(v_override ->> 'authorityRef') = '' then
+    raise exception 'override payload for % is missing a nonblank string authorityRef',
+      p_obligation_id using errcode = 'TB220';
+  end if;
   v_authority_ref := v_override ->> 'authorityRef';
-  if v_authority_ref is null or btrim(v_authority_ref) = '' then
-    raise exception 'override payload for % is missing authorityRef', p_obligation_id
-      using errcode = 'TB214';
+  if jsonb_typeof(v_override -> 'actor') is distinct from 'string'
+     or btrim(v_override ->> 'actor') = '' then
+    raise exception 'override payload for % is missing a nonblank string actor',
+      p_obligation_id using errcode = 'TB220';
+  end if;
+  if jsonb_typeof(v_override -> 'reason') is distinct from 'string'
+     or btrim(v_override ->> 'reason') = '' then
+    raise exception 'override payload for % is missing a nonblank string reason',
+      p_obligation_id using errcode = 'TB220';
+  end if;
+  if jsonb_typeof(v_override -> 'recordedAt') is distinct from 'string'
+     or btrim(v_override ->> 'recordedAt') = '' then
+    raise exception 'override payload for % is missing a nonblank string recordedAt',
+      p_obligation_id using errcode = 'TB221';
+  end if;
+  v_recorded_at := v_override ->> 'recordedAt';
+  if v_recorded_at !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,3})?Z$' then
+    raise exception 'override payload for % has a malformed recordedAt timestamp',
+      p_obligation_id using errcode = 'TB221';
+  end if;
+  begin
+    v_recorded_ts := v_recorded_at::timestamptz;
+  exception when others then
+    raise exception 'override payload for % has a malformed recordedAt timestamp',
+      p_obligation_id using errcode = 'TB221';
+  end;
+  if not (v_override ? 'rank')
+     or jsonb_typeof(v_override -> 'rank') is distinct from 'number' then
+    raise exception 'override payload for % requires rank as a JSON number',
+      p_obligation_id using errcode = 'TB222';
+  end if;
+  v_rank := (v_override ->> 'rank')::numeric;
+  if v_rank < 0 or v_rank <> trunc(v_rank) or v_rank > 2147483647 then
+    raise exception 'override payload for % requires a nonnegative integral rank',
+      p_obligation_id using errcode = 'TB222';
   end if;
   select * into v_grant from team_brain.trusted_authorizations
    where grant_id = v_authority_ref;
@@ -924,7 +1160,7 @@ begin
       using errcode = 'TB218';
   end if;
   if v_grant.override_rank is not null
-     and v_grant.override_rank <> coalesce((v_override ->> 'rank')::integer, 0) then
+     and v_grant.override_rank <> v_rank::integer then
     raise exception 'authority grant % rank mismatch', v_authority_ref using errcode = 'TB219';
   end if;
   insert into team_brain.obligation_overrides (obligation_id, override_json)
@@ -1005,9 +1241,9 @@ grant select on team_brain.source_objects to tb_coordinator;
 grant select on team_brain.trusted_authorizations to tb_coordinator;
 grant select on team_brain.principal_keys to tb_coordinator;
 grant select on team_brain.tb_schema_version to tb_coordinator;
-grant execute on function team_brain.tb_set_retention_disposition(text, text) to tb_coordinator;
-grant execute on function team_brain.tb_close_task(text, text[]) to tb_coordinator;
-grant execute on function team_brain.tb_revoke_authorization(text) to tb_coordinator;
+grant execute on function team_brain.tb_set_retention_disposition(text, text, text, text, text) to tb_coordinator;
+grant execute on function team_brain.tb_close_task(text, text[], text, text, text) to tb_coordinator;
+grant execute on function team_brain.tb_revoke_authorization(text, text, text, text) to tb_coordinator;
 grant execute on function team_brain.tb_supersede_verdict(text, text, text, text, timestamptz) to tb_coordinator;
 grant execute on function team_brain.tb_record_obligation_supersession(text, text, text, text) to tb_coordinator;
 grant execute on function team_brain.tb_upsert_override(text, text) to tb_coordinator;
@@ -1058,5 +1294,5 @@ alter default privileges for role tb_owner in schema team_brain
 -- ============================================================================
 
 insert into team_brain.tb_schema_version (version, notes)
-values (1, 'P1 production schema: team_brain schema, roles, all relations; fix round 2: guarded transition functions (TB2xx errcodes) + obligation_supersessions')
+values (1, 'P1 production schema: team_brain schema, roles, all relations; fix round 2: guarded transition functions (TB2xx errcodes) + obligation_supersessions; fix round 3: full override structure in tb_upsert_override (TB220-TB222), array-only verification evidence coverage in tb_close_task (TB223), in-function immutable events for close/revoke/retention (TB224 metadata validation)')
 on conflict (version) do nothing;

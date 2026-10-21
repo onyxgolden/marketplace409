@@ -41,6 +41,11 @@ export const CODES = {
   // Postgres adapter codes (normalized filing contract + guarded DB
   // transition functions, fix round 2): the adapter refuses incomplete
   // provenance at its boundary and maps TB2xx guard errcodes onto these.
+  // Fix round 3 adds no new typed codes: TB220/TB221/TB222 (override
+  // structure / recordedAt / rank, TBP1-002A) map onto INVALID_OVERRIDE,
+  // TB223 (malformed verification evidence, TBP1-002B) onto
+  // UNVERIFIED_EVIDENCE, and TB224 (transition metadata, TBP1-002C) onto
+  // INVALID_FIELD — all in postgres/repository.mjs mapGuardError.
   UNKNOWN_SOURCE: "UNKNOWN_SOURCE",
   INCOMPLETE_PROVENANCE: "INCOMPLETE_PROVENANCE",
   INVALID_RETENTION_DISPOSITION: "INVALID_RETENTION_DISPOSITION",

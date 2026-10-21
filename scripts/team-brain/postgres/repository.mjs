@@ -79,7 +79,11 @@ function assertRetentionDisposition(value) {
 // Translate a guarded-function TB2xx errcode onto the adapter's typed error
 // codes. TB202 (wrong kind) has no single adapter code — the caller passes
 // the kind-specific code (NOT_A_TASK / NOT_AN_AUTHORIZATION / NOT_A_VERDICT);
-// anything unmapped is rethrown untouched.
+// anything unmapped is rethrown untouched. Fix round 3 (TBP1-002A/B/C):
+// TB214/TB220/TB221/TB222 are the INVALID_OVERRIDE family (override payload
+// unparseable / structure / recordedAt / rank), TB223 is malformed
+// verification evidence at close (UNVERIFIED_EVIDENCE), and TB224 is
+// invalid transition metadata on close/revoke/retention (INVALID_FIELD).
 function mapGuardError(err, kindCode = CODES.ILLEGAL_STATE_TRANSITION) {
   const map = {
     TB201: CODES.UNKNOWN_OBLIGATION,
@@ -92,11 +96,17 @@ function mapGuardError(err, kindCode = CODES.ILLEGAL_STATE_TRANSITION) {
     TB208: CODES.INVALID_RETENTION_DISPOSITION,
     TB209: CODES.SAME_HEAD_SUPERSESSION,
     TB210: CODES.STALE_VERDICT_SUPERSESSION,
+    TB214: CODES.INVALID_OVERRIDE,
     TB215: CODES.UNKNOWN_AUTHORITY,
     TB216: CODES.INVALID_OVERRIDE,
     TB217: CODES.INVALID_OVERRIDE,
     TB218: CODES.INVALID_OVERRIDE,
     TB219: CODES.INVALID_OVERRIDE,
+    TB220: CODES.INVALID_OVERRIDE,
+    TB221: CODES.INVALID_OVERRIDE,
+    TB222: CODES.INVALID_OVERRIDE,
+    TB223: CODES.UNVERIFIED_EVIDENCE,
+    TB224: CODES.INVALID_FIELD,
   };
   const mapped = err && typeof err.code === "string" ? map[err.code] : undefined;
   if (mapped) {
@@ -790,21 +800,26 @@ export function createPostgresRepository(pool) {
 
     async setRetentionDisposition(id, { actor, recordedAt, reason, disposition }) {
       assertRetentionDisposition(disposition);
+      // Transition metadata is validated here AND inside the guarded
+      // function (TB224); the function appends the RETENTION_DECIDED event
+      // in its own transaction (fix round 3, TBP1-002C) — the adapter no
+      // longer inserts a duplicate event.
+      assertNonEmptyString(actor, "actor");
+      assertUtcIso(recordedAt, "recordedAt");
+      assertNonEmptyString(reason, "reason");
       return tx(async (t) => {
         await requireObligation(t, id, { forUpdate: true });
         try {
-          await t.query("select team_brain.tb_set_retention_disposition($1, $2)", [id, disposition]);
+          await t.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+            id,
+            disposition,
+            actor,
+            reason,
+            recordedAt,
+          ]);
         } catch (err) {
           mapGuardError(err, CODES.ILLEGAL_STATE_TRANSITION);
         }
-        await insertEvent(t, id, {
-          actor,
-          recordedAt,
-          eventType: "RETENTION_DECIDED",
-          reason,
-          evidenceRefs: [],
-          extra: { disposition },
-        });
         return requireObligation(t, id);
       });
     },
@@ -832,6 +847,13 @@ export function createPostgresRepository(pool) {
 
     async closeTask(id, { actor, recordedAt, reason, evidenceRefs = [] }) {
       assertStringArray(evidenceRefs, "evidenceRefs");
+      // Transition metadata is validated here AND inside the guarded
+      // function (TB224); the function appends the CLOSED event in its own
+      // transaction (fix round 3, TBP1-002C) — the adapter no longer
+      // inserts a duplicate event.
+      assertNonEmptyString(actor, "actor");
+      assertUtcIso(recordedAt, "recordedAt");
+      assertNonEmptyString(reason, "reason");
       return tx(async (t) => {
         const ob = await requireObligation(t, id, { forUpdate: true });
         requireKind(ob, "TASK", CODES.NOT_A_TASK);
@@ -846,9 +868,34 @@ export function createPostgresRepository(pool) {
         if (verRes.rows.length === 0) {
           fail(CODES.NO_VERIFICATION, `Task ${id} cannot close without a recorded verification event`, { id });
         }
+        // Coverage mirrors the DB guard (TB223) exactly: only a JSON array
+        // of valid reference strings (nonblank strings) contributes, and
+        // malformed evidence fails closed here too — an unguarded
+        // JSON.parse would either throw an untyped error or, for an
+        // object payload, iterate its values as if they were refs.
         const verified = new Set();
         for (const r of verRes.rows) {
-          for (const ref of JSON.parse(r.evidence_links || "[]")) verified.add(ref);
+          let links;
+          try {
+            links = JSON.parse(r.evidence_links || "[]");
+          } catch {
+            fail(
+              CODES.UNVERIFIED_EVIDENCE,
+              `Task ${id} cannot close: verification evidence is not valid JSON`,
+              { id },
+            );
+          }
+          if (
+            !Array.isArray(links) ||
+            links.some((ref) => typeof ref !== "string" || ref.trim() === "")
+          ) {
+            fail(
+              CODES.UNVERIFIED_EVIDENCE,
+              `Task ${id} cannot close: verification evidence is not a JSON array of valid reference strings`,
+              { id },
+            );
+          }
+          for (const ref of links) verified.add(ref);
         }
         const uncovered = evidenceRefs.filter((ref) => !verified.has(ref));
         if (uncovered.length > 0) {
@@ -859,26 +906,42 @@ export function createPostgresRepository(pool) {
           );
         }
         try {
-          await t.query("select team_brain.tb_close_task($1, $2)", [id, evidenceRefs]);
+          await t.query("select team_brain.tb_close_task($1, $2, $3, $4, $5)", [
+            id,
+            evidenceRefs,
+            actor,
+            reason,
+            recordedAt,
+          ]);
         } catch (err) {
           mapGuardError(err, CODES.NOT_A_TASK);
         }
-        await insertEvent(t, id, { actor, recordedAt, eventType: "CLOSED", reason, evidenceRefs });
         return requireObligation(t, id);
       });
     },
 
     async revokeAuthorization(id, { actor, recordedAt, reason }) {
+      // Transition metadata is validated here AND inside the guarded
+      // function (TB224); the function appends the REVOKED event in its own
+      // transaction (fix round 3, TBP1-002C) — the adapter no longer
+      // inserts a duplicate event.
+      assertNonEmptyString(actor, "actor");
+      assertUtcIso(recordedAt, "recordedAt");
+      assertNonEmptyString(reason, "reason");
       return tx(async (t) => {
         const ob = await requireObligation(t, id, { forUpdate: true });
         requireKind(ob, "AUTHORIZATION", CODES.NOT_AN_AUTHORIZATION);
         requireOpen(ob);
         try {
-          await t.query("select team_brain.tb_revoke_authorization($1)", [id]);
+          await t.query("select team_brain.tb_revoke_authorization($1, $2, $3, $4)", [
+            id,
+            actor,
+            reason,
+            recordedAt,
+          ]);
         } catch (err) {
           mapGuardError(err, CODES.NOT_AN_AUTHORIZATION);
         }
-        await insertEvent(t, id, { actor, recordedAt, eventType: "REVOKED", reason, evidenceRefs: [] });
         return requireObligation(t, id);
       });
     },
