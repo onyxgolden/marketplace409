@@ -42,11 +42,16 @@ bytes and returns an advisory verification report.
      sha256(canonical summary) matches, sha256(artifact bytes)
      matches, suite identity agrees across expected/registry/summary,
      and the runner is not the implementer (after alias
-     canonicalization).
+     canonicalization). PER-005: the complete supplied identity tuple
+     must also match the record — the task-declared
+     implementer_principal_id (canonicalized; never overwritten with
+     task data), agreement between request.run_id and
+     registry_record_ref.run_id when both are cited, and the
+     artifact's embedded run_id / suite_id.
    - `verified_by` is `MOCK_INDEPENDENT_RUN` only on a full match
      (the registry is synthetic — that is the only verification method
      the fixture registry carries). No run cited → `none`. Any of the
-     nine checks failing → `author_reported_unavailable`.
+     checks failing → `author_reported_unavailable`.
 5. **Reports**: the envelope is advisory, fixture-only, and carries
    source citations with exact byte-span verification of the quoted
    command and suite against the registered artifact bytes, or an
@@ -99,7 +104,7 @@ scripts, and only then spawns the launcher:
 
 ```sh
 VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> tests    # focused suite
-VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> battery   # 120-case battery x3
+VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> battery   # 126-case battery x3
 VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> manual <task.json> <context.json>
 ```
 
@@ -129,9 +134,9 @@ Direct (unauthenticated) equivalents for development only:
 - `corpus/` — `oracle.js` (independent reference implementation of
   the decision rules, authored from the brief without importing the
   candidate), `make-battery.js` (authoring tool), `battery.json` (the
-  frozen 120-case battery: 40 nominal/boundary, 30
-  contradiction/incomplete/duplicate, 20 injection/prohibited-
-  operation, 20 schema/provenance/permission, 10
+  frozen 126-case battery: 40 nominal/boundary, 30
+  contradiction/incomplete/duplicate, 21 injection/prohibited-
+  operation, 25 schema/provenance/permission, 10
   budget/replay/mutation), `freeze-corpus.js`,
   `manifest.json` + `corpus_digest.txt` (the frozen pins).
 - `tests/` — `run-tests.js` (focused node:test suite), `run-battery.js`

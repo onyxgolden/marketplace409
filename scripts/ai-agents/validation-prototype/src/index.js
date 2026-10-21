@@ -454,6 +454,11 @@ export function run(task, context) {
     suiteMatches,
     aliases: gate.aliases,
     clock: gate.clock,
+    // PER-005: the complete supplied identity tuple, compared
+    // against the trusted record inside the eligibility predicate.
+    declaredImplementer: req.implementer_principal_id,
+    requestRunId: req.run_id ?? null,
+    registryRefRunId: req.registry_record_ref?.run_id ?? null,
   });
   if (prov.verified_by === "author_reported_unavailable") {
     diagnostics.push({

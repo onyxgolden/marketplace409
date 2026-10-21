@@ -181,6 +181,16 @@ export function oracleDecision(task, context) {
     reasons.push("no entry");
   } else {
     if (entry.revoked) reasons.push("revoked");
+    // PER-005 (audit slice 2): the complete supplied identity tuple
+    // must match the trusted record — conflicting run citations, a
+    // task-declared implementer that differs from the record's (after
+    // canonicalization), and the artifact's embedded run/suite
+    // identity are all eligibility failures, not silent resolutions.
+    const refRunId = req.registry_record_ref ? req.registry_record_ref.run_id : null;
+    if (req.run_id && refRunId && req.run_id !== refRunId) reasons.push("run-citation-conflict");
+    if (canonPrincipal(req.implementer_principal_id, aliases) !== canonPrincipal(entry.implementer_principal_id, aliases)) reasons.push("declared-implementer");
+    if (artParsed && artParsed.run_id !== entry.run_id) reasons.push("artifact-run-id");
+    if (artParsed && artParsed.suite_id !== entry.suite_id) reasons.push("artifact-suite-id");
     if (!(Date.parse(entry.recorded_at) <= clock)) reasons.push("future");
     if (!refEq(req.implementation_ref, entry.implementation_ref)) reasons.push("impl");
     if (sha256s(req.command) !== entry.command_sha256) reasons.push("command");
