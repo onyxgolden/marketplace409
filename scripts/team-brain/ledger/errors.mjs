@@ -19,6 +19,7 @@ export const CODES = {
   INVALID_KIND: "INVALID_KIND",
   MALFORMED_TIMESTAMP: "MALFORMED_TIMESTAMP",
   SELF_DEPENDENCY: "SELF_DEPENDENCY",
+  DEPENDENCY_CYCLE: "DEPENDENCY_CYCLE",
   SELF_SUPERSESSION: "SELF_SUPERSESSION",
   MISSING_SOURCE_BINDING: "MISSING_SOURCE_BINDING",
   MISSING_RETENTION_DISPOSITION: "MISSING_RETENTION_DISPOSITION",
@@ -36,6 +37,22 @@ export const CODES = {
   STALE_VERDICT_SUPERSESSION: "STALE_VERDICT_SUPERSESSION",
   ALREADY_TERMINAL: "ALREADY_TERMINAL",
   EVENT_ORDER_VIOLATION: "EVENT_ORDER_VIOLATION",
+  DUPLICATE_OPERATION: "DUPLICATE_OPERATION",
+  // Postgres adapter codes (normalized filing contract + guarded DB
+  // transition functions, fix round 2): the adapter refuses incomplete
+  // provenance at its boundary and maps TB2xx guard errcodes onto these.
+  // Fix round 3 adds no new typed codes: TB220/TB221/TB222 (override
+  // structure / recordedAt / rank, TBP1-002A) map onto INVALID_OVERRIDE,
+  // TB223 (malformed verification evidence, TBP1-002B) onto
+  // UNVERIFIED_EVIDENCE, and TB224 (transition metadata, TBP1-002C) onto
+  // INVALID_FIELD — all in postgres/repository.mjs mapGuardError.
+  // Fix round 4: TB225 (retention operation conflict — the same operation
+  // identity replayed with a different disposition, TBP1-002C) maps onto
+  // CONFLICTING_REPLAY in postgres/repository.mjs mapGuardError.
+  UNKNOWN_SOURCE: "UNKNOWN_SOURCE",
+  INCOMPLETE_PROVENANCE: "INCOMPLETE_PROVENANCE",
+  INVALID_RETENTION_DISPOSITION: "INVALID_RETENTION_DISPOSITION",
+  SUPERSESSION_BINDING_MISMATCH: "SUPERSESSION_BINDING_MISMATCH",
   // Queue projection codes
   CYCLE_DETECTED: "CYCLE_DETECTED",
   INVALID_OVERRIDE: "INVALID_OVERRIDE",
