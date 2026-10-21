@@ -30,7 +30,7 @@ import {
 import { resolveSourceRef, hasReadGrant, makeBudget, verifySpan, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
 import {
-  assertionKey, keyLabel, evidenceRoot, deriveKeyStatuses,
+  assertionKey, keyLabel, evidenceRoot, deriveKeyStatuses, registeredEvidenceRoot,
   buildQuestion, buildCompositeQuestion, buildStatement,
 } from "./verify.js";
 import { types } from "node:util";
@@ -461,17 +461,19 @@ export function run(task, context) {
 
   // Research v2 taxonomy over admitted, non-denied, non-quarantined assertions.
   const teachable = admitted.filter((a) => !a._denied && !a._quarantined);
-  // PER-003: a provenance declaration carrying applies_to vouches
-  // only for the exact consumed pins it names. An assertion whose
-  // consumed SourceRef is not named has unknown provenance: it still
-  // teaches (attributed), but it can never corroborate.
+  // PER-003 (closed schema, round 2): a provenance registration
+  // binds ONLY the exact consumed pins its applies_to list names.
+  // Uniform leaf check: entry missing, applies_to absent, or the
+  // consumed SourceRef (all six fields) not listed => the
+  // assertion's provenance is unknown for corroboration. It still
+  // teaches (attributed), but it can never corroborate. There is
+  // no key-bound shorthand fallback.
   for (const a of teachable) {
     const entry = gate.provenance.sources[a._sourceKey];
-    if (entry && Array.isArray(entry.applies_to)) {
-      const consumed = validatedTask.source_refs[a.source_index];
-      if (!entry.applies_to.some((r) => sourceRefEquals(r, consumed))) {
-        a._provUnknown = true;
-      }
+    const consumed = validatedTask.source_refs[a.source_index];
+    if (!entry || !Array.isArray(entry.applies_to) ||
+        !entry.applies_to.some((r) => sourceRefEquals(r, consumed))) {
+      a._provUnknown = true;
     }
   }
   const statuses = deriveKeyStatuses(teachable, gate.provenance.sources);
@@ -487,6 +489,47 @@ export function run(task, context) {
   const diagnostics = [];
   for (const key of deniedSources) {
     diagnostics.push(diagnostic("SOURCE_DENIED", "warning", `exact read grant missing for '${key}'; its assertions cannot be taught`, key));
+  }
+  // PER-003 (round 2): one PROVENANCE_UNBOUND diagnostic per
+  // distinct consumed source key whose teachable assertions fail
+  // to bind — leaf unknown (missing entry, missing applies_to, or
+  // consumed pin not listed) OR the chain walk returns null for a
+  // registered-but-unbound chain (an ancestor is missing or not
+  // self-applicable). The diagnostic names the source key and the
+  // failing reason/link.
+  const unboundSeen = new Set();
+  for (const a of teachable) {
+    const key = a._sourceKey;
+    if (unboundSeen.has(key)) continue;
+    const walkRoot = registeredEvidenceRoot(key, gate.provenance.sources);
+    if (!a._provUnknown && walkRoot !== null) continue;
+    unboundSeen.add(key);
+    let reason;
+    if (a._provUnknown) {
+      const entry = gate.provenance.sources[key];
+      if (!entry) {
+        reason = `provenance registration for '${key}' does not bind the consumed pin (no registration)`;
+      } else if (!Array.isArray(entry.applies_to)) {
+        reason = `provenance registration for '${key}' does not bind the consumed pin (missing applies_to)`;
+      } else {
+        reason = `provenance registration for '${key}' does not bind the consumed pin (consumed pin not listed in applies_to)`;
+      }
+    } else {
+      let link = key;
+      let cur = key;
+      const seenChain = new Set();
+      while (true) {
+        if (seenChain.has(cur)) { link = cur; break; }
+        seenChain.add(cur);
+        const e = gate.provenance.sources[cur];
+        if (!e || !Array.isArray(e.applies_to) ||
+            !e.applies_to.some((r) => r && `${r.repo}|${r.path}` === cur)) { link = cur; break; }
+        if (e.copied_from === null || e.copied_from === undefined) { link = cur; break; }
+        cur = e.copied_from;
+      }
+      reason = `provenance registration for '${key}' does not bind the consumed pin (ancestor '${link}' is not bound)`;
+    }
+    diagnostics.push(diagnostic("PROVENANCE_UNBOUND", "warning", reason, key));
   }
 
   // Per-topic teaching. Stable topic order; stable assertion order.

@@ -49,12 +49,22 @@ retrospective audit) bind the taxonomy further:
   distinct provenance groups. Support counts evidence *roots* (the
   transitive closure of the host-declared `copied_from` relation),
   never passages: duplicates, known copies and citation cycles
-  contribute no corroboration. A root counts only when every link
-  of its chain is registered in the host provenance map — an
-  unregistered source, copy link or root is unknown provenance and
-  corroborates nothing. A declaration may also bind itself to exact
-  consumed pins via `applies_to`; a changed pin makes it
-  inapplicable.
+  contribute no corroboration. Provenance binding is a **closed
+  schema** (PER-003 round 2): a registration binds *only* the exact
+  consumed pins its `applies_to` list names (all six SourceRef
+  fields). An omitted `applies_to` binds nothing — there is no
+  key-bound shorthand — and a changed pin (commit, blob or
+  revision) makes the registration inapplicable. A root counts
+  only when every link of its chain is registered *and* applicable:
+  each link's `applies_to` must name a concrete pin of that link
+  itself, so an absent, empty, stale or mismatching registration
+  at the leaf, any intermediate link, the terminal root or any
+  cycle member leaves the root unknown and contributes zero
+  support (a cycle resolves only when every member is fully
+  applicable). A teachable source that fails to bind still teaches
+  attributed-only and emits one `PROVENANCE_UNBOUND` warning
+  diagnostic per distinct consumed source key, naming the key and
+  the failing reason or ancestor link.
 - **attributed-only** — all agree but the evidence reduces to one
   root. Taught only as "Fixture source states…", never as established
   truth.
@@ -112,9 +122,9 @@ RESEARCH_TRAINING_APPROVED_ROOT=<digest> node <trust>/bootstrap.js <proto> manua
 ```
 
 Suites: `tests/run-tests.js` (focused node:test suite) and
-`tests/run-battery.js` (128 frozen cases — 40 nominal/boundary, 30
+`tests/run-battery.js` (135 frozen cases — 40 nominal/boundary, 30
 contradiction/incomplete/duplicate, 20 injection/prohibited-operation,
-28 schema/provenance/permission, 10 budget/replay/mutation — each run
+35 schema/provenance/permission, 10 budget/replay/mutation — each run
 3× through the guarded launcher, byte-identical).
 
 All fixture material is invented from scratch for this prototype

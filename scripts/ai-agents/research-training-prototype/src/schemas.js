@@ -294,13 +294,16 @@ export function validateCriteria(value, where, budget) {
  * of (null when it is an original). Host-injected; a task can never
  * declare or alter provenance.
  *
- * PER-003: an entry MAY carry applies_to — the complete consumed
- * SourceRefs (all six fields) this declaration vouches for. When
- * present, the declaration applies ONLY to a consumed ref exactly
- * equal to a listed one; a changed pin (commit/blob/revision) makes
- * the declaration inapplicable and the source's provenance unknown
- * for corroboration. When absent, the declaration binds the source
- * key (the host shorthand every frozen fixture uses).
+ * PER-003 (closed schema, round 2): applies_to is syntactically
+ * optional at this schema layer — absence is NOT a schema refusal —
+ * but semantically an entry binds NOTHING when applies_to is
+ * omitted. A declaration corroborates ONLY a consumed ref exactly
+ * equal (all six fields) to a listed one; a changed pin
+ * (commit/blob/revision), an absent list, or a list that does not
+ * name the consumed pin makes the declaration inapplicable and the
+ * source's provenance unknown for corroboration (attributed-only,
+ * with a PROVENANCE_UNBOUND diagnostic). There is no key-bound
+ * shorthand fallback.
  */
 export function validateProvenance(value, where, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail(where, "internal: validateProvenance requires a live budget");

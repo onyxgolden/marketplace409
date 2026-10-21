@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "3f1ea3a81e9dcddf7e221437dc13a1725e7cd292d7626423c4a3cde04f9e7302"
+      "sha256": "b930e30eba8552a4c110a90b280e30db58821cebb66f988b38bd233b83c3907a"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "11e891e4c8e658e4b5a104756d349a335ea15916aa4e30ccb247deb9816f2622"
+      "sha256": "fe6ed9ae168217c91f814a536d83187b564b42005c321381ab21ba274dd38f16"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,11 +15,11 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "770b56e4e99a6b35a0564b56cf7aa3cd00e41483fb0dd789eaa439bfe9cc395b"
+      "sha256": "5989abd1ed5b1fe249f9276bad1d24c30cd25ed54f57785d8846742a0fa45f10"
     },
     {
       "path": "corpus/oracle.js",
-      "sha256": "66a6ee70cd5250ebea2b8868f2c456d13fbb957f636a3489a26ade02c918ab50"
+      "sha256": "6a82595c1a98dc1832f3cde97297fa858bc2fb5eee63543522d0cb1df7905648"
     },
     {
       "path": "fixtures/make-fixtures.js",
@@ -55,7 +55,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "5fae42ada8ff6b39a6280735e6c051a11523009cc1057e930a7bb568e716701a"
+      "sha256": "edf19b2b733c1ac0021193ea844c687f886d0d7fac8a53e96836c987ccf3b01e"
     },
     {
       "path": "src/injection.js",
@@ -67,11 +67,11 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "8b27fe786f02422632284f9f5481c16ebf017edb91d644b0a043dbd8fbe7a59d"
+      "sha256": "fa6000654099e6ddbc791e0c00e94a83b0293852382b40db920743f42d41a205"
     },
     {
       "path": "src/verify.js",
-      "sha256": "5bf91970a5bdaae115de7a47af0dd2d43f4de11b1b24583d4e31385c7d036244"
+      "sha256": "09dc081793acb60f14a0257478f84160629eb042362203652ab099565be2b03f"
     },
     {
       "path": "tests/run-battery.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "c070b4d970fbbb771a7df7b908d4b9363350b7dd3e37337e039529c0d201e8ed"
+      "sha256": "e5c11bfce27a952a97f0635e6d7a3d452cebb92fcde396899fd4a3e72e560a8b"
     }
   ]
 }

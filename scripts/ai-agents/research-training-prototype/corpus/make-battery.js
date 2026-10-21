@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
  * make-battery.js — AUTHORING TOOL (not part of the scored path).
- * Builds corpus/battery.json: 128 frozen cases (40 nominal/boundary,
+ * Builds corpus/battery.json: 135 frozen cases (40 nominal/boundary,
  * 30 contradiction/incomplete/duplicate, 20 injection/prohibited-
- * operation, 28 schema/provenance/permission, 10 budget/replay/
+ * operation, 35 schema/provenance/permission, 10 budget/replay/
  * mutation). The 8 added schema cases (S21–S28) freeze the PER-001/
  * 002/003/004/006 counterexamples and their positive partners from
- * ChatGPT's 2026-10-20 panel-era retrospective audit.
+ * ChatGPT's 2026-10-20 panel-era retrospective audit. The 7 further
+ * schema cases (S29–S35) freeze the PER-003 round-2 closed-schema
+ * counterexamples (missing/stale/changed-blob bindings, empty and
+ * mismatching ancestors) and their fully-bound positives.
  *
  * - Well-formed cases get expectations from corpus/oracle.js, the
  *   independently authored reference implementation of the brief.
@@ -150,14 +153,22 @@ const buildTask = ({ id, refs, topics, asserts, composites = [], proposed = [], 
 const buildCtx = ({ grantPaths, grantKeys = null, custom = {}, testHooks = {}, provenanceOverride = {}, principal = PRINCIPAL, templatesFor = null, omitProvenance = false }) => {
   const sources = {};
   const prov = {};
+  // PER-003 round 2 (closed schema): every legitimate registration
+  // built here carries a complete applies_to naming the exact
+  // SourceRef its source key is consumed as — for store sources
+  // the fixture-store pin srcRef(p) (which is also the ancestor
+  // registration's own full pin when this entry is a chain
+  // ancestor), for custom sources that source's own ref. Cases
+  // that deliberately test unbound provenance strip or stale
+  // these lists explicitly after building.
   for (const p of grantPaths) {
     const key = `${REPO}|${p}`;
     sources[key] = store.sources[key];
-    prov[key] = { group: GROUPS[p], copied_from: provenanceOverride[p] ?? null };
+    prov[key] = { group: GROUPS[p], copied_from: provenanceOverride[p] ?? null, applies_to: [srcRef(p)] };
   }
   for (const [key, c] of Object.entries(custom)) {
     sources[key] = c.entry;
-    prov[key] = { group: c.group, copied_from: null };
+    prov[key] = { group: c.group, copied_from: null, applies_to: [{ ...c.ref }] };
   }
   const grants = (grantKeys ?? [...grantPaths.map((p) => `${REPO}|${p}`), ...Object.keys(custom)])
     .map((key) => ({ repo: key.split("|")[0], path: key.split("|").slice(1).join("|") }));
@@ -277,7 +288,16 @@ wf("N08", "nominal", buildTask({
     A({ id: "a-shut", subject: "Pump", predicate: "shutdown sequence", value: "vent, isolate, cool", scope: "global", polarity: "positive", path: NI, line: 2 }),
   ],
   composites: [{ item_id: "c-pair", atom_refs: ["a-port-c", "a-shut"] }],
-}), buildCtx({ grantPaths: [CP, NI], templatesFor: ["default port", "shutdown sequence"], provenanceOverride: { [CP]: `${REPO}|${K}` } }));
+}), (() => {
+  const c = buildCtx({ grantPaths: [CP, NI], templatesFor: ["default port", "shutdown sequence"], provenanceOverride: { [CP]: `${REPO}|${K}` } });
+  // PER-003 round 2 registration repair: the copy's ancestor (the
+  // kestrel original) is a real fixture source — register it with
+  // a complete applies_to naming its own fixture-store pin, so
+  // the chain is fully bound and resolves to that root. The copy
+  // still contributes no independence (attributed-only stands).
+  c.provenance.sources[`${REPO}|${K}`] = { group: GROUPS[K], copied_from: null, applies_to: [srcRef(K)] };
+  return c;
+})());
 
 // N09 French single-source attributed-only (non-English exact tokens)
 wf("N09", "nominal", buildTask({
@@ -413,7 +433,15 @@ wf("N23", "nominal", buildTask({
   id: "N23", refs: [srcRef(CP)],
   topics: [topic("t-pumps", ["default port"])],
   asserts: [A({ id: "a-port-c", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: CP, line: 1 })],
-}), buildCtx({ grantPaths: [CP], templatesFor: ["default port"], provenanceOverride: { [CP]: `${REPO}|${K}` } }));
+}), (() => {
+  const c = buildCtx({ grantPaths: [CP], templatesFor: ["default port"], provenanceOverride: { [CP]: `${REPO}|${K}` } });
+  // PER-003 round 2 registration repair: as in N08, the copy's
+  // ancestor is registered with its own complete pin so the
+  // chain is fully bound; the single root still cannot
+  // corroborate itself (attributed-only stands, no diagnostic).
+  c.provenance.sources[`${REPO}|${K}`] = { group: GROUPS[K], copied_from: null, applies_to: [srcRef(K)] };
+  return c;
+})());
 
 // N24 original + declared copy -> still attributed-only
 wf("N24", "nominal", buildTask({
@@ -560,9 +588,18 @@ wf("N38", "nominal", (() => {
   return t;
 })(), buildCtx({ grantPaths: [K], templatesFor: ["default port"] }));
 
-// N39 larger bundle: 4 sources, mixed topics (kept inside the 64-object budget)
+// N39 larger bundle: 4 sources in the host bundle, mixed topics
+// (kept inside the 64-object budget). PER-003 round 2 budget
+// repair: CP remains a fully-registered host source (sources,
+// grants and a complete applies_to provenance entry naming its
+// own pin) but is no longer a CONSUMED task ref — no assertion
+// ever consumed it, and the extra consumed pin's resolution
+// charges (selected entry, revision, resolver charge) pushed the
+// bundle past the 64-object budget once each legitimate
+// registration gained its applies_to pin object. The taught
+// domain outcome (quizzes, composite, coverage) is unchanged.
 wf("N39", "nominal", buildTask({
-  id: "N39", refs: [srcRef(K), srcRef(NI), srcRef(FR), srcRef(CP)],
+  id: "N39", refs: [srcRef(K), srcRef(NI), srcRef(FR)],
   topics: [topic("t-pumps", ["default port", "startup sequence"]), topic("t-beacon", ["fréquence défaut"])],
   asserts: [
     A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
@@ -1347,12 +1384,157 @@ wf("S28", "schema", buildTask({
   return c;
 })());
 
+// ---- PER-003 round 2 cases (2026-10-21, closed provenance schema) ----
+// S29 PER-003A missing-binding negative (ChatGPT's
+// changed_revision_no_applicability recipe): the second source's
+// bytes are re-registered under a new commit ('9'.repeat(40),
+// label rev-2) and NO applies_to exists anywhere => both consumed
+// keys are unbound, the key stays attributed-only and each
+// distinct unbound key emits PROVENANCE_UNBOUND.
+{
+  const niOld = srcRef(NI);
+  const niRev2 = { ...niOld, commit: "9".repeat(40), revision: "rev-2" };
+  wf("S29", "schema", buildTask({
+    id: "S29", refs: [srcRef(K), niRev2],
+    topics: [topic("t-pumps", ["default port"])],
+    asserts: [
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+    ],
+  }), (() => {
+    const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"] });
+    const niKey = `${REPO}|${NI}`;
+    const oldRev = store.sources[niKey].revisions[niOld.commit];
+    c.sources[niKey] = { revisions: { ["9".repeat(40)]: { blob: oldRev.blob, label: "rev-2", text: oldRev.text } } };
+    delete c.provenance.sources[`${REPO}|${K}`].applies_to;
+    delete c.provenance.sources[niKey].applies_to;
+    return c;
+  })());
+}
+// S30 PER-003A changed-revision variant: the second source is
+// consumed at rev-2 (new commit, see S29) but its registration's
+// applies_to names the OLD pin (old commit, rev-1) => stale
+// binding, attributed-only + PROVENANCE_UNBOUND for that key only.
+{
+  const niOld = srcRef(NI);
+  const niRev2 = { ...niOld, commit: "9".repeat(40), revision: "rev-2" };
+  wf("S30", "schema", buildTask({
+    id: "S30", refs: [srcRef(K), niRev2],
+    topics: [topic("t-pumps", ["default port"])],
+    asserts: [
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+    ],
+  }), (() => {
+    const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"] });
+    const niKey = `${REPO}|${NI}`;
+    const oldRev = store.sources[niKey].revisions[niOld.commit];
+    c.sources[niKey] = { revisions: { ["9".repeat(40)]: { blob: oldRev.blob, label: "rev-2", text: oldRev.text } } };
+    c.provenance.sources[niKey].applies_to = [niOld];
+    return c;
+  })());
+}
+// S31 PER-003A changed-blob variant: the second source's bytes
+// change in a same-length header word (blob changes; commit and
+// revision label unchanged, grammar line at the same offset) but
+// its registration's applies_to names the OLD blob pin =>
+// attributed-only + PROVENANCE_UNBOUND for that key only. (The
+// default buildCtx registration for NI is the old pin, which is
+// exactly the stale binding under test.)
+{
+  const niOld = srcRef(NI);
+  const niKey = `${REPO}|${NI}`;
+  const oldText = store.sources[niKey].revisions[niOld.commit].text;
+  const newText = oldText.replace("Nimbus", "Nimbux");
+  const newBlob = gitBlob(newText);
+  const niNewBlob = { ...niOld, blob: newBlob };
+  wf("S31", "schema", buildTask({
+    id: "S31", refs: [srcRef(K), niNewBlob],
+    topics: [topic("t-pumps", ["default port"])],
+    asserts: [
+      A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+      A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+    ],
+  }), (() => {
+    const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"] });
+    c.sources[niKey] = { revisions: { [niOld.commit]: { blob: newBlob, label: "rev-1", text: newText } } };
+    return c;
+  })());
+}
+// S32 PER-003 round 2 exact-tuple positive: complete exact-tuple
+// registrations for both consumed sources => supported, no
+// PROVENANCE_UNBOUND. (The battery runner exercises this through
+// runGuarded; the focused suite exercises both public APIs.)
+wf("S32", "schema", buildTask({
+  id: "S32", refs: [srcRef(K), srcRef(NI)],
+  topics: [topic("t-pumps", ["default port"])],
+  asserts: [
+    A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+    A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+  ],
+}), (() => {
+  const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"] });
+  c.provenance.sources[`${REPO}|${K}`].applies_to = [srcRef(K)];
+  c.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(NI)];
+  return c;
+})());
+// S33 PER-003B exact empty-ancestor probe (ChatGPT's
+// copy_root_explicitly_no_applicable_pins recipe): both consumed
+// sources are exactly bound; the second source's copied_from
+// ancestor is registered with applies_to: [] (vouches for
+// nothing) => that chain supplies no root, attributed-only +
+// PROVENANCE_UNBOUND naming the consumed key.
+wf("S33", "schema", buildTask({
+  id: "S33", refs: [srcRef(K), srcRef(NI)],
+  topics: [topic("t-pumps", ["default port"])],
+  asserts: [
+    A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+    A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+  ],
+}), (() => {
+  const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"], provenanceOverride: { [NI]: `${REPO}|manuals/ghost.md` } });
+  c.provenance.sources[`${REPO}|manuals/ghost.md`] = { group: "ghost-group", copied_from: null, applies_to: [] };
+  return c;
+})());
+// S34 PER-003B stale/mismatching ancestor partner: the ancestor
+// is registered but its applies_to names a DIFFERENT source key
+// (it vouches for the first source, not for itself) => the chain
+// supplies no root, attributed-only + PROVENANCE_UNBOUND.
+wf("S34", "schema", buildTask({
+  id: "S34", refs: [srcRef(K), srcRef(NI)],
+  topics: [topic("t-pumps", ["default port"])],
+  asserts: [
+    A({ id: "a-port", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: K, line: 1 }),
+    A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+  ],
+}), (() => {
+  const c = buildCtx({ grantPaths: [K, NI], templatesFor: ["default port"], provenanceOverride: { [NI]: `${REPO}|manuals/ghost.md` } });
+  c.provenance.sources[`${REPO}|manuals/ghost.md`] = { group: "ghost-group", copied_from: null, applies_to: [srcRef(K)] };
+  return c;
+})());
+// S35 PER-003B fully-bound chain positive: the copy leaf AND its
+// ancestor carry complete self-naming applies_to, paired with a
+// second independent fully-bound root in a different group =>
+// supported, no PROVENANCE_UNBOUND.
+wf("S35", "schema", buildTask({
+  id: "S35", refs: [srcRef(CP), srcRef(NI)],
+  topics: [topic("t-pumps", ["default port"])],
+  asserts: [
+    A({ id: "a-port-c", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: CP, line: 1 }),
+    A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+  ],
+}), buildCtx({ grantPaths: [K, CP, NI], templatesFor: ["default port"], provenanceOverride: { [CP]: `${REPO}|${K}` } }));
+
 // =================================================== BUDGET / REPLAY / MUTATION (10)
 // B01 exact-fit input payload (calibrated at authoring) -> taught
 // Launcher-level boundary (binary-searched at authoring, scratch): the
 // serialized task+context transport totals exactly 262144 bytes at
-// x=260542 (in-process outcome REPORT_READY); x=260543 => TRANSPORT_REFUSED.
-const B01_TEXT_LEN = 260_542;
+// x=260324 (in-process outcome REPORT_READY); x=260325 => TRANSPORT_REFUSED.
+// PER-003 round 2 recalibration: the legitimate provenance entry for
+// this source now carries its applies_to pin (+218 transport bytes),
+// so the filler length drops by exactly that amount (260542 -> 260324)
+// and the aggregate stays at the exact-fit cap.
+const B01_TEXT_LEN = 260_324;
 {
   const text = [
     "Vendor data sheet (SYNTHETIC)",
@@ -1477,8 +1659,8 @@ wf("B05", "budget", buildTask({
 }
 
 // ---- write ----
-if (CASES.length !== 128) {
-  throw new Error(`battery must hold exactly 128 cases; built ${CASES.length}`);
+if (CASES.length !== 135) {
+  throw new Error(`battery must hold exactly 135 cases; built ${CASES.length}`);
 }
 const counts = {};
 for (const c of CASES) counts[c.kind] = (counts[c.kind] ?? 0) + 1;

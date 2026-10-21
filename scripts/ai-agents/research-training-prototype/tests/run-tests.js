@@ -115,7 +115,7 @@ function ctx(over = {}) {
   const prov = {};
   for (const p of paths) {
     sources[`${REPO}|${p}`] = store.sources[`${REPO}|${p}`];
-    prov[`${REPO}|${p}`] = { group: GROUPS[p], copied_from: provenanceOverrides[p] ?? null };
+    prov[`${REPO}|${p}`] = { group: GROUPS[p], copied_from: provenanceOverrides[p] ?? null, applies_to: [srcRef(p)] };
   }
   return {
     clock: clock ?? CLOCK,
@@ -711,6 +711,74 @@ test("PER-003: copy chain ending at an unregistered root, and applies_to naming 
   assert.equal(exact.report.quizzes[0].research_status, "supported");
 });
 
+test("PER-003 round 2: missing applies_to anywhere => attributed-only + PROVENANCE_UNBOUND per distinct unbound key", () => {
+  const c = ctx();
+  delete c.provenance.sources[`${REPO}|${K}`].applies_to;
+  delete c.provenance.sources[`${REPO}|${NI}`].applies_to;
+  const out = run(task(), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(out).filter((x) => x === "PROVENANCE_UNBOUND").length, 2);
+  // stripping only one registration demotes with exactly one diagnostic
+  const c2 = ctx();
+  delete c2.provenance.sources[`${REPO}|${NI}`].applies_to;
+  const out2 = run(task(), c2);
+  assert.equal(out2.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(out2), ["PROVENANCE_UNBOUND"]);
+  assert.ok(out2.diagnostics[0].reason.includes(`${REPO}|${NI}`));
+});
+
+test("PER-003 round 2: changed revision with NO applicability (ChatGPT recipe) => attributed-only + PROVENANCE_UNBOUND", () => {
+  const newCommit = "9".repeat(40);
+  const oldRef = srcRef(NI);
+  const newRef = { ...oldRef, commit: newCommit, revision: "rev-2" };
+  const c = ctx();
+  c.sources[`${REPO}|${NI}`] = { revisions: { [newCommit]: { blob: oldRef.blob, label: "rev-2", text: textOf(NI) } } };
+  delete c.provenance.sources[`${REPO}|${K}`].applies_to;
+  delete c.provenance.sources[`${REPO}|${NI}`].applies_to;
+  const out = run(task({ refs: [srcRef(K), newRef] }), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+  assert.ok(codes(out).includes("PROVENANCE_UNBOUND"));
+});
+
+test("PER-003 round 2: empty ancestor (applies_to: []) supplies no root => attributed-only + PROVENANCE_UNBOUND", () => {
+  const c = ctx({ provenanceOverrides: { [NI]: `${REPO}|manuals/ghost.md` } });
+  c.provenance.sources[`${REPO}|manuals/ghost.md`] = { group: "ghost-group", copied_from: null, applies_to: [] };
+  const out = run(task(), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(out), ["PROVENANCE_UNBOUND"]);
+  assert.ok(out.diagnostics[0].reason.includes("ghost"));
+});
+
+test("PER-003 round 2: fully-bound copy chain + independent fully-bound root => supported, no PROVENANCE_UNBOUND", () => {
+  const out = run(
+    task({ refs: [srcRef(CP), srcRef(NI)], assertions: [
+      A("a-port-c", "Pump", "default port", "8080", "global", "positive", 0, CP, 1),
+      A("a-port-n", "Pump", "default port", "8080", "global", "positive", 1, NI, 1),
+    ] }),
+    ctx({ paths: [K, CP, NI], provenanceOverrides: { [CP]: `${REPO}|${K}` } })
+  );
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "supported");
+  assert.deepEqual(codes(out), []);
+});
+
+test("PER-003 round 2: exact-tuple positive through BOTH public APIs (run and runGuarded) => supported", async () => {
+  const t = task();
+  const c = ctx();
+  c.provenance.sources[`${REPO}|${K}`].applies_to = [srcRef(K)];
+  c.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(NI)];
+  const direct = run(structuredClone(t), structuredClone(c));
+  assert.equal(direct.report.quizzes[0].research_status, "supported");
+  assert.deepEqual(codes(direct), []);
+  const guarded = await runGuarded(JSON.stringify(t), JSON.stringify(c));
+  assert.equal(guarded.status, "REPORT_READY");
+  assert.equal(guarded.report.quizzes[0].research_status, "supported");
+  assert.deepEqual(codes(guarded), []);
+});
+
 test("PER-004: forged second pin on an already-resolved path refuses SOURCE_UNVERIFIED, no quiz, null report", () => {
   const forged = { ...srcRef(K), blob: "0".repeat(40), revision: "WRONG" };
   const out = run(
@@ -788,8 +856,8 @@ test("PER-006: concatenated-key collision pair stays two distinct attributed-onl
       c: { question_form: "What is the {predicate} of {subject} ({scope})?", lesson_heading: "Collision B" },
     } },
     provenance: { sources: {
-      [`${REPO}|manuals/col-a.md`]: { group: "untrusted", copied_from: null },
-      [`${REPO}|manuals/col-b.md`]: { group: "untrusted", copied_from: null },
+      [`${REPO}|manuals/col-a.md`]: { group: "untrusted", copied_from: null, applies_to: [mkRef("manuals/col-a.md", textA, "e".repeat(40))] },
+      [`${REPO}|manuals/col-b.md`]: { group: "untrusted", copied_from: null, applies_to: [mkRef("manuals/col-b.md", textB, "f".repeat(40))] },
     } },
     test_hooks: {},
   };
@@ -814,16 +882,57 @@ test("PER-006: concatenated-key collision pair stays two distinct attributed-onl
 
 test("registeredEvidenceRoot: registered chain resolves; broken chain and unregistered cycle member are unknown", async () => {
   const { registeredEvidenceRoot } = await import("../src/verify.js");
+  // PER-003 round 2 (closed schema): every hand-built entry carries
+  // a self-naming applies_to — a listed ref whose repo|path equals
+  // the entry's own key.
+  const selfRef = (key) => {
+    const [repo, path] = key.split("|");
+    return { repo, path, commit: "1".repeat(40), blob: "2".repeat(40), algorithm: "git-sha1", revision: "rev-1" };
+  };
   const prov = {
-    "a|x": { group: "g1", copied_from: "b|x" },
-    "b|x": { group: "g2", copied_from: "c|x" },
-    "c|x": { group: "g3", copied_from: null },
-    "d|x": { group: "g4", copied_from: "e|x" },
-    "e|x": { group: "g5", copied_from: "d|x" },
-    "f|x": { group: "g6", copied_from: "ghost|x" },
+    "a|x": { group: "g1", copied_from: "b|x", applies_to: [selfRef("a|x")] },
+    "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
+    "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
+    "d|x": { group: "g4", copied_from: "e|x", applies_to: [selfRef("d|x")] },
+    "e|x": { group: "g5", copied_from: "d|x", applies_to: [selfRef("e|x")] },
+    "f|x": { group: "g6", copied_from: "ghost|x", applies_to: [selfRef("f|x")] },
   };
   assert.equal(registeredEvidenceRoot("a|x", prov), "c|x");
   assert.equal(registeredEvidenceRoot("d|x", prov), "d|x");
   assert.equal(registeredEvidenceRoot("f|x", prov), null);
   assert.equal(registeredEvidenceRoot("ghost|x", prov), null);
+});
+
+test("registeredEvidenceRoot (PER-003 round 2): unbound ancestor, empty applies_to, and mismatching ancestor all return null; fully-bound chain resolves", async () => {
+  const { registeredEvidenceRoot } = await import("../src/verify.js");
+  const selfRef = (key) => {
+    const [repo, path] = key.split("|");
+    return { repo, path, commit: "1".repeat(40), blob: "2".repeat(40), algorithm: "git-sha1", revision: "rev-1" };
+  };
+  const base = () => ({
+    "a|x": { group: "g1", copied_from: "b|x", applies_to: [selfRef("a|x")] },
+    "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
+    "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
+  });
+  // fully-bound chain resolves to the terminal root
+  assert.equal(registeredEvidenceRoot("a|x", base()), "c|x");
+  // ancestor with missing applies_to => null
+  const missing = base(); delete missing["b|x"].applies_to;
+  assert.equal(registeredEvidenceRoot("a|x", missing), null);
+  // ancestor with empty applies_to => null
+  const empty = base(); empty["c|x"].applies_to = [];
+  assert.equal(registeredEvidenceRoot("a|x", empty), null);
+  // ancestor whose applies_to names a DIFFERENT key => null
+  const mismatched = base(); mismatched["b|x"].applies_to = [selfRef("a|x")];
+  assert.equal(registeredEvidenceRoot("a|x", mismatched), null);
+  // leaf itself unbound (empty applies_to) => null
+  const leafEmpty = base(); leafEmpty["a|x"].applies_to = [];
+  assert.equal(registeredEvidenceRoot("a|x", leafEmpty), null);
+  // cycle with one unbound member => null (conservative)
+  const cyc = {
+    "d|x": { group: "g4", copied_from: "e|x", applies_to: [selfRef("d|x")] },
+    "e|x": { group: "g5", copied_from: "d|x", applies_to: [] },
+  };
+  assert.equal(registeredEvidenceRoot("d|x", cyc), null);
+  assert.equal(registeredEvidenceRoot("e|x", cyc), null);
 });

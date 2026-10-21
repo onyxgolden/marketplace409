@@ -56,15 +56,23 @@ export function evidenceRoot(sourceKey, provenanceSources) {
 }
 
 /**
- * PER-003: the corroboration-bearing variant of evidenceRoot. Returns
- * the evidence root ONLY when every key on the copied_from chain —
- * the source itself, every link, the terminal root, and every member
- * of a citation cycle — is fully registered in the provenance map.
- * Any missing registration makes the root UNKNOWN (null): unknown
- * provenance never supplies an independent group and can never
- * increase support. (A source whose own provenance entry carries an
- * applies_to list that does not name the consumed SourceRef is
- * marked _provUnknown by the caller and excluded before this walk.)
+ * PER-003 (closed schema, round 2): the corroboration-bearing
+ * variant of evidenceRoot. Returns the evidence root ONLY when
+ * every key on the copied_from chain — the source itself, every
+ * link, the terminal root, and every member of a citation cycle —
+ * is registered in the provenance map AND is applicable: its entry
+ * carries an applies_to list containing at least one SourceRef
+ * naming that link's own key ("repo|path" of a listed ref equals
+ * the link key — the registration vouches for a concrete pin of
+ * ITSELF). An absent, empty, or self-naming-nothing applies_to at
+ * ANY link, or any missing registration, makes the root UNKNOWN
+ * (null): unknown provenance never supplies an independent group
+ * and can never increase support. A cycle resolves only when every
+ * member is fully applicable (each member is applicability-checked
+ * on its first visit, before the cycle closes). (The caller's
+ * per-assertion leaf check additionally requires the leaf entry to
+ * name the exact consumed SourceRef; this walk's self-naming check
+ * is the chain authority for ancestors and a backstop for the leaf.)
  */
 export function registeredEvidenceRoot(sourceKey, provenanceSources) {
   const path = [];
@@ -74,6 +82,8 @@ export function registeredEvidenceRoot(sourceKey, provenanceSources) {
     if (idx >= 0) return path.slice(idx).sort()[0];
     const entry = provenanceSources[cur];
     if (!entry) return null;
+    if (!Array.isArray(entry.applies_to)) return null;
+    if (!entry.applies_to.some((r) => r && `${r.repo}|${r.path}` === cur)) return null;
     path.push(cur);
     if (entry.copied_from === null || entry.copied_from === undefined) return cur;
     cur = entry.copied_from;
@@ -99,10 +109,11 @@ export function deriveKeyStatuses(admitted, provenanceSources) {
   const out = new Map();
   for (const [k, list] of byKey) {
     const first = list[0];
-    // PER-003: only fully registered evidence roots corroborate.
-    // Assertions whose provenance is unknown (unregistered source,
-    // broken copy chain, or an applies_to list that does not name
-    // the consumed pin) contribute no root and no group.
+    // PER-003: only fully registered, fully applicable evidence
+    // roots corroborate. Assertions whose provenance is unknown
+    // (unregistered source, broken or unbound copy chain, absent
+    // applies_to, or an applies_to list that does not name the
+    // consumed pin) contribute no root and no group.
     const roots = new Set();
     for (const a of list) {
       if (a._provUnknown) continue;

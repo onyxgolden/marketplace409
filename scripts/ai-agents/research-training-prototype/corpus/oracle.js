@@ -46,9 +46,13 @@ const INJ = [
   /this\s+source\s+is\s+(pre-)?verified/i, /treat\s+this\s+as\s+established\s+truth/i,
 ];
 
-// PER-003: a root counts only when every key on the chain — source,
-// links, terminal root, cycle members — is registered. Any missing
-// registration makes the root unknown (null): no corroboration.
+// PER-003 (closed schema, round 2): a root counts only when every
+// key on the chain — source, links, terminal root, cycle members —
+// is registered AND applicable: its applies_to list contains at
+// least one SourceRef naming that link's own key. Any missing
+// registration, or an absent/empty/self-naming-nothing applies_to
+// at any link, makes the root unknown (null): no corroboration. A
+// cycle resolves only when every member is fully applicable.
 function rootOf(sourceKey, provSources) {
   const path = [];
   let cur = sourceKey;
@@ -57,17 +61,20 @@ function rootOf(sourceKey, provSources) {
     if (idx >= 0) return path.slice(idx).sort()[0];
     const e = provSources[cur];
     if (!e) return null;
+    if (!Array.isArray(e.applies_to)) return null;
+    if (!e.applies_to.some((r) => r && `${r.repo}|${r.path}` === cur)) return null;
     path.push(cur);
     if (e.copied_from === null || e.copied_from === undefined) return cur;
     cur = e.copied_from;
   }
 }
 
-// PER-003: a declaration with applies_to vouches only for the exact
-// consumed SourceRefs it names (all six fields).
+// PER-003 (closed schema, round 2): a declaration binds ONLY the
+// exact consumed SourceRefs its applies_to names (all six fields).
+// Absent applies_to binds nothing.
 function provApplies(entry, ref) {
   if (!entry) return false;
-  if (!Array.isArray(entry.applies_to)) return true;
+  if (!Array.isArray(entry.applies_to)) return false;
   return entry.applies_to.some((r) =>
     r.repo === ref.repo && r.path === ref.path && r.commit === ref.commit &&
     r.blob === ref.blob && r.algorithm === ref.algorithm && r.revision === ref.revision);
@@ -159,7 +166,7 @@ export function oracleDecision(task, context) {
     const first = list[0];
     // PER-003: only assertions whose provenance declaration applies
     // to their consumed pin AND whose chain is fully registered
-    // contribute an evidence root.
+    // and fully applicable contribute an evidence root.
     const roots = new Set();
     for (const a of list) {
       const ref = task.fixture_refs.source_refs[a.source_index];
@@ -227,6 +234,18 @@ export function oracleDecision(task, context) {
     if (r && !r.granted) deniedKeys.add(`${ref.repo}|${ref.path}`);
   }
   for (const _k of deniedKeys) diagnostics.push("SOURCE_DENIED");
+  // PER-003 (round 2): one PROVENANCE_UNBOUND per distinct
+  // teachable consumed source key whose binding fails — leaf
+  // declaration does not name the exact consumed pin, OR the
+  // chain walk returns null (missing/unbound ancestor).
+  const unboundKeys = new Set();
+  for (const a of teachable) {
+    const ref = task.fixture_refs.source_refs[a.source_index];
+    const leafOk = provApplies(context.provenance.sources[a._sourceKey], ref);
+    const root = rootOf(a._sourceKey, context.provenance.sources);
+    if (!leafOk || root === null) unboundKeys.add(a._sourceKey);
+  }
+  for (const _k of unboundKeys) diagnostics.push("PROVENANCE_UNBOUND");
   let status;
   if (teachable.length === 0) {
     status = "PARTIAL";
