@@ -42,7 +42,7 @@
     },
     {
       "path": "runner/run-manual.js",
-      "sha256": "e0b6f15a17d38267f313e308d0ac5da5c4ffa403a258b823a77bc692ec01227e"
+      "sha256": "94f00f3a8ede0f1db1ab5abdbb0b7646172edc798c0ebe459b247e945a6fcc4d"
     },
     {
       "path": "runner/timeout-hang-worker.js",

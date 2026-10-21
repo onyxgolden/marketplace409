@@ -64,13 +64,31 @@ const task = {
     requested_claims,
   },
 };
+// EXEC652-002: per-run host selection — bind this evaluation's registry
+// entries to the evaluated bundle's exact source pin. The store keeps
+// the full multi-bundle master registry; handing it over whole charges
+// every registered entry against the 64-candidate budget at admission
+// (296 candidates) and refuses every bundle with BUDGET_EXCEEDED
+// (WB-001). Mirrors registryFor() in tests/research.test.js and
+// corpus/make-battery.js: only the passages of THIS bundle are bound,
+// each with applies_to rebound to this bundle's exact pin.
+const provenance_registry = {};
+for (const d of docs) {
+  for (const p of d.passages || []) {
+    const k = `${d.doc_id}|${p.passage_id}`;
+    if (store.provenanceRegistry[k]) {
+      provenance_registry[k] = { ...store.provenanceRegistry[k], applies_to: [{ ...ref }] };
+    }
+  }
+}
+
 const context = {
   clock: Date.now(),
   sources: { [key]: store.sources[key] },
   readGrants: [{ repo: ref.repo, path: ref.path }],
   principal: store.principals.jason,
   criteria: store.criteriaPresets.standard,
-  provenance_registry: store.provenanceRegistry,
+  provenance_registry,
 };
 
 const result = await runGuarded(JSON.stringify(task), JSON.stringify(context));
