@@ -15021,6 +15021,413 @@
     }
   },
   {
+    "case_id": "X06",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "battery-run-00001",
+      "operation": "analyze",
+      "fixture_refs": {
+        "artifact_ref": {
+          "repo": "forge-runner",
+          "path": "results/scout/run-logs/run-00001-x06.json",
+          "commit": "4230be00e114bcc472d8a69c609581e98c26eaba",
+          "blob": "5da5f12acdb9f0e121cd6e5ce3651854c2a0790d",
+          "algorithm": "git-sha1",
+          "revision": "rev-A"
+        }
+      },
+      "options": {
+        "request": {
+          "claim_id": "claim-run-00001",
+          "implementation_ref": {
+            "repo": "demo-shop",
+            "path": "src/billing.json",
+            "commit": "48a95f1b267fc9caa073cc90b24f74bc101c90ac",
+            "blob": "de3889890530e681a8cc26346c0a52a138ac1029",
+            "algorithm": "git-sha1",
+            "revision": "v2.3.1"
+          },
+          "implementer_principal_id": "builder-01",
+          "command": "forge:test --suite suite-alpha",
+          "run_id": "run-00001",
+          "runner_artifact_ref": {
+            "repo": "forge-runner",
+            "path": "results/scout/run-logs/run-00001-x06.json",
+            "commit": "4230be00e114bcc472d8a69c609581e98c26eaba",
+            "blob": "5da5f12acdb9f0e121cd6e5ce3651854c2a0790d",
+            "algorithm": "git-sha1",
+            "revision": "rev-A"
+          },
+          "expected_suite_id": "suite-alpha",
+          "claimed_summary": {
+            "schema_version": "1",
+            "test_count": 100,
+            "pass_count": 100,
+            "fail_count": 0,
+            "skip_count": 0,
+            "suite_errors": 0,
+            "exit_code": 0,
+            "run_crashed": false,
+            "timed_out": false,
+            "complete_summary": true,
+            "suite_id": "suite-alpha",
+            "result_class": "PASS"
+          },
+          "registry_record_ref": {
+            "run_id": "run-00001"
+          }
+        }
+      }
+    },
+    "context": {
+      "clock": 1792368000000,
+      "sources": {
+        "forge-runner|results/scout/run-logs/run-00001-x06.json": {
+          "revisions": {
+            "4230be00e114bcc472d8a69c609581e98c26eaba": {
+              "text": "{\"artifact_kind\":\"synthetic-runner-log\",\"run_id\":\"run-00001\",\"claimed_runner\":\"scout-01\",\"suite_id\":\"suite-alpha\",\"command\":\"forge:test --suite suite-beta\",\"summary\":{\"schema_version\":\"1\",\"test_count\":100,\"pass_count\":100,\"fail_count\":0,\"skip_count\":0,\"suite_errors\":0,\"exit_code\":0,\"run_crashed\":false,\"timed_out\":false,\"complete_summary\":true,\"suite_id\":\"suite-alpha\",\"result_class\":\"PASS\"}}",
+              "blob": "5da5f12acdb9f0e121cd6e5ce3651854c2a0790d",
+              "label": "rev-A"
+            }
+          }
+        }
+      },
+      "readGrants": [
+        {
+          "repo": "forge-runner",
+          "path": "results/scout/run-logs/run-00001-x06.json"
+        }
+      ],
+      "principal": {
+        "principal_id": "muse-relay-01",
+        "role": "MUSE_RELAY",
+        "registered_by": "jason",
+        "valid_from": "2026-01-01",
+        "expires_at": "2027-01-01",
+        "revoked": false
+      },
+      "aliases": {
+        "scout-01": "scout-01",
+        "scout-02": "scout-02",
+        "scout-99": "scout-99",
+        "scout-alpha": "builder-01",
+        "builder-01": "builder-01",
+        "koe-jr": "koe-jr",
+        "muse-relay-01": "muse-relay-01"
+      },
+      "criteria": {
+        "criteria_version": "validation-v1"
+      },
+      "provenance_registry": {
+        "run-00001": {
+          "run_id": "run-00001",
+          "runner_principal_id": "scout-01",
+          "implementer_principal_id": "builder-01",
+          "implementation_ref": {
+            "repo": "demo-shop",
+            "path": "src/billing.json",
+            "commit": "48a95f1b267fc9caa073cc90b24f74bc101c90ac",
+            "blob": "de3889890530e681a8cc26346c0a52a138ac1029",
+            "algorithm": "git-sha1",
+            "revision": "v2.3.1"
+          },
+          "command_sha256": "2d24f7ae73d7bc1e389a6ff4c923a958529eaa09bbcdd5f06ce4c65e75fa8b8c",
+          "artifact_sha256": "748955141bd60b2f581a60b36360eab0eb1ed63369772b9bc9ca540b684f9760",
+          "output_sha256": "0c0bfa6a7af67279c669f2d1f4eecc2bd56463a570cf3679eeb60b7ff8e3b7d0",
+          "suite_id": "suite-alpha",
+          "verification_method": "MOCK_INDEPENDENT_RUN",
+          "recorded_at": "2026-10-18T12:00:00Z",
+          "revoked": false
+        }
+      }
+    },
+    "expected": {
+      "status": "PARTIAL",
+      "classification": "PASS",
+      "verified_by": "author_reported_unavailable",
+      "diagnostic_codes": [
+        "CLAIM_MISMATCH",
+        "PROVENANCE_UNAVAILABLE",
+        "SPAN_MISMATCH"
+      ],
+      "mismatch_names": [
+        "artifact_command_vs_task"
+      ],
+      "quarantined_ids": []
+    }
+  },
+  {
+    "case_id": "X07",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "battery-run-00001",
+      "operation": "analyze",
+      "fixture_refs": {
+        "artifact_ref": {
+          "repo": "forge-runner",
+          "path": "results/scout/run-logs/run-00001-x07.json",
+          "commit": "749590ee38e6da0be836f7ac8ac93b9a0bdde858",
+          "blob": "982f87badcf9bb2612792a80af3075001fef7b62",
+          "algorithm": "git-sha1",
+          "revision": "rev-A"
+        }
+      },
+      "options": {
+        "request": {
+          "claim_id": "claim-run-00001",
+          "implementation_ref": {
+            "repo": "demo-shop",
+            "path": "src/billing.json",
+            "commit": "48a95f1b267fc9caa073cc90b24f74bc101c90ac",
+            "blob": "de3889890530e681a8cc26346c0a52a138ac1029",
+            "algorithm": "git-sha1",
+            "revision": "v2.3.1"
+          },
+          "implementer_principal_id": "builder-01",
+          "command": "forge:test --suite suite-alpha",
+          "run_id": "run-00001",
+          "runner_artifact_ref": {
+            "repo": "forge-runner",
+            "path": "results/scout/run-logs/run-00001-x07.json",
+            "commit": "749590ee38e6da0be836f7ac8ac93b9a0bdde858",
+            "blob": "982f87badcf9bb2612792a80af3075001fef7b62",
+            "algorithm": "git-sha1",
+            "revision": "rev-A"
+          },
+          "expected_suite_id": "suite-alpha",
+          "claimed_summary": {
+            "schema_version": "1",
+            "test_count": 100,
+            "pass_count": 100,
+            "fail_count": 0,
+            "skip_count": 0,
+            "suite_errors": 0,
+            "exit_code": 0,
+            "run_crashed": false,
+            "timed_out": false,
+            "complete_summary": true,
+            "suite_id": "suite-alpha",
+            "result_class": "PASS"
+          },
+          "registry_record_ref": {
+            "run_id": "run-00001"
+          }
+        }
+      }
+    },
+    "context": {
+      "clock": 1792368000000,
+      "sources": {
+        "forge-runner|results/scout/run-logs/run-00001-x07.json": {
+          "revisions": {
+            "749590ee38e6da0be836f7ac8ac93b9a0bdde858": {
+              "text": "{\"artifact_kind\":\"synthetic-runner-log\",\"run_id\":\"run-00001\",\"claimed_runner\":\"scout-01\",\"suite_id\":\"suite-alpha\",\"command\":\"forge:test --suite suite-alpha\",\"summary\":{\"schema_version\":\"1\",\"test_count\":100,\"pass_count\":0,\"fail_count\":100,\"skip_count\":0,\"suite_errors\":0,\"exit_code\":0,\"run_crashed\":false,\"timed_out\":false,\"complete_summary\":true,\"suite_id\":\"suite-alpha\",\"result_class\":\"FAIL\"}}",
+              "blob": "982f87badcf9bb2612792a80af3075001fef7b62",
+              "label": "rev-A"
+            }
+          }
+        }
+      },
+      "readGrants": [
+        {
+          "repo": "forge-runner",
+          "path": "results/scout/run-logs/run-00001-x07.json"
+        }
+      ],
+      "principal": {
+        "principal_id": "muse-relay-01",
+        "role": "MUSE_RELAY",
+        "registered_by": "jason",
+        "valid_from": "2026-01-01",
+        "expires_at": "2027-01-01",
+        "revoked": false
+      },
+      "aliases": {
+        "scout-01": "scout-01",
+        "scout-02": "scout-02",
+        "scout-99": "scout-99",
+        "scout-alpha": "builder-01",
+        "builder-01": "builder-01",
+        "koe-jr": "koe-jr",
+        "muse-relay-01": "muse-relay-01"
+      },
+      "criteria": {
+        "criteria_version": "validation-v1"
+      },
+      "provenance_registry": {
+        "run-00001": {
+          "run_id": "run-00001",
+          "runner_principal_id": "scout-01",
+          "implementer_principal_id": "builder-01",
+          "implementation_ref": {
+            "repo": "demo-shop",
+            "path": "src/billing.json",
+            "commit": "48a95f1b267fc9caa073cc90b24f74bc101c90ac",
+            "blob": "de3889890530e681a8cc26346c0a52a138ac1029",
+            "algorithm": "git-sha1",
+            "revision": "v2.3.1"
+          },
+          "command_sha256": "2d24f7ae73d7bc1e389a6ff4c923a958529eaa09bbcdd5f06ce4c65e75fa8b8c",
+          "artifact_sha256": "d8f8dfac8ee7b110046840484126bc12ba6de602f8faba2aa6a1de82b4d137f5",
+          "output_sha256": "0c0bfa6a7af67279c669f2d1f4eecc2bd56463a570cf3679eeb60b7ff8e3b7d0",
+          "suite_id": "suite-alpha",
+          "verification_method": "MOCK_INDEPENDENT_RUN",
+          "recorded_at": "2026-10-18T12:00:00Z",
+          "revoked": false
+        }
+      }
+    },
+    "expected": {
+      "status": "PARTIAL",
+      "classification": "PASS",
+      "verified_by": "author_reported_unavailable",
+      "diagnostic_codes": [
+        "CLAIM_MISMATCH",
+        "PROVENANCE_UNAVAILABLE"
+      ],
+      "mismatch_names": [
+        "artifact_summary_vs_claimed"
+      ],
+      "quarantined_ids": []
+    }
+  },
+  {
+    "case_id": "X08",
+    "category": "schema",
+    "task": {
+      "schema_version": "1",
+      "task_id": "battery-run-00001",
+      "operation": "analyze",
+      "fixture_refs": {
+        "artifact_ref": {
+          "repo": "forge-runner",
+          "path": "results/scout/run-logs/run-00001-x08.json",
+          "commit": "bf2e95f25a69644a32709dfa86a6ea07af65f826",
+          "blob": "9701ecab74319381851720f0ef0363459818bd27",
+          "algorithm": "git-sha1",
+          "revision": "rev-A"
+        }
+      },
+      "options": {
+        "request": {
+          "claim_id": "claim-run-00001",
+          "implementation_ref": {
+            "repo": "demo-shop",
+            "path": "src/billing.json",
+            "commit": "48a95f1b267fc9caa073cc90b24f74bc101c90ac",
+            "blob": "de3889890530e681a8cc26346c0a52a138ac1029",
+            "algorithm": "git-sha1",
+            "revision": "v2.3.1"
+          },
+          "implementer_principal_id": "builder-01",
+          "command": "forge:test --suite suite-alpha",
+          "run_id": "run-00001",
+          "runner_artifact_ref": {
+            "repo": "forge-runner",
+            "path": "results/scout/run-logs/run-00001-x08.json",
+            "commit": "bf2e95f25a69644a32709dfa86a6ea07af65f826",
+            "blob": "9701ecab74319381851720f0ef0363459818bd27",
+            "algorithm": "git-sha1",
+            "revision": "rev-A"
+          },
+          "expected_suite_id": "suite-alpha",
+          "claimed_summary": {
+            "schema_version": "1",
+            "test_count": 100,
+            "pass_count": 100,
+            "fail_count": 0,
+            "skip_count": 0,
+            "suite_errors": 0,
+            "exit_code": 0,
+            "run_crashed": false,
+            "timed_out": false,
+            "complete_summary": true,
+            "suite_id": "suite-alpha",
+            "result_class": "PASS"
+          },
+          "registry_record_ref": {
+            "run_id": "run-00001"
+          }
+        }
+      }
+    },
+    "context": {
+      "clock": 1792368000000,
+      "sources": {
+        "forge-runner|results/scout/run-logs/run-00001-x08.json": {
+          "revisions": {
+            "bf2e95f25a69644a32709dfa86a6ea07af65f826": {
+              "text": "synthetic malformed runner artifact",
+              "blob": "9701ecab74319381851720f0ef0363459818bd27",
+              "label": "rev-A"
+            }
+          }
+        }
+      },
+      "readGrants": [
+        {
+          "repo": "forge-runner",
+          "path": "results/scout/run-logs/run-00001-x08.json"
+        }
+      ],
+      "principal": {
+        "principal_id": "muse-relay-01",
+        "role": "MUSE_RELAY",
+        "registered_by": "jason",
+        "valid_from": "2026-01-01",
+        "expires_at": "2027-01-01",
+        "revoked": false
+      },
+      "aliases": {
+        "scout-01": "scout-01",
+        "scout-02": "scout-02",
+        "scout-99": "scout-99",
+        "scout-alpha": "builder-01",
+        "builder-01": "builder-01",
+        "koe-jr": "koe-jr",
+        "muse-relay-01": "muse-relay-01"
+      },
+      "criteria": {
+        "criteria_version": "validation-v1"
+      },
+      "provenance_registry": {
+        "run-00001": {
+          "run_id": "run-00001",
+          "runner_principal_id": "scout-01",
+          "implementer_principal_id": "builder-01",
+          "implementation_ref": {
+            "repo": "demo-shop",
+            "path": "src/billing.json",
+            "commit": "48a95f1b267fc9caa073cc90b24f74bc101c90ac",
+            "blob": "de3889890530e681a8cc26346c0a52a138ac1029",
+            "algorithm": "git-sha1",
+            "revision": "v2.3.1"
+          },
+          "command_sha256": "2d24f7ae73d7bc1e389a6ff4c923a958529eaa09bbcdd5f06ce4c65e75fa8b8c",
+          "artifact_sha256": "a5d6e3da6e86d7360a6dae3b6012152c4c7e9b07e4699ff4252d901722c6f2c7",
+          "output_sha256": "0c0bfa6a7af67279c669f2d1f4eecc2bd56463a570cf3679eeb60b7ff8e3b7d0",
+          "suite_id": "suite-alpha",
+          "verification_method": "MOCK_INDEPENDENT_RUN",
+          "recorded_at": "2026-10-18T12:00:00Z",
+          "revoked": false
+        }
+      }
+    },
+    "expected": {
+      "status": "PARTIAL",
+      "classification": "PASS",
+      "verified_by": "author_reported_unavailable",
+      "diagnostic_codes": [
+        "ARTIFACT_MALFORMED",
+        "PROVENANCE_UNAVAILABLE"
+      ],
+      "mismatch_names": [],
+      "quarantined_ids": []
+    }
+  },
+  {
     "case_id": "B01",
     "category": "budget",
     "task": {

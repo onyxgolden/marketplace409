@@ -443,6 +443,11 @@ export function run(task, context) {
     ? entry.suite_id === req.expected_suite_id && (summary?.suite_id ?? null) === entry.suite_id
     : false;
   const implRefMatches = entry ? implementationRefEquals(req.implementation_ref, entry.implementation_ref) : false;
+  // Claim comparisons are computed ONCE, before provenance: the
+  // artifact_* entries are fed into the eligibility decision below
+  // (PER-005 round 2) and the same list is emitted in the report,
+  // so the comparison path and the provenance path cannot drift.
+  const comparisons = buildClaimComparisons(req, artifact, entry, classification, outputSha256);
   const prov = deriveVerifiedBy({
     citedRunId,
     entry,
@@ -459,6 +464,10 @@ export function run(task, context) {
     declaredImplementer: req.implementer_principal_id,
     requestRunId: req.run_id ?? null,
     registryRefRunId: req.registry_record_ref?.run_id ?? null,
+    // PER-005 round 2: parsed-artifact validity and semantic
+    // consistency are prerequisites of independent provenance.
+    artifactComparisons: comparisons.filter((c) => c.name.startsWith("artifact_")),
+    artifactMalformed,
   });
   if (prov.verified_by === "author_reported_unavailable") {
     diagnostics.push({
@@ -470,8 +479,7 @@ export function run(task, context) {
     });
   }
 
-  // ---- Claim comparisons (claimed vs computed, both shown). ----
-  const comparisons = buildClaimComparisons(req, artifact, entry, classification, outputSha256);
+  // ---- Claim comparison diagnostics (claimed vs computed). ----
   if (artifactRefMismatch) {
     comparisons.push({
       name: "artifact_ref_identity",

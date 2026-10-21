@@ -113,6 +113,12 @@ export function canonicalizePrincipal(id, aliases) {
 //   declaredImplementer — request.implementer_principal_id (task-declared, untrusted)
 //   requestRunId      — request.run_id, or null when absent
 //   registryRefRunId  — request.registry_record_ref.run_id, or null when absent
+//   artifactComparisons — the artifact_* entries of the SAME claim
+//                         comparison list the report emits (shared
+//                         single source: comparison path and
+//                         provenance path cannot drift)
+//   artifactMalformed — true when the registered artifact bytes did
+//                       not parse into a valid runner log
 //   aliases, clock
 //
 // PER-005: independent provenance derives ONLY from the entire
@@ -124,6 +130,15 @@ export function canonicalizePrincipal(id, aliases) {
 // and the artifact's embedded run/suite identity. A valid digest
 // proves the registered bytes; it does not make conflicting
 // identities consistent.
+//
+// PER-005 round 2: full parsed-artifact validity and semantic
+// consistency are prerequisites of independent provenance. The
+// named artifact comparisons (command vs task, summary vs claimed,
+// embedded run/suite, runner) feed this one eligibility decision,
+// and a null/malformed artifact is explicitly unavailable —
+// matching raw-byte hashes never stand in for the parsed tuple.
+// This is an artifact-consistency requirement, not a requirement
+// that tests pass: a genuine independent FAIL still authenticates.
 // Returns {verified_by, reasons[], canonical_runner, claimed_runner, registry_ref}.
 // ---------------------------------------------------------------------------
 
@@ -133,6 +148,7 @@ export function deriveVerifiedBy(args) {
     taskCommandSha256, outputSha256, implRefMatches,
     suiteMatches, aliases, clock,
     declaredImplementer, requestRunId, registryRefRunId,
+    artifactComparisons, artifactMalformed,
   } = args;
   const reasons = [];
   const registry_ref = entry ? { run_id: entry.run_id, verification_method: entry.verification_method } : null;
@@ -194,6 +210,19 @@ export function deriveVerifiedBy(args) {
   }
   if (artifact && artifact.suite_id !== entry.suite_id) {
     reasons.push(`artifact embedded suite_id '${artifact.suite_id}' does not match registry suite_id '${entry.suite_id}'`);
+  }
+  // PER-005 round 2: the parsed artifact must be fully valid and
+  // semantically consistent — not merely byte-identical to the
+  // registered digest. A malformed artifact supplies no parsed
+  // tuple at all, and every named artifact comparison that
+  // mismatches is an eligibility failure with its own reason.
+  if (artifactMalformed) {
+    reasons.push(`registered artifact is malformed/unparseable; the parsed artifact tuple is unavailable, so matching raw-byte hashes cannot authenticate independent provenance`);
+  }
+  for (const c of artifactComparisons ?? []) {
+    if (c.match === false) {
+      reasons.push(`artifact comparison '${c.name}' mismatch: registered artifact is not semantically consistent with the task/claim`);
+    }
   }
   if (canonical_runner !== null && canonical_runner === canonicalEntryImplementer) {
     reasons.push(`registry runner and implementer canonicalize to the same principal ('${canonical_runner}'): self-runner, not independent`);

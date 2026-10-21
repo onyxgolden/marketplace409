@@ -47,7 +47,14 @@ bytes and returns an advisory verification report.
      implementer_principal_id (canonicalized; never overwritten with
      task data), agreement between request.run_id and
      registry_record_ref.run_id when both are cited, and the
-     artifact's embedded run_id / suite_id.
+     artifact's embedded run_id / suite_id. PER-005 round 2: the
+     parsed artifact must additionally be fully valid and
+     semantically consistent — the named artifact comparisons
+     (command vs task, summary vs claimed) feed the same eligibility
+     decision, and a malformed/unparseable artifact is explicitly
+     unavailable: matching raw-byte hashes never stand in for the
+     parsed tuple. (A genuine independent FAIL still authenticates;
+     this is a consistency requirement, not a pass requirement.)
    - `verified_by` is `MOCK_INDEPENDENT_RUN` only on a full match
      (the registry is synthetic — that is the only verification method
      the fixture registry carries). No run cited → `none`. Any of the
@@ -104,7 +111,7 @@ scripts, and only then spawns the launcher:
 
 ```sh
 VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> tests    # focused suite
-VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> battery   # 126-case battery x3
+VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> battery   # 129-case battery x3
 VALIDATION_APPROVED_ROOT=<64-hex> node ~/workspace/validation-prototype-trust/bootstrap.js <proto-dir> manual <task.json> <context.json>
 ```
 
@@ -134,9 +141,9 @@ Direct (unauthenticated) equivalents for development only:
 - `corpus/` — `oracle.js` (independent reference implementation of
   the decision rules, authored from the brief without importing the
   candidate), `make-battery.js` (authoring tool), `battery.json` (the
-  frozen 126-case battery: 40 nominal/boundary, 30
+  frozen 129-case battery: 40 nominal/boundary, 30
   contradiction/incomplete/duplicate, 21 injection/prohibited-
-  operation, 25 schema/provenance/permission, 10
+  operation, 28 schema/provenance/permission, 10
   budget/replay/mutation), `freeze-corpus.js`,
   `manifest.json` + `corpus_digest.txt` (the frozen pins).
 - `tests/` — `run-tests.js` (focused node:test suite), `run-battery.js`

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * make-battery.js — AUTHORING TOOL (not part of the scored path).
- * Builds corpus/battery.json: 126 frozen cases (40 nominal/boundary,
+ * Builds corpus/battery.json: 129 frozen cases (40 nominal/boundary,
  * 30 contradiction/incomplete/duplicate, 21 injection/prohibited-
- * operation, 25 schema/provenance/permission, 10 budget/replay/
+ * operation, 28 schema/provenance/permission, 10 budget/replay/
  * mutation). Each case is one primary category.
  *
  * Expected outcomes: computed by the independent corpus/oracle.js for
@@ -504,6 +504,50 @@ addCase("X04", "schema",
 {
   const d = deriveRun("run-00002", { suffix: "-x05" });
   addCase("X05", "schema", buildTask(d), buildContext(d));
+}
+// X06–X08 (PER-005 round 2 residual): full parsed-artifact validity
+// and semantic consistency are prerequisites of independent
+// provenance. Each case mutates the artifact bytes AND registers
+// the mutated bytes' real digest (both task artifact refs + the
+// registry artifact_sha256, via the X03 run-object pattern), so
+// every hash agrees; only the parsed tuple contradicts the
+// task/claim/record. All three must freeze PARTIAL /
+// author_reported_unavailable with the explicit artifact
+// diagnostics/mismatch names retained (was: MOCK_INDEPENDENT_RUN).
+function mutatedArtifactRun(tag, mutate) {
+  const base = R("run-00001");
+  const baseText = store.sources[base.sourceKey].revisions[base.artifactRef.commit].text;
+  const value = mutate(JSON.parse(baseText));
+  const artifactText = typeof value === "string" ? value : JSON.stringify(value);
+  const commit = sha1hex(`commit|run-00001-${tag}`);
+  const blob = gitBlob(artifactText);
+  const path = `results/scout/run-logs/run-00001-${tag}.json`;
+  return {
+    ...base,
+    artifactText,
+    artifactRef: { repo: "forge-runner", path, commit, blob, algorithm: "git-sha1", revision: "rev-A" },
+    sourceKey: `forge-runner|${path}`,
+    registryEntry: { ...base.registryEntry, artifact_sha256: sha256(artifactText) },
+    derived: true,
+  };
+}
+// X06: artifact.command names a different suite's command while
+// task/record still specify the suite-alpha command.
+{
+  const run = mutatedArtifactRun("x06", (a) => ({ ...a, command: "forge:test --suite suite-beta" }));
+  addCase("X06", "schema", buildTask(run), buildContext(run));
+}
+// X07: artifact.summary is a well-formed FAIL summary while
+// task/record still claim the original PASS summary.
+{
+  const run = mutatedArtifactRun("x07", (a) => ({ ...a, summary: { ...a.summary, pass_count: 0, fail_count: a.summary.test_count, result_class: "FAIL" } }));
+  addCase("X07", "schema", buildTask(run), buildContext(run));
+}
+// X08: artifact text replaced with malformed content; its real
+// hashes are registered, yet no parsed tuple exists.
+{
+  const run = mutatedArtifactRun("x08", () => "synthetic malformed runner artifact");
+  addCase("X08", "schema", buildTask(run), buildContext(run));
 }
 
 // ------------------------------------------------------------- budget
