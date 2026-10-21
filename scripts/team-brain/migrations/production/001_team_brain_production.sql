@@ -616,11 +616,19 @@ revoke all on team_brain.retrieval_evaluations from public;
 -- longer change state without lifecycle history. Event idempotency keys:
 -- 'close:<id>', 'revoke:<id>'.
 -- Fix round 4 (TBP1-002C): the retention key identifies the OPERATION, not
--- the target value — 'retention:<obligation_id>:<actor>:<reason>:<claimed_at>'.
+-- the target value — raw colon concatenation over colon-permitting fields
+-- ('retention:<obligation_id>:<actor>:<reason>:<claimed_at>').
 -- The per-operation disposition is recorded on the RETENTION_DECIDED event
 -- row (obligation_events.retention_disposition) so an exact replay is an
 -- idempotent no-op while a changed payload under the same operation
 -- identity refuses with TB225.
+-- Fix round 5 (TBP1-002C): the operation identity is now an unambiguous
+-- deterministic JSON-array encoding of the full operation tuple
+-- (obligation_id, actor_principal, reason, claimed_at) —
+-- 'retention-op:' || to_json(array[...])::text (byte-identical to
+-- JSON.stringify of the same tuple) — and a replay verifies the full
+-- recorded binding (obligation, actor, reason, claimed_at, event type,
+-- disposition), not just the disposition value.
 
 -- Idempotency: signatures that changed (or were removed) in fix rounds 2
 -- and 3 are dropped first so a replayed migration never leaves a stale
@@ -678,6 +686,10 @@ declare
   v_claimed_ts timestamptz;
   v_key text;
   v_existing_type text;
+  v_existing_obligation text;
+  v_existing_actor text;
+  v_existing_reason text;
+  v_existing_claimed timestamptz;
   v_existing_disposition text;
 begin
   select * into v_row from team_brain.obligations
@@ -720,26 +732,50 @@ begin
     raise exception 'retention disposition % is not in the policy set', p_disposition
       using errcode = 'TB208';
   end if;
-  -- Fix round 4 (TBP1-002C): the idempotency key identifies the OPERATION
-  -- (actor + reason + claimed_at), not the target disposition. Looked up
-  -- under the row lock held above, so the check-and-insert is atomic:
-  -- an exact replay (same operation, same disposition) is an idempotent
-  -- no-op — no new event, no version increment, no raw 23505; the same
-  -- operation identity with a different disposition refuses with TB225.
-  -- Distinct decisions (including A→B→A) each persist their own event.
-  v_key := 'retention:' || p_obligation_id || ':' || p_actor_principal
-           || ':' || p_reason || ':' || p_claimed_at;
-  select e.event_type, e.retention_disposition
-    into v_existing_type, v_existing_disposition
+  -- Fix round 5 (TBP1-002C): the operation identity is an unambiguous,
+  -- deterministic JSON-array encoding of the full operation tuple
+  -- (obligation_id, actor_principal, reason, claimed_at). to_json emits the
+  -- tuple's JSON text directly (no insignificant whitespace, deterministic
+  -- string escaping — byte-identical to what JSON.stringify produces for
+  -- the same tuple), so any field content — colons, quotes, backslashes,
+  -- newlines, unicode — is structurally delimited and can never collide
+  -- two distinct tuples the way raw colon concatenation did. (to_jsonb
+  -- was considered and rejected: its canonical output inserts a space
+  -- after each comma, so the key would not round-trip byte-identically
+  -- through JSON.stringify/JSON.parse at the application boundary. A
+  -- digest could index this encoding; the encoding itself is already
+  -- injection-proof, so it is used directly — human-readable in
+  -- debugging.) Looked up under the row lock held above, so the
+  -- check-and-insert is atomic: an exact replay (same operation, same
+  -- full binding) is an idempotent no-op — no new event, no version
+  -- increment, no raw 23505; anything less refuses with TB225. Distinct
+  -- decisions (including A→B→A) each persist their own event.
+  v_key := 'retention-op:'
+           || to_json(array[p_obligation_id, p_actor_principal, p_reason, p_claimed_at])::text;
+  select e.event_type, e.obligation_id, e.actor_principal, e.reason,
+         e.claimed_at, e.retention_disposition
+    into v_existing_type, v_existing_obligation, v_existing_actor,
+         v_existing_reason, v_existing_claimed, v_existing_disposition
     from team_brain.obligation_events e
    where e.idempotency_key = v_key;
   if found then
-    if v_existing_type = 'RETENTION_DECIDED'
-       and v_existing_disposition is not distinct from p_disposition then
-      return;
+    -- Full-binding replay verification (fix round 5): an exact replay must
+    -- match EVERY recorded component of the operation — obligation, actor,
+    -- reason, claimed_at, the RETENTION_DECIDED type — and the disposition,
+    -- not just the disposition value. A tampered event row, a key
+    -- collision, or the same operation identity with a different
+    -- disposition all refuse atomically with TB225; nothing is persisted
+    -- and nothing changes.
+    if v_existing_type <> 'RETENTION_DECIDED'
+       or v_existing_obligation is distinct from p_obligation_id
+       or v_existing_actor is distinct from p_actor_principal
+       or v_existing_reason is distinct from p_reason
+       or v_existing_claimed is distinct from v_claimed_ts
+       or v_existing_disposition is distinct from p_disposition then
+      raise exception 'retention operation % already recorded with a conflicting payload',
+        v_key using errcode = 'TB225';
     end if;
-    raise exception 'retention operation % already recorded with a different disposition',
-      v_key using errcode = 'TB225';
+    return;
   end if;
   update team_brain.obligations
      set retention_disposition = p_disposition,

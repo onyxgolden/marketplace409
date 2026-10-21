@@ -37,6 +37,15 @@
 //      the TDZ shadowing of the `filed` helper in the idempotency test,
 //      and the auth-override test asserting a typed code against the
 //      error message instead of its .code property
+//  11. Fix round 5 (TBP1-002C): unambiguous retention operation identity —
+//      a deterministic JSON-array encoding of the full operation tuple
+//      ('retention-op:' || to_jsonb(...)) replaces raw colon
+//      concatenation; a replay verifies the full recorded binding
+//      (obligation, actor, reason, claimed_at, event type, disposition).
+//      ChatGPT's attribution-collision and cross-obligation probes are
+//      encoded as live-PG regressions (direct worker SQL and adapter),
+//      plus a tampered-binding refusal probe and an injection-proofness
+//      battery over JSON-hostile field content.
 
 import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -1777,17 +1786,21 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       expect(stored.rows[0].override_json).toBe(padded);
     });
 
-    // Fix round 4 (TBP1-002C): retention idempotency is keyed by the
-    // OPERATION — retention:<obligation_id>:<actor>:<reason>:<claimed_at>.
-    // Distinct decisions (A→B→A) each persist exactly one immutable event;
-    // an exact replay is an idempotent no-op (no new event, no version
-    // increment, no raw 23505); the same operation identity with a
-    // different disposition refuses atomically with TB225.
+    // Fix round 5 (TBP1-002C): retention idempotency is keyed by the
+    // OPERATION encoded as an unambiguous deterministic JSON array —
+    // retention-op:["<obligation_id>","<actor>","<reason>","<claimed_at>"] —
+    // and a replay verifies the full recorded binding, not just the
+    // disposition. Distinct decisions (A→B→A) each persist exactly one
+    // immutable event; an exact replay is an idempotent no-op (no new
+    // event, no version increment, no raw 23505); the same operation
+    // identity with a different disposition refuses atomically with TB225.
     test("tb_set_retention_disposition is idempotent by operation identity: A→B→A, exact replay, TB225 conflict (TBP1-002C)", async () => {
       const task = await filed(adminRepo, admin, taskRecord("g-ret-idem"));
       const TA = "2026-10-15T18:10:00.000Z";
       const TB = "2026-10-15T18:11:00.000Z";
       const TC = "2026-10-15T18:12:00.000Z";
+      const opKey = (actor, reason, claimedAt) =>
+        `retention-op:${JSON.stringify([task.id, actor, reason, claimedAt])}`;
       const call = (disposition, actor, reason, claimedAt) =>
         worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
           task.id,
@@ -1799,17 +1812,17 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       await call("RETAIN_1Y", "reviewer", "first decision", TA);
       await call("PERMANENT", "reviewer", "second decision", TB);
       await call("RETAIN_1Y", "reviewer", "third decision", TC);
-      // A→B→A persisted three events with operation keys and per-event
-      // dispositions; the projection reflects the last decision.
+      // A→B→A persisted three events with unambiguous operation keys and
+      // per-event dispositions; the projection reflects the last decision.
       const events = await admin.query(
         `select idempotency_key, retention_disposition from team_brain.obligation_events
          where obligation_id = $1 and event_type = 'RETENTION_DECIDED' order by seq`,
         [task.id],
       );
       expect(events.rows.map((r) => r.idempotency_key)).toEqual([
-        `retention:${task.id}:reviewer:first decision:${TA}`,
-        `retention:${task.id}:reviewer:second decision:${TB}`,
-        `retention:${task.id}:reviewer:third decision:${TC}`,
+        opKey("reviewer", "first decision", TA),
+        opKey("reviewer", "second decision", TB),
+        opKey("reviewer", "third decision", TC),
       ]);
       expect(events.rows.map((r) => r.retention_disposition)).toEqual([
         "RETAIN_1Y",
@@ -1909,6 +1922,262 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         [task.id],
       );
       expect(afterConflict.rows[0].n).toBe(3);
+    });
+
+    // Fix round 5 (TBP1-002C): ChatGPT's attribution-collision probe as a
+    // live-PG regression — the two tuples (alice:team, reason) and
+    // (alice, team:reason) collided under raw colon concatenation and the
+    // second call falsely reported an idempotent replay. Under the
+    // unambiguous JSON-array encoding each tuple is a distinct operation.
+    test("tb_set_retention_disposition attribution collision: colon-shifting tuples persist as distinct operations (TBP1-002C)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ret-collide"));
+      const TS = "2026-10-15T18:30:00.000Z";
+      const call = (obligation, disposition, actor, reason, claimedAt) =>
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          obligation,
+          disposition,
+          actor,
+          reason,
+          claimedAt,
+        ]);
+      await call(task.id, "RETAIN_1Y", "alice:team", "reason", TS);
+      await call(task.id, "RETAIN_1Y", "alice", "team:reason", TS);
+      const events = await admin.query(
+        `select idempotency_key, actor_principal, reason, retention_disposition
+         from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED' order by seq`,
+        [task.id],
+      );
+      // Two distinct operations → two events with two distinct
+      // unambiguous keys and correct per-event attribution — not one
+      // event plus a false replay.
+      expect(events.rows).toHaveLength(2);
+      expect(events.rows[0].idempotency_key).toBe(
+        `retention-op:${JSON.stringify([task.id, "alice:team", "reason", TS])}`,
+      );
+      expect(events.rows[1].idempotency_key).toBe(
+        `retention-op:${JSON.stringify([task.id, "alice", "team:reason", TS])}`,
+      );
+      expect(events.rows.map((r) => r.actor_principal)).toEqual(["alice:team", "alice"]);
+      expect(events.rows.map((r) => r.reason)).toEqual(["reason", "team:reason"]);
+      const proj = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(proj.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      expect(Number(proj.rows[0].row_version)).toBe(3);
+      // Exact replay of the first tuple is a genuine no-op (not TB225).
+      await call(task.id, "RETAIN_1Y", "alice:team", "reason", TS);
+      const replayed = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(replayed.rows[0].n).toBe(2);
+      // Same full tuple, different disposition: named TB225 refusal,
+      // atomically — nothing persisted, nothing changed.
+      await expect(
+        call(task.id, "PERMANENT", "alice:team", "reason", TS),
+      ).rejects.toMatchObject({ code: "TB225" });
+      const conflicted = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(conflicted.rows[0].n).toBe(2);
+      const afterConflict = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(afterConflict.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      expect(Number(afterConflict.rows[0].row_version)).toBe(3);
+    });
+
+    // Fix round 5 (TBP1-002C): ChatGPT's cross-obligation probe —
+    // (cross:alice, team, reason) and (cross, alice:team, reason) collided
+    // under raw concatenation, so the second call returned a false
+    // successful update on an entirely different obligation. Each call
+    // must now succeed independently on its own obligation.
+    test("tb_set_retention_disposition cross-obligation collision: colon-shifting tuples update their own obligation (TBP1-002C)", async () => {
+      const tA = await filed(adminRepo, admin, taskRecord("cross:alice"));
+      const tB = await filed(adminRepo, admin, taskRecord("cross"));
+      const TS = "2026-10-15T18:31:00.000Z";
+      const call = (obligation, disposition, actor, reason, claimedAt) =>
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          obligation,
+          disposition,
+          actor,
+          reason,
+          claimedAt,
+        ]);
+      await call(tA.id, "RETAIN_1Y", "team", "reason", TS);
+      await call(tB.id, "RETAIN_1Y", "alice:team", "reason", TS);
+      const projs = await admin.query(
+        `select obligation_id, retention_disposition, row_version,
+                (select count(*)::int from team_brain.obligation_events e
+                 where e.obligation_id = o.obligation_id and e.event_type = 'RETENTION_DECIDED') as events
+         from team_brain.obligations o where obligation_id in ($1, $2)`,
+        [tA.id, tB.id],
+      );
+      const byId = Object.fromEntries(projs.rows.map((r) => [r.obligation_id, r]));
+      // Neither call was swallowed as a replay: both obligations moved and
+      // each carries exactly its own event.
+      expect(byId[tA.id].retention_disposition).toBe("RETAIN_1Y");
+      expect(byId[tA.id].events).toBe(1);
+      expect(byId[tB.id].retention_disposition).toBe("RETAIN_1Y");
+      expect(byId[tB.id].events).toBe(1);
+      expect(Number(byId[tB.id].row_version)).toBe(2);
+      const keys = await admin.query(
+        `select obligation_id, idempotency_key from team_brain.obligation_events
+         where event_type = 'RETENTION_DECIDED' and obligation_id in ($1, $2)`,
+        [tA.id, tB.id],
+      );
+      const keyById = Object.fromEntries(keys.rows.map((r) => [r.obligation_id, r.idempotency_key]));
+      expect(keyById[tA.id]).not.toBe(keyById[tB.id]);
+      expect(keyById[tB.id]).toBe(
+        `retention-op:${JSON.stringify([tB.id, "alice:team", "reason", TS])}`,
+      );
+    });
+
+    // Fix round 5 (TBP1-002C): full-binding replay verification — a replay
+    // is accepted only when EVERY recorded component (obligation, actor,
+    // reason, claimed_at, event type, disposition) matches, not just the
+    // disposition. Hand-tamper an event row under the exact operation key
+    // and confirm the function refuses TB225 instead of trusting the key
+    // or the disposition value alone.
+    test("tb_set_retention_disposition replay verifies the full recorded binding, not just disposition (TBP1-002C)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ret-bind"));
+      const TS = "2026-10-15T18:32:00.000Z";
+      const call = (disposition, actor, reason, claimedAt) =>
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          disposition,
+          actor,
+          reason,
+          claimedAt,
+        ]);
+      await call("RETAIN_1Y", "reviewer", "binding check", TS);
+      const key = `retention-op:${JSON.stringify([task.id, "reviewer", "binding check", TS])}`;
+      // Tamper with the stored row's actor binding under the exact same
+      // operation key (a key-only or disposition-only comparison would
+      // accept the replay; a real backend never performs this update).
+      await admin.query(
+        `update team_brain.obligation_events set actor_principal = 'intruder'
+         where idempotency_key = $1`,
+        [key],
+      );
+      // Same tuple, same disposition — but the recorded binding no longer
+      // matches → atomic TB225, nothing persisted, nothing changed.
+      await expect(call("RETAIN_1Y", "reviewer", "binding check", TS)).rejects.toMatchObject({
+        code: "TB225",
+      });
+      const events = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(events.rows[0].n).toBe(1);
+      const proj = await admin.query(
+        "select retention_disposition, row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(proj.rows[0].retention_disposition).toBe("RETAIN_1Y");
+      expect(Number(proj.rows[0].row_version)).toBe(2);
+    });
+
+    // Fix round 5 (TBP1-002C): JSON-hostile field content (quotes,
+    // backslashes, newlines, unicode, colons) cannot break the operation
+    // identity — distinct tuples still encode to distinct keys, persist
+    // independently, and decode back to exactly the tuple that produced
+    // them (round-trip-safe).
+    test("tb_set_retention_disposition operation keys are injection-proof over JSON-hostile field content (TBP1-002C)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ret-inject"));
+      const TS = "2026-10-15T18:33:00.000Z";
+      const call = (disposition, actor, reason, claimedAt) =>
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2, $3, $4, $5)", [
+          task.id,
+          disposition,
+          actor,
+          reason,
+          claimedAt,
+        ]);
+      await call("RETAIN_1Y", 'ali"ce\\x', "line1\nline2:ret", TS);
+      await call("RETAIN_1Y", "alice", "emoji \u2705 reason", TS);
+      await call("RETAIN_1Y", 'ali"ce\\x', "different reason", TS);
+      const keys = await admin.query(
+        `select idempotency_key from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED' order by seq`,
+        [task.id],
+      );
+      expect(keys.rows).toHaveLength(3);
+      const uniq = new Set(keys.rows.map((r) => r.idempotency_key));
+      expect(uniq.size).toBe(3);
+      // Every stored key decodes back to exactly its producing tuple.
+      const tuples = keys.rows.map((r) =>
+        JSON.parse(r.idempotency_key.replace(/^retention-op:/, "")),
+      );
+      expect(tuples).toEqual([
+        [task.id, 'ali"ce\\x', "line1\nline2:ret", TS],
+        [task.id, "alice", "emoji \u2705 reason", TS],
+        [task.id, 'ali"ce\\x', "different reason", TS],
+      ]);
+      // Exact replay of the first hostile tuple is a genuine no-op.
+      await call("RETAIN_1Y", 'ali"ce\\x', "line1\nline2:ret", TS);
+      const replayed = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(replayed.rows[0].n).toBe(3);
+    });
+
+    // Fix round 5 (TBP1-002C): the adapter path inherits the unambiguous
+    // operation identity — colon-shifting tuples through
+    // setRetentionDisposition persist as separate decisions (no false
+    // replay), exact retry is a no-op, and a changed payload under one
+    // full tuple surfaces as typed CONFLICTING_REPLAY.
+    test("adapter setRetentionDisposition: colliding tuples persist separately; conflict maps to CONFLICTING_REPLAY (TBP1-002C)", async () => {
+      const task = await filed(workerRepo, admin, taskRecord("g-ret-adapter-collide"));
+      const TS = "2026-10-15T18:34:00.000Z";
+      const set = (actor, reason, disposition) =>
+        workerRepo.setRetentionDisposition(task.id, {
+          actor,
+          recordedAt: TS,
+          reason,
+          disposition,
+        });
+      await set("alice:team", "reason", "RETAIN_1Y");
+      await set("alice", "team:reason", "RETAIN_1Y");
+      const events = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(events.rows[0].n).toBe(2);
+      // Exact retry of the first tuple: still two events, version
+      // untouched.
+      await set("alice:team", "reason", "RETAIN_1Y");
+      const retried = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(retried.rows[0].n).toBe(2);
+      const afterRetry = await admin.query(
+        "select row_version from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(Number(afterRetry.rows[0].row_version)).toBe(3);
+      // Changed payload under the first full tuple: typed conflict.
+      await expect(set("alice:team", "reason", "PERMANENT")).rejects.toMatchObject({
+        code: "CONFLICTING_REPLAY",
+      });
+      const afterConflict = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = $1 and event_type = 'RETENTION_DECIDED'`,
+        [task.id],
+      );
+      expect(afterConflict.rows[0].n).toBe(2);
     });
 
     test("tb_record_obligation_supersession refuses verdict endpoints (TB212)", async () => {
