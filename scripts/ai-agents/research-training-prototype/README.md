@@ -22,17 +22,53 @@ exactly at the claimed half-open UTF-8 offsets (re-encoding check
 included) and parses back into the same four tokens.
 
 Research v2 taxonomy, precedence **contradicted > supported >
-attributed-only > unsupported**, keyed by (subject, predicate, scope):
+attributed-only > unsupported**, keyed by (subject, predicate, scope).
+Keys are framed tuples — ("a","bc","d") and ("ab","c","d") never
+merge. Authority and evidence repairs (PER-001..004/006, 2026-10-20
+retrospective audit) bind the taxonomy further:
 
-- **contradicted** — admitted assertions for the key disagree on value
-  or polarity. The key is blocked: no statement, no quiz, no answer.
+- The authenticated principal must be non-revoked and inside its
+  validity window at the context clock before any source is resolved
+  or any output produced — a dead principal refuses `ACTION_DENIED`
+  on every path, including the empty one.
+- The grammar attests positive statements only. Polarity is part of
+  an assertion and of its key, so it must be passage-proven like
+  every other component: a task-supplied negative polarity is
+  refused `INVALID_INPUT`, and unchanged positive bytes can never
+  yield a negative key or a manufactured contradiction.
+- Source resolution is keyed by the complete pin identity
+  (repo|path|commit|blob|algorithm|revision). A second, different
+  pin on an already-resolved path is verified on its own bytes;
+  a citation never consumes another pin's verification.
+
+- **contradicted** — admitted assertions for the key disagree on
+  value. The key is blocked: no statement, no quiz, no answer.
   A contradiction note cites both sides.
 - **supported** — all admitted assertions agree and the evidence comes
   from at least two independent evidence roots in at least two
   distinct provenance groups. Support counts evidence *roots* (the
   transitive closure of the host-declared `copied_from` relation),
   never passages: duplicates, known copies and citation cycles
-  contribute no corroboration.
+  contribute no corroboration. Provenance binding is a **closed
+  schema** (PER-003 rounds 2–3): a registration binds *only* the exact
+  consumed pins its `applies_to` list names (all six SourceRef
+  fields). An omitted `applies_to` binds nothing — there is no
+  key-bound shorthand — and a changed pin (commit, blob or
+  revision) makes the registration inapplicable. A root counts
+  only when every link of its chain is registered *and* applicable
+  under the full ancestor-identity binding: each link's
+  `applies_to` must contain a pin *fully equal* (all six fields)
+  to that link's own registered identity — the complete pin under
+  which the link's key is itself registered in `context.sources` —
+  so a same-key pin with any identity field differing, an absent,
+  empty, stale or mismatching registration, or a link with no
+  registered identity, at the leaf, any intermediate link, the
+  terminal root or any cycle member leaves the root unknown and
+  contributes zero support (a cycle resolves only when every
+  member is fully applicable). A teachable source that fails to bind still teaches
+  attributed-only and emits one `PROVENANCE_UNBOUND` warning
+  diagnostic per distinct consumed source key, naming the key and
+  the failing reason or ancestor link.
 - **attributed-only** — all agree but the evidence reduces to one
   root. Taught only as "Fixture source states…", never as established
   truth.
@@ -90,9 +126,9 @@ RESEARCH_TRAINING_APPROVED_ROOT=<digest> node <trust>/bootstrap.js <proto> manua
 ```
 
 Suites: `tests/run-tests.js` (focused node:test suite) and
-`tests/run-battery.js` (120 frozen cases — 40 nominal/boundary, 30
+`tests/run-battery.js` (138 frozen cases — 40 nominal/boundary, 30
 contradiction/incomplete/duplicate, 20 injection/prohibited-operation,
-20 schema/provenance/permission, 10 budget/replay/mutation — each run
+38 schema/provenance/permission, 10 budget/replay/mutation — each run
 3× through the guarded launcher, byte-identical).
 
 All fixture material is invented from scratch for this prototype

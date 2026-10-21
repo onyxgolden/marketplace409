@@ -289,10 +289,21 @@ export function validateCriteria(value, where, budget) {
 
 /**
  * Host provenance declarations, keyed by source key ("repo|path"):
- * {group, copied_from} — group is the fixture provenance group;
- * copied_from names the source key this source is a known copy of
- * (null when it is an original). Host-injected; a task can never
+ * {group, copied_from, applies_to?} — group is the fixture provenance
+ * group; copied_from names the source key this source is a known copy
+ * of (null when it is an original). Host-injected; a task can never
  * declare or alter provenance.
+ *
+ * PER-003 (closed schema, round 2): applies_to is syntactically
+ * optional at this schema layer — absence is NOT a schema refusal —
+ * but semantically an entry binds NOTHING when applies_to is
+ * omitted. A declaration corroborates ONLY a consumed ref exactly
+ * equal (all six fields) to a listed one; a changed pin
+ * (commit/blob/revision), an absent list, or a list that does not
+ * name the consumed pin makes the declaration inapplicable and the
+ * source's provenance unknown for corroboration (attributed-only,
+ * with a PROVENANCE_UNBOUND diagnostic). There is no key-bound
+ * shorthand fallback.
  */
 export function validateProvenance(value, where, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail(where, "internal: validateProvenance requires a live budget");
@@ -312,7 +323,7 @@ export function validateProvenance(value, where, budget) {
     const w = `provenance.sources[${k}]`;
     if (!isPlainObject(entry)) fail(w, "provenance entry must be an object");
     assertNoAccessors(entry, w);
-    exactKeys(entry, ["group", "copied_from"], w);
+    exactKeys(entry, ["group", "copied_from", "applies_to"], w);
     const group = reqStr(entry, "group", w, { maxBytes: 128 });
     if (!SLUG_RE.test(group)) fail(w, `invalid provenance group '${group}'`);
     let copied_from = null;
@@ -322,7 +333,19 @@ export function validateProvenance(value, where, budget) {
       }
       copied_from = entry.copied_from;
     }
-    sources[k] = { group, copied_from };
+    const out = { group, copied_from };
+    if (entry.applies_to !== undefined) {
+      if (!Array.isArray(entry.applies_to)) fail(w, "applies_to must be an array of SourceRefs");
+      assertDenseArray(entry.applies_to, `${w}.applies_to`);
+      if (entry.applies_to.length > 64) fail(w, "applies_to must have at most 64 entries");
+      const refs = [];
+      for (let i = 0; i < entry.applies_to.length; i++) {
+        budget.chargeObjectOnce(entry.applies_to[i], `${w}.applies_to[${i}]`);
+        refs.push(validateSourceRef(entry.applies_to[i], `${w}.applies_to[${i}]`));
+      }
+      out.applies_to = refs;
+    }
+    sources[k] = out;
   }
   return { sources };
 }

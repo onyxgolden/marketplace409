@@ -36,7 +36,10 @@ const PROTO = join(HERE, "..");
 const store = JSON.parse(readFileSync(join(PROTO, "fixtures", "store.json"), "utf8"));
 const sha256hex = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const gitBlob = (text) => gitBlobId(Buffer.from(text, "utf8"));
-const CLOCK = 1760941800000;
+// PER-001: inside the principal's 2026-01-01..2027-01-01 window
+// (2026-10-20T00:00:00Z). The previous 2025 value silently depended
+// on the missing liveness gate.
+const CLOCK = 1792454400000;
 const PRINCIPAL = { principal_id: "muse-relay-01", role: "MUSE_RELAY", registered_by: "jason", valid_from: "2026-01-01", expires_at: "2027-01-01", revoked: false };
 const ALIASES = { "muse-relay-01": "muse-relay-01" };
 
@@ -106,18 +109,19 @@ function task(over = {}) {
 function ctx(over = {}) {
   const {
     paths = [K, NI], grants = null, test_hooks = {}, provenanceOverrides = {}, templates = TEMPLATES,
+    principal = null, clock = null,
   } = over;
   const sources = {};
   const prov = {};
   for (const p of paths) {
     sources[`${REPO}|${p}`] = store.sources[`${REPO}|${p}`];
-    prov[`${REPO}|${p}`] = { group: GROUPS[p], copied_from: provenanceOverrides[p] ?? null };
+    prov[`${REPO}|${p}`] = { group: GROUPS[p], copied_from: provenanceOverrides[p] ?? null, applies_to: [srcRef(p)] };
   }
   return {
-    clock: CLOCK,
+    clock: clock ?? CLOCK,
     sources,
     readGrants: (grants ?? paths).map((p) => ({ repo: REPO, path: p })),
-    principal: { ...PRINCIPAL },
+    principal: principal ?? { ...PRINCIPAL },
     aliases: { ...ALIASES },
     criteria: { criteria_version: "rt-1", templates },
     provenance: { sources: prov },
@@ -180,7 +184,7 @@ test("contradiction blocks quizzes; note cites both sides", () => {
   assert.equal(out.report.gaps[0].topic_id, "t-power");
 });
 
-test("polarity disagreement is a contradiction", () => {
+test("PER-002: task-supplied negative polarity over positive bytes => REFUSED, no key, no manufactured contradiction", () => {
   const out = run(
     task({ assertions: [
       A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
@@ -188,8 +192,9 @@ test("polarity disagreement is a contradiction", () => {
     ] }),
     ctx()
   );
-  assert.equal(out.report.quizzes.length, 0);
-  assert.equal(out.report.contradiction_notes.length, 1);
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["INVALID_INPUT"]);
+  assert.equal(out.report, null);
 });
 
 test("unsupported topic is a gap, never taught", () => {
@@ -654,4 +659,362 @@ test("mutation: tampered package.json (npm scripts) refuses at the bootstrap", {
   });
   assert.equal(r.status, 3);
   assert.ok(String(r.stderr).includes("npm scripts"));
+});
+
+// ------------------------------------------------------------ PER repairs (2026-10-20 audit)
+test("PER-001: revoked, expired and not-yet-valid principals refuse ACTION_DENIED before any output — including the EMPTY path", () => {
+  for (const p of [
+    { ...PRINCIPAL, revoked: true },
+    { ...PRINCIPAL, expires_at: "2026-01-02" },
+    { ...PRINCIPAL, valid_from: "2027-01-01" },
+  ]) {
+    const out = run(task(), ctx({ principal: p }));
+    assert.equal(out.status, "REFUSED");
+    assert.deepEqual(codes(out), ["ACTION_DENIED"]);
+    assert.equal(out.report, null);
+    assert.deepEqual(out.source_refs, []);
+  }
+  const empty = run(
+    { schema_version: "1", task_id: "test-rt", operation: "analyze", fixture_refs: { source_refs: [] },
+      options: { request: { module_id: "mod-test", question_format: "short_answer", topics: [], assertions: [], proposed_keys: [], composite_requests: [] } } },
+    ctx({ principal: { ...PRINCIPAL, revoked: true } })
+  );
+  assert.equal(empty.status, "REFUSED");
+  assert.deepEqual(codes(empty), ["ACTION_DENIED"]);
+});
+
+test("PER-001: principal at the exact validity bounds (clock == valid_from == expires_at day) still teaches", () => {
+  const out = run(task(), ctx({ principal: { ...PRINCIPAL, valid_from: "2026-10-20", expires_at: "2026-10-20" } }));
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "supported");
+});
+
+test("PER-003: deleted provenance registration => the source cannot corroborate (attributed-only)", () => {
+  const c = ctx();
+  delete c.provenance.sources[`${REPO}|${NI}`];
+  const out = run(task(), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+});
+
+test("PER-003: copy chain ending at an unregistered root, and applies_to naming a different pin, both stay attributed-only; exact applies_to corroborates", () => {
+  const ghost = run(task(), ctx({ provenanceOverrides: { [NI]: `${REPO}|manuals/ghost.md` } }));
+  assert.equal(ghost.report.quizzes[0].research_status, "attributed-only");
+  const cMismatch = ctx();
+  cMismatch.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(K)];
+  const mismatch = run(task(), cMismatch);
+  assert.equal(mismatch.report.quizzes[0].research_status, "attributed-only");
+  const cExact = ctx();
+  cExact.provenance.sources[`${REPO}|${K}`].applies_to = [srcRef(K)];
+  cExact.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(NI)];
+  const exact = run(task(), cExact);
+  assert.equal(exact.report.quizzes[0].research_status, "supported");
+});
+
+test("PER-003 round 2: missing applies_to anywhere => attributed-only + PROVENANCE_UNBOUND per distinct unbound key", () => {
+  const c = ctx();
+  delete c.provenance.sources[`${REPO}|${K}`].applies_to;
+  delete c.provenance.sources[`${REPO}|${NI}`].applies_to;
+  const out = run(task(), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(out).filter((x) => x === "PROVENANCE_UNBOUND").length, 2);
+  // stripping only one registration demotes with exactly one diagnostic
+  const c2 = ctx();
+  delete c2.provenance.sources[`${REPO}|${NI}`].applies_to;
+  const out2 = run(task(), c2);
+  assert.equal(out2.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(out2), ["PROVENANCE_UNBOUND"]);
+  assert.ok(out2.diagnostics[0].reason.includes(`${REPO}|${NI}`));
+});
+
+test("PER-003 round 2: changed revision with NO applicability (ChatGPT recipe) => attributed-only + PROVENANCE_UNBOUND", () => {
+  const newCommit = "9".repeat(40);
+  const oldRef = srcRef(NI);
+  const newRef = { ...oldRef, commit: newCommit, revision: "rev-2" };
+  const c = ctx();
+  c.sources[`${REPO}|${NI}`] = { revisions: { [newCommit]: { blob: oldRef.blob, label: "rev-2", text: textOf(NI) } } };
+  delete c.provenance.sources[`${REPO}|${K}`].applies_to;
+  delete c.provenance.sources[`${REPO}|${NI}`].applies_to;
+  const out = run(task({ refs: [srcRef(K), newRef] }), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+  assert.ok(codes(out).includes("PROVENANCE_UNBOUND"));
+});
+
+test("PER-003 round 2: empty ancestor (applies_to: []) supplies no root => attributed-only + PROVENANCE_UNBOUND", () => {
+  const c = ctx({ provenanceOverrides: { [NI]: `${REPO}|manuals/ghost.md` } });
+  c.provenance.sources[`${REPO}|manuals/ghost.md`] = { group: "ghost-group", copied_from: null, applies_to: [] };
+  const out = run(task(), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(out), ["PROVENANCE_UNBOUND"]);
+  assert.ok(out.diagnostics[0].reason.includes("ghost"));
+});
+
+test("PER-003 round 2: fully-bound copy chain + independent fully-bound root => supported, no PROVENANCE_UNBOUND", () => {
+  const out = run(
+    task({ refs: [srcRef(CP), srcRef(NI)], assertions: [
+      A("a-port-c", "Pump", "default port", "8080", "global", "positive", 0, CP, 1),
+      A("a-port-n", "Pump", "default port", "8080", "global", "positive", 1, NI, 1),
+    ] }),
+    ctx({ paths: [K, CP, NI], provenanceOverrides: { [CP]: `${REPO}|${K}` } })
+  );
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "supported");
+  assert.deepEqual(codes(out), []);
+});
+
+test("PER-003 round 2: exact-tuple positive through BOTH public APIs (run and runGuarded) => supported", async () => {
+  const t = task();
+  const c = ctx();
+  c.provenance.sources[`${REPO}|${K}`].applies_to = [srcRef(K)];
+  c.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(NI)];
+  const direct = run(structuredClone(t), structuredClone(c));
+  assert.equal(direct.report.quizzes[0].research_status, "supported");
+  assert.deepEqual(codes(direct), []);
+  const guarded = await runGuarded(JSON.stringify(t), JSON.stringify(c));
+  assert.equal(guarded.status, "REPORT_READY");
+  assert.equal(guarded.report.quizzes[0].research_status, "supported");
+  assert.deepEqual(codes(guarded), []);
+});
+
+// PER-003 round 3 (PER-003B residual): the fully-bound chain of the
+// round-2 positive, with exactly ONE identity field of the
+// ANCESTOR's applies_to pin mutated. The ancestor (kestrel
+// original) is registered in context.sources under its real
+// fixture-store pin, so a same-key pin with a wrong blob, an
+// unregistered commit, or a wrong revision is inapplicable: the
+// chain supplies no root => attributed-only + PROVENANCE_UNBOUND,
+// through BOTH public APIs. (Battery S36–S38 freeze the same three
+// mutations; S35 is the unchanged positive.)
+const r3ChainTask = () => task({ refs: [srcRef(CP), srcRef(NI)], assertions: [
+  A("a-port-c", "Pump", "default port", "8080", "global", "positive", 0, CP, 1),
+  A("a-port-n", "Pump", "default port", "8080", "global", "positive", 1, NI, 1),
+] });
+const r3ChainCtx = (ancestorPin) => {
+  const c = ctx({ paths: [K, CP, NI], provenanceOverrides: { [CP]: `${REPO}|${K}` } });
+  c.provenance.sources[`${REPO}|${K}`].applies_to = [ancestorPin];
+  return c;
+};
+const assertR3Unbound = async (ancestorPin) => {
+  const t = r3ChainTask();
+  const c = r3ChainCtx(ancestorPin);
+  const direct = run(structuredClone(t), structuredClone(c));
+  assert.equal(direct.status, "REPORT_READY");
+  assert.equal(direct.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(direct), ["PROVENANCE_UNBOUND"]);
+  assert.ok(direct.diagnostics[0].reason.includes(`${REPO}|${K}`));
+  const guarded = await runGuarded(JSON.stringify(t), JSON.stringify(c));
+  assert.equal(guarded.status, "REPORT_READY");
+  assert.equal(guarded.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(guarded), ["PROVENANCE_UNBOUND"]);
+  assert.ok(guarded.diagnostics[0].reason.includes(`${REPO}|${K}`));
+};
+
+test("PER-003 round 3: ancestor applies_to with wrong blob (same key) => attributed-only + PROVENANCE_UNBOUND (both APIs)", async () => {
+  await assertR3Unbound({ ...srcRef(K), blob: "0".repeat(40) });
+});
+
+test("PER-003 round 3: ancestor applies_to with unregistered commit (same key) => attributed-only + PROVENANCE_UNBOUND (both APIs)", async () => {
+  await assertR3Unbound({ ...srcRef(K), commit: "9".repeat(40) });
+});
+
+test("PER-003 round 3: ancestor applies_to with wrong revision (same key) => attributed-only + PROVENANCE_UNBOUND (both APIs)", async () => {
+  await assertR3Unbound({ ...srcRef(K), revision: "rev-999" });
+});
+
+test("PER-004: forged second pin on an already-resolved path refuses SOURCE_UNVERIFIED, no quiz, null report", () => {
+  const forged = { ...srcRef(K), blob: "0".repeat(40), revision: "WRONG" };
+  const out = run(
+    task({
+      refs: [srcRef(K), forged],
+      topics: [{ topic_id: "t-pumps", predicates: ["default port", "startup sequence"] }],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-start", "Pump", "startup sequence", "prime, ignite, ramp", "global", "positive", 1, K, 2),
+      ],
+    }),
+    ctx({ paths: [K] })
+  );
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["SOURCE_UNVERIFIED"]);
+  assert.equal(out.report, null);
+});
+
+test("PER-004: two genuinely valid revisions of one path each teach their own verified bytes", () => {
+  const rev1 = store.sources[`${REPO}|${K}`].revisions[Object.keys(store.sources[`${REPO}|${K}`].revisions)[0]];
+  const text2 = [
+    "Kestrel-9 vapor pump — field service extract (SYNTHETIC)",
+    "Pump | default port | 8080 | global",
+    "Pump | startup sequence | prime, ignite, ramp | global",
+  ].join("\n") + "\n";
+  const commit2 = "d".repeat(40);
+  const ref2 = { repo: REPO, path: K, commit: commit2, blob: gitBlob(text2), algorithm: "git-sha1", revision: "rev-2" };
+  const c = ctx({ paths: [K] });
+  c.sources[`${REPO}|${K}`] = { revisions: {
+    [Object.keys(store.sources[`${REPO}|${K}`].revisions)[0]]: rev1,
+    [commit2]: { blob: gitBlob(text2), label: "rev-2", text: text2 },
+  } };
+  const out = run(
+    task({
+      refs: [srcRef(K), ref2],
+      topics: [{ topic_id: "t-pumps", predicates: ["default port", "startup sequence"] }],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-start", "Pump", "startup sequence", "prime, ignite, ramp", "global", "positive", 1, K, 2),
+      ],
+    }),
+    c
+  );
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes.length, 2);
+  const startQuiz = out.report.quizzes.find((q) => q.item_id === "q-a-start");
+  assert.equal(startQuiz.citations[0].source_ref.blob, gitBlob(text2));
+  assert.equal(startQuiz.citations[0].source_ref.revision, "rev-2");
+  const portQuiz = out.report.quizzes.find((q) => q.item_id === "q-a-port");
+  assert.equal(portQuiz.citations[0].source_ref.blob, rev1.blob);
+  assert.equal(portQuiz.citations[0].source_ref.revision, "rev-1");
+});
+
+test("PER-006: concatenated-key collision pair stays two distinct attributed-only facts", () => {
+  const textA = "Collision fixture one (SYNTHETIC)\na | bc | one | d\n";
+  const textB = "Collision fixture two (SYNTHETIC)\nab | c | one | d\n";
+  const mkRef = (path, text, commit) => ({ repo: REPO, path, commit, blob: gitBlob(text), algorithm: "git-sha1", revision: "rev-1" });
+  const span = (text, line) => {
+    const quoted = text.split("\n")[line];
+    const bytes = Buffer.from(text, "utf8");
+    const start = bytes.indexOf(quoted);
+    return { start_byte: start, end_byte: start + Buffer.byteLength(quoted, "utf8"), quoted_text: quoted };
+  };
+  const c = {
+    clock: CLOCK,
+    sources: {
+      [`${REPO}|manuals/col-a.md`]: { revisions: { ["e".repeat(40)]: { blob: gitBlob(textA), label: "rev-1", text: textA } } },
+      [`${REPO}|manuals/col-b.md`]: { revisions: { ["f".repeat(40)]: { blob: gitBlob(textB), label: "rev-1", text: textB } } },
+    },
+    readGrants: [{ repo: REPO, path: "manuals/col-a.md" }, { repo: REPO, path: "manuals/col-b.md" }],
+    principal: { ...PRINCIPAL },
+    aliases: { ...ALIASES },
+    criteria: { criteria_version: "rt-1", templates: {
+      bc: { question_form: "What is the {predicate} of {subject} ({scope})?", lesson_heading: "Collision A" },
+      c: { question_form: "What is the {predicate} of {subject} ({scope})?", lesson_heading: "Collision B" },
+    } },
+    provenance: { sources: {
+      [`${REPO}|manuals/col-a.md`]: { group: "untrusted", copied_from: null, applies_to: [mkRef("manuals/col-a.md", textA, "e".repeat(40))] },
+      [`${REPO}|manuals/col-b.md`]: { group: "untrusted", copied_from: null, applies_to: [mkRef("manuals/col-b.md", textB, "f".repeat(40))] },
+    } },
+    test_hooks: {},
+  };
+  const t = {
+    schema_version: "1", task_id: "test-rt", operation: "analyze",
+    fixture_refs: { source_refs: [mkRef("manuals/col-a.md", textA, "e".repeat(40)), mkRef("manuals/col-b.md", textB, "f".repeat(40))] },
+    options: { request: {
+      module_id: "mod-test", question_format: "short_answer",
+      topics: [{ topic_id: "t-collision", predicates: ["bc", "c"] }],
+      assertions: [
+        { assertion_id: "a-col-a", subject: "a", predicate: "bc", value: "one", scope: "d", polarity: "positive", passage_id: "a-col-a-p", source_index: 0, span: span(textA, 1) },
+        { assertion_id: "a-col-b", subject: "ab", predicate: "c", value: "one", scope: "d", polarity: "positive", passage_id: "a-col-b-p", source_index: 1, span: span(textB, 1) },
+      ],
+      proposed_keys: [], composite_requests: [],
+    } },
+  };
+  const out = run(t, c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.deepEqual(out.report.quizzes.map((q) => q.item_id).sort(), ["q-a-col-a", "q-a-col-b"]);
+  assert.ok(out.report.quizzes.every((q) => q.research_status === "attributed-only"));
+});
+
+test("registeredEvidenceRoot: registered chain resolves; broken chain and unregistered cycle member are unknown", async () => {
+  const { registeredEvidenceRoot } = await import("../src/verify.js");
+  // PER-003 round 2 (closed schema): every hand-built entry carries
+  // a self-naming applies_to — a listed ref whose repo|path equals
+  // the entry's own key.
+  const selfRef = (key) => {
+    const [repo, path] = key.split("|");
+    return { repo, path, commit: "1".repeat(40), blob: "2".repeat(40), algorithm: "git-sha1", revision: "rev-1" };
+  };
+  const prov = {
+    "a|x": { group: "g1", copied_from: "b|x", applies_to: [selfRef("a|x")] },
+    "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
+    "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
+    "d|x": { group: "g4", copied_from: "e|x", applies_to: [selfRef("d|x")] },
+    "e|x": { group: "g5", copied_from: "d|x", applies_to: [selfRef("e|x")] },
+    "f|x": { group: "g6", copied_from: "ghost|x", applies_to: [selfRef("f|x")] },
+  };
+  // PER-003 round 3: the walk also receives each key's registered
+  // full identity (as built from context.sources at the call site);
+  // here every key's registered pin is its own selfRef.
+  const reg = Object.fromEntries(Object.keys(prov).map((k) => [k, [selfRef(k)]]));
+  assert.equal(registeredEvidenceRoot("a|x", prov, reg), "c|x");
+  assert.equal(registeredEvidenceRoot("d|x", prov, reg), "d|x");
+  assert.equal(registeredEvidenceRoot("f|x", prov, reg), null);
+  assert.equal(registeredEvidenceRoot("ghost|x", prov, reg), null);
+});
+
+test("registeredEvidenceRoot (PER-003 round 2): unbound ancestor, empty applies_to, and mismatching ancestor all return null; fully-bound chain resolves", async () => {
+  const { registeredEvidenceRoot } = await import("../src/verify.js");
+  const selfRef = (key) => {
+    const [repo, path] = key.split("|");
+    return { repo, path, commit: "1".repeat(40), blob: "2".repeat(40), algorithm: "git-sha1", revision: "rev-1" };
+  };
+  const base = () => ({
+    "a|x": { group: "g1", copied_from: "b|x", applies_to: [selfRef("a|x")] },
+    "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
+    "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
+  });
+  // PER-003 round 3: registered full identities, one per key.
+  const regFor = (prov) => Object.fromEntries(Object.keys(prov).map((k) => [k, [selfRef(k)]]));
+  // fully-bound chain resolves to the terminal root
+  assert.equal(registeredEvidenceRoot("a|x", base(), regFor(base())), "c|x");
+  // ancestor with missing applies_to => null
+  const missing = base(); delete missing["b|x"].applies_to;
+  assert.equal(registeredEvidenceRoot("a|x", missing, regFor(missing)), null);
+  // ancestor with empty applies_to => null
+  const empty = base(); empty["c|x"].applies_to = [];
+  assert.equal(registeredEvidenceRoot("a|x", empty, regFor(empty)), null);
+  // ancestor whose applies_to names a DIFFERENT key => null
+  const mismatched = base(); mismatched["b|x"].applies_to = [selfRef("a|x")];
+  assert.equal(registeredEvidenceRoot("a|x", mismatched, regFor(mismatched)), null);
+  // leaf itself unbound (empty applies_to) => null
+  const leafEmpty = base(); leafEmpty["a|x"].applies_to = [];
+  assert.equal(registeredEvidenceRoot("a|x", leafEmpty, regFor(leafEmpty)), null);
+  // cycle with one unbound member => null (conservative)
+  const cyc = {
+    "d|x": { group: "g4", copied_from: "e|x", applies_to: [selfRef("d|x")] },
+    "e|x": { group: "g5", copied_from: "d|x", applies_to: [] },
+  };
+  assert.equal(registeredEvidenceRoot("d|x", cyc, regFor(cyc)), null);
+  assert.equal(registeredEvidenceRoot("e|x", cyc, regFor(cyc)), null);
+});
+
+test("registeredEvidenceRoot (PER-003 round 3): same-key wrong-identity ancestor (blob/commit/revision) returns null; exact ancestor identity resolves", async () => {
+  const { registeredEvidenceRoot } = await import("../src/verify.js");
+  const selfRef = (key) => {
+    const [repo, path] = key.split("|");
+    return { repo, path, commit: "1".repeat(40), blob: "2".repeat(40), algorithm: "git-sha1", revision: "rev-1" };
+  };
+  const base = () => ({
+    "a|x": { group: "g1", copied_from: "b|x", applies_to: [selfRef("a|x")] },
+    "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
+    "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
+  });
+  const reg = { "a|x": [selfRef("a|x")], "b|x": [selfRef("b|x")], "c|x": [selfRef("c|x")] };
+  // exact full ancestor identity resolves to the terminal root
+  assert.equal(registeredEvidenceRoot("a|x", base(), reg), "c|x");
+  // ancestor applies_to naming the SAME key but with exactly one
+  // identity field differing from its registered pin => null
+  for (const mut of [{ blob: "0".repeat(40) }, { commit: "9".repeat(40) }, { revision: "rev-999" }]) {
+    const m = base();
+    m["c|x"].applies_to = [{ ...selfRef("c|x"), ...mut }];
+    assert.equal(registeredEvidenceRoot("a|x", m, reg), null);
+  }
+  // intermediate link with a wrong-identity pin => null as well
+  const mid = base();
+  mid["b|x"].applies_to = [{ ...selfRef("b|x"), blob: "0".repeat(40) }];
+  assert.equal(registeredEvidenceRoot("a|x", mid, reg), null);
+  // ancestor with a complete self-naming pin but NO registered
+  // identity supplied for its key => null (fail closed)
+  const regMissing = { "a|x": [selfRef("a|x")], "b|x": [selfRef("b|x")] };
+  assert.equal(registeredEvidenceRoot("a|x", base(), regMissing), null);
 });

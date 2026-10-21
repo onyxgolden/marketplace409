@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "2af4c4803aa9c11baa9266f82597721338eee320561967d13cf4cb261912a961"
+      "sha256": "7cdf3ab1b4ee63ea7b9881f1190cfd3f11aeba7b019f1ed574f9aca7f045eb2f"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "b6886e5f1636384d620504027c9ff163f220f3f45cd66c438db174347458f044"
+      "sha256": "f139640b4d31df92a28e0074aa02d2295e24262049e0ec61818be36d513d58d7"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,11 +15,11 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "1330be63002ddd793bfaabec64edb0e138223a3af4e9aace2f6ed1119b11063b"
+      "sha256": "0a8be1c6ea43c0ea86b45a18890ec71f0741557560db39f925b2ad2a03b49abc"
     },
     {
       "path": "corpus/oracle.js",
-      "sha256": "8346d58f71a491eeba69e053df44f522c077d8b7e7499c5444d28c85e0451b69"
+      "sha256": "ea9eecc4a0d9570ae0575f33939f5987acb857c01725adb1300c1b39cd2f5f71"
     },
     {
       "path": "fixtures/make-fixtures.js",
@@ -55,7 +55,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "1d1efe924a711d914bcb6a2ea2d936c8fe69f09a77fe6cbb9c834640b8017fdc"
+      "sha256": "4ed2c6ef97bd68d8b3d3a111782b66ecdc492bb876711d1cd05dcadbf6755c96"
     },
     {
       "path": "src/injection.js",
@@ -67,11 +67,11 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "2cf1c65393f424548dfa05478ab80d5857f09b7fb018ce36be88abd78b8f0ac7"
+      "sha256": "fa6000654099e6ddbc791e0c00e94a83b0293852382b40db920743f42d41a205"
     },
     {
       "path": "src/verify.js",
-      "sha256": "62843061d1a0c992a9f10b8a6c4b62ec35b545d96e4bbd9d0060a0e5201285d0"
+      "sha256": "2205e329c46972a600318ba79ffbe80bf67a74c04d88674ba9b753ee60f2341c"
     },
     {
       "path": "tests/run-battery.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "45fafad477c610655bc49e895ff43233edc06dc39f1f404de1b0510f2cd24de7"
+      "sha256": "6e0e1567887a96c4bb16d39507b54d0d53c8efa4c32b6c53fccdd51c867a36f4"
     }
   ]
 }
