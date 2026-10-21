@@ -24,7 +24,7 @@
 import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.js";
 import {
   validateTask, validateGrantGateContext, validateSelectedSourceEntry,
-  validateProvenanceRegistry, validateArtifactRecord, assertNoNativeProxies,
+  validateProvenanceRegistry, validateArtifactRecord,
   admitGraph, implementationRefEquals, SchemaError,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, verifySpan, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
@@ -201,7 +201,20 @@ function sourceRefOut(r) {
 export function run(task, context) {
   const budget = makeBudget();
   try {
-    assertNoNativeProxies(task, "task");
+    // PER-008: ONE charged admission traversal. The old uncharged
+    // assertNoNativeProxies(task) pre-sweep walked the whole task graph
+    // without the invocation budget, inspecting descriptors of
+    // candidates past the 64-object limit (e.g. an accessor sentinel
+    // smuggled into an unknown options.padding array). admitGraph
+    // already integrates the trap-free native-Proxy check, the
+    // own-descriptor accessor/function/symbol checks, the prototype
+    // check and the depth bound: each distinct object is charged BEFORE
+    // any of its descriptor fields is examined, so candidate #65
+    // refuses with BUDGET_EXCEEDED before that candidate (or any later
+    // one) is inspected at all. Unknown control keys are still rejected
+    // by the schema layer without their values being decoded. A Proxy
+    // task still refuses here with INVALID_INPUT and zero trap
+    // executions.
     admitGraph(task, "task", budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);

@@ -164,6 +164,105 @@ export function assertNoAccessors(obj, where) {
 }
 
 /**
+ * PER-008 round 2: common charged own-data admission primitive for
+ * every consulted host object/array. Order is load-bearing:
+ *
+ *   (a) reject native Proxies BEFORE any reflective operation —
+ *       types.isProxy is a native V8 map check, zero traps fire;
+ *   (b) charge the object BEFORE inspecting its prototype or any
+ *       descriptor, so candidate #65 refuses with BUDGET_EXCEEDED
+ *       without touching that candidate;
+ *   (c) reject unsupported prototypes — only Object.prototype,
+ *       Array.prototype (for arrays) and null are plain data; fields
+ *       inherited from a custom prototype are never read as
+ *       authority data;
+ *   (d) require OWN data descriptors for control fields before
+ *       reading them (see ownData()/ownDataOpt()) — an inherited
+ *       getter never fires, and inherited data never establishes a
+ *       control field.
+ *
+ * Applies to nested arrays/maps and provenance link/pin records, not
+ * just subtree roots — the containing array itself is admitted, since
+ * a forwarding Proxy around a valid applies_to array ran traps under
+ * the old per-element checks. Replaces the ad hoc rejectHostProxy +
+ * manual check sequences. Refusal convention: INVALID_INPUT via
+ * SchemaError (mapped at the run boundary).
+ */
+export function admitHostObject(value, where, budget, { array = false } = {}) {
+  if (!budget || typeof budget.chargeObjectOnce !== "function") {
+    fail(where, "internal: admitHostObject requires a live budget");
+  }
+  // (a) trap-free native-Proxy rejection BEFORE any reflective
+  // operation on the value — including Array.isArray below.
+  if (types.isProxy(value)) {
+    fail(where, `native Proxy at '${where}' is not plain data; refusing without invoking its traps`);
+  }
+  if (value === null || typeof value !== "object") fail(where, "must be an object");
+  if (array && !Array.isArray(value)) fail(where, "must be an array");
+  if (!array && Array.isArray(value)) fail(where, "must be a non-array object");
+  // (b) charge BEFORE inspecting the prototype or any descriptor.
+  budget.chargeObjectOnce(value, where);
+  // (c) prototype check — the same rule as the task-side admitGraph.
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== Array.prototype && proto !== null) {
+    fail(where, `unsupported prototype at '${where}'; inherited controls are not plain data; refusing`);
+  }
+  // (d) own accessors/symbol keys rejected here; control fields are
+  // read only through ownData()/ownDataOpt() below.
+  assertNoAccessors(value, where);
+  for (const s of Object.getOwnPropertySymbols(value)) {
+    fail(where, `symbol-keyed property '${where}.${String(s)}' is not plain data; refusing`);
+  }
+  return value;
+}
+
+/**
+ * PER-008 round 2: read a REQUIRED control field as an own data
+ * descriptor. Inherited getters — and inherited data — never
+ * establish authority fields. Zero getter invocations; the
+ * descriptor lookup itself never fires accessors.
+ */
+export function ownData(obj, key, where) {
+  const desc = Object.getOwnPropertyDescriptor(obj, key);
+  if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
+    fail(where, `'${key}' must be an own data property; inherited controls are not plain data; refusing`);
+  }
+  return desc.value;
+}
+
+/**
+ * PER-008 round 2: read an OPTIONAL control field as an own data
+ * descriptor. Absent (no own descriptor) reads as undefined without
+ * consulting the prototype chain; a present accessor still refuses.
+ */
+function ownDataOpt(obj, key, where) {
+  const desc = Object.getOwnPropertyDescriptor(obj, key);
+  if (desc === undefined) return undefined;
+  if (typeof desc.get === "function" || typeof desc.set === "function") {
+    fail(where, `'${key}' must be an own data property; inherited controls are not plain data; refusing`);
+  }
+  return desc.value;
+}
+
+/** Own-data variants of reqStr/reqInt for host control fields. The
+ *  shared reqStr/reqInt (dot-read) stay for the task validators,
+ *  whose admitGraph already rejects custom prototypes. */
+function reqOwnStr(obj, key, where, { allowEmpty = false, maxBytes = null } = {}) {
+  const v = ownData(obj, key, where);
+  if (typeof v !== "string" || (!allowEmpty && v.length === 0)) fail(where, `'${key}' must be a non-empty string`);
+  if (maxBytes !== null && Buffer.byteLength(v, "utf8") > maxBytes) fail(where, `'${key}' exceeds ${maxBytes} bytes`);
+  return v;
+}
+
+function reqOwnInt(obj, key, where, { min = null, max = null } = {}) {
+  const v = ownData(obj, key, where);
+  if (!Number.isInteger(v)) fail(where, `'${key}' must be an integer`);
+  if (min !== null && v < min) fail(where, `'${key}' must be >= ${min}`);
+  if (max !== null && v > max) fail(where, `'${key}' must be <= ${max}`);
+  return v;
+}
+
+/**
  * Budget-integrated descriptor-safe admission. Walks the object graph with
  * getOwnPropertyDescriptor (never invoking accessors), charging each
  * distinct object against the live monotonic budget BEFORE any of its
@@ -274,56 +373,77 @@ export function assertDenseArray(arr, where) {
 }
 
 /** SourceRef = {repo, path, commit, blob, algorithm:"git-sha1", revision}. */
-export function validateSourceRef(value, where) {
-  if (!isPlainObject(value)) fail(where, "SourceRef must be an object");
-  assertNoAccessors(value, where);
+export function validateSourceRef(value, where, budget = null) {
+  // PER-008 round 2: charged own-data admission. The budget-less path
+  // (task-side pins already charged by the task admitGraph, and the
+  // resolver's countObject) gets the same trap-free, prototype and
+  // own-data discipline without a second charge.
+  if (budget) {
+    admitHostObject(value, where, budget);
+  } else {
+    if (types.isProxy(value)) {
+      fail(where, `native Proxy at '${where}' is not plain data; refusing without invoking its traps`);
+    }
+    if (!isPlainObject(value)) fail(where, "SourceRef must be an object");
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      fail(where, `unsupported prototype at '${where}'; inherited controls are not plain data; refusing`);
+    }
+    assertNoAccessors(value, where);
+  }
   exactKeys(value, ["repo", "path", "commit", "blob", "algorithm", "revision"], where);
-  const repo = reqStr(value, "repo", where);
+  const repo = reqOwnStr(value, "repo", where);
   if (!REPO_RE.test(repo)) fail(where, `invalid repo '${repo}'`);
-  const path = reqStr(value, "path", where);
+  const path = reqOwnStr(value, "path", where);
   if (!PATH_RE.test(path)) fail(where, `invalid path '${path}'`);
-  const commit = reqStr(value, "commit", where);
+  const commit = reqOwnStr(value, "commit", where);
   if (!HEX40.test(commit)) fail(where, "commit must be a full 40-hex Git object ID");
-  const blob = reqStr(value, "blob", where);
+  const blob = reqOwnStr(value, "blob", where);
   if (!HEX40.test(blob)) fail(where, "blob must be a full 40-hex Git object ID");
-  if (value.algorithm !== "git-sha1") fail(where, "algorithm must be 'git-sha1'");
-  const revision = reqStr(value, "revision", where);
+  if (ownData(value, "algorithm", where) !== "git-sha1") fail(where, "algorithm must be 'git-sha1'");
+  const revision = reqOwnStr(value, "revision", where);
   return { repo, path, commit, blob, algorithm: "git-sha1", revision };
 }
 
-export function validatePrincipal(value, where) {
-  if (!isPlainObject(value)) fail(where, "principal must be an object");
-  assertNoAccessors(value, where);
+export function validatePrincipal(value, where, budget) {
+  // PER-008 round 2: charged own-data admission — an inherited
+  // principal_id getter (custom prototype) refuses here with zero
+  // getter calls, before any control field is read.
+  admitHostObject(value, where, budget);
   exactKeys(value, ["principal_id", "role", "registered_by", "valid_from", "expires_at", "revoked"], where);
-  const pid = reqStr(value, "principal_id", where);
+  const pid = reqOwnStr(value, "principal_id", where);
   if (!RECORD_ID_RE.test(pid)) fail(where, `invalid principal_id '${pid}'`);
-  if (!PRINCIPAL_ROLES.includes(value.role)) fail(where, `role must be one of ${PRINCIPAL_ROLES.join(", ")}`);
-  const registered_by = reqStr(value, "registered_by", where);
+  const role = ownData(value, "role", where);
+  if (!PRINCIPAL_ROLES.includes(role)) fail(where, `role must be one of ${PRINCIPAL_ROLES.join(", ")}`);
+  const registered_by = reqOwnStr(value, "registered_by", where);
   if (registered_by !== "jason") fail(where, "registered_by must be 'jason'");
-  validateDate(value.valid_from, `${where}.valid_from`);
-  validateDate(value.expires_at, `${where}.expires_at`);
-  if (typeof value.revoked !== "boolean") fail(where, "revoked must be a boolean");
-  return { principal_id: pid, role: value.role, registered_by, valid_from: value.valid_from, expires_at: value.expires_at, revoked: value.revoked };
+  const valid_from = ownData(value, "valid_from", where);
+  const expires_at = ownData(value, "expires_at", where);
+  validateDate(valid_from, `${where}.valid_from`);
+  validateDate(expires_at, `${where}.expires_at`);
+  const revoked = ownData(value, "revoked", where);
+  if (typeof revoked !== "boolean") fail(where, "revoked must be a boolean");
+  return { principal_id: pid, role, registered_by, valid_from, expires_at, revoked };
 }
 
 /** Trusted criteria: versioned policy record. Host-injected only. */
 export function validateCriteria(value, where, budget) {
   if (!budget || typeof budget.countObject !== "function") fail(where, "internal: validateCriteria requires a live budget");
-  if (!isPlainObject(value)) fail(where, "criteria must be an object");
-  assertNoAccessors(value, where);
+  // PER-008 round 2: charged own-data admission.
+  admitHostObject(value, where, budget);
   exactKeys(value, ["criteria_version"], where);
-  const criteria_version = reqStr(value, "criteria_version", where);
+  const criteria_version = reqOwnStr(value, "criteria_version", where);
   if (!SLUG_RE.test(criteria_version)) fail(where, `invalid criteria_version '${criteria_version}'`);
   return { criteria_version };
 }
 
 export function validateReadGrant(value, where, budget) {
-  if (!isPlainObject(value)) fail(where, "read grant must be an object");
-  assertNoAccessors(value, where);
+  // PER-008 round 2: charged own-data admission.
+  admitHostObject(value, where, budget);
   exactKeys(value, ["repo", "path"], where);
-  const repo = reqStr(value, "repo", where);
+  const repo = reqOwnStr(value, "repo", where);
   if (!REPO_RE.test(repo)) fail(where, `invalid repo '${repo}'`);
-  const path = reqStr(value, "path", where);
+  const path = reqOwnStr(value, "path", where);
   if (!PATH_RE.test(path)) fail(where, `invalid path '${path}'`);
   if (budget) {
     // EXEC652-003: exact aggregate accounting — charge the serialized
@@ -350,13 +470,18 @@ export function validateReadGrant(value, where, budget) {
  * registered lineage never upgrades to independent.
  */
 export function validateProvenanceEntry(value, where, budget) {
-  if (!isPlainObject(value)) fail(where, "provenance entry must be an object");
-  assertNoAccessors(value, where);
+  // PER-008 round 2: charged own-data admission for the entry.
+  admitHostObject(value, where, budget);
   exactKeys(value, ["provenance_group_id", "derivation_links", "applies_to"], where);
-  const provenance_group_id = reqStr(value, "provenance_group_id", where);
+  const provenance_group_id = reqOwnStr(value, "provenance_group_id", where);
   if (!GROUP_ID_RE.test(provenance_group_id)) fail(where, `invalid provenance_group_id '${provenance_group_id}'`);
-  const appliesIn = value.applies_to;
-  if (!Array.isArray(appliesIn) || appliesIn.length === 0 || appliesIn.length > 64) {
+  // PER-008 round 2: the containing array itself is admitted BEFORE
+  // any reflective operation on it (Array.isArray, .length,
+  // getOwnPropertyDescriptor all fire traps on a Proxy). A
+  // forwarding Proxy around a valid applies_to array refuses here
+  // with ZERO traps.
+  const appliesIn = admitHostObject(ownData(value, "applies_to", where), `${where}.applies_to`, budget, { array: true });
+  if (appliesIn.length === 0 || appliesIn.length > 64) {
     fail(where, "applies_to must be a non-empty array of at most 64 SourceRefs binding this registration to exact source pins");
   }
   assertDenseArray(appliesIn, `${where}.applies_to`);
@@ -367,10 +492,17 @@ export function validateProvenanceEntry(value, where, budget) {
       fail(where, `applies_to[${i}] must be a plain data property; refusing`);
     }
     if (budget) budget.chargeObjectOnce(desc.value, `${where}.applies_to[${i}]`);
-    applies_to.push(validateSourceRef(desc.value, `${where}.applies_to[${i}]`));
+    // Each pin record is a consulted host object — admitted
+    // (charged, own-data) inside validateSourceRef.
+    applies_to.push(validateSourceRef(desc.value, `${where}.applies_to[${i}]`, budget));
   }
-  const linksIn = value.derivation_links === undefined ? [] : value.derivation_links;
-  if (!Array.isArray(linksIn) || linksIn.length > 64) fail(where, "derivation_links must be an array of at most 64 links");
+  // PER-008 round 2: derivation-link records/arrays get the same
+  // admission rule — the links array itself is admitted before its
+  // elements are touched, and each link record is admitted before
+  // its fields are read.
+  const linksRaw = ownDataOpt(value, "derivation_links", where);
+  const linksIn = linksRaw === undefined ? [] : admitHostObject(linksRaw, `${where}.derivation_links`, budget, { array: true });
+  if (linksIn.length > 64) fail(where, "derivation_links must be an array of at most 64 links");
   assertDenseArray(linksIn, `${where}.derivation_links`);
   const derivation_links = [];
   for (let i = 0; i < linksIn.length; i++) {
@@ -379,16 +511,14 @@ export function validateProvenanceEntry(value, where, budget) {
       fail(where, `derivation_links[${i}] must be a plain data property; refusing`);
     }
     if (budget) budget.chargeObjectOnce(desc.value, `${where}.derivation_links[${i}]`);
-    const l = desc.value;
     const lw = `${where}.derivation_links[${i}]`;
-    if (!isPlainObject(l)) fail(lw, "must be an object");
-    assertNoAccessors(l, lw);
+    const l = admitHostObject(desc.value, lw, budget);
     exactKeys(l, ["from_doc", "from_passage", "kind"], lw);
-    const from_doc = reqStr(l, "from_doc", lw);
+    const from_doc = reqOwnStr(l, "from_doc", lw);
     if (!DOC_ID_RE.test(from_doc)) fail(lw, `invalid from_doc '${from_doc}'`);
-    const from_passage = reqStr(l, "from_passage", lw);
+    const from_passage = reqOwnStr(l, "from_passage", lw);
     if (!PASSAGE_ID_RE.test(from_passage)) fail(lw, `invalid from_passage '${from_passage}'`);
-    const kind = reqStr(l, "kind", lw);
+    const kind = reqOwnStr(l, "kind", lw);
     if (!DERIVATION_KINDS.includes(kind)) fail(lw, `kind must be one of ${DERIVATION_KINDS.join(",")}`);
     derivation_links.push({ from_doc, from_passage, kind });
   }
@@ -427,10 +557,9 @@ export function entryAppliesToSource(entry, ref) {
  */
 export function validateGrantGateContext(context, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateGrantGateContext requires a live budget");
+  // PER-008 round 2: charged own-data admission for the context root.
+  admitHostObject(context, "context", budget);
   const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
-  charge(context, "context");
-  if (!isPlainObject(context)) fail("context", "must be an object");
-  assertNoAccessors(context, "context");
   exactKeys(context, ["clock", "sources", "readGrants", "principal", "criteria", "provenance_registry", "test_hooks"], "context");
   const clockDesc = Object.getOwnPropertyDescriptor(context, "clock");
   if (!clockDesc || typeof clockDesc.get === "function" || typeof clockDesc.set === "function") {
@@ -439,40 +568,39 @@ export function validateGrantGateContext(context, budget) {
   const clock = clockDesc.value;
   if (!Number.isFinite(clock)) fail("context", "clock must be a finite number");
 
-  // EXEC652-003: trap-free native Proxy sweeps over every subgraph this
-  // gate inspects — before any reflective operation on them. The
-  // sources map gets a shallow check only (its entries stay untouched
-  // pre-grant, RA652-006); readGrants/principal/criteria/test_hooks are
-  // fully admitted here, so they are swept deeply. types.isProxy is a
-  // native V8 check: zero traps fire.
-  assertNoNativeProxies(context.readGrants, "context.readGrants");
-  assertNoNativeProxies(context.principal, "context.principal");
-  assertNoNativeProxies(context.criteria, "context.criteria");
-  if (context.test_hooks !== undefined) assertNoNativeProxies(context.test_hooks, "context.test_hooks");
-
-  // Sources map: key set only. Entries are NOT read here — a denied
-  // source's revision metadata and payload stay untouched until the
-  // grant check passes. EXEC652-003: shallow native-Proxy check on the
-  // map itself (trap-free); entries are never descended into here.
-  if (!isPlainObject(context.sources)) fail("context", "sources must be an object");
-  if (types.isProxy(context.sources)) {
-    fail("context", "context.sources must not be a native Proxy; refusing without invoking its traps");
+  // PER-008 round 2: the old uncharged assertNoNativeProxies sweeps
+  // are gone. Each consulted host subtree root is admitted below
+  // (Proxy-checked trap-free, charged, prototype-checked) BEFORE any
+  // reflective operation on it; every deeper object is admitted
+  // inside its charged validator, which charges each object BEFORE
+  // inspecting its descriptors. Candidate #65 refuses before its
+  // descriptors are touched; a Proxy still refuses immediately with
+  // INVALID_INPUT and zero trap executions.
+  const readGrantsIn = admitHostObject(ownData(context, "readGrants", "context"), "context.readGrants", budget, { array: true });
+  const principalIn = admitHostObject(ownData(context, "principal", "context"), "context.principal", budget);
+  const criteriaIn = admitHostObject(ownData(context, "criteria", "context"), "context.criteria", budget);
+  const testHooksRaw = ownDataOpt(context, "test_hooks", "context");
+  if (testHooksRaw !== undefined) {
+    admitHostObject(testHooksRaw, "context.test_hooks", budget);
   }
-  charge(context.sources, "context.sources");
-  assertNoAccessors(context.sources, "context.sources");
-  const sourceKeys = Object.keys(context.sources);
+
+  // Sources map: key set only, admitted as a nested container.
+  // Entries are NOT read here — a denied source's revision metadata
+  // and payload stay untouched until the grant check passes.
+  // EXEC652-003: shallow native-Proxy check on the map itself is
+  // subsumed by admission; entries are never descended into here.
+  const sourcesIn = admitHostObject(ownData(context, "sources", "context"), "context.sources", budget);
+  const sourceKeys = Object.keys(sourcesIn);
   if (sourceKeys.length === 0 || sourceKeys.length > 64) fail("context", "sources must have 1..64 entries");
   // EXEC652-003: exact aggregate accounting — the consulted key set is
   // charged in serialized (canonical JSON) form: structure, key names
   // and escaping, not selected raw string lengths.
   budget.countSerialized(sourceKeys, "context.sources keys");
 
-  if (!Array.isArray(context.readGrants)) fail("context", "readGrants must be an array");
-  assertDenseArray(context.readGrants, "context.readGrants");
-  charge(context.readGrants, "context.readGrants");
+  assertDenseArray(readGrantsIn, "context.readGrants");
   const readGrants = [];
-  for (let i = 0; i < context.readGrants.length; i++) {
-    const desc = Object.getOwnPropertyDescriptor(context.readGrants, i);
+  for (let i = 0; i < readGrantsIn.length; i++) {
+    const desc = Object.getOwnPropertyDescriptor(readGrantsIn, i);
     if (!desc || typeof desc.get === "function" || typeof desc.set === "function") {
       fail("context", `readGrants[${i}] must be a plain data property; refusing`);
     }
@@ -480,13 +608,13 @@ export function validateGrantGateContext(context, budget) {
     readGrants.push(validateReadGrant(desc.value, `context.readGrants[${i}]`, budget));
   }
 
-  charge(context.principal, "context.principal");
-  const principal = validatePrincipal(context.principal, "context.principal");
-  charge(context.criteria, "context.criteria");
-  const criteria = validateCriteria(context.criteria, "context.criteria", budget);
+  charge(principalIn, "context.principal");
+  const principal = validatePrincipal(principalIn, "context.principal", budget);
+  charge(criteriaIn, "context.criteria");
+  const criteria = validateCriteria(criteriaIn, "context.criteria", budget);
 
   // Host-only output-boundary test hook (see validateTestHooks).
-  const test_hooks = validateTestHooks(context.test_hooks, "context.test_hooks", budget);
+  const test_hooks = validateTestHooks(testHooksRaw, "context.test_hooks", budget);
 
   return { clock, sourceKeys, readGrants, principal, criteria, test_hooks };
 }
@@ -497,37 +625,32 @@ export function validateGrantGateContext(context, budget) {
  * only the selected source.
  */
 function validateSourceEntry(sources, sk, budget) {
-  const charge = (obj, what) => budget.chargeObjectOnce(obj, what);
-  const entry = sources[sk];
-  // EXEC652-003: trap-free native Proxy sweep over the selected entry
-  // BEFORE any reflective operation on it — nested/selected-source
-  // traps execute zero times. This is post-grant admission, so touching
-  // the selected entry is allowed here (RA652-006).
-  assertNoNativeProxies(entry, `context.sources[${sk}]`);
-  charge(entry, `context.sources[${sk}]`);
-  if (!isPlainObject(entry)) fail("context", `source '${sk}' must be an object`);
-  assertNoAccessors(entry, `context.sources[${sk}]`);
-  const revs = entry.revisions;
-  if (!isPlainObject(revs)) fail("context", `source '${sk}' revisions must be an object`);
-  charge(revs, `context.sources[${sk}].revisions`);
-  assertNoAccessors(revs, `context.sources[${sk}].revisions`);
+  // PER-008 round 2: the entry is read as an own data descriptor of
+  // the admitted sources map (never via the prototype chain), then
+  // admitted itself — an inherited-revisions getter on a custom
+  // prototype refuses here with zero getter calls. Post-grant
+  // admission, so touching the selected entry is allowed here
+  // (RA652-006).
+  const entry = admitHostObject(ownData(sources, sk, "context.sources"), `context.sources[${sk}]`, budget);
+  const revs = admitHostObject(ownData(entry, "revisions", `context.sources[${sk}]`), `context.sources[${sk}].revisions`, budget);
   for (const commit of Object.keys(revs)) {
-    const rev = revs[commit];
-    charge(rev, `context.sources[${sk}]@${commit}`);
-    if (!isPlainObject(rev)) fail("context", `source '${sk}' revision '${commit}' must be an object`);
-    assertNoAccessors(rev, `context.sources[${sk}]@${commit}`);
-    exactKeys(rev, ["text", "blob", "label", "expected_records"], `context.sources[${sk}]@${commit}`);
+    const revW = `context.sources[${sk}]@${commit}`;
+    const rev = admitHostObject(ownData(revs, commit, `context.sources[${sk}].revisions`), revW, budget);
+    exactKeys(rev, ["text", "blob", "label", "expected_records"], revW);
     const textDesc = Object.getOwnPropertyDescriptor(rev, "text");
     if (!textDesc || typeof textDesc.get === "function" || typeof textDesc.set === "function") {
       fail("context", `source '${sk}' revision '${commit}' text must be a plain data property`);
     }
     if (typeof textDesc.value !== "string") fail("context", `source '${sk}' revision '${commit}' text must be a string`);
-    if (typeof rev.blob !== "string" || !HEX40.test(rev.blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
-    if (typeof rev.label !== "string" || rev.label.length === 0) {
+    const blob = ownData(rev, "blob", revW);
+    if (typeof blob !== "string" || !HEX40.test(blob)) fail("context", `source '${sk}' revision '${commit}' blob must be a 40-hex Git object ID`);
+    const label = ownData(rev, "label", revW);
+    if (typeof label !== "string" || label.length === 0) {
       fail("context", `source '${sk}' revision '${commit}' must carry a registered label`);
     }
-    if (rev.expected_records !== undefined) {
-      if (!Number.isInteger(rev.expected_records) || rev.expected_records < 0) {
+    const expectedRecords = ownDataOpt(rev, "expected_records", revW);
+    if (expectedRecords !== undefined) {
+      if (!Number.isInteger(expectedRecords) || expectedRecords < 0) {
         fail("context", `source '${sk}' revision '${commit}' expected_records must be a nonnegative integer`);
       }
     }
@@ -538,7 +661,7 @@ function validateSourceEntry(sources, sk, budget) {
     // bytes are charged separately as selected source bytes on
     // resolution — nonduplicating: metadata here, bytes there.
     budget.countSerialized(
-      { commit, blob: rev.blob, label: rev.label, expected_records: rev.expected_records ?? null },
+      { commit, blob, label, expected_records: expectedRecords ?? null },
       `context.sources[${sk}]@${commit} metadata`
     );
   }
@@ -556,7 +679,7 @@ export function validateSelectedSourceEntry(context, budget, selectedKey) {
     fail("context", `selected source '${String(selectedKey).slice(0, 80)}' is not a registered source key`);
   }
   validateSourceEntry(context.sources, selectedKey, budget);
-  return context.sources[selectedKey];
+  return ownData(context.sources, selectedKey, "context.sources");
 }
 
 /**
@@ -566,14 +689,11 @@ export function validateSelectedSourceEntry(context, budget, selectedKey) {
  */
 export function validateProvenanceRegistry(context, budget) {
   if (!budget || typeof budget.chargeObjectOnce !== "function") fail("context", "internal: validateProvenanceRegistry requires a live budget");
-  const regIn = context.provenance_registry;
-  if (!isPlainObject(regIn)) fail("context", "provenance_registry must be an object");
-  // EXEC652-003: trap-free native Proxy sweep before any reflective
-  // operation on the registry. Post-grant required metadata: touching
-  // it here is allowed.
-  assertNoNativeProxies(regIn, "context.provenance_registry");
-  budget.chargeObjectOnce(regIn, "context.provenance_registry");
-  assertNoAccessors(regIn, "context.provenance_registry");
+  // PER-008 round 2: the registry map is a consulted host container —
+  // admitted (Proxy-checked, charged, prototype-checked) before any
+  // entry is read. Post-grant required metadata: touching it here is
+  // allowed.
+  const regIn = admitHostObject(ownData(context, "provenance_registry", "context"), "context.provenance_registry", budget);
   const regKeys = Object.keys(regIn);
   if (regKeys.length > 256) fail("context", "provenance_registry must have at most 256 entries");
   const provenance_registry = {};
@@ -581,8 +701,9 @@ export function validateProvenanceRegistry(context, budget) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\|[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(rk)) {
       fail("context", `invalid provenance registry key '${rk}'; expected 'doc_id|passage_id'`);
     }
-    const entry = regIn[rk];
-    budget.chargeObjectOnce(entry, `context.provenance_registry[${rk}]`);
+    // PER-008 round 2: each entry is read as an own data descriptor
+    // and admitted before its fields are inspected.
+    const entry = admitHostObject(ownData(regIn, rk, "context.provenance_registry"), `context.provenance_registry[${rk}]`, budget);
     const validated = validateProvenanceEntry(entry, `context.provenance_registry[${rk}]`, budget);
     // EXEC652-003: exact aggregate accounting — each admitted registry
     // entry is charged in serialized (canonical JSON) form: key,
@@ -625,11 +746,11 @@ export function validateContext(context, budget) {
  */
 function validateTestHooks(value, where, budget) {
   if (value === undefined) return undefined;
-  if (!isPlainObject(value)) fail(where, "test_hooks must be an object");
-  assertNoAccessors(value, where);
+  // PER-008 round 2: charged own-data admission (admitHostObject
+  // charges; the old explicit chargeObjectOnce is subsumed).
+  admitHostObject(value, where, budget);
   exactKeys(value, ["prefill_output_records"], where);
-  if (budget) budget.chargeObjectOnce(value, where);
-  const prefill = value.prefill_output_records === undefined ? 0 : value.prefill_output_records;
+  const prefill = ownDataOpt(value, "prefill_output_records", where) ?? 0;
   if (!Number.isInteger(prefill) || prefill < 0 || prefill > 1024) {
     fail(where, "prefill_output_records must be an integer 0..1024");
   }

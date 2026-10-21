@@ -27,7 +27,7 @@ import { canonicalJson, sha256HexUtf8, canonicalByteLength } from "./canonical.j
 import {
   validateTask, validateGrantGateContext, validateSelectedSourceEntry,
   validateProvenanceRegistry, validateDocumentRecord, splitTopLevelArray,
-  admitGraph, renderAssertionText, assertNoNativeProxies,
+  admitGraph, renderAssertionText,
   entryAppliesToSource, SchemaError,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
@@ -150,6 +150,10 @@ function emptyReport() {
  *   item records ....................... each claims[] element
  *   nested basis records ................ each claim's atom and origin
  *   citation records .................... every emitted citation
+ *   byte-identity records ............. every citation's byte_identity
+ *                                       (PER-010: the pinned passage
+ *                                       SHA-256 identity is an emitted
+ *                                       public record and is counted)
  *   span records ........................ every span nested in a citation
  *   source-ref records .................. every emitted source_ref
  *   resource records .................... each corroboration evidence /
@@ -210,6 +214,7 @@ export function countFinalEnvelopeRecords(env) {
   const walkCitation = (c) => obj(c, (o) => {
     rec(); // citation record
     obj(o.source_ref, () => rec()); // source-ref record
+    obj(o.byte_identity, () => rec()); // byte-identity record (PER-010)
     obj(o.span, () => rec()); // span record
   });
   const walkResourceEntry = (e) => obj(e, (o) => {
@@ -278,13 +283,20 @@ export function run(task, context) {
   // provenance metadata admitted.
   const budget = makeBudget();
   try {
-    // EXEC652-003: trap-free native Proxy detection BEFORE every
-    // reflective operation on the task. assertNoNativeProxies checks
-    // types.isProxy (a native V8 map check — zero traps) on every
-    // reachable task object before admitGraph reflects on any of them;
-    // admitGraph itself re-checks per object as a second layer. A Proxy
-    // task refuses here with INVALID_INPUT and zero trap executions.
-    assertNoNativeProxies(task, "task");
+    // PER-008: ONE charged admission traversal. The old uncharged
+    // assertNoNativeProxies(task) pre-sweep walked the whole task graph
+    // without the invocation budget, inspecting descriptors of
+    // candidates past the 64-object limit (e.g. an accessor sentinel
+    // smuggled into an unknown options.padding array). admitGraph
+    // already integrates the trap-free native-Proxy check, the
+    // own-descriptor accessor/function/symbol checks, the prototype
+    // check and the depth bound: each distinct object is charged BEFORE
+    // any of its descriptor fields is examined, so candidate #65
+    // refuses with BUDGET_EXCEEDED before that candidate (or any later
+    // one) is inspected at all. Unknown control keys are still rejected
+    // by the schema layer without their values being decoded. A Proxy
+    // task still refuses here with INVALID_INPUT and zero trap
+    // executions.
     admitGraph(task, "task", budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);

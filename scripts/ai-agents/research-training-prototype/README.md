@@ -94,6 +94,34 @@ topics, assertions or sources), `REFUSED` (with a diagnostic code:
 `BUDGET_EXCEEDED`, `OUTPUT_LIMIT`, `EXECUTION_TIMEOUT`,
 `TRANSPORT_REFUSED`).
 
+## Bounded-report-completion repairs (PER-007..011, 2026-10-21
+retrospective audit)
+
+- **Predicate-level coverage (PER-007):** a topic is covered only
+  when EVERY requested predicate has at least one taught statement.
+  Each missing predicate is an explicit gap
+  (`missing_predicates`); any gap forces `PARTIAL`, `complete:false`,
+  and a `partial` coverage entry. Teaching one predicate of a
+  two-predicate topic no longer reports `full`.
+- **Trap-free candidate admission (PER-008):** every consulted host
+  object is Proxy/accessor/function/symbol/prototype/depth-checked
+  per object and charged BEFORE its fields are read — the uncharged
+  recursive preflight sweep over unknown subtrees is removed, so an
+  over-budget child (e.g. an accessor sentinel at candidate 79)
+  refuses `BUDGET_EXCEEDED` at candidate 65 with zero descriptor
+  visits or getter invocations.
+- **Serialized metadata charging (PER-009):** consulted
+  template/provenance metadata is charged in complete canonical
+  serialized form (structure, key names, escaping) before use, and
+  template keys are shape-bounded to 256 bytes (`INVALID_INPUT`).
+- **Complete output counting (PER-010):** the output walk counts
+  every `quiz.key` record and the `report.provenance` record; the
+  truly-empty fast path enforces the output-record and output-byte
+  bounds before returning `EMPTY`.
+- **Clean source refs (PER-011):** `source_refs` is derived after
+  the quarantine scan — quarantined pins are excluded, denied pins
+  are never included.
+
 ## Runtime contract
 
 - Trust: a builtins-only bootstrap (`bootstrap.js`, held outside the

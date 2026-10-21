@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "7cdf3ab1b4ee63ea7b9881f1190cfd3f11aeba7b019f1ed574f9aca7f045eb2f"
+      "sha256": "b8bbef84194085f3cad93aa379e67397ec94be113c2bec27924a7aa18a3e5917"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "f139640b4d31df92a28e0074aa02d2295e24262049e0ec61818be36d513d58d7"
+      "sha256": "97c291c6581edf794bf55d3f32a701e472ef559b8a3fb2978129876cb3ab57df"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,11 +15,11 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "0a8be1c6ea43c0ea86b45a18890ec71f0741557560db39f925b2ad2a03b49abc"
+      "sha256": "66c492198ab00bca7fcbbc917343570cb055aa0d71801a256571cbd84e5d626c"
     },
     {
       "path": "corpus/oracle.js",
-      "sha256": "ea9eecc4a0d9570ae0575f33939f5987acb857c01725adb1300c1b39cd2f5f71"
+      "sha256": "e79efa794f7e50839d2dc1119435945e547b34807b7529a32ab575b219d4c3de"
     },
     {
       "path": "fixtures/make-fixtures.js",
@@ -55,7 +55,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "4ed2c6ef97bd68d8b3d3a111782b66ecdc492bb876711d1cd05dcadbf6755c96"
+      "sha256": "50e42fc4c69796b43654f7b1e32e0dbbc59a79a88441037bda7c92ad43a51cfc"
     },
     {
       "path": "src/injection.js",
@@ -63,23 +63,27 @@
     },
     {
       "path": "src/resolver.js",
-      "sha256": "3cba9faa302abe82bc42ca6e7a7f3c36cddf4122214c420990db7c380242aa23"
+      "sha256": "095f03e2abcc7b143254dc40898686a1262576743ae43e56bc3f73735261adc0"
     },
     {
       "path": "src/schemas.js",
-      "sha256": "fa6000654099e6ddbc791e0c00e94a83b0293852382b40db920743f42d41a205"
+      "sha256": "ccd9f641a54448797ab44897266c1044fb3f0e4663591b3de1e772f25fc4377f"
     },
     {
       "path": "src/verify.js",
       "sha256": "2205e329c46972a600318ba79ffbe80bf67a74c04d88674ba9b753ee60f2341c"
     },
     {
+      "path": "tests/per008.test.js",
+      "sha256": "c7280f803e01c0303d66e4ff895724fe6d8fdaf1706ef66f0f83500789995feb"
+    },
+    {
       "path": "tests/run-battery.js",
-      "sha256": "ec8800b22e5e4090d5e4c9c7c95f34a171c23de331116c9088f2c2691cf68136"
+      "sha256": "f445a35ca00cbedcfa5db923cb27f820d603cb9a66fe777a6960349390011d6c"
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "6e0e1567887a96c4bb16d39507b54d0d53c8efa4c32b6c53fccdd51c867a36f4"
+      "sha256": "4379057ce65853043186288304200242a09c75d6e3fef9195c59aef1e1fb1c7e"
     }
   ]
 }

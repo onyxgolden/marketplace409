@@ -214,7 +214,13 @@ export function oracleDecision(task, context) {
   for (const topic of req.topics || []) {
     const preds = new Set(topic.predicates);
     const atoms = teachable.filter((a) => preds.has(a.predicate));
-    let taught = false;
+    // PER-007: coverage is predicate-level, never topic-level. A
+    // topic is covered only when EVERY requested predicate has at
+    // least one taught statement; each missing predicate is a gap.
+    // The taught-dedup is per-topic (mirroring the candidate's
+    // taughtByKey); the quiz-dedup stays global (quiz once).
+    const taughtPredicates = new Set();
+    const seenKeys = new Set();
     for (const a of atoms) {
       const st = statusOf.get(KEY_OF(a));
       if (st === "contradicted") {
@@ -225,11 +231,14 @@ export function oracleDecision(task, context) {
         continue;
       }
       if (st === "unsupported") continue;
-      taught = true;
+      if (seenKeys.has(KEY_OF(a))) continue;
+      seenKeys.add(KEY_OF(a));
+      taughtPredicates.add(a.predicate);
       // One quiz per key, from the first-listed assertion for that key.
       if (!quizSeen.has(KEY_OF(a))) { quizSeen.add(KEY_OF(a)); quizzes.push(a.assertion_id); }
     }
-    if (!taught) gaps.push(topic.topic_id);
+    const missing = (topic.predicates || []).filter((p) => !taughtPredicates.has(p));
+    if (missing.length > 0 || atoms.length === 0) gaps.push(topic.topic_id);
   }
   for (const a of admitted.filter((a) => a._quarantined)) rejected.push("KEY_QUARANTINED");
   for (const a of admitted.filter((a) => a._denied)) rejected.push("KEY_DENIED_SOURCE");

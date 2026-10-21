@@ -25,7 +25,7 @@
 import { canonicalJson, canonicalByteLength } from "./canonical.js";
 import {
   validateTask, validateGrantGateContext, validateSelectedSourceEntry,
-  assertNoNativeProxies, admitGraph, SchemaError, sourceRefEquals,
+  admitGraph, SchemaError, sourceRefEquals,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, verifySpan, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
@@ -119,14 +119,17 @@ function diagnostic(code, severity, reason, record_id = null, source_ref = null)
  *   lesson records .................. each lessons[] element
  *   statement records ............... each lesson.statements[] element
  *   quiz records .................... each quizzes[] element
+ *   quiz-key records ................ each quiz's key object (PER-010)
  *   composite records ............... each composites[] element
- *   composite-key-part records ...... key.first / key.second of each
+ *   composite-key wrapper ........... each composite's key object (PER-010 round 2)
+ *   composite-key-part records ...... key.first / key.second of each composite
  *   citation records ................ every emitted citation
  *   span records .................... every span nested in a citation
  *   source-ref records .............. every emitted source_ref
  *   gap records ..................... each gaps[] element
  *   rejected-key records ............ each rejected_keys[] element
  *   contradiction-note records ...... each contradiction_notes[] element
+ *   provenance record ............... the report.provenance object (PER-010)
  *   diagnostic records .............. each diagnostics[] entry
  *   exclusion records ............... each quarantined_sources[] entry
  *
@@ -180,6 +183,7 @@ export function countFinalEnvelopeRecords(env) {
     obj(r.quizzes, () => {
       for (const q of r.quizzes ?? []) obj(q, () => {
         rec(); // quiz record
+        obj(q.key, () => rec()); // quiz-key record (PER-010)
         obj(q.citations, () => { for (const c of q.citations ?? []) walkCitation(c); });
       });
     });
@@ -187,6 +191,7 @@ export function countFinalEnvelopeRecords(env) {
       for (const c of r.composites ?? []) obj(c, () => {
         rec(); // composite record
         obj(c.key, (k) => {
+          rec(); // composite-key wrapper record (PER-010 round 2)
           obj(k.first, () => rec()); // key-part record
           obj(k.second, () => rec()); // key-part record
         });
@@ -196,6 +201,7 @@ export function countFinalEnvelopeRecords(env) {
     obj(r.gaps, () => { for (const g of r.gaps ?? []) obj(g, () => rec()); });
     obj(r.rejected_keys, () => { for (const k of r.rejected_keys ?? []) obj(k, () => rec()); });
     obj(r.contradiction_notes, () => { for (const n of r.contradiction_notes ?? []) obj(n, () => { rec(); obj(n.citations, () => { for (const c of n.citations ?? []) walkCitation(c); }); }); });
+    obj(r.provenance, () => rec()); // provenance record (PER-010)
   });
   obj(tree?.source_refs, () => {
     for (const s of tree.source_refs ?? []) obj(s, () => rec()); // source-ref records
@@ -238,7 +244,20 @@ function verifyClaimedSpan(bytes, startByte, endByte, quotedText, budget, what) 
 export function run(task, context) {
   const budget = makeBudget();
   try {
-    assertNoNativeProxies(task, "task");
+    // PER-008: ONE charged admission traversal. The old uncharged
+    // assertNoNativeProxies(task) pre-sweep walked the whole task graph
+    // without the invocation budget, inspecting descriptors of
+    // candidates past the 64-object limit (e.g. an accessor sentinel
+    // smuggled into an unknown options.padding array). admitGraph
+    // already integrates the trap-free native-Proxy check, the
+    // own-descriptor accessor/function/symbol checks, the prototype
+    // check and the depth bound: each distinct object is charged BEFORE
+    // any of its descriptor fields is examined, so candidate #65
+    // refuses with BUDGET_EXCEEDED before that candidate (or any later
+    // one) is inspected at all. Unknown control keys are still rejected
+    // by the schema layer without their values being decoded. A Proxy
+    // task still refuses here with INVALID_INPUT and zero trap
+    // executions.
     admitGraph(task, "task", budget);
   } catch (e) {
     if (e instanceof BudgetError) return boundedRefused(requestTaskId(task), e.code, "error", e.message);
@@ -323,9 +342,22 @@ export function run(task, context) {
   setOutputPrefill(gate.test_hooks?.prefill_output_records ?? 0);
   if (gate.test_hooks?.prefill_spans) budget.applySpanPrefill(gate.test_hooks.prefill_spans);
 
-  // Truly no request/source content => EMPTY.
+  // Truly no request/source content => EMPTY. PER-010: the empty
+  // fast path is not exempt from the final-envelope bounds — the
+  // record count (including any host prefill) and the byte cap are
+  // enforced here exactly as on the main path.
   if (request.topics.length === 0 && request.assertions.length === 0 && validatedTask.source_refs.length === 0) {
-    return envelope(taskId, { status: "EMPTY", complete: true, report: emptyReport() });
+    const empty = envelope(taskId, { status: "EMPTY", complete: true, report: emptyReport() });
+    const emptyRecords = countFinalEnvelopeRecords(empty);
+    if (emptyRecords > BUDGET_LIMITS.maxOutputRecords) {
+      return boundedRefused(taskId, "OUTPUT_LIMIT", "error",
+        `public envelope holds ${emptyRecords} records (limit ${BUDGET_LIMITS.maxOutputRecords}); refusing with no partial domain artifact`);
+    }
+    if (canonicalByteLength(empty) > BUDGET_LIMITS.maxOutputBytes) {
+      return boundedRefused(taskId, "OUTPUT_LIMIT", "error",
+        `public envelope exceeds ${BUDGET_LIMITS.maxOutputBytes} bytes; refusing with no partial domain artifact`);
+    }
+    return empty;
   }
 
   // Resolve granted sources (exact read grant first; denied sources
@@ -376,7 +408,10 @@ export function run(task, context) {
     try {
       const r = resolveSourceRef(ref, context.sources, budget, `source_refs[${i}]`);
       resolved.set(idk, { ref, text: r.text, bytes: r.bytes, granted: true });
-      emittedRefs.push(sourceRefOut(ref));
+      // PER-011: clean source_refs are NOT populated here. They are
+      // derived after the quarantine scan below, so a quarantined pin
+      // contributes no clean ref — its identity survives only in the
+      // explicitly labeled quarantine/exclusion records.
     } catch (e) {
       if (e instanceof ResolutionError) {
         return boundedRefused(taskId, e.code === "HASH_MISMATCH" ? "HASH_MISMATCH" : "SOURCE_UNVERIFIED", "error", e.message);
@@ -404,6 +439,17 @@ export function run(task, context) {
         quarantineRecords.push({ record_id: key, families, reason: "seeded injection family detected; text and support quarantined" });
       }
     }
+  }
+
+  // PER-011: derive the clean source_refs AFTER quarantine and
+  // evidence selection. A quarantined pin is excluded here even
+  // though it resolved; its identity survives only in the explicitly
+  // labeled quarantine_records above. Denied sources never resolved
+  // and contribute nothing. Downstream consumers can therefore use
+  // source_refs as the set of admitted clean supporting evidence.
+  for (const [idk, r] of resolved) {
+    if (!r.granted || quarantined.has(idk)) continue;
+    emittedRefs.push(sourceRefOut(r.ref));
   }
 
   // Admit assertions: span proof + grammar-token match + grant +
@@ -604,7 +650,11 @@ export function run(task, context) {
     const atoms = teachable.filter((a) => predSet.has(a.predicate));
     const statements = [];
     const taughtByKey = new Set();
-    let taughtAny = false;
+    // PER-007: coverage is predicate-level, never topic-level. A topic
+    // is covered only when EVERY requested predicate has at least one
+    // taught statement; each missing predicate is an explicit gap. One
+    // taught predicate can no longer make the whole topic read "full".
+    const taughtPredicates = new Set();
     let quizzesThisTopic = 0;
     for (const a of atoms) {
       const st = statusOfAssertion(a);
@@ -632,7 +682,7 @@ export function run(task, context) {
       const k = assertionKey(a);
       if (taughtByKey.has(k)) continue;
       taughtByKey.add(k);
-      taughtAny = true;
+      taughtPredicates.add(a.predicate);
       const tmpl = gate.criteria.templates[a.predicate];
       const statement = {
         text: buildStatement(st, a),
@@ -666,12 +716,25 @@ export function run(task, context) {
       draft_label: DRAFT_LABEL,
     });
     lessonQuizCounts.push({ topic_id: topic.topic_id, quizzes: quizzesThisTopic });
-    const covered = taughtAny;
-    if (!covered) {
+    // PER-007: disclose every requested predicate with no taught
+    // statement. A topic whose predicates are only partly teachable
+    // (the rest contradicted, unsupported, denied or quarantined)
+    // yields an explicit gap, never silent "full" coverage.
+    const missingPredicates = topic.predicates.filter((p) => !taughtPredicates.has(p));
+    if (missingPredicates.length > 0) {
       gaps.push({
         topic_id: topic.topic_id,
-        reason: atoms.length === 0 ? "no admitted assertions for the requested predicates"
-          : "admitted assertions are contradicted, denied or quarantined",
+        missing_predicates: missingPredicates,
+        reason: atoms.length === 0
+          ? `no admitted assertions for the requested predicates: ${missingPredicates.join(", ")}`
+          : `no taught statement for requested predicate(s) — assertions contradicted, unsupported, denied or quarantined: ${missingPredicates.join(", ")}`,
+        draft_label: DRAFT_LABEL,
+      });
+    } else if (atoms.length === 0) {
+      // No requested predicates at all and nothing admitted.
+      gaps.push({
+        topic_id: topic.topic_id,
+        reason: "no admitted assertions for the requested predicates",
         draft_label: DRAFT_LABEL,
       });
     }

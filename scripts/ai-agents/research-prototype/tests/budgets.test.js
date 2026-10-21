@@ -122,9 +122,11 @@ test("RA652-004: final-envelope walk counts every public record per the taxonomy
   // Hand-derived for the single-passage 1-claim REPORT_READY envelope:
   // report(1) + coverage(1) + summary(1) + claim(1) + atom(1) +
   // origin(1) + origin.citation(1) + citation.source_ref(1) +
-  // citation.span(1) + corroboration(1) + top-level source_refs[0](1) = 11.
-  // The old hand-maintained field list counted 2.
-  assert.equal(n, 11, `walk must count 11 public records (got ${n})`);
+  // citation.byte_identity(1) [PER-010] + citation.span(1) +
+  // corroboration(1) + top-level source_refs[0](1) = 12.
+  // The old hand-maintained field list counted 2; the pre-PER-010 walk
+  // counted 11.
+  assert.equal(n, 12, `walk must count 12 public records (got ${n})`);
   assert.equal(c.corroboration.evidence.length, 0);
 });
 
@@ -140,10 +142,10 @@ test("RA652-004: walk counts nested evidence/contradiction records", () => {
   assert.equal(c.fidelity, "FAITHFUL");
   assert.equal(c.contradictions.length, 1);
   // report(1) + coverage(1) + claim(1) + atom(1) + origin(1) +
-  // origin.citation(1) + cit.source_ref(1) + cit.span(1) +
-  // corroboration(1) + contradiction(1) + k.citation(1) + k.source_ref(1) + k.span(1) +
-  // top-level source_refs[0](1) = 14. (PARTIAL => summary null.)
-  assert.equal(n, 14, `walk must count 14 public records (got ${n})`);
+  // origin.citation(1) + cit.source_ref(1) + cit.byte_identity(1) [PER-010] + cit.span(1) +
+  // corroboration(1) + contradiction(1) + k.citation(1) + k.source_ref(1) + k.byte_identity(1) [PER-010] + k.span(1) +
+  // top-level source_refs[0](1) = 16. (PARTIAL => summary null.)
+  assert.equal(n, 16, `walk must count 16 public records (got ${n})`);
   // Scalars/arrays are not records: the walk of a refusal (report null)
   // counts zero.
   assert.equal(countFinalEnvelopeRecords({ report: null, source_refs: [], diagnostics: [], quarantined_sources: [] }), 0);
@@ -228,4 +230,68 @@ test("oversized task_id becomes a bounded marker, not a 300KB envelope", () => {
   const r = run(task, ctxFor("single-passage"));
   assert.equal(r.task_id, "[task-id-exceeds-256-bytes]");
   assert.ok(JSON.stringify(r).length <= BUDGET_LIMITS.maxOutputBytes);
+});
+
+test("PER-008: unknown options.padding with an accessor sentinel on child 79 refuses at candidate 65 without inspecting the sentinel", () => {
+  const task = taskFor("single-passage", [{
+    claim_id: "c1", atoms: [REV_ALPHA],
+    origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
+  }]);
+  task.options.padding = Array.from({ length: 80 }, () => ({ ok: 1 }));
+  let getterRan = false;
+  let descriptorVisits = 0;
+  const sentinel = task.options.padding[79];
+  Object.defineProperty(sentinel, "poison", {
+    enumerable: true,
+    get() { getterRan = true; throw new Error("GETTER_RAN"); },
+  });
+  // Instrument descriptor visits past the budget: wrap
+  // Object.getOwnPropertyDescriptor to count visits to the sentinel.
+  const origGOPD = Object.getOwnPropertyDescriptor;
+  let r;
+  try {
+    Object.getOwnPropertyDescriptor = function (o, k) {
+      if (o === sentinel) descriptorVisits++;
+      return origGOPD.call(this, o, k);
+    };
+    r = run(task, ctxFor("single-passage"));
+    assert.equal(r.status, "REFUSED");
+    assert.ok(r.diagnostics.some((d) => d.code === "BUDGET_EXCEEDED"), "must refuse at candidate 65 with BUDGET_EXCEEDED");
+    assert.ok(!r.diagnostics.some((d) => String(d.reason).includes("padding.79")), "refusal must not name the uninspected sentinel");
+  } finally {
+    Object.getOwnPropertyDescriptor = origGOPD;
+  }
+  assert.equal(getterRan, false, "the sentinel getter must never run");
+  assert.equal(descriptorVisits, 0, "the sentinel's descriptors must never be visited");
+  assert.equal(r.report, null, "no partial domain artifact");
+});
+
+test("PER-008: trap-free immediate Proxy refusal is intact (zero traps)", () => {
+  const task = taskFor("single-passage");
+  let traps = 0;
+  const proxied = new Proxy(task, {
+    ownKeys(t) { traps++; return Reflect.ownKeys(t); },
+    getOwnPropertyDescriptor(t, k) { traps++; return Reflect.getOwnPropertyDescriptor(t, k); },
+    get(t, k, r) { traps++; return Reflect.get(t, k, r); },
+  });
+  const r = run(proxied, ctxFor("single-passage"));
+  assert.equal(r.status, "REFUSED");
+  assert.ok(r.diagnostics.some((d) => d.code === "INVALID_INPUT"));
+  assert.equal(traps, 0, "no proxy trap may fire");
+});
+
+test("PER-010: citation.byte_identity records are counted in the output walk", () => {
+  const claims = [{
+    claim_id: "c1", atoms: [REV_ALPHA],
+    origin_passage_refs: [{ doc_id: "doc-alpha", passage_id: "p1" }],
+  }];
+  const r = run(taskFor("single-passage", claims), ctxFor("single-passage"));
+  assert.equal(r.status, "REPORT_READY");
+  const n = countFinalEnvelopeRecords(r);
+  // The single-passage 1-claim envelope holds exactly one citation
+  // (the faithful origin), and its byte_identity record is counted:
+  // the corrected natural total is 12, not the pre-PER-010 11.
+  assert.equal(n, 12);
+  const c = r.report.claims[0];
+  assert.ok(c.origin.citation.byte_identity && typeof c.origin.citation.byte_identity.digest === "string");
 });

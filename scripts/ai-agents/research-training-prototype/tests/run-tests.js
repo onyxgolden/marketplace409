@@ -423,7 +423,7 @@ test("output boundary: prefill to exactly 256 records fits", () => {
   assert.equal(out.status, "REPORT_READY");
 });
 
-test("INPUT_LIMIT exact boundary (in-process): x=261075 fits, x=261076 refuses", () => {
+test("INPUT_LIMIT exact boundary (in-process): x=260617 fits, x=260618 refuses", () => {
   const mk = (x) => {
     const text = [
       "Vendor data sheet (SYNTHETIC)",
@@ -459,8 +459,13 @@ test("INPUT_LIMIT exact boundary (in-process): x=261075 fits, x=261076 refuses",
       },
     };
   };
-  const fit = mk(261075);
-  const over = mk(261076);
+  // PER-009 recalibration (2026-10-21): the consulted host metadata
+  // is now serialized-charged before use (criteria container +
+  // template record + provenance record + alias record + principal
+  // record = 458 bytes here), so the exact-fit filler drops from
+  // 261075 to 260617; the aggregate in-process cap is unchanged.
+  const fit = mk(260617);
+  const over = mk(260618);
   assert.equal(run(fit.task, fit.ctx).status, "REPORT_READY");
   const ro = run(over.task, over.ctx);
   assert.equal(ro.status, "REFUSED");
@@ -1018,3 +1023,190 @@ test("registeredEvidenceRoot (PER-003 round 3): same-key wrong-identity ancestor
   const regMissing = { "a|x": [selfRef("a|x")], "b|x": [selfRef("b|x")] };
   assert.equal(registeredEvidenceRoot("a|x", base(), regMissing), null);
 });
+
+// ------------------------------------------------- slice 3: PER-007..011
+test("PER-007: topic with one taught and one missing predicate => PARTIAL with an explicit gap, never full", () => {
+  const out = run(
+    task({
+      topics: [{ topic_id: "t-pumps", predicates: ["default port", "startup sequence"] }],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-port-n", "Pump", "default port", "8080", "global", "positive", 1, NI, 1),
+      ],
+    }),
+    ctx()
+  );
+  assert.equal(out.status, "PARTIAL");
+  assert.equal(out.complete, false);
+  assert.deepEqual(out.report.gaps.map((g) => g.topic_id), ["t-pumps"]);
+  assert.deepEqual(out.report.gaps[0].missing_predicates, ["startup sequence"]);
+  assert.deepEqual(out.report.coverage.map((c) => c.status), ["partial"]);
+});
+
+test("PER-007: fully covered multi-predicate topic stays REPORT_READY with no gaps", () => {
+  const out = run(
+    task({
+      topics: [{ topic_id: "t-pumps", predicates: ["default port", "startup sequence"] }],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-start", "Pump", "startup sequence", "prime, ignite, ramp", "global", "positive", 0, K, 2),
+      ],
+    }),
+    ctx({ templates: { ...TEMPLATES } })
+  );
+  assert.equal(out.status, "REPORT_READY");
+  assert.deepEqual(out.report.gaps, []);
+  assert.deepEqual(out.report.coverage.map((c) => c.status), ["full"]);
+});
+
+test("PER-008: unknown options.padding with an accessor sentinel on child 79 refuses at candidate 65 without inspecting the sentinel", () => {
+  const t = task();
+  t.options.padding = Array.from({ length: 80 }, () => ({ ok: 1 }));
+  let getterRan = false;
+  let descriptorVisits = 0;
+  const sentinel = t.options.padding[79];
+  Object.defineProperty(sentinel, "poison", {
+    enumerable: true,
+    get() { getterRan = true; throw new Error("GETTER_RAN"); },
+  });
+  const origGOPD = Object.getOwnPropertyDescriptor;
+  let out;
+  try {
+    Object.getOwnPropertyDescriptor = function (o, k) {
+      if (o === sentinel) descriptorVisits++;
+      return origGOPD.call(this, o, k);
+    };
+    out = run(t, ctx());
+    assert.equal(out.status, "REFUSED");
+    assert.deepEqual(codes(out), ["BUDGET_EXCEEDED"]);
+    assert.ok(!out.diagnostics.some((d) => String(d.reason).includes("padding.79")), "refusal must not name the uninspected sentinel");
+  } finally {
+    Object.getOwnPropertyDescriptor = origGOPD;
+  }
+  assert.equal(getterRan, false, "the sentinel getter must never run");
+  assert.equal(descriptorVisits, 0, "the sentinel's descriptors must never be visited");
+  assert.equal(out.report, null, "no partial domain artifact");
+});
+
+test("PER-008: consulted host subtree Proxy refuses trap-free with zero trap invocations", () => {
+  const c = ctx();
+  let traps = 0;
+  c.sources = new Proxy(c.sources, {
+    ownKeys(t) { traps++; return Reflect.ownKeys(t); },
+    getOwnPropertyDescriptor(t, k) { traps++; return Reflect.getOwnPropertyDescriptor(t, k); },
+  });
+  const out = run(task(), c);
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["INVALID_INPUT"]);
+  assert.equal(traps, 0, "no source-map trap may fire");
+});
+
+test("PER-009: 300,000-character template key refuses INVALID_INPUT at the gate", () => {
+  const templates = { ...TEMPLATES };
+  templates["z".repeat(300000)] = { question_form: "unused", lesson_heading: "unused" };
+  const out = run(task(), ctx({ templates }));
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["INVALID_INPUT"]);
+});
+
+test("PER-009: consulted template/provenance metadata is serialized-charged — exact byte accounting", async () => {
+  const { validateCriteria, validateProvenance } = await import("../src/schemas.js");
+  const { canonicalJson } = await import("../src/canonical.js");
+  // Criteria: container header + one template record, each charged in
+  // canonical serialized form before use.
+  {
+    const budget = makeBudget();
+    const templates = { "default port": TEMPLATES["default port"] };
+    validateCriteria({ criteria_version: "rt-1", templates }, "criteria", budget);
+    const expected =
+      Buffer.byteLength(canonicalJson({ criteria_version: "rt-1" }), "utf8") +
+      Buffer.byteLength(canonicalJson({ predicate: "default port", ...TEMPLATES["default port"] }), "utf8");
+    assert.equal(budget.used.payloadBytes, expected, "criteria bytes must be exactly the serialized container + records");
+  }
+  // Provenance: one entry record charged in canonical serialized form.
+  {
+    const budget = makeBudget();
+    const key = `${REPO}|${K}`;
+    const entry = { group: "vendor-docs", copied_from: null, applies_to: [srcRef(K)] };
+    validateProvenance({ sources: { [key]: entry } }, "provenance", budget);
+    const expected = Buffer.byteLength(
+      canonicalJson({ source_key: key, group: "vendor-docs", copied_from: null, applies_to: [srcRef(K)] }),
+      "utf8"
+    );
+    assert.equal(budget.used.payloadBytes, expected, "provenance bytes must be exactly the serialized record");
+  }
+  // Escaping is charged, not raw string length: a template value with
+  // characters that expand under JSON escaping charges the escaped
+  // byte count.
+  {
+    const budget = makeBudget();
+    const templates = { "default port": { question_form: "a\"b", lesson_heading: "c" } };
+    validateCriteria({ criteria_version: "rt-1", templates }, "criteria", budget);
+    const expected =
+      Buffer.byteLength(canonicalJson({ criteria_version: "rt-1" }), "utf8") +
+      Buffer.byteLength(canonicalJson({ predicate: "default port", question_form: "a\"b", lesson_heading: "c" }), "utf8");
+    assert.equal(budget.used.payloadBytes, expected);
+    assert.ok(expected > Buffer.byteLength('a"b', "utf8") + 1, "escaped form exceeds the raw length");
+  }
+});
+
+test("PER-010: quiz.key and report.provenance are counted in the output walk", () => {
+  const base = run(task(), ctx());
+  assert.equal(base.status, "REPORT_READY");
+  const n = countFinalEnvelopeRecords(base);
+  // N02-shaped envelope: the pre-PER-010 walk counted 13; the
+  // corrected taxonomy counts each quiz's key record and the
+  // report.provenance record => 15.
+  assert.equal(n, 15, `walk must count 15 public records (got ${n})`);
+  assert.ok(base.report.quizzes.every((q) => q.key && typeof q.key.value_token === "string"));
+  assert.ok(base.report.provenance && Array.isArray(base.report.provenance.groups));
+});
+
+test("PER-010: truly-empty fast path enforces the output bounds (prefill 255 => OUTPUT_LIMIT)", () => {
+  const t = task({ refs: [], topics: [], assertions: [] });
+  const out = run(t, ctx({ paths: [], test_hooks: { prefill_output_records: 255 } }));
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["OUTPUT_LIMIT"]);
+  assert.equal(out.report, null);
+  assert.equal(out.complete, false);
+});
+
+test("PER-010: truly-empty fast path within bounds still returns EMPTY", () => {
+  const t = task({ refs: [], topics: [], assertions: [] });
+  const out = run(t, ctx({ paths: [] }));
+  assert.equal(out.status, "EMPTY");
+  assert.equal(out.complete, true);
+});
+
+test("PER-011: wholly quarantined source contributes no clean source_refs", () => {
+  const out = run(
+    task({ refs: [srcRef(PO)], assertions: [A("a-port-p", "Pump", "default port", "8080", "global", "positive", 0, PO, 1)] }),
+    ctx({ paths: [PO] })
+  );
+  assert.equal(out.status, "PARTIAL");
+  assert.equal(out.quarantined_sources.length, 1);
+  assert.deepEqual(out.source_refs, [], "quarantined pins must not appear in clean source_refs");
+  assert.equal(out.report.quizzes.length, 0, "no taught items from quarantined evidence");
+});
+
+test("PER-011: mixed clean/quarantined fixture keeps clean refs only, with explicit exclusions", () => {
+  const out = run(
+    task({
+      refs: [srcRef(K), srcRef(PO)],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-port-p", "Pump", "default port", "8080", "global", "positive", 1, PO, 1),
+      ],
+    }),
+    ctx({ paths: [K, PO] })
+  );
+  assert.equal(out.quarantined_sources.length, 1);
+  assert.deepEqual(out.source_refs.map((r) => r.path), [K], "only the clean pin is emitted");
+  assert.ok(out.report.quizzes.length > 0, "clean evidence still teaches");
+});
+
+// PER-008 round 2 focused tests (admission primitive, verdict probes,
+// exact-64 accounting, round-1 candidate-65 proof) plus PER-010 round 2
+// (N06 prefill 220/221 boundary). Imported here so the official
+// trust-bootstrap "tests" entrypoint runs them.
+await import("./per008.test.js");

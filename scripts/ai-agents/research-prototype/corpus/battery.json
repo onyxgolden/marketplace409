@@ -2602,15 +2602,13 @@
       }
     },
     "expected": {
-      "status": "PARTIAL",
-      "diagnostic_codes": [],
-      "claim_statuses": [
-        "supported",
-        "contradicted",
-        "contradicted"
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "BUDGET_EXCEEDED"
       ],
+      "claim_statuses": [],
       "quarantined_ids": [],
-      "coverage_state": "PARTIAL"
+      "coverage_state": "UNKNOWN"
     }
   },
   {
@@ -4181,15 +4179,13 @@
       }
     },
     "expected": {
-      "status": "PARTIAL",
-      "diagnostic_codes": [],
-      "claim_statuses": [
-        "contradicted",
-        "contradicted",
-        "supported"
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "BUDGET_EXCEEDED"
       ],
+      "claim_statuses": [],
       "quarantined_ids": [],
-      "coverage_state": "PARTIAL"
+      "coverage_state": "UNKNOWN"
     }
   },
   {
@@ -14997,7 +14993,7 @@
         }
       },
       "test_hooks": {
-        "prefill_output_records": 245
+        "prefill_output_records": 244
       }
     },
     "expected": {
@@ -15103,7 +15099,7 @@
         }
       },
       "test_hooks": {
-        "prefill_output_records": 246
+        "prefill_output_records": 245
       }
     },
     "expected": {
@@ -15384,6 +15380,86 @@
       "status": "REFUSED",
       "diagnostic_codes": [
         "BUDGET_EXCEEDED"
+      ],
+      "claim_statuses": [],
+      "quarantined_ids": [],
+      "coverage_state": "UNKNOWN"
+    }
+  },
+  {
+    "case_id": "hst-001-inherited-principal",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "nom-002-single-attributed",
+      "transform": "inherited-principal-getter",
+      "expect_zero": [
+        "getter_calls"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
+      ],
+      "claim_statuses": [],
+      "quarantined_ids": [],
+      "coverage_state": "UNKNOWN"
+    }
+  },
+  {
+    "case_id": "hst-002-inherited-revisions",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "nom-002-single-attributed",
+      "transform": "inherited-revisions-getter",
+      "expect_zero": [
+        "getter_calls"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
+      ],
+      "claim_statuses": [],
+      "quarantined_ids": [],
+      "coverage_state": "UNKNOWN"
+    }
+  },
+  {
+    "case_id": "hst-003-nested-applies-to-proxy",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "nom-002-single-attributed",
+      "transform": "nested-applies-to-proxy",
+      "expect_zero": [
+        "traps"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
+      ],
+      "claim_statuses": [],
+      "quarantined_ids": [],
+      "coverage_state": "UNKNOWN"
+    }
+  },
+  {
+    "case_id": "hst-004-nested-derivation-link-proxy",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "nom-018-derivation-link",
+      "transform": "nested-derivation-link-proxy",
+      "expect_zero": [
+        "traps"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
       ],
       "claim_statuses": [],
       "quarantined_ids": [],

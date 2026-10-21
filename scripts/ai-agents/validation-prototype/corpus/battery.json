@@ -17802,5 +17802,56 @@
       "mismatch_names": [],
       "quarantined_ids": []
     }
+  },
+  {
+    "case_id": "H01",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "N01",
+      "transform": "inherited-principal-getter",
+      "expect_zero": [
+        "getter_calls"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "H02",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "N01",
+      "transform": "inherited-revisions-getter",
+      "expect_zero": [
+        "getter_calls"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
+      ]
+    }
+  },
+  {
+    "case_id": "H03",
+    "category": "hostile_admission",
+    "hostile": {
+      "base": "N01",
+      "transform": "nested-pin-proxy",
+      "expect_zero": [
+        "traps"
+      ]
+    },
+    "expected": {
+      "status": "REFUSED",
+      "diagnostic_codes": [
+        "INVALID_INPUT"
+      ]
+    }
   }
 ]

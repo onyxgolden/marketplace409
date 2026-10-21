@@ -91,6 +91,7 @@ const testFiles = [
   "injection.test.js",
   "execution-addendum.test.js",
   "fixround4.test.js",
+  "per008.test.js",
   "watchdog.test.js",
   "trust.test.js",
   "battery.test.js",
