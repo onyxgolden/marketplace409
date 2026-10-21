@@ -157,6 +157,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           "obligations",
           "obligation_events",
           "obligation_dependencies",
+          "obligation_overrides",
           "principal_keys",
           "trusted_authorizations",
           "handoffs",
@@ -179,7 +180,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           "retrieval_evaluations",
           "tb_schema_version",
         ]) {
-          expect(tables.includes(expected).toBeTruthy(), `missing table: ${expected}`);
+          expect(tables).toContain(expected);
         }
         const ver = await pool.query("select version from team_brain.tb_schema_version");
         expect(ver.rows[0].version).toBe(1);
@@ -220,7 +221,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       }
     });
 
-    test("roles exist with correct login attributes", async () => {
+    test("every role the migration creates is NOLOGIN (TBP1-001: login + password provisioning is an operator step outside this file)", async () => {
       const pool = await freshMigratedPool();
       try {
         const res = await pool.query(
@@ -231,11 +232,11 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         );
         const byName = Object.fromEntries(res.rows.map((r) => [r.rolname, r.rolcanlogin]));
         expect(byName["tb_owner"]).toBe(false);
-        expect(byName["tb_ingest"]).toBe(true);
-        expect(byName["tb_coordinator"]).toBe(true);
-        expect(byName["tb_consolidator"]).toBe(true);
-        expect(byName["tb_reader"]).toBe(true);
-        expect(byName["tb_admin"]).toBe(true);
+        expect(byName["tb_ingest"]).toBe(false);
+        expect(byName["tb_coordinator"]).toBe(false);
+        expect(byName["tb_consolidator"]).toBe(false);
+        expect(byName["tb_reader"]).toBe(false);
+        expect(byName["tb_admin"]).toBe(false);
       } finally {
         await pool.end();
       }
@@ -333,8 +334,8 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
                     has_table_privilege($1, 'app.domain_ledger', 'insert') as i`,
             [role],
           );
-          expect(r.rows[0].s).toBe(false, `${role} must not select domain tables`);
-          expect(r.rows[0].i).toBe(false, `${role} must not insert domain tables`);
+          expect(r.rows[0].s, `${role} must not select domain tables`).toBe(false);
+          expect(r.rows[0].i, `${role} must not insert domain tables`).toBe(false);
         }
         await pool.query("drop table app.domain_ledger");
       } finally {
@@ -364,7 +365,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
         // Bad kind triggers validation failure inside the transaction.
-        await expect(() => repo.fileObligation({ ...taskRecord("p1-bad"), kind: "NOPE" })).rejects.toThrow(/Invalid obligation kind/);
+        await expect(repo.fileObligation({ ...taskRecord("p1-bad"), kind: "NOPE" })).rejects.toThrow(/Invalid obligation kind/);
         const res = await pool.query(
           "select count(*)::int as n from team_brain.obligations where obligation_id = 'p1-bad'",
         );
@@ -443,7 +444,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         const v1 = await pool.query(
           "select row_version from team_brain.obligations where obligation_id = 'p1-rv'",
         );
-        expect(Number(v1.rows[0].row_version).toBeTruthy() > Number(v0.rows[0].row_version));
+        expect(Number(v1.rows[0].row_version)).toBeGreaterThan(Number(v0.rows[0].row_version));
         void before;
       } finally {
         await pool.end();
@@ -457,12 +458,14 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         const repo = createPostgresRepository(pool);
         await repo.fileObligation(taskRecord("p1-close"));
         // Close without verification fails.
-        await expect(async () => { repo.closeTask("p1-close", {
-              actor: "tester",
-              recordedAt: T1,
-              reason: "no verification",
-              evidenceRefs: ["ev-1"],
-            }) }).rejects.toThrow(/without a recorded verification/);
+        await expect(
+          repo.closeTask("p1-close", {
+            actor: "tester",
+            recordedAt: T1,
+            reason: "no verification",
+            evidenceRefs: ["ev-1"],
+          }),
+        ).rejects.toThrow(/without a recorded verification/);
         // Verify then close succeeds.
         await repo.recordVerification("p1-close", {
           verifier: "tester",
@@ -489,17 +492,22 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           "../postgres/repository.mjs"
         );
         // Unknown authority ref: must be refused before anything persists.
-        const repo = createPostgresRepository(pool, { trustedAuthorizations: [] });
-        await expect(async () => { repo.fileObligation(
-              taskRecord("p1-auth", T0, {
-                priorityOverride: {
-                  authorityRef: "unknown-grant",
-                  item: "p1-auth",
-                  rank: 1,
-                  reason: "test",
-                },
-              }),
-            ) }).rejects.toThrow(/UNKNOWN_AUTHORITY|INVALID_OVERRIDE/);
+        // No trust is caller-injected -- the repository reads
+        // team_brain.trusted_authorizations itself, and this test database
+        // has no rows in it, so "unknown-grant" cannot resolve.
+        const repo = createPostgresRepository(pool);
+        await expect(
+          repo.fileObligation(
+            taskRecord("p1-auth", T0, {
+              priorityOverride: {
+                authorityRef: "unknown-grant",
+                item: "p1-auth",
+                rank: 1,
+                reason: "test",
+              },
+            }),
+          ),
+        ).rejects.toThrow(/UNKNOWN_AUTHORITY|INVALID_OVERRIDE/);
         const res = await pool.query(
           "select count(*)::int as n from team_brain.obligations where obligation_id = 'p1-auth'",
         );
@@ -509,26 +517,36 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       }
     });
 
-    test("dependency race: concurrent edge writes cannot create a cycle", async () => {
+    test("dependency race: concurrent opposite-direction edge writes cannot create a cycle", async () => {
       const pool = await freshMigratedPool();
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
         await repo.fileObligation(taskRecord("p1-d1"));
         await repo.fileObligation(taskRecord("p1-d2"));
-        // A depends on B and B depends on A would be a cycle; the schema
-        // CHECK plus application validation must refuse at least one.
-        // File A->B first.
-        await pool.query(
-          "insert into team_brain.obligation_dependencies (obligation_id, depends_on_id) values ('p1-d1','p1-d2')",
+        // Genuinely concurrent: p1-d1->p1-d2 and p1-d2->p1-d1 fired at the
+        // same time, not sequentially. tb_insert_dependency_edge serializes
+        // on a cluster-wide advisory lock, so these two calls race for the
+        // SAME lock; whichever wins commits its edge, and the loser's
+        // reachability check then sees it and must refuse the cycle.
+        const results = await Promise.allSettled([
+          pool.query("select team_brain.tb_insert_dependency_edge($1, $2)", ["p1-d1", "p1-d2"]),
+          pool.query("select team_brain.tb_insert_dependency_edge($1, $2)", ["p1-d2", "p1-d1"]),
+        ]);
+        const fulfilled = results.filter((r) => r.status === "fulfilled");
+        const rejected = results.filter((r) => r.status === "rejected");
+        expect(fulfilled.length).toBe(1);
+        expect(rejected.length).toBe(1);
+        expect(String(rejected[0].reason && rejected[0].reason.message)).toMatch(/dependency cycle/i);
+        const edges = await pool.query(
+          "select obligation_id, depends_on_id from team_brain.obligation_dependencies",
         );
-        // Direct B->A insert is allowed by FK but creates a 2-cycle; the
-        // application layer (projection) detects cycles. Here we assert the
-        // self-link CHECK fires for the degenerate case.
-        await expect(async () => { pool.query(
-              "insert into team_brain.obligation_dependencies (obligation_id, depends_on_id) values ('p1-d1','p1-d1')",
-            ) }).rejects.toThrow(/check/i,
-        );
+        expect(edges.rows.length).toBe(1);
+
+        // Degenerate self-link: refused before any insert is attempted.
+        await expect(
+          pool.query("select team_brain.tb_insert_dependency_edge($1, $2)", ["p1-d1", "p1-d1"]),
+        ).rejects.toThrow(/self dependency/i);
       } finally {
         await pool.end();
       }
@@ -553,6 +571,70 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
     });
   });
 
+  describe("worker role execution (real tb_coordinator connection, not the admin role)", () => {
+    test("lifecycle transitions and dependency edges work when connected as tb_coordinator; raw UPDATE does not", async () => {
+      const admin = await freshMigratedPool();
+      let workerPool;
+      try {
+        // Test-only credential, provisioned here (outside the migration,
+        // per TBP1-001) and reset in `finally` below. Scoped to this one
+        // ephemeral test database's cluster for the life of this test.
+        await admin.query("alter role tb_coordinator login password 'tb_p1_test_only'");
+        const url = new URL(TEST_URL);
+        url.pathname = `/${testDbName}`;
+        url.username = "tb_coordinator";
+        url.password = "tb_p1_test_only";
+        workerPool = new PgPool({ connectionString: url.toString(), max: 3 });
+
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(workerPool);
+        await repo.fileObligation(taskRecord("p1-worker-1"));
+        await repo.fileObligation(
+          taskRecord("p1-worker-2", T0, { dependencies: ["p1-worker-1"] }),
+        );
+        await repo.setRetentionDisposition("p1-worker-1", {
+          actor: "t",
+          recordedAt: T1,
+          reason: "t",
+          disposition: "retain",
+        });
+        await repo.recordVerification("p1-worker-1", {
+          verifier: "t",
+          verifiedAt: T1,
+          reason: "t",
+          evidenceRefs: ["e1"],
+        });
+        const closed = await repo.closeTask("p1-worker-1", {
+          actor: "t",
+          recordedAt: T2,
+          reason: "t",
+          evidenceRefs: ["e1"],
+        });
+        expect(closed.state).toBe("CLOSED");
+
+        await repo.fileObligation({ ...taskRecord("p1-worker-auth"), kind: "AUTHORIZATION" });
+        const revoked = await repo.revokeAuthorization("p1-worker-auth", {
+          actor: "t",
+          recordedAt: T2,
+          reason: "t",
+        });
+        expect(revoked.state).toBe("REVOKED");
+
+        // The above succeeded entirely through the SECURITY DEFINER
+        // functions. tb_coordinator must still have no raw UPDATE grant.
+        await expect(
+          workerPool.query(
+            "update team_brain.obligations set state = 'OPEN' where obligation_id = 'p1-worker-1'",
+          ),
+        ).rejects.toThrow(/permission denied/i);
+      } finally {
+        if (workerPool) await workerPool.end();
+        await admin.query("alter role tb_coordinator nologin").catch(() => {});
+        await admin.end();
+      }
+    });
+  });
+
   describe("prototype compatibility (68 tests via pg adapter)", () => {
     // The adapter exposes the same API as ledger/repository.mjs. Spot-check
     // the core lifecycle here; the full 68-test prototype suite runs against
@@ -573,13 +655,12 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         };
         await repo.fileObligation(v1);
         await expect(
-          () =>
-            repo.supersedeVerdict(
-              "p1-v1",
-              { ...v1, id: "p1-v2", filedAt: T1, source: { ...src("x.md"), head: "a".repeat(40) } },
-              { actor: "t", recordedAt: T1, reason: "t" },
-            ),
-          /same head/);
+          repo.supersedeVerdict(
+            "p1-v1",
+            { ...v1, id: "p1-v2", filedAt: T1, source: { ...src("x.md"), head: "a".repeat(40) } },
+            { actor: "t", recordedAt: T1, reason: "t" },
+          ),
+        ).rejects.toThrow(/same head/);
         const { next } = await repo.supersedeVerdict(
           "p1-v1",
           { ...v1, id: "p1-v2", filedAt: T1, source: { ...src("x.md"), head: "b".repeat(40) } },

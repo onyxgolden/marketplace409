@@ -20,6 +20,18 @@
 --   - Timestamps are timestamptz; server assigns recorded_at via clock_timestamp().
 --   - Every mutable projection carries bigint row_version.
 --   - Full 40-hex Git identities; SHA-256 for non-Git content with algorithm field.
+--
+-- Provisioning (operator-run, OUTSIDE this file, never committed):
+--   Every login role below is created NOLOGIN here. A human operator grants
+--   LOGIN and sets a password from the real secret manager after apply, e.g.:
+--     alter role tb_coordinator login password '<vault secret>';
+--   This migration is replayed in test/CI against disposable databases and
+--   must never need an edit to add a secret, so no password of any kind is
+--   ever defined in this file.
+--   tb_coordinator's and tb_consolidator's write paths that used to need
+--   direct UPDATE are narrow SECURITY DEFINER functions instead (below); the
+--   roles keep SELECT/INSERT only and reach every allowed transition through
+--   a named function, never a raw UPDATE grant on obligations/dependencies.
 
 -- ============================================================================
 -- Schema and roles
@@ -35,19 +47,19 @@ begin
     create role tb_owner nologin;
   end if;
   if not exists (select 1 from pg_roles where rolname = 'tb_ingest') then
-    create role tb_ingest login password 'CHANGEME_TB_INGEST';
+    create role tb_ingest nologin;
   end if;
   if not exists (select 1 from pg_roles where rolname = 'tb_coordinator') then
-    create role tb_coordinator login password 'CHANGEME_TB_COORDINATOR';
+    create role tb_coordinator nologin;
   end if;
   if not exists (select 1 from pg_roles where rolname = 'tb_consolidator') then
-    create role tb_consolidator login password 'CHANGEME_TB_CONSOLIDATOR';
+    create role tb_consolidator nologin;
   end if;
   if not exists (select 1 from pg_roles where rolname = 'tb_reader') then
-    create role tb_reader login password 'CHANGEME_TB_READER';
+    create role tb_reader nologin;
   end if;
   if not exists (select 1 from pg_roles where rolname = 'tb_admin') then
-    create role tb_admin login password 'CHANGEME_TB_ADMIN';
+    create role tb_admin nologin;
   end if;
 end
 $$;
@@ -190,6 +202,16 @@ create table if not exists team_brain.obligation_dependencies (
 );
 alter table team_brain.obligation_dependencies owner to tb_owner;
 revoke all on team_brain.obligation_dependencies from public;
+
+-- Priority overrides: side table so the narrow obligations row stays simple.
+-- Created here (not lazily by the app) because tb_coordinator has no CREATE
+-- privilege on the schema — only tb_owner/the migration may create relations.
+create table if not exists team_brain.obligation_overrides (
+  obligation_id text primary key references team_brain.obligations (obligation_id),
+  override_json text not null
+);
+alter table team_brain.obligation_overrides owner to tb_owner;
+revoke all on team_brain.obligation_overrides from public;
 
 -- ============================================================================
 -- principal_keys / trusted_authorizations — protected trust registry
@@ -519,6 +541,119 @@ alter table team_brain.retrieval_evaluations owner to tb_owner;
 revoke all on team_brain.retrieval_evaluations from public;
 
 -- ============================================================================
+-- Narrow transition functions
+-- ============================================================================
+--
+-- tb_coordinator gets SELECT/INSERT on obligations and obligation_dependencies
+-- (below) but no UPDATE on either — every state transition and every
+-- dependency edge goes through one of these SECURITY DEFINER functions, each
+-- touching only the exact columns its name says. Owned by tb_owner; EXECUTE
+-- granted narrowly. This is the actual write boundary, not the table grant.
+
+create or replace function team_brain.tb_set_retention_disposition(
+  p_obligation_id text, p_disposition text
+) returns void
+language sql
+security definer
+set search_path = team_brain, pg_temp
+as $$
+  update team_brain.obligations
+     set retention_disposition = p_disposition,
+         row_version = row_version + 1
+   where obligation_id = p_obligation_id;
+$$;
+alter function team_brain.tb_set_retention_disposition(text, text) owner to tb_owner;
+revoke all on function team_brain.tb_set_retention_disposition(text, text) from public;
+
+create or replace function team_brain.tb_close_task(p_obligation_id text) returns void
+language sql
+security definer
+set search_path = team_brain, pg_temp
+as $$
+  update team_brain.obligations
+     set state = 'CLOSED', row_version = row_version + 1
+   where obligation_id = p_obligation_id;
+$$;
+alter function team_brain.tb_close_task(text) owner to tb_owner;
+revoke all on function team_brain.tb_close_task(text) from public;
+
+create or replace function team_brain.tb_revoke_authorization(p_obligation_id text) returns void
+language sql
+security definer
+set search_path = team_brain, pg_temp
+as $$
+  update team_brain.obligations
+     set state = 'REVOKED', row_version = row_version + 1
+   where obligation_id = p_obligation_id;
+$$;
+alter function team_brain.tb_revoke_authorization(text) owner to tb_owner;
+revoke all on function team_brain.tb_revoke_authorization(text) from public;
+
+create or replace function team_brain.tb_mark_superseded(p_obligation_id text) returns void
+language sql
+security definer
+set search_path = team_brain, pg_temp
+as $$
+  update team_brain.obligations
+     set state = 'SUPERSEDED', row_version = row_version + 1
+   where obligation_id = p_obligation_id;
+$$;
+alter function team_brain.tb_mark_superseded(text) owner to tb_owner;
+revoke all on function team_brain.tb_mark_superseded(text) from public;
+
+create or replace function team_brain.tb_upsert_override(
+  p_obligation_id text, p_override_json text
+) returns void
+language sql
+security definer
+set search_path = team_brain, pg_temp
+as $$
+  insert into team_brain.obligation_overrides (obligation_id, override_json)
+  values (p_obligation_id, p_override_json)
+  on conflict (obligation_id) do update set override_json = excluded.override_json;
+$$;
+alter function team_brain.tb_upsert_override(text, text) owner to tb_owner;
+revoke all on function team_brain.tb_upsert_override(text, text) from public;
+
+-- Dependency edges: insert is cycle-safe and serialized against every other
+-- edge insert in the cluster, so two concurrent transactions can never
+-- jointly create a cycle that neither would see alone (brief TBP1-003).
+-- The advisory lock key is a fixed hash of the table name -- one lock domain
+-- for the whole obligation_dependencies graph.
+create or replace function team_brain.tb_insert_dependency_edge(
+  p_obligation_id text, p_depends_on_id text
+) returns void
+language plpgsql
+security definer
+set search_path = team_brain, pg_temp
+as $$
+begin
+  perform pg_advisory_xact_lock(hashtext('team_brain.obligation_dependencies'));
+  if p_obligation_id = p_depends_on_id then
+    raise exception 'self dependency: %', p_obligation_id using errcode = '23514';
+  end if;
+  if exists (
+    with recursive reachable(id) as (
+      select depends_on_id from team_brain.obligation_dependencies
+       where obligation_id = p_depends_on_id
+      union
+      select d.depends_on_id
+        from team_brain.obligation_dependencies d
+        join reachable r on d.obligation_id = r.id
+    )
+    select 1 from reachable where id = p_obligation_id
+  ) then
+    raise exception 'dependency cycle: % already (transitively) depends on %',
+      p_depends_on_id, p_obligation_id using errcode = 'TB001';
+  end if;
+  insert into team_brain.obligation_dependencies (obligation_id, depends_on_id)
+  values (p_obligation_id, p_depends_on_id);
+end;
+$$;
+alter function team_brain.tb_insert_dependency_edge(text, text) owner to tb_owner;
+revoke all on function team_brain.tb_insert_dependency_edge(text, text) from public;
+
+-- ============================================================================
 -- Least-privilege grants
 -- ============================================================================
 
@@ -535,7 +670,8 @@ grant select on team_brain.tb_schema_version to tb_ingest;
 grant usage on schema team_brain to tb_coordinator;
 grant select, insert on team_brain.obligations to tb_coordinator;
 grant select, insert on team_brain.obligation_events to tb_coordinator;
-grant select, insert on team_brain.obligation_dependencies to tb_coordinator;
+grant select on team_brain.obligation_dependencies to tb_coordinator;
+grant select on team_brain.obligation_overrides to tb_coordinator;
 grant select, insert, update on team_brain.handoffs to tb_coordinator;
 grant select, insert on team_brain.handoff_events to tb_coordinator;
 grant select, insert on team_brain.verification_receipts to tb_coordinator;
@@ -548,9 +684,18 @@ grant select on team_brain.source_objects to tb_coordinator;
 grant select on team_brain.trusted_authorizations to tb_coordinator;
 grant select on team_brain.principal_keys to tb_coordinator;
 grant select on team_brain.tb_schema_version to tb_coordinator;
+grant execute on function team_brain.tb_set_retention_disposition(text, text) to tb_coordinator;
+grant execute on function team_brain.tb_close_task(text) to tb_coordinator;
+grant execute on function team_brain.tb_revoke_authorization(text) to tb_coordinator;
+grant execute on function team_brain.tb_mark_superseded(text) to tb_coordinator;
+grant execute on function team_brain.tb_upsert_override(text, text) to tb_coordinator;
+grant execute on function team_brain.tb_insert_dependency_edge(text, text) to tb_coordinator;
 -- UPDATE allowed only on mutable projections (handoffs.state, outbox.state,
--- jobs.*). No UPDATE or DELETE on obligations, events, or history tables.
--- No access to episodes, semantic entries, conflicts, or metrics.
+-- jobs.*). No UPDATE or DELETE on obligations, obligation_dependencies,
+-- obligation_overrides, events, or history tables -- every one of those
+-- transitions is a named SECURITY DEFINER function (above), never a raw
+-- table grant. No access to episodes, semantic entries, conflicts, or
+-- metrics.
 
 -- tb_consolidator: append-only consolidation effects (brief Section 6).
 grant usage on schema team_brain to tb_consolidator;
@@ -580,6 +725,7 @@ grant select on team_brain.tb_schema_version to tb_reader;
 grant all on schema team_brain to tb_admin;
 grant all on all tables in schema team_brain to tb_admin;
 grant all on all sequences in schema team_brain to tb_admin;
+grant all on all functions in schema team_brain to tb_admin;
 
 -- Sequences owned by tb_owner; usage granted via table grants above.
 alter default privileges for role tb_owner in schema team_brain

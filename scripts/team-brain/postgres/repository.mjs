@@ -65,11 +65,24 @@ function rowToObligation(row, dependencies) {
   };
 }
 
-export function createPostgresRepository(pool, { trustedAuthorizations = [] } = {}) {
+export function createPostgresRepository(pool) {
   if (!pool || typeof pool.connect !== "function") {
     throw new TypeError("createPostgresRepository requires a pg Pool (pool.connect)");
   }
-  const trusted = trustedAuthorizations;
+
+  // Trust is never caller-injected: every override is checked against the
+  // protected team_brain.trusted_authorizations rows as they stand in the
+  // SAME transaction as the write, so a revocation already committed when
+  // this transaction began is honored, and nothing a caller passes in can
+  // forge or stale-date a grant.
+  async function loadTrustedAuthorizations(runner) {
+    const res = await runner.query(
+      `select grant_id as id, granter_principal_id as granter, override_item as "itemId",
+              override_rank as rank, (revoked_at is not null) as revoked
+         from team_brain.trusted_authorizations`,
+    );
+    return res.rows;
+  }
 
   // Run work inside one explicit transaction on a single connection.
   // Always BEGIN/COMMIT/ROLLBACK; never the prototype's sequential fallback.
@@ -138,12 +151,24 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
     return res.rows.map((r) => r.depends_on_id);
   }
 
+  // Routed through tb_insert_dependency_edge: a SECURITY DEFINER function
+  // that takes a cluster-wide advisory lock before checking reachability, so
+  // two concurrent transactions can never jointly create a cycle that
+  // neither would see alone (brief TBP1-003). tb_coordinator has no direct
+  // INSERT on obligation_dependencies -- this function is the only path.
   async function insertDependencyEdges(runner, id, dependencies) {
     for (const dep of dependencies) {
-      await runner.query(
-        "insert into team_brain.obligation_dependencies (obligation_id, depends_on_id) values ($1, $2)",
-        [id, dep],
-      );
+      try {
+        await runner.query("select team_brain.tb_insert_dependency_edge($1, $2)", [id, dep]);
+      } catch (err) {
+        if (err && err.code === "TB001") {
+          fail(CODES.DEPENDENCY_CYCLE, `Obligation ${id} cannot depend on ${dep}: would create a cycle`, {
+            id,
+            dependsOn: dep,
+          });
+        }
+        throw err;
+      }
     }
   }
 
@@ -266,7 +291,9 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
       }
     }
     if (priorityOverride !== null) {
-      validateOverride(id, priorityOverride, { trustedAuthorizations: trusted });
+      validateOverride(id, priorityOverride, {
+        trustedAuthorizations: await loadTrustedAuthorizations(runner),
+      });
     }
     // Idempotent filing: same obligation_id is a duplicate, surfaced as a
     // typed error (never a silent second row).
@@ -330,14 +357,15 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
   }
 
   // The obligations table in the production schema has no priority_override
-  // column; overrides live in a side table so the core row stays narrow.
-  // P1 keeps it simple: store as JSON in a companion table.
-  async function ensureOverrideTable(runner) {
-    await runner.query(`
-      create table if not exists team_brain.obligation_overrides (
-        obligation_id text primary key references team_brain.obligations (obligation_id),
-        override_json text not null
-      )`);
+  // column; overrides live in team_brain.obligation_overrides (created by the
+  // migration, not here -- tb_coordinator has no CREATE privilege on the
+  // schema). Writes go through tb_upsert_override; tb_coordinator only has
+  // SELECT on the table itself.
+  async function upsertOverride(runner, obligationId, override) {
+    await runner.query("select team_brain.tb_upsert_override($1, $2)", [
+      obligationId,
+      JSON.stringify(override),
+    ]);
   }
 
   return {
@@ -359,17 +387,13 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
     async fileObligation(record, createdAt) {
       return tx(
         async (t) => {
-          await ensureOverrideTable(t);
           // Store override via side table; fileObligationRow handles validation.
           const rec = { ...record };
           const override = rec.priorityOverride ?? null;
           delete rec.priorityOverride;
           const created = await fileObligationRow(t, rec, createdAt || record.filedAt);
           if (override !== null) {
-            await t.query(
-              "insert into team_brain.obligation_overrides (obligation_id, override_json) values ($1, $2) on conflict (obligation_id) do update set override_json = excluded.override_json",
-              [created.id, JSON.stringify(override)],
-            );
+            await upsertOverride(t, created.id, override);
             return { ...created, priorityOverride: override };
           }
           return created;
@@ -383,7 +407,6 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
         fail(CODES.INVALID_FIELD, "fileObligationBatch requires a non-empty array of records", {});
       }
       return tx(async (t) => {
-        await ensureOverrideTable(t);
         const created = [];
         for (const record of records) {
           const rec = { ...record };
@@ -391,10 +414,7 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
           delete rec.priorityOverride;
           const c = await fileObligationRow(t, rec, createdAt || record.filedAt, { allowForwardRefs: true });
           if (override !== null) {
-            await t.query(
-              "insert into team_brain.obligation_overrides (obligation_id, override_json) values ($1, $2) on conflict (obligation_id) do update set override_json = excluded.override_json",
-              [c.id, JSON.stringify(override)],
-            );
+            await upsertOverride(t, c.id, override);
             created.push({ ...c, priorityOverride: override });
           } else {
             created.push(c);
@@ -466,10 +486,7 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
       assertNonEmptyString(disposition, "disposition");
       return tx(async (t) => {
         await requireObligation(t, id, { forUpdate: true });
-        await t.query(
-          "update team_brain.obligations set retention_disposition = $1, row_version = row_version + 1 where obligation_id = $2",
-          [disposition, id],
-        );
+        await t.query("select team_brain.tb_set_retention_disposition($1, $2)", [id, disposition]);
         await insertEvent(t, id, {
           actor,
           recordedAt,
@@ -531,10 +548,7 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
             { id, uncovered },
           );
         }
-        await t.query(
-          "update team_brain.obligations set state = 'CLOSED', row_version = row_version + 1 where obligation_id = $1",
-          [id],
-        );
+        await t.query("select team_brain.tb_close_task($1)", [id]);
         await insertEvent(t, id, { actor, recordedAt, eventType: "CLOSED", reason, evidenceRefs });
         return requireObligation(t, id);
       });
@@ -545,10 +559,7 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
         const ob = await requireObligation(t, id, { forUpdate: true });
         requireKind(ob, "AUTHORIZATION", CODES.NOT_AN_AUTHORIZATION);
         requireOpen(ob);
-        await t.query(
-          "update team_brain.obligations set state = 'REVOKED', row_version = row_version + 1 where obligation_id = $1",
-          [id],
-        );
+        await t.query("select team_brain.tb_revoke_authorization($1)", [id]);
         await insertEvent(t, id, { actor, recordedAt, eventType: "REVOKED", reason, evidenceRefs: [] });
         return requireObligation(t, id);
       });
@@ -586,10 +597,7 @@ export function createPostgresRepository(pool, { trustedAuthorizations = [] } = 
           recordedAt,
           { verdictSupersession: true },
         );
-        await t.query(
-          "update team_brain.obligations set state = 'SUPERSEDED', row_version = row_version + 1 where obligation_id = $1",
-          [oldId],
-        );
+        await t.query("select team_brain.tb_mark_superseded($1)", [oldId]);
         await insertEvent(t, oldId, {
           actor,
           recordedAt,
