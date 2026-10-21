@@ -38,6 +38,13 @@ export const CODES = {
   ALREADY_TERMINAL: "ALREADY_TERMINAL",
   EVENT_ORDER_VIOLATION: "EVENT_ORDER_VIOLATION",
   DUPLICATE_OPERATION: "DUPLICATE_OPERATION",
+  // Postgres adapter codes (normalized filing contract + guarded DB
+  // transition functions, fix round 2): the adapter refuses incomplete
+  // provenance at its boundary and maps TB2xx guard errcodes onto these.
+  UNKNOWN_SOURCE: "UNKNOWN_SOURCE",
+  INCOMPLETE_PROVENANCE: "INCOMPLETE_PROVENANCE",
+  INVALID_RETENTION_DISPOSITION: "INVALID_RETENTION_DISPOSITION",
+  SUPERSESSION_BINDING_MISMATCH: "SUPERSESSION_BINDING_MISMATCH",
   // Queue projection codes
   CYCLE_DETECTED: "CYCLE_DETECTED",
   INVALID_OVERRIDE: "INVALID_OVERRIDE",

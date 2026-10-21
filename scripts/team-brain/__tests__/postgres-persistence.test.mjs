@@ -7,7 +7,7 @@
 // Each test gets a FRESH database (created per test file run, tables
 // truncated between tests) so tests are isolated and repeatable.
 //
-// Coverage (30+ tests):
+// Coverage (36+ tests):
 //   1. Migration: fresh install, idempotent replay, schema snapshot
 //   2. Roles: least-privilege grants, negative grants on domain tables,
 //      append-only (no UPDATE/DELETE on history for worker roles)
@@ -17,12 +17,20 @@
 //   5. Concurrency: same-ID winner, conflicting replay rejected,
 //      dependency race (no cycle accepted)
 //   6. Prototype compatibility: all ledger operations work via pg adapter
+//   7. Guarded transition functions (fix round 2, TBP1-002): direct calls
+//      AS tb_coordinator are refused by the database itself — wrong-kind
+//      close/revoke, missing verification/evidence, same-head and
+//      binding-mismatched supersession, out-of-policy retention, and
+//      untrusted/revoked/mis-bound overrides all raise TB2xx errcodes
+//   8. Adapter provenance boundary (fix round 2, TBP1-004): the normalized
+//      filing contract — sourceId or a REGISTERED source identity only;
+//      incomplete or unregistered provenance is refused, never synthesized
 
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -62,17 +70,56 @@ function src(path, extra = {}) {
   return { repo: "onyxgolden/marketplace409", path, ...extra };
 }
 
+const HEX40 = (ch) => ch.repeat(40);
+
+// Normalized filing contract (fix round 2): obligations file against a
+// REGISTERED source identity. Tests seed synthetic source rows explicitly —
+// deterministic 40-hex commit/blob derived from the key — through whatever
+// pool is passed (admin pool for worker-role tests, so the worker only ever
+// resolves an existing source_id, exactly like production ingress).
+async function seedSourceObject(pool, key, extra = {}) {
+  const commit = extra.commit ?? createHash("sha1").update(`commit-${key}`).digest("hex");
+  const blob = extra.blob ?? createHash("sha1").update(`blob-${key}`).digest("hex");
+  const sourceId = `src-${key}`;
+  const repo = "onyxgolden/marketplace409";
+  const path = `results/team-brain/${key}.md`;
+  await pool.query(
+    `insert into team_brain.source_objects
+       (source_id, repo, path, commit, blob, algorithm, reviewed_head, byte_length,
+        content_sha256, source_class, observed_at, transport_receipt, provenance_status)
+     values ($1, $2, $3, $4, $5, 'git-sha1', null, 128, $6, 'TEST_FIXTURE', $7,
+             'test-transport', 'UNVERIFIED')
+     on conflict (source_id) do nothing`,
+    [
+      sourceId,
+      repo,
+      path,
+      commit,
+      blob,
+      createHash("sha256").update(`content-${key}`).digest("hex"),
+      T0,
+    ],
+  );
+  return { sourceId, repo, path, commit, blob };
+}
+
 function taskRecord(id, filedAt = T0, extra = {}) {
   return {
     id,
     kind: "TASK",
     filedAt,
-    source: src("scripts/team-brain/README.md"),
-    retentionDisposition: "test-only; never expire silently",
+    owner: "p1-test",
+    retentionDisposition: "PERMANENT",
     filedBy: "p1-test",
     filedReason: "p1-test",
     ...extra,
   };
+}
+
+// File a record against a freshly seeded source identity for its id.
+async function filed(repo, pool, record) {
+  const s = await seedSourceObject(pool, record.id);
+  return repo.fileObligation({ sourceId: s.sourceId, ...record });
 }
 
 function migrationSql() {
@@ -126,6 +173,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         team_brain.verification_receipts, team_brain.handoff_events,
         team_brain.handoffs, team_brain.obligation_events,
         team_brain.obligation_dependencies, team_brain.obligation_overrides,
+        team_brain.obligation_supersessions,
         team_brain.obligations, team_brain.trusted_authorizations,
         team_brain.principal_keys, team_brain.intake_events,
         team_brain.scan_cursors, team_brain.source_objects,
@@ -158,6 +206,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           "obligation_events",
           "obligation_dependencies",
           "obligation_overrides",
+          "obligation_supersessions",
           "principal_keys",
           "trusted_authorizations",
           "handoffs",
@@ -350,7 +399,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        const ob = await repo.fileObligation(taskRecord("p1-t1"));
+        const ob = await filed(repo, pool, taskRecord("p1-t1"));
         expect(ob.id).toBe("p1-t1");
         expect(ob.state).toBe("OPEN");
         expect(ob.kind).toBe("TASK");
@@ -365,7 +414,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
         // Bad kind triggers validation failure inside the transaction.
-        await expect(repo.fileObligation({ ...taskRecord("p1-bad"), kind: "NOPE" })).rejects.toThrow(/Invalid obligation kind/);
+        await expect(filed(repo, pool, { ...taskRecord("p1-bad"), kind: "NOPE" })).rejects.toThrow(/Invalid obligation kind/);
         const res = await pool.query(
           "select count(*)::int as n from team_brain.obligations where obligation_id = 'p1-bad'",
         );
@@ -385,8 +434,8 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
         const results = await Promise.allSettled([
-          repo.fileObligation(taskRecord("p1-race")),
-          repo.fileObligation(taskRecord("p1-race")),
+          filed(repo, pool, taskRecord("p1-race")),
+          filed(repo, pool, taskRecord("p1-race")),
         ]);
         const fulfilled = results.filter((r) => r.status === "fulfilled");
         const rejected = results.filter((r) => r.status === "rejected");
@@ -407,7 +456,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        await repo.fileObligation(taskRecord("p1-idem"));
+        await filed(repo, pool, taskRecord("p1-idem"));
         const a1 = await repo.appendAnnotation("p1-idem", {
           actor: "tester",
           recordedAt: T1,
@@ -431,7 +480,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        const before = await repo.fileObligation(taskRecord("p1-rv"));
+        const before = await filed(repo, pool, taskRecord("p1-rv"));
         const v0 = await pool.query(
           "select row_version from team_brain.obligations where obligation_id = 'p1-rv'",
         );
@@ -439,7 +488,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           actor: "tester",
           recordedAt: T1,
           reason: "test",
-          disposition: "retain-1y",
+          disposition: "RETAIN_1Y",
         });
         const v1 = await pool.query(
           "select row_version from team_brain.obligations where obligation_id = 'p1-rv'",
@@ -456,7 +505,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        await repo.fileObligation(taskRecord("p1-close"));
+        await filed(repo, pool, taskRecord("p1-close"));
         // Close without verification fails.
         await expect(
           repo.closeTask("p1-close", {
@@ -497,13 +546,16 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         // has no rows in it, so "unknown-grant" cannot resolve.
         const repo = createPostgresRepository(pool);
         await expect(
-          repo.fileObligation(
+          filed(
+            repo,
+            pool,
             taskRecord("p1-auth", T0, {
               priorityOverride: {
                 authorityRef: "unknown-grant",
-                item: "p1-auth",
-                rank: 1,
+                actor: "tester",
+                recordedAt: T0,
                 reason: "test",
+                rank: 1,
               },
             }),
           ),
@@ -522,8 +574,8 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        await repo.fileObligation(taskRecord("p1-d1"));
-        await repo.fileObligation(taskRecord("p1-d2"));
+        await filed(repo, pool, taskRecord("p1-d1"));
+        await filed(repo, pool, taskRecord("p1-d2"));
         // Genuinely concurrent: p1-d1->p1-d2 and p1-d2->p1-d1 fired at the
         // same time, not sequentially. tb_insert_dependency_edge serializes
         // on a cluster-wide advisory lock, so these two calls race for the
@@ -588,15 +640,20 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
 
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(workerPool);
-        await repo.fileObligation(taskRecord("p1-worker-1"));
-        await repo.fileObligation(
+        // Source identities are seeded through the ADMIN pool; the worker
+        // repo only resolves existing source_ids (it has SELECT on
+        // source_objects), exactly like production ingress.
+        await filed(repo, admin, taskRecord("p1-worker-1"));
+        await filed(
+          repo,
+          admin,
           taskRecord("p1-worker-2", T0, { dependencies: ["p1-worker-1"] }),
         );
         await repo.setRetentionDisposition("p1-worker-1", {
           actor: "t",
           recordedAt: T1,
           reason: "t",
-          disposition: "retain",
+          disposition: "PERMANENT",
         });
         await repo.recordVerification("p1-worker-1", {
           verifier: "t",
@@ -612,7 +669,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         });
         expect(closed.state).toBe("CLOSED");
 
-        await repo.fileObligation({ ...taskRecord("p1-worker-auth"), kind: "AUTHORIZATION" });
+        await filed(repo, admin, { ...taskRecord("p1-worker-auth"), kind: "AUTHORIZATION" });
         const revoked = await repo.revokeAuthorization("p1-worker-auth", {
           actor: "t",
           recordedAt: T2,
@@ -644,12 +701,16 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
+        const s1 = await seedSourceObject(pool, "p1-v1");
         const v1 = {
           id: "p1-v1",
           kind: "VERDICT",
           filedAt: T0,
-          source: { ...src("x.md"), head: "a".repeat(40) },
-          retentionDisposition: "retain",
+          owner: "p1-test",
+          sourceId: s1.sourceId,
+          resourceRepo: "onyxgolden/marketplace409",
+          reviewedHead: HEX40("a"),
+          retentionDisposition: "UNTIL_SUPERSEDED_AT_NEW_HEAD",
           filedBy: "t",
           filedReason: "t",
         };
@@ -657,18 +718,28 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
         await expect(
           repo.supersedeVerdict(
             "p1-v1",
-            { ...v1, id: "p1-v2", filedAt: T1, source: { ...src("x.md"), head: "a".repeat(40) } },
+            { ...v1, id: "p1-v2", filedAt: T1 },
             { actor: "t", recordedAt: T1, reason: "t" },
           ),
         ).rejects.toThrow(/same head/);
+        const s2 = await seedSourceObject(pool, "p1-v2");
         const { next } = await repo.supersedeVerdict(
           "p1-v1",
-          { ...v1, id: "p1-v2", filedAt: T1, source: { ...src("x.md"), head: "b".repeat(40) } },
+          { ...v1, id: "p1-v2", filedAt: T1, sourceId: s2.sourceId, reviewedHead: HEX40("b") },
           { actor: "t", recordedAt: T1, reason: "new head" },
         );
         expect(next.id).toBe("p1-v2");
         const old = await repo.getObligation("p1-v1");
         expect(old.state).toBe("SUPERSEDED");
+        // The supersession is a first-class relation row, and both ends of
+        // it are visible through the adapter's obligation view.
+        const rel = await pool.query(
+          `select count(*)::int as n from team_brain.obligation_supersessions
+           where old_obligation_id = 'p1-v1' and new_obligation_id = 'p1-v2'`,
+        );
+        expect(rel.rows[0].n).toBe(1);
+        expect(old.supersededBy).toBe("p1-v2");
+        expect(next.supersedes).toBe("p1-v1");
       } finally {
         await pool.end();
       }
@@ -679,13 +750,15 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        await repo.fileObligation({ ...taskRecord("p1-e1"), kind: "EVIDENCE" });
+        await filed(repo, pool, { ...taskRecord("p1-e1"), kind: "EVIDENCE" });
+        const s2 = await seedSourceObject(pool, "p1-e2");
         const { correction } = await repo.correctEvidence(
           "p1-e1",
-          { ...taskRecord("p1-e2"), kind: "EVIDENCE" },
+          { ...taskRecord("p1-e2"), kind: "EVIDENCE", sourceId: s2.sourceId },
           { actor: "t", recordedAt: T1, reason: "fix" },
         );
         expect(correction.id).toBe("p1-e2");
+        expect(correction.supersedes).toBe("p1-e1");
         const events = await repo.getEvents("p1-e1");
         expect(events.some((e) => e.eventType === "CORRECTION_FILED")).toBe(true);
       } finally {
@@ -698,7 +771,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
       try {
         const { createPostgresRepository } = await import("../postgres/repository.mjs");
         const repo = createPostgresRepository(pool);
-        await repo.fileObligation({ ...taskRecord("p1-a1"), kind: "AUTHORIZATION" });
+        await filed(repo, pool, { ...taskRecord("p1-a1"), kind: "AUTHORIZATION" });
         const revoked = await repo.revokeAuthorization("p1-a1", {
           actor: "t",
           recordedAt: T1,
@@ -739,6 +812,7 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           "obligation_dependencies",
           "obligation_events",
           "obligation_overrides",
+          "obligation_supersessions",
           "outbox",
           "principal_keys",
           "retrieval_evaluations",
@@ -755,6 +829,529 @@ describe.skipIf(!PgPool || !pgReachable)("P1 Postgres persistence", () => {
           .sort()
           .join(",");
         expect(tables).toBe(expected);
+      } finally {
+        await pool.end();
+      }
+    });
+  });
+
+  describe("guarded transition functions (direct calls as tb_coordinator)", () => {
+    // Fix round 2 (TBP1-002): the lifecycle predicates live in the database.
+    // These tests connect AS tb_coordinator and call the SECURITY DEFINER
+    // functions DIRECTLY — no adapter pre-checks in the path — and require
+    // the database itself to refuse every guard violation with its TB2xx
+    // errcode. pg surfaces the errcode on error.code (the message text does
+    // not embed it), so refusals are asserted with toMatchObject({ code }).
+    let admin;
+    let worker;
+    let adminRepo;
+    let workerRepo;
+
+    const T3 = "2026-10-15T18:03:00.000Z";
+
+    function verdictRecord(id, filedAt, head, extra = {}) {
+      return {
+        id,
+        kind: "VERDICT",
+        filedAt,
+        owner: "p1-test",
+        resourceRepo: "onyxgolden/marketplace409",
+        reviewedHead: head,
+        retentionDisposition: "UNTIL_SUPERSEDED_AT_NEW_HEAD",
+        filedBy: "p1-test",
+        filedReason: "p1-test",
+        ...extra,
+      };
+    }
+
+    async function seedGrants(targetId) {
+      await admin.query(
+        `insert into team_brain.trusted_authorizations
+           (grant_id, granter_principal_id, subject_ref, resource_repo,
+            allowed_operations, override_item, override_rank)
+         values
+           ('grant-valid', 'Jason', 'test', 'onyxgolden/marketplace409', 'OVERRIDE', $1, 1),
+           ('grant-revoked', 'Jason', 'test', 'onyxgolden/marketplace409', 'OVERRIDE', $1, 1),
+           ('grant-mallory', 'Mallory', 'test', 'onyxgolden/marketplace409', 'OVERRIDE', $1, 1),
+           ('grant-other-item', 'Jason', 'test', 'onyxgolden/marketplace409', 'OVERRIDE', 'someone-else', 1)`,
+        [targetId],
+      );
+      await admin.query(
+        "update team_brain.trusted_authorizations set revoked_at = now() where grant_id = 'grant-revoked'",
+      );
+    }
+
+    function overridePayload(extra = {}) {
+      return JSON.stringify({
+        authorityRef: "grant-valid",
+        actor: "t",
+        recordedAt: T0,
+        reason: "t",
+        rank: 1,
+        ...extra,
+      });
+    }
+
+    beforeAll(async () => {
+      admin = await freshMigratedPool();
+      // Test-only credential, provisioned outside the migration (TBP1-001)
+      // and reset in afterAll.
+      await admin.query("alter role tb_coordinator login password 'tb_p1_test_only'");
+      const url = new URL(TEST_URL);
+      url.pathname = `/${testDbName}`;
+      url.username = "tb_coordinator";
+      url.password = "tb_p1_test_only";
+      worker = new PgPool({ connectionString: url.toString(), max: 3 });
+      const { createPostgresRepository } = await import("../postgres/repository.mjs");
+      adminRepo = createPostgresRepository(admin);
+      workerRepo = createPostgresRepository(worker);
+    });
+
+    afterAll(async () => {
+      if (worker) await worker.end();
+      if (admin) {
+        await admin.query("alter role tb_coordinator nologin").catch(() => {});
+        await admin.end();
+      }
+    });
+
+    beforeEach(async () => {
+      await truncateAll(admin);
+    });
+
+    test("tb_close_task refuses a non-TASK obligation (TB202) and changes nothing", async () => {
+      const auth = await filed(adminRepo, admin, { ...taskRecord("g-auth"), kind: "AUTHORIZATION" });
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2)", [auth.id, ["e1"]]),
+      ).rejects.toMatchObject({ code: "TB202" });
+      const res = await admin.query(
+        "select state from team_brain.obligations where obligation_id = $1",
+        [auth.id],
+      );
+      expect(res.rows[0].state).toBe("OPEN");
+    });
+
+    test("tb_close_task refuses a task with no verification event (TB204)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-noverify"));
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2)", [task.id, ["e1"]]),
+      ).rejects.toMatchObject({ code: "TB204" });
+    });
+
+    test("tb_close_task refuses evidence not covered by verification (TB206)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-uncovered"));
+      await adminRepo.recordVerification(task.id, {
+        verifier: "t",
+        verifiedAt: T1,
+        reason: "t",
+        evidenceRefs: ["e1"],
+      });
+      await expect(
+        worker.query("select team_brain.tb_close_task($1, $2)", [task.id, ["e2"]]),
+      ).rejects.toMatchObject({ code: "TB206" });
+    });
+
+    test("tb_close_task closes directly when verification covers the evidence", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-close-ok"));
+      await workerRepo.recordVerification(task.id, {
+        verifier: "t",
+        verifiedAt: T1,
+        reason: "t",
+        evidenceRefs: ["e1"],
+      });
+      await worker.query("select team_brain.tb_close_task($1, $2)", [task.id, ["e1"]]);
+      const res = await admin.query(
+        "select state from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].state).toBe("CLOSED");
+    });
+
+    test("tb_revoke_authorization refuses a non-AUTHORIZATION obligation (TB202)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-task"));
+      await expect(
+        worker.query("select team_brain.tb_revoke_authorization($1)", [task.id]),
+      ).rejects.toMatchObject({ code: "TB202" });
+    });
+
+    test("tb_revoke_authorization refuses an already-terminal authorization (TB203)", async () => {
+      const auth = await filed(adminRepo, admin, { ...taskRecord("g-auth2"), kind: "AUTHORIZATION" });
+      await adminRepo.revokeAuthorization(auth.id, { actor: "t", recordedAt: T1, reason: "t" });
+      await expect(
+        worker.query("select team_brain.tb_revoke_authorization($1)", [auth.id]),
+      ).rejects.toMatchObject({ code: "TB203" });
+    });
+
+    test("tb_supersede_verdict refuses a same-head supersession (TB209)", async () => {
+      await filed(adminRepo, admin, verdictRecord("g-v1", T0, HEX40("a")));
+      await filed(adminRepo, admin, verdictRecord("g-v2", T1, HEX40("a")));
+      await expect(
+        worker.query("select team_brain.tb_supersede_verdict($1, $2, $3, $4, $5)", [
+          "g-v1",
+          "g-v2",
+          "t",
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB209" });
+    });
+
+    test("tb_supersede_verdict refuses a scope mismatch (TB207)", async () => {
+      await filed(adminRepo, admin, verdictRecord("g-s1", T0, HEX40("a"), { resourceScope: "scope-a" }));
+      await filed(adminRepo, admin, verdictRecord("g-s2", T1, HEX40("b"), { resourceScope: "scope-b" }));
+      await expect(
+        worker.query("select team_brain.tb_supersede_verdict($1, $2, $3, $4, $5)", [
+          "g-s1",
+          "g-s2",
+          "t",
+          "t",
+          T2,
+        ]),
+      ).rejects.toMatchObject({ code: "TB207" });
+    });
+
+    test("tb_supersede_verdict records relation + events + state atomically; a second supersession is refused (TB203)", async () => {
+      await filed(adminRepo, admin, verdictRecord("g-h1", T0, HEX40("a")));
+      await filed(adminRepo, admin, verdictRecord("g-h2", T1, HEX40("b")));
+      await filed(adminRepo, admin, verdictRecord("g-h3", T2, HEX40("c")));
+      await worker.query("select team_brain.tb_supersede_verdict($1, $2, $3, $4, $5)", [
+        "g-h1",
+        "g-h2",
+        "t",
+        "new head",
+        T2,
+      ]);
+      const rel = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_supersessions
+         where old_obligation_id = 'g-h1' and new_obligation_id = 'g-h2'`,
+      );
+      expect(rel.rows[0].n).toBe(1);
+      const old = await admin.query(
+        "select state from team_brain.obligations where obligation_id = 'g-h1'",
+      );
+      expect(old.rows[0].state).toBe("SUPERSEDED");
+      const ev = await admin.query(
+        `select count(*)::int as n from team_brain.obligation_events
+         where obligation_id = 'g-h1' and event_type = 'SUPERSEDED'`,
+      );
+      expect(ev.rows[0].n).toBe(1);
+      await expect(
+        worker.query("select team_brain.tb_supersede_verdict($1, $2, $3, $4, $5)", [
+          "g-h1",
+          "g-h3",
+          "t",
+          "t",
+          T3,
+        ]),
+      ).rejects.toMatchObject({ code: "TB203" });
+    });
+
+    test("tb_set_retention_disposition enforces the policy set (TB208)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ret"));
+      await expect(
+        worker.query("select team_brain.tb_set_retention_disposition($1, $2)", [task.id, "whenever lol"]),
+      ).rejects.toMatchObject({ code: "TB208" });
+      await worker.query("select team_brain.tb_set_retention_disposition($1, $2)", [
+        task.id,
+        "RETAIN_1Y",
+      ]);
+      const res = await admin.query(
+        "select retention_disposition from team_brain.obligations where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].retention_disposition).toBe("RETAIN_1Y");
+    });
+
+    test("tb_upsert_override refuses an unknown authority grant (TB215)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr"));
+      await seedGrants(task.id);
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overridePayload({ authorityRef: "nope" }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB215" });
+    });
+
+    test("tb_upsert_override refuses a revoked grant (TB217)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr"));
+      await seedGrants(task.id);
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overridePayload({ authorityRef: "grant-revoked" }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB217" });
+    });
+
+    test("tb_upsert_override refuses a grant not from Jason (TB216)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr"));
+      await seedGrants(task.id);
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          task.id,
+          overridePayload({ authorityRef: "grant-mallory" }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB216" });
+    });
+
+    test("tb_upsert_override refuses a grant bound to a different item (TB218)", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr"));
+      const other = await filed(adminRepo, admin, taskRecord("g-ovr-other"));
+      await seedGrants(task.id);
+      await expect(
+        worker.query("select team_brain.tb_upsert_override($1, $2)", [
+          other.id,
+          overridePayload({ authorityRef: "grant-valid" }),
+        ]),
+      ).rejects.toMatchObject({ code: "TB218" });
+    });
+
+    test("tb_upsert_override accepts a valid Jason grant and stores the row", async () => {
+      const task = await filed(adminRepo, admin, taskRecord("g-ovr"));
+      await seedGrants(task.id);
+      await worker.query("select team_brain.tb_upsert_override($1, $2)", [
+        task.id,
+        overridePayload(),
+      ]);
+      const res = await admin.query(
+        "select count(*)::int as n from team_brain.obligation_overrides where obligation_id = $1",
+        [task.id],
+      );
+      expect(res.rows[0].n).toBe(1);
+    });
+
+    test("tb_record_obligation_supersession refuses verdict endpoints (TB212)", async () => {
+      await filed(adminRepo, admin, verdictRecord("g-r1", T0, HEX40("a")));
+      await filed(adminRepo, admin, verdictRecord("g-r2", T1, HEX40("b")));
+      await expect(
+        worker.query("select team_brain.tb_record_obligation_supersession($1, $2, $3, $4)", [
+          "g-r1",
+          "g-r2",
+          "t",
+          "t",
+        ]),
+      ).rejects.toMatchObject({ code: "TB212" });
+    });
+
+    test("tb_mark_superseded no longer exists (unguarded marker removed in fix round 2)", async () => {
+      const res = await admin.query(
+        `select count(*)::int as n from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'team_brain' and p.proname = 'tb_mark_superseded'`,
+      );
+      expect(res.rows[0].n).toBe(0);
+    });
+  });
+
+  describe("adapter provenance boundary (normalized filing contract)", () => {
+    test("filing with a bare { repo, path } source is refused as INCOMPLETE_PROVENANCE and persists nothing", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        await expect(
+          repo.fileObligation({
+            ...taskRecord("pv-bare"),
+            source: { repo: "onyxgolden/marketplace409", path: "x.md" },
+          }),
+        ).rejects.toMatchObject({ code: "INCOMPLETE_PROVENANCE" });
+        const res = await pool.query(
+          "select count(*)::int as n from team_brain.obligations where obligation_id = 'pv-bare'",
+        );
+        expect(res.rows[0].n).toBe(0);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("filing with a complete but UNREGISTERED source identity is refused as INCOMPLETE_PROVENANCE", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        await expect(
+          repo.fileObligation({
+            ...taskRecord("pv-unreg"),
+            source: {
+              repo: "onyxgolden/marketplace409",
+              path: "x.md",
+              commit: HEX40("c"),
+              blob: HEX40("d"),
+            },
+          }),
+        ).rejects.toMatchObject({ code: "INCOMPLETE_PROVENANCE" });
+        const res = await pool.query(
+          "select count(*)::int as n from team_brain.obligations where obligation_id = 'pv-unreg'",
+        );
+        expect(res.rows[0].n).toBe(0);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("registerSourceObject then filing with that exact identity succeeds and binds the registered source_id", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        const reg = await repo.registerSourceObject({
+          sourceId: "src-pv-reg",
+          repo: "onyxgolden/marketplace409",
+          path: "results/team-brain/pv-reg.md",
+          commit: HEX40("c"),
+          blob: HEX40("d"),
+          byteLength: 42,
+          contentSha256: createHash("sha256").update("pv-reg").digest("hex"),
+          sourceClass: "TEST_FIXTURE",
+          observedAt: T0,
+          transportReceipt: "test-transport",
+        });
+        expect(reg.sourceId).toBe("src-pv-reg");
+        const ob = await repo.fileObligation({
+          ...taskRecord("pv-reg"),
+          source: { repo: reg.repo, path: reg.path, commit: reg.commit, blob: reg.blob },
+        });
+        const raw = await pool.query(
+          "select source_id from team_brain.obligations where obligation_id = 'pv-reg'",
+        );
+        expect(raw.rows[0].source_id).toBe("src-pv-reg");
+        expect(ob.source.commit).toBe(HEX40("c"));
+        expect(ob.source.blob).toBe(HEX40("d"));
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("filing with an unknown sourceId is refused as UNKNOWN_SOURCE", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        await expect(
+          repo.fileObligation({ ...taskRecord("pv-unknown"), sourceId: "src-does-not-exist" }),
+        ).rejects.toMatchObject({ code: "UNKNOWN_SOURCE" });
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("filing without an owner is refused", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        const s = await seedSourceObject(pool, "pv-noowner");
+        const rec = { ...taskRecord("pv-noowner"), sourceId: s.sourceId };
+        delete rec.owner;
+        await expect(repo.fileObligation(rec)).rejects.toThrow(/owner/i);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("registerSourceObject refuses to rebind a sourceId to a different identity", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        const base = {
+          sourceId: "src-pv-rebind",
+          repo: "onyxgolden/marketplace409",
+          path: "results/team-brain/pv-rebind.md",
+          commit: HEX40("c"),
+          blob: HEX40("d"),
+          byteLength: 42,
+          contentSha256: createHash("sha256").update("pv-rebind").digest("hex"),
+          sourceClass: "TEST_FIXTURE",
+          observedAt: T0,
+          transportReceipt: "test-transport",
+        };
+        await repo.registerSourceObject(base);
+        await expect(
+          repo.registerSourceObject({ ...base, blob: HEX40("e") }),
+        ).rejects.toThrow(/different identity/);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("a filed VERDICT row carries reviewed_head, resource_repo, and owner in the normalized columns", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        const s = await seedSourceObject(pool, "pv-verdict");
+        await repo.fileObligation({
+          id: "pv-verdict",
+          kind: "VERDICT",
+          filedAt: T0,
+          owner: "p1-test",
+          sourceId: s.sourceId,
+          resourceRepo: "onyxgolden/marketplace409",
+          reviewedHead: HEX40("e"),
+          retentionDisposition: "UNTIL_SUPERSEDED_AT_NEW_HEAD",
+          filedBy: "t",
+          filedReason: "t",
+        });
+        const raw = await pool.query(
+          `select reviewed_head, resource_repo, owner from team_brain.obligations
+           where obligation_id = 'pv-verdict'`,
+        );
+        expect(raw.rows[0].reviewed_head).toBe(HEX40("e"));
+        expect(raw.rows[0].resource_repo).toBe("onyxgolden/marketplace409");
+        expect(raw.rows[0].owner).toBeTruthy();
+      } finally {
+        await pool.end();
+      }
+    });
+
+    test("a refused supersession rolls back: no new obligation row, no supersession relation", async () => {
+      const pool = await freshMigratedPool();
+      try {
+        const { createPostgresRepository } = await import("../postgres/repository.mjs");
+        const repo = createPostgresRepository(pool);
+        const sOld = await seedSourceObject(pool, "pv-old");
+        await repo.fileObligation({
+          id: "pv-old",
+          kind: "VERDICT",
+          filedAt: T0,
+          owner: "p1-test",
+          sourceId: sOld.sourceId,
+          resourceRepo: "onyxgolden/marketplace409",
+          reviewedHead: HEX40("a"),
+          retentionDisposition: "UNTIL_SUPERSEDED_AT_NEW_HEAD",
+          filedBy: "t",
+          filedReason: "t",
+        });
+        const sNew = await seedSourceObject(pool, "pv-new");
+        await expect(
+          repo.supersedeVerdict(
+            "pv-old",
+            {
+              id: "pv-new",
+              kind: "VERDICT",
+              filedAt: T1,
+              owner: "p1-test",
+              sourceId: sNew.sourceId,
+              resourceRepo: "onyxgolden/marketplace409",
+              reviewedHead: HEX40("a"),
+              retentionDisposition: "UNTIL_SUPERSEDED_AT_NEW_HEAD",
+              filedBy: "t",
+              filedReason: "t",
+            },
+            { actor: "t", recordedAt: T1, reason: "same head" },
+          ),
+        ).rejects.toMatchObject({ code: "SAME_HEAD_SUPERSESSION" });
+        const rows = await pool.query(
+          "select count(*)::int as n from team_brain.obligations where obligation_id = 'pv-new'",
+        );
+        expect(rows.rows[0].n).toBe(0);
+        const rel = await pool.query(
+          `select count(*)::int as n from team_brain.obligation_supersessions
+           where old_obligation_id = 'pv-old' or new_obligation_id = 'pv-new'`,
+        );
+        expect(rel.rows[0].n).toBe(0);
       } finally {
         await pool.end();
       }

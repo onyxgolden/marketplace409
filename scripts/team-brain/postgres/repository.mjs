@@ -2,18 +2,33 @@
 //
 // Replaces the prototype's optional non-transactional fallback. Every
 // lifecycle transition runs inside an explicit BEGIN/COMMIT/ROLLBACK on a
-// single dedicated connection from the pool. Row locks (SELECT ... FOR
-// UPDATE) guard lifecycle transitions; serialization (40001) and deadlock
-// (40P01) errors retry with a bounded limit under the SAME operation ID,
-// so a retry never creates a duplicate logical operation.
+// single dedicated connection from the pool. Lifecycle transitions are
+// serialized by the guarded SECURITY DEFINER functions, which lock the
+// target rows (SELECT ... FOR UPDATE, as tb_owner) and re-validate every
+// predicate under the lock; serialization (40001) and deadlock (40P01)
+// errors retry with a bounded limit under the SAME operation ID, so a
+// retry never creates a duplicate logical operation.
 //
 // Boundaries (brief Section 3, P1):
 //   - No Git network, no daemon, no migration apply in this adapter.
 //   - Statement timeout 5s, lock wait 1s (brief Section 7).
 //   - Never hold a transaction while waiting on Git/network (no Git here).
 //
-// The public API mirrors ledger/repository.mjs so the 68 prototype tests
-// run unchanged against this adapter (with a real Postgres backend).
+// Filing contract (fix round 2, TBP1-004): the adapter targets the
+// NORMALIZED production schema, not the prototype's flat source columns.
+// An obligation is filed against a validated source identity — either an
+// existing source_id, or a source { repo, path, commit, blob } identity that
+// is already registered in team_brain.source_objects (see
+// registerSourceObject). owner is required on every record; VERDICT
+// obligations additionally require a reviewed head (record.reviewedHead or
+// source.head). The adapter boundary refuses incomplete provenance: it never
+// synthesizes content_sha256, byte_length, source_class, observed_at, or
+// transport_receipt, because doing so would turn incomplete provenance into
+// trusted persistence. Provenance is registered first, by an explicit
+// registerSourceObject call or an earlier trusted-ingress slice.
+// Lifecycle transitions run through the guarded SECURITY DEFINER functions
+// in the migration (TB2xx errcodes); mapGuardError translates those onto the
+// adapter's typed codes so direct-call and adapter-call refusals agree.
 
 import { CODES, fail, TeamBrainError } from "../ledger/errors.mjs";
 import {
@@ -30,6 +45,66 @@ const KINDS = ["TASK", "AUTHORIZATION", "VERDICT", "EVIDENCE"];
 const TERMINAL_STATES = ["CLOSED", "REVOKED", "SUPERSEDED"];
 const ANNOTATION_EVENT_TYPES = ["NOTE", "REPING_SENT", "REPORT_TO_JASON_SENT"];
 
+// Closed retention-disposition policy set. Mirrors the domain enforced in
+// the database by tb_set_retention_disposition (TB208) and the persistence
+// contract's Section 1 language: a task closes only on verified completion;
+// an authorization stands until explicitly revoked; a verdict stands until
+// superseded at a new head; evidence is immutable, corrections link.
+export const RETENTION_DISPOSITIONS = [
+  "PERMANENT",
+  "UNTIL_VERIFIED_COMPLETION",
+  "UNTIL_EXPLICITLY_REVOKED",
+  "UNTIL_SUPERSEDED_AT_NEW_HEAD",
+  "IMMUTABLE_CORRECTIONS_LINK",
+  "RETAIN_1Y",
+  "RETAIN_7Y",
+  "ARCHIVE_AFTER_30D",
+];
+
+const HEX40_RE = /^[0-9a-f]{40}$/;
+const HEX64_RE = /^[0-9a-f]{64}$/;
+
+function assertRetentionDisposition(value) {
+  assertNonEmptyString(value, "retentionDisposition");
+  if (!RETENTION_DISPOSITIONS.includes(value)) {
+    fail(
+      CODES.INVALID_RETENTION_DISPOSITION,
+      `Retention disposition ${JSON.stringify(value)} is not in the policy set`,
+      { disposition: value },
+    );
+  }
+  return value;
+}
+
+// Translate a guarded-function TB2xx errcode onto the adapter's typed error
+// codes. TB202 (wrong kind) has no single adapter code — the caller passes
+// the kind-specific code (NOT_A_TASK / NOT_AN_AUTHORIZATION / NOT_A_VERDICT);
+// anything unmapped is rethrown untouched.
+function mapGuardError(err, kindCode = CODES.ILLEGAL_STATE_TRANSITION) {
+  const map = {
+    TB201: CODES.UNKNOWN_OBLIGATION,
+    TB202: kindCode,
+    TB203: CODES.ALREADY_TERMINAL,
+    TB204: CODES.NO_VERIFICATION,
+    TB205: CODES.MISSING_EVIDENCE,
+    TB206: CODES.UNVERIFIED_EVIDENCE,
+    TB207: CODES.SUPERSESSION_BINDING_MISMATCH,
+    TB208: CODES.INVALID_RETENTION_DISPOSITION,
+    TB209: CODES.SAME_HEAD_SUPERSESSION,
+    TB210: CODES.STALE_VERDICT_SUPERSESSION,
+    TB215: CODES.UNKNOWN_AUTHORITY,
+    TB216: CODES.INVALID_OVERRIDE,
+    TB217: CODES.INVALID_OVERRIDE,
+    TB218: CODES.INVALID_OVERRIDE,
+    TB219: CODES.INVALID_OVERRIDE,
+  };
+  const mapped = err && typeof err.code === "string" ? map[err.code] : undefined;
+  if (mapped) {
+    throw new TeamBrainError(mapped, err.message, {});
+  }
+  throw err;
+}
+
 // Postgres error codes that are safe to retry with the same operation ID.
 const RETRYABLE_CODES = new Set(["40001", "40P01"]);
 const MAX_TX_RETRIES = 3;
@@ -38,30 +113,33 @@ function isRetryable(err) {
   return err && typeof err.code === "string" && RETRYABLE_CODES.has(err.code);
 }
 
-function rowToObligation(row, dependencies) {
+function rowToObligation(row, dependencies, links = {}) {
+  const iso = (v) => (v instanceof Date ? v.toISOString() : v);
   return {
     id: row.obligation_id,
     kind: row.kind,
-    filedAt: row.filed_at instanceof Date ? row.filed_at.toISOString() : row.filed_at,
-    source: {
-      repo: row.source_repo,
-      path: row.source_path,
-      commit: row.source_commit,
-      blob: row.source_blob,
-      head: row.source_head,
-    },
+    filedAt: iso(row.filed_at),
+    sourceId: row.source_id,
+    source: row.so_repo
+      ? {
+          repo: row.so_repo,
+          path: row.so_path,
+          commit: row.so_commit,
+          blob: row.so_blob,
+          head: row.reviewed_head ?? row.so_reviewed_head ?? undefined,
+        }
+      : null,
+    owner: row.owner,
+    resourceRepo: row.resource_repo,
+    resourceScope: row.resource_scope,
+    reviewedHead: row.reviewed_head,
     state: row.state,
     retentionDisposition: row.retention_disposition,
     dependencies: dependencies || [],
-    supersedes: row.supersedes,
-    supersededBy: row.superseded_by,
-    priorityOverride: row.priority_override
-      ? typeof row.priority_override === "string"
-        ? JSON.parse(row.priority_override)
-        : row.priority_override
-      : null,
-    createdAt:
-      row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    supersedes: links.supersedes ?? null,
+    supersededBy: links.supersededBy ?? null,
+    priorityOverride: row.ov_override_json ? JSON.parse(row.ov_override_json) : null,
+    createdAt: iso(row.created_at),
   };
 }
 
@@ -117,22 +195,52 @@ export function createPostgresRepository(pool) {
     throw lastErr;
   }
 
+  // Joined read: the obligation row plus its registered source identity and
+  // priority override, so rowToObligation never invents flat source columns.
+  const OBLIGATION_SELECT = `
+    select o.*, s.repo as so_repo, s.path as so_path, s.commit as so_commit,
+           s.blob as so_blob, s.reviewed_head as so_reviewed_head,
+           ov.override_json as ov_override_json
+      from team_brain.obligations o
+      left join team_brain.source_objects s on s.source_id = o.source_id
+      left join team_brain.obligation_overrides ov on ov.obligation_id = o.obligation_id`;
+
   async function getRaw(runner, id) {
-    const res = await runner.query(
-      "select * from team_brain.obligations where obligation_id = $1",
-      [id],
-    );
+    const res = await runner.query(`${OBLIGATION_SELECT} where o.obligation_id = $1`, [id]);
     return res.rows[0] || null;
   }
 
-  // Row-locked read for lifecycle transitions. The FOR UPDATE lock is held
-  // until commit, serializing concurrent transitions on the same obligation.
+  // Pre-transition read for lifecycle methods. This deliberately takes NO
+  // row lock: PostgreSQL requires UPDATE privilege for every row-lock mode
+  // (FOR UPDATE / FOR NO KEY UPDATE / FOR SHARE / FOR KEY SHARE alike), and
+  // tb_coordinator holds no UPDATE on obligations by design (TBP1-002) — a
+  // locking read would fail 42501 for the worker role before any guarded
+  // function ran (verified against the migration: plain SELECT is allowed,
+  // all four lock modes are denied). Serialization lives in the guarded
+  // SECURITY DEFINER functions instead: each locks the target row(s)
+  // SELECT ... FOR UPDATE as tb_owner and re-validates every predicate
+  // under that lock, so the adapter's pre-checks here are fast-fail only
+  // and no invariant depends on them.
   async function getRawForUpdate(runner, id) {
+    const res = await runner.query(`${OBLIGATION_SELECT} where o.obligation_id = $1`, [id]);
+    return res.rows[0] || null;
+  }
+
+  // Supersession links for one obligation from the append-only
+  // obligation_supersessions relation (earliest recorded row wins).
+  async function getSupersessionLinks(runner, id) {
     const res = await runner.query(
-      "select * from team_brain.obligations where obligation_id = $1 for update",
+      `select old_obligation_id, new_obligation_id from team_brain.obligation_supersessions
+        where old_obligation_id = $1 or new_obligation_id = $1 order by recorded_at asc`,
       [id],
     );
-    return res.rows[0] || null;
+    let supersedes = null;
+    let supersededBy = null;
+    for (const r of res.rows) {
+      if (r.old_obligation_id === id && supersededBy === null) supersededBy = r.new_obligation_id;
+      if (r.new_obligation_id === id && supersedes === null) supersedes = r.old_obligation_id;
+    }
+    return { supersedes, supersededBy };
   }
 
   async function requireObligation(runner, id, { forUpdate = false } = {}) {
@@ -140,7 +248,71 @@ export function createPostgresRepository(pool) {
     if (!row) {
       fail(CODES.UNKNOWN_OBLIGATION, `Unknown obligation: ${id}`, { id });
     }
-    return rowToObligation(row, await getDependencyIds(runner, id));
+    return rowToObligation(
+      row,
+      await getDependencyIds(runner, id),
+      await getSupersessionLinks(runner, id),
+    );
+  }
+
+  // Resolve a filing record to a registered source_id, or refuse. The
+  // adapter NEVER synthesizes provenance fields (content_sha256, byte_length,
+  // source_class, observed_at, transport_receipt): a source identity must
+  // already be registered in source_objects (registerSourceObject), because
+  // inventing those fields would turn incomplete provenance into trusted
+  // persistence.
+  async function resolveSourceId(runner, record) {
+    if (record.sourceId != null) {
+      assertNonEmptyString(record.sourceId, "sourceId");
+      const res = await runner.query(
+        "select source_id from team_brain.source_objects where source_id = $1",
+        [record.sourceId],
+      );
+      if (res.rows.length === 0) {
+        fail(CODES.UNKNOWN_SOURCE, `Unknown source_id: ${record.sourceId}`, {
+          sourceId: record.sourceId,
+        });
+      }
+      return record.sourceId;
+    }
+    if (record.source) {
+      const source = assertSourceBinding(record.source);
+      const missing = [];
+      if (!source.commit) missing.push("commit");
+      if (!source.blob) missing.push("blob");
+      if (missing.length > 0) {
+        fail(
+          CODES.INCOMPLETE_PROVENANCE,
+          `Source identity for ${record.id} is missing ${missing.join(", ")}; the adapter never synthesizes content_sha256, byte_length, source_class, observed_at, or transport_receipt — provenance must be registered first (registerSourceObject or an existing source_id)`,
+          { id: record.id, missing },
+        );
+      }
+      if (!HEX40_RE.test(source.commit) || !HEX40_RE.test(source.blob)) {
+        fail(
+          CODES.INCOMPLETE_PROVENANCE,
+          `Source identity for ${record.id} must carry full 40-hex commit and blob`,
+          { id: record.id },
+        );
+      }
+      const res = await runner.query(
+        `select source_id from team_brain.source_objects
+          where repo = $1 and path = $2 and commit = $3 and blob = $4`,
+        [source.repo, source.path, source.commit, source.blob],
+      );
+      if (res.rows.length === 0) {
+        fail(
+          CODES.INCOMPLETE_PROVENANCE,
+          `Source identity for ${record.id} is not registered in source_objects; register provenance first (registerSourceObject)`,
+          { id: record.id },
+        );
+      }
+      return res.rows[0].source_id;
+    }
+    fail(
+      CODES.MISSING_SOURCE_BINDING,
+      `Obligation ${record.id} requires a sourceId or a registered source identity`,
+      { id: record.id },
+    );
   }
 
   async function getDependencyIds(runner, id) {
@@ -256,7 +428,7 @@ export function createPostgresRepository(pool) {
       id,
       kind,
       filedAt,
-      source,
+      owner,
       retentionDisposition,
       dependencies = [],
       supersedes = null,
@@ -267,8 +439,10 @@ export function createPostgresRepository(pool) {
       fail(CODES.INVALID_KIND, `Invalid obligation kind: ${JSON.stringify(kind)}`, { kind });
     }
     assertUtcIso(filedAt, "filedAt");
-    assertSourceBinding(source, { requireHead: kind === "VERDICT" });
-    assertNonEmptyString(retentionDisposition, "retentionDisposition");
+    if (typeof owner !== "string" || owner.trim() === "") {
+      fail(CODES.INVALID_FIELD, "owner is required", { id, field: "owner" });
+    }
+    assertRetentionDisposition(retentionDisposition);
     assertUniqueStringArray(dependencies, "dependencies");
     if (dependencies.includes(id)) {
       fail(CODES.SELF_DEPENDENCY, `Obligation ${id} may not depend on itself`, { id });
@@ -290,6 +464,24 @@ export function createPostgresRepository(pool) {
         fail(CODES.UNKNOWN_OBLIGATION, `Supersession target does not exist: ${supersedes}`, { id: supersedes });
       }
     }
+    // Normalized filing: provenance resolves to a registered source_id or
+    // the filing is refused at this boundary (never synthesized).
+    const sourceId = await resolveSourceId(runner, record);
+    const reviewedHead = record.reviewedHead ?? record.source?.head ?? null;
+    if (kind === "VERDICT" && !reviewedHead) {
+      fail(CODES.MISSING_SOURCE_BINDING, "VERDICT obligations require a reviewed head", { id });
+    }
+    if (reviewedHead !== null && !HEX40_RE.test(reviewedHead)) {
+      fail(CODES.INVALID_FIELD, `reviewedHead for ${id} must be a full 40-hex head`, {
+        id,
+        field: "reviewedHead",
+      });
+    }
+    const resourceRepo = record.resourceRepo ?? record.source?.repo ?? null;
+    const resourceScope = record.resourceScope ?? null;
+    // Trust is validated BEFORE anything persists, against the live
+    // trusted_authorizations rows in this same transaction; the guarded
+    // tb_upsert_override re-validates inside the database after insert.
     if (priorityOverride !== null) {
       validateOverride(id, priorityOverride, {
         trustedAuthorizations: await loadTrustedAuthorizations(runner),
@@ -300,20 +492,19 @@ export function createPostgresRepository(pool) {
     try {
       await runner.query(
         `insert into team_brain.obligations
-           (obligation_id, kind, filed_at, source_repo, source_path, source_commit, source_blob,
-            source_head, state, retention_disposition, supersedes, created_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,'OPEN',$9,$10,$11)`,
+           (obligation_id, kind, filed_at, source_id, resource_repo, resource_scope,
+            reviewed_head, owner, state, retention_disposition, created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'OPEN',$9,$10)`,
         [
           id,
           kind,
           filedAt,
-          source.repo,
-          source.path,
-          source.commit ?? null,
-          source.blob ?? null,
-          source.head ?? null,
+          sourceId,
+          resourceRepo,
+          resourceScope,
+          reviewedHead,
+          owner,
           retentionDisposition,
-          supersedes,
           createdAt,
         ],
       );
@@ -324,13 +515,8 @@ export function createPostgresRepository(pool) {
       }
       throw err;
     }
-    // Priority override stored separately to keep the insert above simple;
-    // updated under the same row lock in this transaction.
     if (priorityOverride !== null) {
-      await runner.query(
-        "update team_brain.obligations set priority_override = $1 where obligation_id = $2",
-        [JSON.stringify(priorityOverride), id],
-      );
+      await upsertOverride(runner, id, priorityOverride);
     }
     if (!internal.allowForwardRefs) {
       for (const dep of dependencies) {
@@ -344,6 +530,19 @@ export function createPostgresRepository(pool) {
       }
     }
     await insertDependencyEdges(runner, id, dependencies);
+    // Filing-time supersession link for non-verdict kinds, recorded through
+    // the guarded recorder (verdict supersession goes through
+    // tb_supersede_verdict via supersedeVerdict instead).
+    if (supersedes !== null && !internal.verdictSupersession) {
+      try {
+        await runner.query(
+          "select team_brain.tb_record_obligation_supersession($1, $2, $3, $4)",
+          [supersedes, id, record.filedBy || "system", record.filedReason || "filed with supersession link"],
+        );
+      } catch (err) {
+        mapGuardError(err);
+      }
+    }
     await insertEvent(runner, id, {
       actor: record.filedBy || "system",
       recordedAt: filedAt,
@@ -362,10 +561,14 @@ export function createPostgresRepository(pool) {
   // schema). Writes go through tb_upsert_override; tb_coordinator only has
   // SELECT on the table itself.
   async function upsertOverride(runner, obligationId, override) {
-    await runner.query("select team_brain.tb_upsert_override($1, $2)", [
-      obligationId,
-      JSON.stringify(override),
-    ]);
+    try {
+      await runner.query("select team_brain.tb_upsert_override($1, $2)", [
+        obligationId,
+        JSON.stringify(override),
+      ]);
+    } catch (err) {
+      mapGuardError(err, CODES.INVALID_OVERRIDE);
+    }
   }
 
   return {
@@ -384,20 +587,114 @@ export function createPostgresRepository(pool) {
       await runner.query(sql);
     },
 
+    // Register an immutable source identity. This is the ONLY way provenance
+    // fields (content_sha256, byte_length, source_class, observed_at,
+    // transport_receipt) enter the system: explicitly, from the caller that
+    // observed them — the adapter never synthesizes them at filing time.
+    // Re-registering the same source_id with the same identity is a no-op;
+    // a different identity under the same source_id is refused.
+    async registerSourceObject(record) {
+      return tx(async (t) => {
+        const sourceId = assertNonEmptyString(record.sourceId, "sourceId");
+        const repo = assertNonEmptyString(record.repo, "repo");
+        const path = assertNonEmptyString(record.path, "path");
+        if (!HEX40_RE.test(record.commit || "")) {
+          fail(CODES.INVALID_FIELD, "commit must be a full 40-hex value", { field: "commit" });
+        }
+        if (!HEX40_RE.test(record.blob || "")) {
+          fail(CODES.INVALID_FIELD, "blob must be a full 40-hex value", { field: "blob" });
+        }
+        const algorithm = record.algorithm ?? "git-sha1";
+        if (!["git-sha1", "sha256"].includes(algorithm)) {
+          fail(CODES.INVALID_FIELD, `Invalid source algorithm: ${JSON.stringify(algorithm)}`, {
+            field: "algorithm",
+          });
+        }
+        const reviewedHead = record.reviewedHead ?? null;
+        if (reviewedHead !== null && !HEX40_RE.test(reviewedHead)) {
+          fail(CODES.INVALID_FIELD, "reviewedHead must be a full 40-hex value when present", {
+            field: "reviewedHead",
+          });
+        }
+        if (!Number.isInteger(record.byteLength) || record.byteLength < 0) {
+          fail(CODES.INVALID_FIELD, "byteLength is required and must be an integer >= 0", {
+            field: "byteLength",
+          });
+        }
+        if (!HEX64_RE.test(record.contentSha256 || "")) {
+          fail(CODES.INVALID_FIELD, "contentSha256 is required and must be a full 64-hex SHA-256", {
+            field: "contentSha256",
+          });
+        }
+        const sourceClass = assertNonEmptyString(record.sourceClass, "sourceClass");
+        const observedAt = assertUtcIso(record.observedAt, "observedAt");
+        const transportReceipt = assertNonEmptyString(record.transportReceipt, "transportReceipt");
+        const provenanceStatus = record.provenanceStatus ?? "UNVERIFIED";
+        if (!["UNVERIFIED", "VERIFIED", "AUTH_UNVERIFIED", "REJECTED"].includes(provenanceStatus)) {
+          fail(CODES.INVALID_FIELD, `Invalid provenanceStatus: ${JSON.stringify(provenanceStatus)}`, {
+            field: "provenanceStatus",
+          });
+        }
+        await t.query(
+          `insert into team_brain.source_objects
+             (source_id, repo, path, commit, blob, algorithm, reviewed_head, byte_length,
+              content_sha256, source_class, observed_at, transport_receipt, provenance_status)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           on conflict (source_id) do nothing`,
+          [
+            sourceId,
+            repo,
+            path,
+            record.commit,
+            record.blob,
+            algorithm,
+            reviewedHead,
+            record.byteLength,
+            record.contentSha256,
+            sourceClass,
+            observedAt,
+            transportReceipt,
+            provenanceStatus,
+          ],
+        );
+        const res = await t.query(
+          "select * from team_brain.source_objects where source_id = $1",
+          [sourceId],
+        );
+        const row = res.rows[0];
+        if (
+          !row ||
+          row.repo !== repo ||
+          row.path !== path ||
+          row.commit !== record.commit ||
+          row.blob !== record.blob
+        ) {
+          fail(CODES.INVALID_FIELD, "source_id already registered with a different identity", {
+            sourceId,
+          });
+        }
+        return {
+          sourceId: row.source_id,
+          repo: row.repo,
+          path: row.path,
+          commit: row.commit,
+          blob: row.blob,
+          algorithm: row.algorithm,
+          reviewedHead: row.reviewed_head,
+          byteLength: Number(row.byte_length),
+          contentSha256: row.content_sha256,
+          sourceClass: row.source_class,
+          observedAt:
+            row.observed_at instanceof Date ? row.observed_at.toISOString() : row.observed_at,
+          transportReceipt: row.transport_receipt,
+          provenanceStatus: row.provenance_status,
+        };
+      });
+    },
+
     async fileObligation(record, createdAt) {
       return tx(
-        async (t) => {
-          // Store override via side table; fileObligationRow handles validation.
-          const rec = { ...record };
-          const override = rec.priorityOverride ?? null;
-          delete rec.priorityOverride;
-          const created = await fileObligationRow(t, rec, createdAt || record.filedAt);
-          if (override !== null) {
-            await upsertOverride(t, created.id, override);
-            return { ...created, priorityOverride: override };
-          }
-          return created;
-        },
+        async (t) => fileObligationRow(t, record, createdAt || record.filedAt),
         { operationId: `file:${record.id}` },
       );
     },
@@ -409,16 +706,11 @@ export function createPostgresRepository(pool) {
       return tx(async (t) => {
         const created = [];
         for (const record of records) {
-          const rec = { ...record };
-          const override = rec.priorityOverride ?? null;
-          delete rec.priorityOverride;
-          const c = await fileObligationRow(t, rec, createdAt || record.filedAt, { allowForwardRefs: true });
-          if (override !== null) {
-            await upsertOverride(t, c.id, override);
-            created.push({ ...c, priorityOverride: override });
-          } else {
-            created.push(c);
-          }
+          created.push(
+            await fileObligationRow(t, record, createdAt || record.filedAt, {
+              allowForwardRefs: true,
+            }),
+          );
         }
         return created;
       });
@@ -432,7 +724,7 @@ export function createPostgresRepository(pool) {
       const client = await pool.connect();
       try {
         const res = await client.query(
-          "select * from team_brain.obligations order by filed_at asc, obligation_id asc",
+          `${OBLIGATION_SELECT} order by o.filed_at asc, o.obligation_id asc`,
         );
         const depRes = await client.query(
           "select obligation_id, depends_on_id from team_brain.obligation_dependencies order by obligation_id asc, depends_on_id asc",
@@ -442,7 +734,21 @@ export function createPostgresRepository(pool) {
           if (!depMap.has(r.obligation_id)) depMap.set(r.obligation_id, []);
           depMap.get(r.obligation_id).push(r.depends_on_id);
         }
-        return res.rows.map((row) => rowToObligation(row, depMap.get(row.obligation_id) || []));
+        const supRes = await client.query(
+          "select old_obligation_id, new_obligation_id from team_brain.obligation_supersessions order by recorded_at asc",
+        );
+        const linkMap = new Map();
+        for (const r of supRes.rows) {
+          const oldLinks = linkMap.get(r.old_obligation_id) || { supersedes: null, supersededBy: null };
+          if (oldLinks.supersededBy === null) oldLinks.supersededBy = r.new_obligation_id;
+          linkMap.set(r.old_obligation_id, oldLinks);
+          const newLinks = linkMap.get(r.new_obligation_id) || { supersedes: null, supersededBy: null };
+          if (newLinks.supersedes === null) newLinks.supersedes = r.old_obligation_id;
+          linkMap.set(r.new_obligation_id, newLinks);
+        }
+        return res.rows.map((row) =>
+          rowToObligation(row, depMap.get(row.obligation_id) || [], linkMap.get(row.obligation_id) || {}),
+        );
       } finally {
         client.release();
       }
@@ -483,10 +789,14 @@ export function createPostgresRepository(pool) {
     },
 
     async setRetentionDisposition(id, { actor, recordedAt, reason, disposition }) {
-      assertNonEmptyString(disposition, "disposition");
+      assertRetentionDisposition(disposition);
       return tx(async (t) => {
         await requireObligation(t, id, { forUpdate: true });
-        await t.query("select team_brain.tb_set_retention_disposition($1, $2)", [id, disposition]);
+        try {
+          await t.query("select team_brain.tb_set_retention_disposition($1, $2)", [id, disposition]);
+        } catch (err) {
+          mapGuardError(err, CODES.ILLEGAL_STATE_TRANSITION);
+        }
         await insertEvent(t, id, {
           actor,
           recordedAt,
@@ -548,7 +858,11 @@ export function createPostgresRepository(pool) {
             { id, uncovered },
           );
         }
-        await t.query("select team_brain.tb_close_task($1)", [id]);
+        try {
+          await t.query("select team_brain.tb_close_task($1, $2)", [id, evidenceRefs]);
+        } catch (err) {
+          mapGuardError(err, CODES.NOT_A_TASK);
+        }
         await insertEvent(t, id, { actor, recordedAt, eventType: "CLOSED", reason, evidenceRefs });
         return requireObligation(t, id);
       });
@@ -559,7 +873,11 @@ export function createPostgresRepository(pool) {
         const ob = await requireObligation(t, id, { forUpdate: true });
         requireKind(ob, "AUTHORIZATION", CODES.NOT_AN_AUTHORIZATION);
         requireOpen(ob);
-        await t.query("select team_brain.tb_revoke_authorization($1)", [id]);
+        try {
+          await t.query("select team_brain.tb_revoke_authorization($1)", [id]);
+        } catch (err) {
+          mapGuardError(err, CODES.NOT_AN_AUTHORIZATION);
+        }
         await insertEvent(t, id, { actor, recordedAt, eventType: "REVOKED", reason, evidenceRefs: [] });
         return requireObligation(t, id);
       });
@@ -570,8 +888,8 @@ export function createPostgresRepository(pool) {
         const old = await requireObligation(t, oldId, { forUpdate: true });
         requireKind(old, "VERDICT", CODES.NOT_A_VERDICT);
         requireOpen(old);
-        const oldHead = old.source.head;
-        const newHead = newRecord.source && newRecord.source.head;
+        const oldHead = old.reviewedHead ?? (old.source && old.source.head);
+        const newHead = newRecord.reviewedHead ?? (newRecord.source && newRecord.source.head);
         if (!newHead) {
           fail(CODES.SUPERSESSION_HEAD_MISSING, `Superseding verdict must bind a new reviewed head`, { oldId });
         }
@@ -589,24 +907,45 @@ export function createPostgresRepository(pool) {
             { oldId, oldFiledAt: old.filedAt, newFiledAt: newRecord.filedAt },
           );
         }
-        const rec = { ...newRecord };
-        delete rec.priorityOverride;
+        // Binding pre-check (the guarded DB function re-checks this as
+        // TB207): the new verdict must bind the same resource repo/scope.
+        const newRepo = newRecord.resourceRepo ?? (newRecord.source && newRecord.source.repo) ?? null;
+        if (old.resourceRepo != null && newRepo != null && old.resourceRepo !== newRepo) {
+          fail(
+            CODES.SUPERSESSION_BINDING_MISMATCH,
+            `Verdict ${oldId} is bound to repo ${old.resourceRepo}; superseding verdict binds ${newRepo}`,
+            { oldId, oldRepo: old.resourceRepo, newRepo },
+          );
+        }
+        const newScope = newRecord.resourceScope ?? null;
+        if ((old.resourceScope ?? null) !== newScope) {
+          fail(
+            CODES.SUPERSESSION_BINDING_MISMATCH,
+            `Verdict ${oldId} is bound to scope ${old.resourceScope}; superseding verdict binds ${newScope}`,
+            { oldId, oldScope: old.resourceScope, newScope },
+          );
+        }
         const created = await fileObligationRow(
           t,
-          { ...rec, kind: "VERDICT", supersedes: oldId },
+          { ...newRecord, kind: "VERDICT", supersedes: oldId },
           recordedAt,
           { verdictSupersession: true },
         );
-        await t.query("select team_brain.tb_mark_superseded($1)", [oldId]);
-        await insertEvent(t, oldId, {
-          actor,
-          recordedAt,
-          eventType: "SUPERSEDED",
-          reason,
-          evidenceRefs: [],
-          extra: { supersededBy: created.id, newHead },
-        });
-        return { old: await requireObligation(t, oldId), next: created };
+        // The guarded function records the obligation_supersessions relation
+        // and both immutable events, then flips the old verdict's state —
+        // one privileged transaction, no adapter-side event surgery.
+        try {
+          await t.query("select team_brain.tb_supersede_verdict($1, $2, $3, $4, $5)", [
+            oldId,
+            created.id,
+            actor,
+            reason,
+            recordedAt,
+          ]);
+        } catch (err) {
+          mapGuardError(err, CODES.NOT_A_VERDICT);
+        }
+        return { old: await requireObligation(t, oldId), next: await requireObligation(t, created.id) };
       });
     },
 
@@ -614,9 +953,13 @@ export function createPostgresRepository(pool) {
       return tx(async (t) => {
         const old = await requireObligation(t, oldId, { forUpdate: true });
         requireKind(old, "EVIDENCE", CODES.NOT_EVIDENCE);
-        const rec = { ...newRecord };
-        delete rec.priorityOverride;
-        const created = await fileObligationRow(t, { ...rec, kind: "EVIDENCE" }, recordedAt);
+        // Prototype parity: the correction is filed WITH its supersession
+        // link, recorded in obligation_supersessions by the guarded recorder.
+        const created = await fileObligationRow(
+          t,
+          { ...newRecord, kind: "EVIDENCE", supersedes: oldId },
+          recordedAt,
+        );
         await insertEvent(t, oldId, {
           actor,
           recordedAt,
