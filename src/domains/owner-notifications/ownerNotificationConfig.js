@@ -2,7 +2,7 @@ import {
   QUIET_HOURS_END,
   QUIET_HOURS_START,
   QUIET_HOURS_TIME_ZONE,
-} from "./ownerPaymentNotifications";
+} from "./ownerPaymentNotifications.js";
 
 // Brandy's owner payment-notification configuration.
 //
