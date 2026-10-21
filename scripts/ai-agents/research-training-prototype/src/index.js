@@ -25,7 +25,7 @@
 import { canonicalJson, canonicalByteLength } from "./canonical.js";
 import {
   validateTask, validateGrantGateContext, validateSelectedSourceEntry,
-  assertNoNativeProxies, admitGraph, SchemaError,
+  assertNoNativeProxies, admitGraph, SchemaError, sourceRefEquals,
 } from "./schemas.js";
 import { resolveSourceRef, hasReadGrant, makeBudget, verifySpan, BudgetError, ResolutionError, BUDGET_LIMITS } from "./resolver.js";
 import { scanTexts } from "./injection.js";
@@ -305,6 +305,21 @@ export function run(task, context) {
     throw e;
   }
 
+  // PER-001: principal liveness. The authenticated principal must be
+  // non-revoked and inside its validity window at the context clock
+  // BEFORE any source resolution or domain output — including the
+  // EMPTY fast path below. Mirrors the Validation prototype's gate.
+  if (gate.principal.revoked) {
+    return boundedRefused(taskId, "ACTION_DENIED", "critical",
+      `principal '${gate.principal.principal_id}' is revoked; no request authority`);
+  }
+  const validFrom = Date.parse(gate.principal.valid_from);
+  const expiresAt = Date.parse(gate.principal.expires_at);
+  if (!(validFrom <= gate.clock && gate.clock <= expiresAt)) {
+    return boundedRefused(taskId, "ACTION_DENIED", "critical",
+      `principal '${gate.principal.principal_id}' is not valid at the current clock; no request authority`);
+  }
+
   setOutputPrefill(gate.test_hooks?.prefill_output_records ?? 0);
   if (gate.test_hooks?.prefill_spans) budget.applySpanPrefill(gate.test_hooks.prefill_spans);
 
@@ -315,19 +330,31 @@ export function run(task, context) {
 
   // Resolve granted sources (exact read grant first; denied sources
   // contribute nothing — their bytes are never touched).
-  const resolved = new Map(); // key "repo|path" -> {ref, text, bytes, granted}
+  // PER-004: resolution is keyed by the COMPLETE admitted identity
+  // (repo|path|commit|blob|algorithm|revision), never by repo|path
+  // alone — a second, different pin on an already-resolved path is
+  // resolved and verified on its own bytes, so no assertion can cite
+  // an unchecked pin while consuming another pin's verified bytes.
+  // Only a byte-identical repeat is a repeat consultation.
+  const identityOf = (r) => `${r.repo}|${r.path}|${r.commit}|${r.blob}|${r.algorithm}|${r.revision}`;
+  const resolved = new Map(); // identity -> {ref, text, bytes, granted}
   const deniedSources = [];
+  const deniedSeen = new Set();
   const emittedRefs = [];
   for (let i = 0; i < validatedTask.source_refs.length; i++) {
     const ref = validatedTask.source_refs[i];
     const key = `${ref.repo}|${ref.path}`;
-    if (resolved.has(key)) {
-      budget.countObject(`repeat consultation ${key}`);
+    const idk = identityOf(ref);
+    if (resolved.has(idk)) {
+      budget.countObject(`repeat consultation ${idk}`);
       continue;
     }
     if (!hasReadGrant(ref, gate.readGrants)) {
-      deniedSources.push(key);
-      resolved.set(key, { ref, granted: false });
+      if (!deniedSeen.has(key)) {
+        deniedSeen.add(key);
+        deniedSources.push(key);
+      }
+      resolved.set(idk, { ref, granted: false });
       continue;
     }
     // An unregistered source key is SOURCE_UNVERIFIED (the resolver
@@ -346,7 +373,7 @@ export function run(task, context) {
     }
     try {
       const r = resolveSourceRef(ref, context.sources, budget, `source_refs[${i}]`);
-      resolved.set(key, { ref, text: r.text, bytes: r.bytes, granted: true });
+      resolved.set(idk, { ref, text: r.text, bytes: r.bytes, granted: true });
       emittedRefs.push(sourceRefOut(ref));
     } catch (e) {
       if (e instanceof ResolutionError) {
@@ -359,14 +386,21 @@ export function run(task, context) {
 
   // Quarantine: scan the FULL resolved source text for seeded
   // injection families. A hit excludes the source's text and support.
+  // Keyed by resolved identity (PER-004); the public record names the
+  // source key once even when several pins of it are quarantined.
   const quarantined = new Set();
   const quarantineRecords = [];
-  for (const [key, r] of resolved) {
+  const quarantineRecorded = new Set();
+  for (const [idk, r] of resolved) {
     if (!r.granted) continue;
     const { hit, families } = scanTexts([r.text]);
     if (hit) {
-      quarantined.add(key);
-      quarantineRecords.push({ record_id: key, families, reason: "seeded injection family detected; text and support quarantined" });
+      quarantined.add(idk);
+      const key = `${r.ref.repo}|${r.ref.path}`;
+      if (!quarantineRecorded.has(key)) {
+        quarantineRecorded.add(key);
+        quarantineRecords.push({ record_id: key, families, reason: "seeded injection family detected; text and support quarantined" });
+      }
     }
   }
 
@@ -382,13 +416,13 @@ export function run(task, context) {
       }
       const ref = validatedTask.source_refs[a.source_index];
       const key = `${ref.repo}|${ref.path}`;
-      const entry = resolved.get(key);
+      const entry = resolved.get(identityOf(ref));
       if (!entry || !entry.granted) {
         // Denied source: the assertion cannot be taught; recorded as a gap below.
         admitted.push({ ...a, _sourceKey: key, _denied: true });
         continue;
       }
-      if (quarantined.has(key)) {
+      if (quarantined.has(identityOf(ref))) {
         admitted.push({ ...a, _sourceKey: key, _quarantined: true });
         continue;
       }
@@ -406,6 +440,17 @@ export function run(task, context) {
         return boundedRefused(taskId, "INVALID_INPUT", "error",
           `assertions[${i}]: span text does not parse as 'subject | predicate | value | scope' matching the assertion tokens`);
       }
+      // PER-002: polarity is a semantic component of the assertion
+      // and of its key, so it must be proven by the passage like
+      // every other component. The retained grammar attests positive
+      // statements only — it has no representation for negation — so
+      // a task-supplied negative polarity disagrees with its passage
+      // and is refused structurally: unchanged positive bytes can
+      // never yield a negative key or a manufactured contradiction.
+      if (a.polarity !== "positive") {
+        return boundedRefused(taskId, "INVALID_INPUT", "error",
+          `assertions[${i}]: polarity '${a.polarity}' is not attested by the passage; the passage grammar expresses positive statements only, so task-supplied negation is refused`);
+      }
       admitted.push({ ...a, _sourceKey: key });
     }
   } catch (e) {
@@ -416,6 +461,19 @@ export function run(task, context) {
 
   // Research v2 taxonomy over admitted, non-denied, non-quarantined assertions.
   const teachable = admitted.filter((a) => !a._denied && !a._quarantined);
+  // PER-003: a provenance declaration carrying applies_to vouches
+  // only for the exact consumed pins it names. An assertion whose
+  // consumed SourceRef is not named has unknown provenance: it still
+  // teaches (attributed), but it can never corroborate.
+  for (const a of teachable) {
+    const entry = gate.provenance.sources[a._sourceKey];
+    if (entry && Array.isArray(entry.applies_to)) {
+      const consumed = validatedTask.source_refs[a.source_index];
+      if (!entry.applies_to.some((r) => sourceRefEquals(r, consumed))) {
+        a._provUnknown = true;
+      }
+    }
+  }
   const statuses = deriveKeyStatuses(teachable, gate.provenance.sources);
   const statusOfAssertion = (a) => statuses.get(assertionKey(a))?.status ?? "unsupported";
 

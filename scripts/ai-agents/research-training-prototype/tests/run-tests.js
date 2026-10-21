@@ -36,7 +36,10 @@ const PROTO = join(HERE, "..");
 const store = JSON.parse(readFileSync(join(PROTO, "fixtures", "store.json"), "utf8"));
 const sha256hex = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const gitBlob = (text) => gitBlobId(Buffer.from(text, "utf8"));
-const CLOCK = 1760941800000;
+// PER-001: inside the principal's 2026-01-01..2027-01-01 window
+// (2026-10-20T00:00:00Z). The previous 2025 value silently depended
+// on the missing liveness gate.
+const CLOCK = 1792454400000;
 const PRINCIPAL = { principal_id: "muse-relay-01", role: "MUSE_RELAY", registered_by: "jason", valid_from: "2026-01-01", expires_at: "2027-01-01", revoked: false };
 const ALIASES = { "muse-relay-01": "muse-relay-01" };
 
@@ -106,6 +109,7 @@ function task(over = {}) {
 function ctx(over = {}) {
   const {
     paths = [K, NI], grants = null, test_hooks = {}, provenanceOverrides = {}, templates = TEMPLATES,
+    principal = null, clock = null,
   } = over;
   const sources = {};
   const prov = {};
@@ -114,10 +118,10 @@ function ctx(over = {}) {
     prov[`${REPO}|${p}`] = { group: GROUPS[p], copied_from: provenanceOverrides[p] ?? null };
   }
   return {
-    clock: CLOCK,
+    clock: clock ?? CLOCK,
     sources,
     readGrants: (grants ?? paths).map((p) => ({ repo: REPO, path: p })),
-    principal: { ...PRINCIPAL },
+    principal: principal ?? { ...PRINCIPAL },
     aliases: { ...ALIASES },
     criteria: { criteria_version: "rt-1", templates },
     provenance: { sources: prov },
@@ -180,7 +184,7 @@ test("contradiction blocks quizzes; note cites both sides", () => {
   assert.equal(out.report.gaps[0].topic_id, "t-power");
 });
 
-test("polarity disagreement is a contradiction", () => {
+test("PER-002: task-supplied negative polarity over positive bytes => REFUSED, no key, no manufactured contradiction", () => {
   const out = run(
     task({ assertions: [
       A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
@@ -188,8 +192,9 @@ test("polarity disagreement is a contradiction", () => {
     ] }),
     ctx()
   );
-  assert.equal(out.report.quizzes.length, 0);
-  assert.equal(out.report.contradiction_notes.length, 1);
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["INVALID_INPUT"]);
+  assert.equal(out.report, null);
 });
 
 test("unsupported topic is a gap, never taught", () => {
@@ -654,4 +659,171 @@ test("mutation: tampered package.json (npm scripts) refuses at the bootstrap", {
   });
   assert.equal(r.status, 3);
   assert.ok(String(r.stderr).includes("npm scripts"));
+});
+
+// ------------------------------------------------------------ PER repairs (2026-10-20 audit)
+test("PER-001: revoked, expired and not-yet-valid principals refuse ACTION_DENIED before any output — including the EMPTY path", () => {
+  for (const p of [
+    { ...PRINCIPAL, revoked: true },
+    { ...PRINCIPAL, expires_at: "2026-01-02" },
+    { ...PRINCIPAL, valid_from: "2027-01-01" },
+  ]) {
+    const out = run(task(), ctx({ principal: p }));
+    assert.equal(out.status, "REFUSED");
+    assert.deepEqual(codes(out), ["ACTION_DENIED"]);
+    assert.equal(out.report, null);
+    assert.deepEqual(out.source_refs, []);
+  }
+  const empty = run(
+    { schema_version: "1", task_id: "test-rt", operation: "analyze", fixture_refs: { source_refs: [] },
+      options: { request: { module_id: "mod-test", question_format: "short_answer", topics: [], assertions: [], proposed_keys: [], composite_requests: [] } } },
+    ctx({ principal: { ...PRINCIPAL, revoked: true } })
+  );
+  assert.equal(empty.status, "REFUSED");
+  assert.deepEqual(codes(empty), ["ACTION_DENIED"]);
+});
+
+test("PER-001: principal at the exact validity bounds (clock == valid_from == expires_at day) still teaches", () => {
+  const out = run(task(), ctx({ principal: { ...PRINCIPAL, valid_from: "2026-10-20", expires_at: "2026-10-20" } }));
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "supported");
+});
+
+test("PER-003: deleted provenance registration => the source cannot corroborate (attributed-only)", () => {
+  const c = ctx();
+  delete c.provenance.sources[`${REPO}|${NI}`];
+  const out = run(task(), c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes[0].research_status, "attributed-only");
+});
+
+test("PER-003: copy chain ending at an unregistered root, and applies_to naming a different pin, both stay attributed-only; exact applies_to corroborates", () => {
+  const ghost = run(task(), ctx({ provenanceOverrides: { [NI]: `${REPO}|manuals/ghost.md` } }));
+  assert.equal(ghost.report.quizzes[0].research_status, "attributed-only");
+  const cMismatch = ctx();
+  cMismatch.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(K)];
+  const mismatch = run(task(), cMismatch);
+  assert.equal(mismatch.report.quizzes[0].research_status, "attributed-only");
+  const cExact = ctx();
+  cExact.provenance.sources[`${REPO}|${K}`].applies_to = [srcRef(K)];
+  cExact.provenance.sources[`${REPO}|${NI}`].applies_to = [srcRef(NI)];
+  const exact = run(task(), cExact);
+  assert.equal(exact.report.quizzes[0].research_status, "supported");
+});
+
+test("PER-004: forged second pin on an already-resolved path refuses SOURCE_UNVERIFIED, no quiz, null report", () => {
+  const forged = { ...srcRef(K), blob: "0".repeat(40), revision: "WRONG" };
+  const out = run(
+    task({
+      refs: [srcRef(K), forged],
+      topics: [{ topic_id: "t-pumps", predicates: ["default port", "startup sequence"] }],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-start", "Pump", "startup sequence", "prime, ignite, ramp", "global", "positive", 1, K, 2),
+      ],
+    }),
+    ctx({ paths: [K] })
+  );
+  assert.equal(out.status, "REFUSED");
+  assert.deepEqual(codes(out), ["SOURCE_UNVERIFIED"]);
+  assert.equal(out.report, null);
+});
+
+test("PER-004: two genuinely valid revisions of one path each teach their own verified bytes", () => {
+  const rev1 = store.sources[`${REPO}|${K}`].revisions[Object.keys(store.sources[`${REPO}|${K}`].revisions)[0]];
+  const text2 = [
+    "Kestrel-9 vapor pump — field service extract (SYNTHETIC)",
+    "Pump | default port | 8080 | global",
+    "Pump | startup sequence | prime, ignite, ramp | global",
+  ].join("\n") + "\n";
+  const commit2 = "d".repeat(40);
+  const ref2 = { repo: REPO, path: K, commit: commit2, blob: gitBlob(text2), algorithm: "git-sha1", revision: "rev-2" };
+  const c = ctx({ paths: [K] });
+  c.sources[`${REPO}|${K}`] = { revisions: {
+    [Object.keys(store.sources[`${REPO}|${K}`].revisions)[0]]: rev1,
+    [commit2]: { blob: gitBlob(text2), label: "rev-2", text: text2 },
+  } };
+  const out = run(
+    task({
+      refs: [srcRef(K), ref2],
+      topics: [{ topic_id: "t-pumps", predicates: ["default port", "startup sequence"] }],
+      assertions: [
+        A("a-port", "Pump", "default port", "8080", "global", "positive", 0, K, 1),
+        A("a-start", "Pump", "startup sequence", "prime, ignite, ramp", "global", "positive", 1, K, 2),
+      ],
+    }),
+    c
+  );
+  assert.equal(out.status, "REPORT_READY");
+  assert.equal(out.report.quizzes.length, 2);
+  const startQuiz = out.report.quizzes.find((q) => q.item_id === "q-a-start");
+  assert.equal(startQuiz.citations[0].source_ref.blob, gitBlob(text2));
+  assert.equal(startQuiz.citations[0].source_ref.revision, "rev-2");
+  const portQuiz = out.report.quizzes.find((q) => q.item_id === "q-a-port");
+  assert.equal(portQuiz.citations[0].source_ref.blob, rev1.blob);
+  assert.equal(portQuiz.citations[0].source_ref.revision, "rev-1");
+});
+
+test("PER-006: concatenated-key collision pair stays two distinct attributed-only facts", () => {
+  const textA = "Collision fixture one (SYNTHETIC)\na | bc | one | d\n";
+  const textB = "Collision fixture two (SYNTHETIC)\nab | c | one | d\n";
+  const mkRef = (path, text, commit) => ({ repo: REPO, path, commit, blob: gitBlob(text), algorithm: "git-sha1", revision: "rev-1" });
+  const span = (text, line) => {
+    const quoted = text.split("\n")[line];
+    const bytes = Buffer.from(text, "utf8");
+    const start = bytes.indexOf(quoted);
+    return { start_byte: start, end_byte: start + Buffer.byteLength(quoted, "utf8"), quoted_text: quoted };
+  };
+  const c = {
+    clock: CLOCK,
+    sources: {
+      [`${REPO}|manuals/col-a.md`]: { revisions: { ["e".repeat(40)]: { blob: gitBlob(textA), label: "rev-1", text: textA } } },
+      [`${REPO}|manuals/col-b.md`]: { revisions: { ["f".repeat(40)]: { blob: gitBlob(textB), label: "rev-1", text: textB } } },
+    },
+    readGrants: [{ repo: REPO, path: "manuals/col-a.md" }, { repo: REPO, path: "manuals/col-b.md" }],
+    principal: { ...PRINCIPAL },
+    aliases: { ...ALIASES },
+    criteria: { criteria_version: "rt-1", templates: {
+      bc: { question_form: "What is the {predicate} of {subject} ({scope})?", lesson_heading: "Collision A" },
+      c: { question_form: "What is the {predicate} of {subject} ({scope})?", lesson_heading: "Collision B" },
+    } },
+    provenance: { sources: {
+      [`${REPO}|manuals/col-a.md`]: { group: "untrusted", copied_from: null },
+      [`${REPO}|manuals/col-b.md`]: { group: "untrusted", copied_from: null },
+    } },
+    test_hooks: {},
+  };
+  const t = {
+    schema_version: "1", task_id: "test-rt", operation: "analyze",
+    fixture_refs: { source_refs: [mkRef("manuals/col-a.md", textA, "e".repeat(40)), mkRef("manuals/col-b.md", textB, "f".repeat(40))] },
+    options: { request: {
+      module_id: "mod-test", question_format: "short_answer",
+      topics: [{ topic_id: "t-collision", predicates: ["bc", "c"] }],
+      assertions: [
+        { assertion_id: "a-col-a", subject: "a", predicate: "bc", value: "one", scope: "d", polarity: "positive", passage_id: "a-col-a-p", source_index: 0, span: span(textA, 1) },
+        { assertion_id: "a-col-b", subject: "ab", predicate: "c", value: "one", scope: "d", polarity: "positive", passage_id: "a-col-b-p", source_index: 1, span: span(textB, 1) },
+      ],
+      proposed_keys: [], composite_requests: [],
+    } },
+  };
+  const out = run(t, c);
+  assert.equal(out.status, "REPORT_READY");
+  assert.deepEqual(out.report.quizzes.map((q) => q.item_id).sort(), ["q-a-col-a", "q-a-col-b"]);
+  assert.ok(out.report.quizzes.every((q) => q.research_status === "attributed-only"));
+});
+
+test("registeredEvidenceRoot: registered chain resolves; broken chain and unregistered cycle member are unknown", async () => {
+  const { registeredEvidenceRoot } = await import("../src/verify.js");
+  const prov = {
+    "a|x": { group: "g1", copied_from: "b|x" },
+    "b|x": { group: "g2", copied_from: "c|x" },
+    "c|x": { group: "g3", copied_from: null },
+    "d|x": { group: "g4", copied_from: "e|x" },
+    "e|x": { group: "g5", copied_from: "d|x" },
+    "f|x": { group: "g6", copied_from: "ghost|x" },
+  };
+  assert.equal(registeredEvidenceRoot("a|x", prov), "c|x");
+  assert.equal(registeredEvidenceRoot("d|x", prov), "d|x");
+  assert.equal(registeredEvidenceRoot("f|x", prov), null);
+  assert.equal(registeredEvidenceRoot("ghost|x", prov), null);
 });

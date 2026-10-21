@@ -22,17 +22,39 @@ exactly at the claimed half-open UTF-8 offsets (re-encoding check
 included) and parses back into the same four tokens.
 
 Research v2 taxonomy, precedence **contradicted > supported >
-attributed-only > unsupported**, keyed by (subject, predicate, scope):
+attributed-only > unsupported**, keyed by (subject, predicate, scope).
+Keys are framed tuples — ("a","bc","d") and ("ab","c","d") never
+merge. Authority and evidence repairs (PER-001..004/006, 2026-10-20
+retrospective audit) bind the taxonomy further:
 
-- **contradicted** — admitted assertions for the key disagree on value
-  or polarity. The key is blocked: no statement, no quiz, no answer.
+- The authenticated principal must be non-revoked and inside its
+  validity window at the context clock before any source is resolved
+  or any output produced — a dead principal refuses `ACTION_DENIED`
+  on every path, including the empty one.
+- The grammar attests positive statements only. Polarity is part of
+  an assertion and of its key, so it must be passage-proven like
+  every other component: a task-supplied negative polarity is
+  refused `INVALID_INPUT`, and unchanged positive bytes can never
+  yield a negative key or a manufactured contradiction.
+- Source resolution is keyed by the complete pin identity
+  (repo|path|commit|blob|algorithm|revision). A second, different
+  pin on an already-resolved path is verified on its own bytes;
+  a citation never consumes another pin's verification.
+
+- **contradicted** — admitted assertions for the key disagree on
+  value. The key is blocked: no statement, no quiz, no answer.
   A contradiction note cites both sides.
 - **supported** — all admitted assertions agree and the evidence comes
   from at least two independent evidence roots in at least two
   distinct provenance groups. Support counts evidence *roots* (the
   transitive closure of the host-declared `copied_from` relation),
   never passages: duplicates, known copies and citation cycles
-  contribute no corroboration.
+  contribute no corroboration. A root counts only when every link
+  of its chain is registered in the host provenance map — an
+  unregistered source, copy link or root is unknown provenance and
+  corroborates nothing. A declaration may also bind itself to exact
+  consumed pins via `applies_to`; a changed pin makes it
+  inapplicable.
 - **attributed-only** — all agree but the evidence reduces to one
   root. Taught only as "Fixture source states…", never as established
   truth.
@@ -90,9 +112,9 @@ RESEARCH_TRAINING_APPROVED_ROOT=<digest> node <trust>/bootstrap.js <proto> manua
 ```
 
 Suites: `tests/run-tests.js` (focused node:test suite) and
-`tests/run-battery.js` (120 frozen cases — 40 nominal/boundary, 30
+`tests/run-battery.js` (128 frozen cases — 40 nominal/boundary, 30
 contradiction/incomplete/duplicate, 20 injection/prohibited-operation,
-20 schema/provenance/permission, 10 budget/replay/mutation — each run
+28 schema/provenance/permission, 10 budget/replay/mutation — each run
 3× through the guarded launcher, byte-identical).
 
 All fixture material is invented from scratch for this prototype

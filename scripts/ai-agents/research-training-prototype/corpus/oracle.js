@@ -31,7 +31,9 @@ function canon(v) {
 }
 const byteLen = (s) => Buffer.byteLength(s, "utf8");
 
-const KEY_OF = (a) => `${a.subject}${a.predicate}${a.scope}`;
+// PER-006: framed tuple encoding — ("a","bc","d") and ("ab","c","d")
+// are distinct keys; bare concatenation would merge them.
+const KEY_OF = (a) => JSON.stringify([a.subject, a.predicate, a.scope]);
 const LABEL_OF = (a) => `${a.subject} | ${a.predicate} | ${a.scope}`;
 
 const INJ = [
@@ -44,17 +46,31 @@ const INJ = [
   /this\s+source\s+is\s+(pre-)?verified/i, /treat\s+this\s+as\s+established\s+truth/i,
 ];
 
+// PER-003: a root counts only when every key on the chain — source,
+// links, terminal root, cycle members — is registered. Any missing
+// registration makes the root unknown (null): no corroboration.
 function rootOf(sourceKey, provSources) {
   const path = [];
   let cur = sourceKey;
   for (;;) {
     const idx = path.indexOf(cur);
     if (idx >= 0) return path.slice(idx).sort()[0];
-    path.push(cur);
     const e = provSources[cur];
-    if (!e || e.copied_from === null || e.copied_from === undefined) return cur;
+    if (!e) return null;
+    path.push(cur);
+    if (e.copied_from === null || e.copied_from === undefined) return cur;
     cur = e.copied_from;
   }
+}
+
+// PER-003: a declaration with applies_to vouches only for the exact
+// consumed SourceRefs it names (all six fields).
+function provApplies(entry, ref) {
+  if (!entry) return false;
+  if (!Array.isArray(entry.applies_to)) return true;
+  return entry.applies_to.some((r) =>
+    r.repo === ref.repo && r.path === ref.path && r.commit === ref.commit &&
+    r.blob === ref.blob && r.algorithm === ref.algorithm && r.revision === ref.revision);
 }
 
 /**
@@ -69,42 +85,64 @@ function rootOf(sourceKey, provSources) {
  */
 export function oracleDecision(task, context) {
   const req = task.options.request;
+  // PER-001: principal liveness precedes any source work.
+  const principal = context.principal;
+  if (principal && (principal.revoked ||
+      !(Date.parse(principal.valid_from) <= context.clock && context.clock <= Date.parse(principal.expires_at)))) {
+    return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: [], diagnostics: ["ACTION_DENIED"] };
+  }
   const grantSet = new Set((context.readGrants || []).map((g) => `${g.repo}|${g.path}`));
+  // PER-004: resolution is keyed by the complete pin identity; a
+  // second, different pin on one path resolves on its own revision.
+  const idOf = (r) => `${r.repo}|${r.path}|${r.commit}|${r.blob}|${r.algorithm}|${r.revision}`;
   const resolved = {};
   for (const ref of task.fixture_refs.source_refs || []) {
     const key = `${ref.repo}|${ref.path}`;
-    if (key in resolved) continue;
+    const idk = idOf(ref);
+    if (idk in resolved) continue;
     if (!grantSet.has(key)) {
-      resolved[key] = { granted: false };
+      resolved[idk] = { granted: false };
       continue;
     }
     const entry = context.sources[key];
     const rev = entry.revisions[ref.commit];
-    resolved[key] = { granted: true, text: rev.text };
+    resolved[idk] = { granted: true, text: rev.text };
   }
-  // quarantine: any seeded family anywhere in the FULL text
-  const quarantined = new Set();
-  for (const [key, r] of Object.entries(resolved)) {
+  // quarantine: any seeded family anywhere in the FULL text (tracked
+  // per resolved identity; reported per source key)
+  const quarantinedIds = new Set();
+  const quarantinedKeys = new Set();
+  for (const [idk, r] of Object.entries(resolved)) {
     if (!r.granted) continue;
-    if (INJ.some((re) => re.test(r.text))) quarantined.add(key);
+    if (INJ.some((re) => re.test(r.text))) {
+      quarantinedIds.add(idk);
+      const ref = (task.fixture_refs.source_refs || []).find((x) => idOf(x) === idk);
+      quarantinedKeys.add(`${ref.repo}|${ref.path}`);
+    }
   }
+  const qList = () => [...quarantinedKeys].sort();
   // span proof + grammar
   const admitted = [];
   for (const a of req.assertions || []) {
     const ref = task.fixture_refs.source_refs[a.source_index];
     const key = `${ref.repo}|${ref.path}`;
-    const r = resolved[key];
+    const r = resolved[idOf(ref)];
     if (!r.granted) { admitted.push({ ...a, _sourceKey: key, _denied: true }); continue; }
-    if (quarantined.has(key)) { admitted.push({ ...a, _sourceKey: key, _quarantined: true }); continue; }
+    if (quarantinedIds.has(idOf(ref))) { admitted.push({ ...a, _sourceKey: key, _quarantined: true }); continue; }
     const bytes = Buffer.from(r.text, "utf8");
     const slice = bytes.subarray(a.span.start_byte, a.span.end_byte);
     const text = slice.toString("utf8");
     if (text !== a.span.quoted_text || !Buffer.from(text, "utf8").equals(slice)) {
-      return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: [...quarantined].sort(), diagnostics: ["SPAN_MISMATCH"] };
+      return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: qList(), diagnostics: ["SPAN_MISMATCH"] };
     }
     const parts = a.span.quoted_text.split(" | ");
     if (parts.length !== 4 || parts[0] !== a.subject || parts[1] !== a.predicate || parts[2] !== a.value || parts[3] !== a.scope) {
-      return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: [...quarantined].sort(), diagnostics: ["INVALID_INPUT"] };
+      return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: qList(), diagnostics: ["INVALID_INPUT"] };
+    }
+    // PER-002: the grammar attests positive statements only; a
+    // task-supplied negative polarity is unproven and refused.
+    if (a.polarity !== "positive") {
+      return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: qList(), diagnostics: ["INVALID_INPUT"] };
     }
     admitted.push({ ...a, _sourceKey: key });
   }
@@ -119,8 +157,17 @@ export function oracleDecision(task, context) {
   const statusOf = new Map();
   for (const [k, list] of byKey) {
     const first = list[0];
-    const roots = new Set(list.map((a) => rootOf(a._sourceKey, context.provenance.sources)));
-    const rootGroups = new Set([...roots].map((r) => (context.provenance.sources[r] || {}).group || "unregistered"));
+    // PER-003: only assertions whose provenance declaration applies
+    // to their consumed pin AND whose chain is fully registered
+    // contribute an evidence root.
+    const roots = new Set();
+    for (const a of list) {
+      const ref = task.fixture_refs.source_refs[a.source_index];
+      if (!provApplies(context.provenance.sources[a._sourceKey], ref)) continue;
+      const r = rootOf(a._sourceKey, context.provenance.sources);
+      if (r !== null) roots.add(r);
+    }
+    const rootGroups = new Set([...roots].map((r) => context.provenance.sources[r].group));
     const contradicted = list.some((a) => a.value !== first.value || a.polarity !== first.polarity);
     statusOf.set(k, contradicted ? "contradicted" : (roots.size >= 2 && rootGroups.size >= 2 ? "supported" : "attributed-only"));
   }
@@ -174,9 +221,12 @@ export function oracleDecision(task, context) {
     if (p.proposed_value !== a.value) rejected.push("KEY_UNSUPPORTED");
   }
   const diagnostics = [];
-  for (const [key, r] of Object.entries(resolved)) {
-    if (!r.granted) diagnostics.push("SOURCE_DENIED");
+  const deniedKeys = new Set();
+  for (const ref of task.fixture_refs.source_refs || []) {
+    const r = resolved[idOf(ref)];
+    if (r && !r.granted) deniedKeys.add(`${ref.repo}|${ref.path}`);
   }
+  for (const _k of deniedKeys) diagnostics.push("SOURCE_DENIED");
   let status;
   if (teachable.length === 0) {
     status = "PARTIAL";
@@ -194,7 +244,7 @@ export function oracleDecision(task, context) {
     gaps,
     rejected_codes: rejected,
     contradictions: contradictions.sort(),
-    quarantined: [...quarantined].sort(),
+    quarantined: qList(),
     diagnostics: diagnostics.sort(),
   };
 }

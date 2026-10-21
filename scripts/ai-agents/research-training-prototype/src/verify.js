@@ -22,9 +22,13 @@
  * copied_from relation), not passages.
  */
 
-/** The grammar key for an assertion. */
+/**
+ * The grammar key for an assertion. PER-006: the encoding is a framed
+ * tuple (JSON array), never bare concatenation — ("a","bc","d") and
+ * ("ab","c","d") are distinct keys and can never merge into one fact.
+ */
 export function assertionKey(a) {
-  return `${a.subject}${a.predicate}${a.scope}`;
+  return JSON.stringify([a.subject, a.predicate, a.scope]);
 }
 
 /** Human-readable key for notes. */
@@ -52,6 +56,31 @@ export function evidenceRoot(sourceKey, provenanceSources) {
 }
 
 /**
+ * PER-003: the corroboration-bearing variant of evidenceRoot. Returns
+ * the evidence root ONLY when every key on the copied_from chain —
+ * the source itself, every link, the terminal root, and every member
+ * of a citation cycle — is fully registered in the provenance map.
+ * Any missing registration makes the root UNKNOWN (null): unknown
+ * provenance never supplies an independent group and can never
+ * increase support. (A source whose own provenance entry carries an
+ * applies_to list that does not name the consumed SourceRef is
+ * marked _provUnknown by the caller and excluded before this walk.)
+ */
+export function registeredEvidenceRoot(sourceKey, provenanceSources) {
+  const path = [];
+  let cur = sourceKey;
+  while (true) {
+    const idx = path.indexOf(cur);
+    if (idx >= 0) return path.slice(idx).sort()[0];
+    const entry = provenanceSources[cur];
+    if (!entry) return null;
+    path.push(cur);
+    if (entry.copied_from === null || entry.copied_from === undefined) return cur;
+    cur = entry.copied_from;
+  }
+}
+
+/**
  * Group admitted (span-verified, non-quarantined) assertions by key and
  * derive the Research v2 status of each key.
  *
@@ -70,10 +99,17 @@ export function deriveKeyStatuses(admitted, provenanceSources) {
   const out = new Map();
   for (const [k, list] of byKey) {
     const first = list[0];
-    const roots = new Set(list.map((a) => evidenceRoot(a._sourceKey, provenanceSources)));
-    const rootGroups = new Set(
-      [...roots].map((r) => provenanceSources[r]?.group ?? "unregistered")
-    );
+    // PER-003: only fully registered evidence roots corroborate.
+    // Assertions whose provenance is unknown (unregistered source,
+    // broken copy chain, or an applies_to list that does not name
+    // the consumed pin) contribute no root and no group.
+    const roots = new Set();
+    for (const a of list) {
+      if (a._provUnknown) continue;
+      const r = registeredEvidenceRoot(a._sourceKey, provenanceSources);
+      if (r !== null) roots.add(r);
+    }
+    const rootGroups = new Set([...roots].map((r) => provenanceSources[r].group));
     // Contradiction: any disagreement on (value, polarity) for the key.
     let contradicted = false;
     for (const a of list) {

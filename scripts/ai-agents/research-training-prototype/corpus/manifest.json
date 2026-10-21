@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "2af4c4803aa9c11baa9266f82597721338eee320561967d13cf4cb261912a961"
+      "sha256": "3f1ea3a81e9dcddf7e221437dc13a1725e7cd292d7626423c4a3cde04f9e7302"
     },
     {
       "path": "corpus/battery.json",
-      "sha256": "b6886e5f1636384d620504027c9ff163f220f3f45cd66c438db174347458f044"
+      "sha256": "11e891e4c8e658e4b5a104756d349a335ea15916aa4e30ccb247deb9816f2622"
     },
     {
       "path": "corpus/freeze-corpus.js",
@@ -15,11 +15,11 @@
     },
     {
       "path": "corpus/make-battery.js",
-      "sha256": "1330be63002ddd793bfaabec64edb0e138223a3af4e9aace2f6ed1119b11063b"
+      "sha256": "770b56e4e99a6b35a0564b56cf7aa3cd00e41483fb0dd789eaa439bfe9cc395b"
     },
     {
       "path": "corpus/oracle.js",
-      "sha256": "8346d58f71a491eeba69e053df44f522c077d8b7e7499c5444d28c85e0451b69"
+      "sha256": "66a6ee70cd5250ebea2b8868f2c456d13fbb957f636a3489a26ade02c918ab50"
     },
     {
       "path": "fixtures/make-fixtures.js",
@@ -55,7 +55,7 @@
     },
     {
       "path": "src/index.js",
-      "sha256": "1d1efe924a711d914bcb6a2ea2d936c8fe69f09a77fe6cbb9c834640b8017fdc"
+      "sha256": "5fae42ada8ff6b39a6280735e6c051a11523009cc1057e930a7bb568e716701a"
     },
     {
       "path": "src/injection.js",
@@ -67,11 +67,11 @@
     },
     {
       "path": "src/schemas.js",
-      "sha256": "2cf1c65393f424548dfa05478ab80d5857f09b7fb018ce36be88abd78b8f0ac7"
+      "sha256": "8b27fe786f02422632284f9f5481c16ebf017edb91d644b0a043dbd8fbe7a59d"
     },
     {
       "path": "src/verify.js",
-      "sha256": "62843061d1a0c992a9f10b8a6c4b62ec35b545d96e4bbd9d0060a0e5201285d0"
+      "sha256": "5bf91970a5bdaae115de7a47af0dd2d43f4de11b1b24583d4e31385c7d036244"
     },
     {
       "path": "tests/run-battery.js",
@@ -79,7 +79,7 @@
     },
     {
       "path": "tests/run-tests.js",
-      "sha256": "45fafad477c610655bc49e895ff43233edc06dc39f1f404de1b0510f2cd24de7"
+      "sha256": "c070b4d970fbbb771a7df7b908d4b9363350b7dd3e37337e039529c0d201e8ed"
     }
   ]
 }
