@@ -10,12 +10,12 @@
  */
 
 import { parentPort, workerData } from "node:worker_threads";
-import { run } from "../src/index.js";
+import { run, AGENT_ID } from "../src/index.js";
 
 function failEnvelope(code, reason) {
   return {
     schema_version: "1",
-    agent: "validation-agent",
+    agent: AGENT_ID,
     task_id: "unavailable",
     status: "REFUSED",
     advisory: true,
