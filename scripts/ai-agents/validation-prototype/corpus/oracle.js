@@ -171,6 +171,32 @@ export function oracleDecision(task, context) {
   }
   const artSha = artText && !artQuarantined ? sha256s(artText) : null;
 
+  // Comparisons (mirror the candidate's comparison list). Computed
+  // BEFORE verified_by: the artifact_* results feed the provenance
+  // eligibility decision (PER-005 round 2), exactly as the
+  // candidate shares one comparison list between both paths.
+  const cmp = (name, claimed, computed) => {
+    if (claimed === undefined || claimed === null || computed === undefined || computed === null) return;
+    if (claimed !== computed) mismatches.push(name);
+  };
+  if (summary) {
+    cmp("summary_class", summary.result_class, classification);
+    cmp("summary_suite", summary.suite_id, req.expected_suite_id);
+    cmp("summary_arithmetic", summary.pass_count + summary.fail_count + summary.skip_count === summary.test_count, true);
+  }
+  if (entry) {
+    cmp("expected_suite_vs_registry", req.expected_suite_id, entry.suite_id);
+    cmp("command_digest_vs_registry", sha256s(req.command), entry.command_sha256);
+    if (summary) cmp("output_digest_vs_registry", sha256s(canon(summary)), entry.output_sha256);
+    cmp("implementation_ref_vs_registry", canon(req.implementation_ref), canon(entry.implementation_ref));
+  }
+  if (artParsed) {
+    cmp("artifact_suite_vs_expected", artParsed.suite_id, req.expected_suite_id);
+    cmp("artifact_command_vs_task", artParsed.command, req.command);
+    cmp("artifact_run_id_vs_cited", artParsed.run_id, cited);
+    if (summary) cmp("artifact_summary_vs_claimed", canon(artParsed.summary), canon(summary));
+  }
+
   // verified_by
   const reasons = [];
   let verified_by;
@@ -181,6 +207,28 @@ export function oracleDecision(task, context) {
     reasons.push("no entry");
   } else {
     if (entry.revoked) reasons.push("revoked");
+    // PER-005 (audit slice 2): the complete supplied identity tuple
+    // must match the trusted record — conflicting run citations, a
+    // task-declared implementer that differs from the record's (after
+    // canonicalization), and the artifact's embedded run/suite
+    // identity are all eligibility failures, not silent resolutions.
+    const refRunId = req.registry_record_ref ? req.registry_record_ref.run_id : null;
+    if (req.run_id && refRunId && req.run_id !== refRunId) reasons.push("run-citation-conflict");
+    if (canonPrincipal(req.implementer_principal_id, aliases) !== canonPrincipal(entry.implementer_principal_id, aliases)) reasons.push("declared-implementer");
+    if (artParsed && artParsed.run_id !== entry.run_id) reasons.push("artifact-run-id");
+    if (artParsed && artParsed.suite_id !== entry.suite_id) reasons.push("artifact-suite-id");
+    // PER-005 round 2: full parsed-artifact validity and semantic
+    // consistency are prerequisites of independent provenance. A
+    // malformed artifact is explicitly unavailable, and every
+    // mismatching named artifact comparison is an eligibility
+    // failure — matching raw-byte hashes never stand in for the
+    // parsed tuple. (artifact_ref_identity is not an artifact
+    // comparison here: unresolved bytes already fail the digest
+    // check above, mirroring the candidate.)
+    if (artMalformed) reasons.push("artifact-malformed");
+    for (const n of mismatches) {
+      if (n.startsWith("artifact_") && n !== "artifact_ref_identity") reasons.push(`artifact-comparison-${n}`);
+    }
     if (!(Date.parse(entry.recorded_at) <= clock)) reasons.push("future");
     if (!refEq(req.implementation_ref, entry.implementation_ref)) reasons.push("impl");
     if (sha256s(req.command) !== entry.command_sha256) reasons.push("command");
@@ -205,28 +253,6 @@ export function oracleDecision(task, context) {
     }
   }
 
-  // Comparisons (mirror the candidate's comparison list).
-  const cmp = (name, claimed, computed) => {
-    if (claimed === undefined || claimed === null || computed === undefined || computed === null) return;
-    if (claimed !== computed) mismatches.push(name);
-  };
-  if (summary) {
-    cmp("summary_class", summary.result_class, classification);
-    cmp("summary_suite", summary.suite_id, req.expected_suite_id);
-    cmp("summary_arithmetic", summary.pass_count + summary.fail_count + summary.skip_count === summary.test_count, true);
-  }
-  if (entry) {
-    cmp("expected_suite_vs_registry", req.expected_suite_id, entry.suite_id);
-    cmp("command_digest_vs_registry", sha256s(req.command), entry.command_sha256);
-    if (summary) cmp("output_digest_vs_registry", sha256s(canon(summary)), entry.output_sha256);
-    cmp("implementation_ref_vs_registry", canon(req.implementation_ref), canon(entry.implementation_ref));
-  }
-  if (artParsed) {
-    cmp("artifact_suite_vs_expected", artParsed.suite_id, req.expected_suite_id);
-    cmp("artifact_command_vs_task", artParsed.command, req.command);
-    cmp("artifact_run_id_vs_cited", artParsed.run_id, cited);
-    if (summary) cmp("artifact_summary_vs_claimed", canon(artParsed.summary), canon(summary));
-  }
   if (artRefMismatch0) {
     mismatches.push("artifact_ref_identity");
     diags.add("ARTIFACT_REF_MISMATCH");

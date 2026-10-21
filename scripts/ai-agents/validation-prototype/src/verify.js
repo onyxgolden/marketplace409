@@ -110,7 +110,35 @@ export function canonicalizePrincipal(id, aliases) {
 //   outputSha256      — sha256 of canonicalJson(claimed_summary), or null when no summary
 //   implRefMatches    — request.implementation_ref deep-equals entry.implementation_ref
 //   suiteMatches      — expected_suite_id == entry.suite_id == (claimed summary suite_id)
+//   declaredImplementer — request.implementer_principal_id (task-declared, untrusted)
+//   requestRunId      — request.run_id, or null when absent
+//   registryRefRunId  — request.registry_record_ref.run_id, or null when absent
+//   artifactComparisons — the artifact_* entries of the SAME claim
+//                         comparison list the report emits (shared
+//                         single source: comparison path and
+//                         provenance path cannot drift)
+//   artifactMalformed — true when the registered artifact bytes did
+//                       not parse into a valid runner log
 //   aliases, clock
+//
+// PER-005: independent provenance derives ONLY from the entire
+// matching identity tuple. Every identity the task supplies is
+// compared against the trusted record: the declared implementer
+// (after alias canonicalization — the trusted implementer is never
+// overwritten with task data), both run citations when both are
+// supplied (a conflict never silently resolves in either direction),
+// and the artifact's embedded run/suite identity. A valid digest
+// proves the registered bytes; it does not make conflicting
+// identities consistent.
+//
+// PER-005 round 2: full parsed-artifact validity and semantic
+// consistency are prerequisites of independent provenance. The
+// named artifact comparisons (command vs task, summary vs claimed,
+// embedded run/suite, runner) feed this one eligibility decision,
+// and a null/malformed artifact is explicitly unavailable —
+// matching raw-byte hashes never stand in for the parsed tuple.
+// This is an artifact-consistency requirement, not a requirement
+// that tests pass: a genuine independent FAIL still authenticates.
 // Returns {verified_by, reasons[], canonical_runner, claimed_runner, registry_ref}.
 // ---------------------------------------------------------------------------
 
@@ -119,6 +147,8 @@ export function deriveVerifiedBy(args) {
     citedRunId, entry, artifactSha256, artifact,
     taskCommandSha256, outputSha256, implRefMatches,
     suiteMatches, aliases, clock,
+    declaredImplementer, requestRunId, registryRefRunId,
+    artifactComparisons, artifactMalformed,
   } = args;
   const reasons = [];
   const registry_ref = entry ? { run_id: entry.run_id, verification_method: entry.verification_method } : null;
@@ -135,6 +165,15 @@ export function deriveVerifiedBy(args) {
   }
   if (entry.revoked) {
     reasons.push(`registry entry for '${citedRunId}' is revoked`);
+  }
+  // PER-005 identity tuple: conflicting supplied identities are
+  // named mismatches, never silently resolved or overwritten.
+  if (requestRunId && registryRefRunId && requestRunId !== registryRefRunId) {
+    reasons.push(`conflicting run citations: request.run_id '${requestRunId}' does not match registry_record_ref.run_id '${registryRefRunId}'`);
+  }
+  const canonicalEntryImplementer = canonicalizePrincipal(entry.implementer_principal_id, aliases);
+  if (canonicalizePrincipal(declaredImplementer, aliases) !== canonicalEntryImplementer) {
+    reasons.push(`task-declared implementer_principal_id '${declaredImplementer}' does not match registry implementer_principal_id '${entry.implementer_principal_id}' after alias canonicalization`);
   }
   const recordedAtMs = Date.parse(entry.recorded_at);
   if (!(recordedAtMs <= clock)) {
@@ -160,8 +199,32 @@ export function deriveVerifiedBy(args) {
   if (artifact && canonicalizePrincipal(artifact.claimed_runner, aliases) !== canonical_runner) {
     reasons.push(`artifact claimed_runner '${artifact.claimed_runner}' does not match registry runner_principal_id after alias canonicalization`);
   }
-  const canonicalImplementer = canonicalizePrincipal(entry.implementer_principal_id, aliases);
-  if (canonical_runner !== null && canonical_runner === canonicalImplementer) {
+  // PER-005: the artifact's embedded run/suite identity is part of
+  // the authenticated tuple. The artifact digest check above proves
+  // these are the registered bytes; it does not prove the identity
+  // embedded in those bytes agrees with the record that registers
+  // them — a registry updated to a forged artifact's digest must not
+  // launder a run/suite identity mismatch into independent provenance.
+  if (artifact && artifact.run_id !== entry.run_id) {
+    reasons.push(`artifact embedded run_id '${artifact.run_id}' does not match registry run_id '${entry.run_id}'`);
+  }
+  if (artifact && artifact.suite_id !== entry.suite_id) {
+    reasons.push(`artifact embedded suite_id '${artifact.suite_id}' does not match registry suite_id '${entry.suite_id}'`);
+  }
+  // PER-005 round 2: the parsed artifact must be fully valid and
+  // semantically consistent — not merely byte-identical to the
+  // registered digest. A malformed artifact supplies no parsed
+  // tuple at all, and every named artifact comparison that
+  // mismatches is an eligibility failure with its own reason.
+  if (artifactMalformed) {
+    reasons.push(`registered artifact is malformed/unparseable; the parsed artifact tuple is unavailable, so matching raw-byte hashes cannot authenticate independent provenance`);
+  }
+  for (const c of artifactComparisons ?? []) {
+    if (c.match === false) {
+      reasons.push(`artifact comparison '${c.name}' mismatch: registered artifact is not semantically consistent with the task/claim`);
+    }
+  }
+  if (canonical_runner !== null && canonical_runner === canonicalEntryImplementer) {
     reasons.push(`registry runner and implementer canonicalize to the same principal ('${canonical_runner}'): self-runner, not independent`);
   }
   if (reasons.length > 0) {

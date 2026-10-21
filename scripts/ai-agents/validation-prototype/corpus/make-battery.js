@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * make-battery.js — AUTHORING TOOL (not part of the scored path).
- * Builds corpus/battery.json: 121 frozen cases (40 nominal/boundary,
+ * Builds corpus/battery.json: 129 frozen cases (40 nominal/boundary,
  * 30 contradiction/incomplete/duplicate, 21 injection/prohibited-
- * operation, 20 schema/provenance/permission, 10 budget/replay/
+ * operation, 28 schema/provenance/permission, 10 budget/replay/
  * mutation). Each case is one primary category.
  *
  * Expected outcomes: computed by the independent corpus/oracle.js for
@@ -357,7 +357,11 @@ withDerived("C25", "run-00006", { summary: { ...R("run-00006").summary, result_c
 addCase("C27", "contradiction",
   buildTask(R("run-00001"), { expected_suite_id: "suite-gamma" }),
   buildContext(R("run-00001")));
-// C28: registry ref authoritative; request.run_id disagrees
+// C28: request.run_id disagrees with registry_record_ref. Pre-PER-005
+// the ref silently won and the case froze REPORT_READY / independent;
+// the audit (case 2) made the disagreement itself the defect — now a
+// named mismatch with provenance unavailable (expectation changed by
+// the PER-005 fix, deliberately).
 addCase("C28", "contradiction",
   buildTask(R("run-00001"), { run_id: "run-00002" }),
   buildContext(R("run-00001")));
@@ -447,6 +451,104 @@ addCase("S19", "schema",
 addCase("S20", "schema",
   buildTask(R("run-00001"), { claimed_summary: { result_class: 123 } }),
   buildContext(R("run-00001")));
+
+// ------------------------------------------- PER-005 (audit slice 2)
+// X01: task declares implementer scout-01 (the runner); the trusted
+// record names builder-01. The contradiction must be a named mismatch
+// and independent provenance must be unavailable (was: silently
+// REPORT_READY / MOCK_INDEPENDENT_RUN).
+addCase("X01", "schema",
+  buildTask(R("run-00001"), { implementer_principal_id: "scout-01" }),
+  buildContext(R("run-00001")));
+// X02: request.run_id run-99999 conflicts with registry_record_ref
+// run-00001. Neither citation silently wins; named mismatch,
+// provenance unavailable (was: the ref silently won).
+addCase("X02", "schema",
+  buildTask(R("run-00001"), { run_id: "run-99999" }),
+  buildContext(R("run-00001")));
+// X03: the artifact's embedded run_id is forged to run-99999 AND the
+// registry artifact_sha256 is updated to the forged bytes, so every
+// digest agrees; only the semantic identity inside the artifact
+// contradicts the cited run. Provenance must still be unavailable
+// (was: envelope PARTIAL via the comparison, verified_by stayed
+// MOCK_INDEPENDENT_RUN).
+{
+  const base = R("run-00001");
+  const baseText = store.sources[base.sourceKey].revisions[base.artifactRef.commit].text;
+  const forged = JSON.parse(baseText);
+  forged.run_id = "run-99999";
+  const artifactText = JSON.stringify(forged);
+  const commit = sha1hex("commit|run-00001-x03");
+  const blob = gitBlob(artifactText);
+  const path = "results/scout/run-logs/run-00001-x03.json";
+  const run = {
+    ...base,
+    artifactText,
+    artifactRef: { repo: "forge-runner", path, commit, blob, algorithm: "git-sha1", revision: "rev-A" },
+    sourceKey: `forge-runner|${path}`,
+    registryEntry: { ...base.registryEntry, artifact_sha256: sha256(artifactText) },
+    derived: true,
+  };
+  addCase("X03", "schema", buildTask(run), buildContext(run));
+}
+// X04 (positive partner): the task declares the implementer by an
+// alias (scout-alpha) that canonicalizes to the trusted record's
+// builder-01. Canonicalization is honored, not raw string equality:
+// independent provenance is retained.
+addCase("X04", "schema",
+  buildTask(R("run-00001"), { implementer_principal_id: "scout-alpha" }),
+  buildContext(R("run-00001")));
+// X05 (positive partner): a fully consistent tuple over an honest
+// FAIL run — independent provenance remains authenticated on the
+// provenance axis (classification FAIL, verified_by independent).
+{
+  const d = deriveRun("run-00002", { suffix: "-x05" });
+  addCase("X05", "schema", buildTask(d), buildContext(d));
+}
+// X06–X08 (PER-005 round 2 residual): full parsed-artifact validity
+// and semantic consistency are prerequisites of independent
+// provenance. Each case mutates the artifact bytes AND registers
+// the mutated bytes' real digest (both task artifact refs + the
+// registry artifact_sha256, via the X03 run-object pattern), so
+// every hash agrees; only the parsed tuple contradicts the
+// task/claim/record. All three must freeze PARTIAL /
+// author_reported_unavailable with the explicit artifact
+// diagnostics/mismatch names retained (was: MOCK_INDEPENDENT_RUN).
+function mutatedArtifactRun(tag, mutate) {
+  const base = R("run-00001");
+  const baseText = store.sources[base.sourceKey].revisions[base.artifactRef.commit].text;
+  const value = mutate(JSON.parse(baseText));
+  const artifactText = typeof value === "string" ? value : JSON.stringify(value);
+  const commit = sha1hex(`commit|run-00001-${tag}`);
+  const blob = gitBlob(artifactText);
+  const path = `results/scout/run-logs/run-00001-${tag}.json`;
+  return {
+    ...base,
+    artifactText,
+    artifactRef: { repo: "forge-runner", path, commit, blob, algorithm: "git-sha1", revision: "rev-A" },
+    sourceKey: `forge-runner|${path}`,
+    registryEntry: { ...base.registryEntry, artifact_sha256: sha256(artifactText) },
+    derived: true,
+  };
+}
+// X06: artifact.command names a different suite's command while
+// task/record still specify the suite-alpha command.
+{
+  const run = mutatedArtifactRun("x06", (a) => ({ ...a, command: "forge:test --suite suite-beta" }));
+  addCase("X06", "schema", buildTask(run), buildContext(run));
+}
+// X07: artifact.summary is a well-formed FAIL summary while
+// task/record still claim the original PASS summary.
+{
+  const run = mutatedArtifactRun("x07", (a) => ({ ...a, summary: { ...a.summary, pass_count: 0, fail_count: a.summary.test_count, result_class: "FAIL" } }));
+  addCase("X07", "schema", buildTask(run), buildContext(run));
+}
+// X08: artifact text replaced with malformed content; its real
+// hashes are registered, yet no parsed tuple exists.
+{
+  const run = mutatedArtifactRun("x08", () => "synthetic malformed runner artifact");
+  addCase("X08", "schema", buildTask(run), buildContext(run));
+}
 
 // ------------------------------------------------------------- budget
 // B01: 30-entry registry; entry 30 carries a sentinel field that must

@@ -145,6 +145,191 @@ test("no run cited: verified_by none, REPORT_READY", () => {
   assert.equal(r.status, "REPORT_READY");
 });
 
+// ---------------------------------------------------------- PER-005
+// Audit slice 2: independent provenance derives only from the entire
+// matching identity tuple. The three audit counterexamples flip to
+// author_reported_unavailable with named mismatches; positive
+// partners (alias-canonicalized implementer; both citations equal —
+// the standard positive case above) stay independent.
+test("PER-005: declared implementer contradicting the trusted record => unavailable, named mismatch", () => {
+  const task = positiveTask(R1, { request: { implementer_principal_id: "scout-01" } });
+  const r = run(task, positiveContext(R1));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(codes(r).includes("PROVENANCE_UNAVAILABLE"));
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("implementer_principal_id 'scout-01'") && x.includes("'builder-01'")),
+    `reasons must name the implementer mismatch: ${JSON.stringify(r.report.provenance.reasons)}`);
+});
+test("PER-005: declared implementer via alias canonicalization stays independent (positive partner)", () => {
+  const task = positiveTask(R1, { request: { implementer_principal_id: "scout-alpha" } });
+  const r = run(task, positiveContext(R1));
+  assert.equal(r.status, "REPORT_READY");
+  assert.equal(r.report.provenance.verified_by, "MOCK_INDEPENDENT_RUN");
+  assert.equal(r.diagnostics.length, 0);
+});
+test("PER-005: conflicting run citations => unavailable, named mismatch", () => {
+  const task = positiveTask(R1, { request: { run_id: "run-99999" } });
+  const r = run(task, positiveContext(R1));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(codes(r).includes("PROVENANCE_UNAVAILABLE"));
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("run-99999") && x.includes("run-00001")),
+    `reasons must name both conflicting citations: ${JSON.stringify(r.report.provenance.reasons)}`);
+});
+test("PER-005: artifact embedded run_id mismatch with agreeing digests => unavailable (audit case 3)", () => {
+  // Mirror of the audit probe: forge the artifact's embedded run_id
+  // and register the forged bytes' digest, so every hash agrees and
+  // only the semantic identity contradicts the record.
+  const baseText = store.sources[R1.sourceKey].revisions[R1.artifactRef.commit].text;
+  const forged = JSON.parse(baseText);
+  forged.run_id = "run-99999";
+  const artifactText = JSON.stringify(forged);
+  const commit = sha1hex("commit|run-00001-per005");
+  const blob = gitBlob(artifactText);
+  const path = "results/scout/run-logs/run-00001-per005.json";
+  const aref = { repo: "forge-runner", path, commit, blob, algorithm: "git-sha1", revision: "rev-A" };
+  const key = `forge-runner|${path}`;
+  const task = positiveTask(R1, { request: { runner_artifact_ref: aref } });
+  task.fixture_refs.artifact_ref = aref;
+  const ctx = positiveContext(R1, {
+    sources: { [key]: { revisions: { [commit]: { text: artifactText, blob, label: "rev-A" } } } },
+    readGrants: [{ repo: "forge-runner", path }],
+    provenance_registry: { "run-00001": { ...structuredClone(R1.registryEntry), artifact_sha256: sha256hex(artifactText) } },
+  });
+  const r = run(task, ctx);
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("run-99999") && x.includes("run-00001")),
+    `reasons must name the artifact run mismatch: ${JSON.stringify(r.report.provenance.reasons)}`);
+  const cmpRun = r.report.claim_comparisons.find((c) => c.name === "artifact_run_id_vs_cited");
+  assert.equal(cmpRun.match, false);
+});
+test("PER-005: artifact embedded suite_id mismatch with agreeing digests => unavailable", () => {
+  const baseText = store.sources[R1.sourceKey].revisions[R1.artifactRef.commit].text;
+  const forged = JSON.parse(baseText);
+  forged.suite_id = "suite-beta";
+  const artifactText = JSON.stringify(forged);
+  const commit = sha1hex("commit|run-00001-per005-suite");
+  const blob = gitBlob(artifactText);
+  const path = "results/scout/run-logs/run-00001-per005-suite.json";
+  const aref = { repo: "forge-runner", path, commit, blob, algorithm: "git-sha1", revision: "rev-A" };
+  const key = `forge-runner|${path}`;
+  const task = positiveTask(R1, { request: { runner_artifact_ref: aref } });
+  task.fixture_refs.artifact_ref = aref;
+  const ctx = positiveContext(R1, {
+    sources: { [key]: { revisions: { [commit]: { text: artifactText, blob, label: "rev-A" } } } },
+    readGrants: [{ repo: "forge-runner", path }],
+    provenance_registry: { "run-00001": { ...structuredClone(R1.registryEntry), artifact_sha256: sha256hex(artifactText) } },
+  });
+  const r = run(task, ctx);
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("suite_id 'suite-beta'") && x.includes("'suite-alpha'")),
+    `reasons must name the artifact suite mismatch: ${JSON.stringify(r.report.provenance.reasons)}`);
+});
+test("PER-005 guarded: declared implementer mismatch flips through runGuarded", async () => {
+  const task = positiveTask(R1, { request: { implementer_principal_id: "scout-01" } });
+  const r = await runGuarded(JSON.stringify(task), JSON.stringify(positiveContext(R1)));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+});
+test("PER-005 guarded: conflicting run citations flip through runGuarded", async () => {
+  const task = positiveTask(R1, { request: { run_id: "run-99999" } });
+  const r = await runGuarded(JSON.stringify(task), JSON.stringify(positiveContext(R1)));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+});
+
+// ------------------------------------- PER-005 round 2 (residual)
+// Independent provenance requires a fully valid, semantically
+// consistent parsed artifact. Each counterexample below mutates the
+// artifact bytes AND registers the mutated bytes' real digest (task
+// refs + registry artifact_sha256), so every hash agrees — only the
+// parsed tuple contradicts the task/claim/record.
+function mutatedArtifactCase(mutate, tag) {
+  const baseText = store.sources[R1.sourceKey].revisions[R1.artifactRef.commit].text;
+  const value = mutate(JSON.parse(baseText));
+  const artifactText = typeof value === "string" ? value : JSON.stringify(value);
+  const commit = sha1hex(`commit|run-00001-${tag}`);
+  const blob = gitBlob(artifactText);
+  const path = `results/scout/run-logs/run-00001-${tag}.json`;
+  const aref = { repo: "forge-runner", path, commit, blob, algorithm: "git-sha1", revision: "rev-A" };
+  const key = `forge-runner|${path}`;
+  const task = positiveTask(R1, { request: { runner_artifact_ref: aref } });
+  task.fixture_refs.artifact_ref = aref;
+  const ctx = positiveContext(R1, {
+    sources: { [key]: { revisions: { [commit]: { text: artifactText, blob, label: "rev-A" } } } },
+    readGrants: [{ repo: "forge-runner", path }],
+    provenance_registry: { "run-00001": { ...structuredClone(R1.registryEntry), artifact_sha256: sha256hex(artifactText) } },
+  });
+  return { task, ctx };
+}
+const ARTIFACT_COMMAND_MUTATION = (a) => ({ ...a, command: "forge:test --suite suite-beta" });
+const ARTIFACT_SUMMARY_MUTATION = (a) => ({ ...a, summary: { ...a.summary, pass_count: 0, fail_count: a.summary.test_count, result_class: "FAIL" } });
+const ARTIFACT_UNPARSEABLE_MUTATION = () => "synthetic malformed runner artifact";
+
+test("PER-005 r2: artifact command contradicts task/record with agreeing digests => unavailable, named reason + mismatch retained", () => {
+  const { task, ctx } = mutatedArtifactCase(ARTIFACT_COMMAND_MUTATION, "per005r2-cmd");
+  const r = run(task, ctx);
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(codes(r).includes("PROVENANCE_UNAVAILABLE"));
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("artifact_command_vs_task")),
+    `reasons must name the artifact command comparison: ${JSON.stringify(r.report.provenance.reasons)}`);
+  const cmpCmd = r.report.claim_comparisons.find((c) => c.name === "artifact_command_vs_task");
+  assert.equal(cmpCmd.match, false);
+  assert.equal(r.report.artifact_consistency.state, "inconsistent");
+});
+test("PER-005 r2: artifact summary contradicts claimed/record summary with agreeing digests => unavailable, named reason + mismatch retained", () => {
+  const { task, ctx } = mutatedArtifactCase(ARTIFACT_SUMMARY_MUTATION, "per005r2-sum");
+  const r = run(task, ctx);
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(codes(r).includes("PROVENANCE_UNAVAILABLE"));
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("artifact_summary_vs_claimed")),
+    `reasons must name the artifact summary comparison: ${JSON.stringify(r.report.provenance.reasons)}`);
+  const cmpSum = r.report.claim_comparisons.find((c) => c.name === "artifact_summary_vs_claimed");
+  assert.equal(cmpSum.match, false);
+  assert.equal(r.report.artifact_consistency.state, "inconsistent");
+  // The observed-test-result axis is untouched: the claimed PASS
+  // summary still classifies PASS — this is a provenance failure,
+  // not a requirement that tests pass to authenticate provenance.
+  assert.equal(r.report.test_result.classification, "PASS");
+});
+test("PER-005 r2: malformed artifact bytes with agreeing digests => unavailable, ARTIFACT_MALFORMED retained", () => {
+  const { task, ctx } = mutatedArtifactCase(ARTIFACT_UNPARSEABLE_MUTATION, "per005r2-mal");
+  const r = run(task, ctx);
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(codes(r).includes("ARTIFACT_MALFORMED"));
+  assert.ok(codes(r).includes("PROVENANCE_UNAVAILABLE"));
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("malformed")),
+    `reasons must name the malformed artifact: ${JSON.stringify(r.report.provenance.reasons)}`);
+  assert.equal(r.report.artifact_consistency.state, "malformed");
+  assert.equal(r.report.provenance.claimed_runner, null);
+});
+test("PER-005 r2 guarded: artifact command conflict flips through runGuarded", async () => {
+  const { task, ctx } = mutatedArtifactCase(ARTIFACT_COMMAND_MUTATION, "per005r2-cmd");
+  const r = await runGuarded(JSON.stringify(task), JSON.stringify(ctx));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("artifact_command_vs_task")));
+});
+test("PER-005 r2 guarded: artifact summary conflict flips through runGuarded", async () => {
+  const { task, ctx } = mutatedArtifactCase(ARTIFACT_SUMMARY_MUTATION, "per005r2-sum");
+  const r = await runGuarded(JSON.stringify(task), JSON.stringify(ctx));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(r.report.provenance.reasons.some((x) => x.includes("artifact_summary_vs_claimed")));
+});
+test("PER-005 r2 guarded: malformed artifact flips through runGuarded", async () => {
+  const { task, ctx } = mutatedArtifactCase(ARTIFACT_UNPARSEABLE_MUTATION, "per005r2-mal");
+  const r = await runGuarded(JSON.stringify(task), JSON.stringify(ctx));
+  assert.equal(r.status, "PARTIAL");
+  assert.equal(r.report.provenance.verified_by, "author_reported_unavailable");
+  assert.ok(codes(r).includes("ARTIFACT_MALFORMED"));
+});
+
 // --------------------------------------------------- classification
 test("classification precedence: crash + zero tests => FAIL beats BLOCKED", () => {
   const summary = S(0, 0, 0, 0, 0, 0, true, false, true, "suite-alpha", "FAIL");
