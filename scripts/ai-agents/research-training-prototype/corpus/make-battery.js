@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 /**
  * make-battery.js — AUTHORING TOOL (not part of the scored path).
- * Builds corpus/battery.json: 135 frozen cases (40 nominal/boundary,
+ * Builds corpus/battery.json: 138 frozen cases (40 nominal/boundary,
  * 30 contradiction/incomplete/duplicate, 20 injection/prohibited-
- * operation, 35 schema/provenance/permission, 10 budget/replay/
+ * operation, 38 schema/provenance/permission, 10 budget/replay/
  * mutation). The 8 added schema cases (S21–S28) freeze the PER-001/
  * 002/003/004/006 counterexamples and their positive partners from
  * ChatGPT's 2026-10-20 panel-era retrospective audit. The 7 further
  * schema cases (S29–S35) freeze the PER-003 round-2 closed-schema
  * counterexamples (missing/stale/changed-blob bindings, empty and
- * mismatching ancestors) and their fully-bound positives.
+ * mismatching ancestors) and their fully-bound positives. The 3
+ * further schema cases (S36–S38) freeze the PER-003 round-3
+ * full ancestor-identity counterexamples: S35's ancestor
+ * registration with a single mutated identity field (blob, commit,
+ * revision) — each must stay attributed-only with
+ * PROVENANCE_UNBOUND, with S35 as the unchanged positive.
  *
  * - Well-formed cases get expectations from corpus/oracle.js, the
  *   independently authored reference implementation of the brief.
@@ -296,6 +301,12 @@ wf("N08", "nominal", buildTask({
   // the chain is fully bound and resolves to that root. The copy
   // still contributes no independence (attributed-only stands).
   c.provenance.sources[`${REPO}|${K}`] = { group: GROUPS[K], copied_from: null, applies_to: [srcRef(K)] };
+  // PER-003 round 3 registration completion: the ancestor's
+  // registered full identity must also be present in
+  // context.sources (its fixture-store entry), so the chain
+  // walk can bind the ancestor's applies_to pin in full. The
+  // ancestor is still not a consumed task ref; outcome unchanged.
+  c.sources[`${REPO}|${K}`] = store.sources[`${REPO}|${K}`];
   return c;
 })());
 
@@ -440,6 +451,11 @@ wf("N23", "nominal", buildTask({
   // chain is fully bound; the single root still cannot
   // corroborate itself (attributed-only stands, no diagnostic).
   c.provenance.sources[`${REPO}|${K}`] = { group: GROUPS[K], copied_from: null, applies_to: [srcRef(K)] };
+  // PER-003 round 3 registration completion: as in N08, the
+  // ancestor's fixture-store entry is present in context.sources
+  // so its registered full identity can bind the chain in full;
+  // the ancestor is not a consumed task ref; outcome unchanged.
+  c.sources[`${REPO}|${K}`] = store.sources[`${REPO}|${K}`];
   return c;
 })());
 
@@ -1525,6 +1541,37 @@ wf("S35", "schema", buildTask({
   ],
 }), buildCtx({ grantPaths: [K, CP, NI], templatesFor: ["default port"], provenanceOverride: { [CP]: `${REPO}|${K}` } }));
 
+// ---- PER-003 round 3 cases (2026-10-21, full ancestor identity) ----
+// S36–S38 are S35 with EXACTLY ONE identity field of the ancestor's
+// applies_to pin mutated (blob / commit / revision). The ancestor
+// (kestrel original) is registered in context.sources with its real
+// fixture-store pin, so a same-key pin whose blob, commit or
+// revision differs from that registered identity is inapplicable:
+// the copy chain supplies no root, the key stays attributed-only
+// and the consumed copy key emits PROVENANCE_UNBOUND. S35 above is
+// the unchanged fully-bound positive partner.
+const s35Task = (id) => buildTask({
+  id, refs: [srcRef(CP), srcRef(NI)],
+  topics: [topic("t-pumps", ["default port"])],
+  asserts: [
+    A({ id: "a-port-c", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: CP, line: 1 }),
+    A({ id: "a-port-n", subject: "Pump", predicate: "default port", value: "8080", scope: "global", polarity: "positive", path: NI, line: 1 }),
+  ],
+});
+const s35CtxWithAncestorPin = (ancestorPin) => {
+  const c = buildCtx({ grantPaths: [K, CP, NI], templatesFor: ["default port"], provenanceOverride: { [CP]: `${REPO}|${K}` } });
+  c.provenance.sources[`${REPO}|${K}`].applies_to = [ancestorPin];
+  return c;
+};
+// S36 PER-003B round 3: ancestor blob mutated to all zeros.
+wf("S36", "schema", s35Task("S36"), s35CtxWithAncestorPin({ ...srcRef(K), blob: "0".repeat(40) }));
+// S37 PER-003B round 3: ancestor commit mutated to an unregistered
+// commit ('9'.repeat(40)).
+wf("S37", "schema", s35Task("S37"), s35CtxWithAncestorPin({ ...srcRef(K), commit: "9".repeat(40) }));
+// S38 PER-003B round 3: ancestor revision mutated to rev-999 (the
+// registered label is rev-1).
+wf("S38", "schema", s35Task("S38"), s35CtxWithAncestorPin({ ...srcRef(K), revision: "rev-999" }));
+
 // =================================================== BUDGET / REPLAY / MUTATION (10)
 // B01 exact-fit input payload (calibrated at authoring) -> taught
 // Launcher-level boundary (binary-searched at authoring, scratch): the
@@ -1659,8 +1706,8 @@ wf("B05", "budget", buildTask({
 }
 
 // ---- write ----
-if (CASES.length !== 135) {
-  throw new Error(`battery must hold exactly 135 cases; built ${CASES.length}`);
+if (CASES.length !== 138) {
+  throw new Error(`battery must hold exactly 138 cases; built ${CASES.length}`);
 }
 const counts = {};
 for (const c of CASES) counts[c.kind] = (counts[c.kind] ?? 0) + 1;

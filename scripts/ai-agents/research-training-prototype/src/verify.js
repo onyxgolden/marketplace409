@@ -22,6 +22,8 @@
  * copied_from relation), not passages.
  */
 
+import { sourceRefEquals } from "./schemas.js";
+
 /**
  * The grammar key for an assertion. PER-006: the encoding is a framed
  * tuple (JSON array), never bare concatenation — ("a","bc","d") and
@@ -56,25 +58,31 @@ export function evidenceRoot(sourceKey, provenanceSources) {
 }
 
 /**
- * PER-003 (closed schema, round 2): the corroboration-bearing
+ * PER-003 (closed schema, round 3): the corroboration-bearing
  * variant of evidenceRoot. Returns the evidence root ONLY when
  * every key on the copied_from chain — the source itself, every
  * link, the terminal root, and every member of a citation cycle —
- * is registered in the provenance map AND is applicable: its entry
- * carries an applies_to list containing at least one SourceRef
- * naming that link's own key ("repo|path" of a listed ref equals
- * the link key — the registration vouches for a concrete pin of
- * ITSELF). An absent, empty, or self-naming-nothing applies_to at
- * ANY link, or any missing registration, makes the root UNKNOWN
- * (null): unknown provenance never supplies an independent group
- * and can never increase support. A cycle resolves only when every
- * member is fully applicable (each member is applicability-checked
- * on its first visit, before the cycle closes). (The caller's
- * per-assertion leaf check additionally requires the leaf entry to
- * name the exact consumed SourceRef; this walk's self-naming check
- * is the chain authority for ancestors and a backstop for the leaf.)
+ * is registered in the provenance map AND is applicable under the
+ * FULL ancestor-identity binding: its entry carries an applies_to
+ * list containing at least one SourceRef FULLY equal (all six
+ * fields, via sourceRefEquals) to that link's own registered
+ * identity — the complete pin (or one of the complete pins) under
+ * which the link's key is itself registered in context.sources,
+ * supplied by the caller as `registeredRefs` (key -> SourceRef or
+ * SourceRef[]). A repo|path key match with ANY identity field
+ * differing (commit, blob, algorithm or revision) is inapplicable.
+ * An absent, empty, or non-matching applies_to at ANY link, a
+ * missing provenance registration, or a link with no registered
+ * identity in context.sources makes the root UNKNOWN (null):
+ * unknown provenance never supplies an independent group and can
+ * never increase support. A cycle resolves only when every member
+ * is fully applicable (each member is applicability-checked on its
+ * first visit, before the cycle closes). (The caller's per-assertion
+ * leaf check additionally requires the leaf entry to name the exact
+ * consumed SourceRef; this walk's full-identity check is the chain
+ * authority for ancestors and a backstop for the leaf.)
  */
-export function registeredEvidenceRoot(sourceKey, provenanceSources) {
+export function registeredEvidenceRoot(sourceKey, provenanceSources, registeredRefs) {
   const path = [];
   let cur = sourceKey;
   while (true) {
@@ -83,7 +91,12 @@ export function registeredEvidenceRoot(sourceKey, provenanceSources) {
     const entry = provenanceSources[cur];
     if (!entry) return null;
     if (!Array.isArray(entry.applies_to)) return null;
-    if (!entry.applies_to.some((r) => r && `${r.repo}|${r.path}` === cur)) return null;
+    const registered = registeredRefs instanceof Map
+      ? registeredRefs.get(cur)
+      : (registeredRefs ? registeredRefs[cur] : undefined);
+    const registeredList = Array.isArray(registered) ? registered : (registered ? [registered] : []);
+    if (registeredList.length === 0) return null;
+    if (!entry.applies_to.some((r) => r && registeredList.some((reg) => sourceRefEquals(r, reg)))) return null;
     path.push(cur);
     if (entry.copied_from === null || entry.copied_from === undefined) return cur;
     cur = entry.copied_from;
@@ -97,9 +110,11 @@ export function registeredEvidenceRoot(sourceKey, provenanceSources) {
  * @param {Array} admitted — assertions enriched with _sourceKey (the
  *   "repo|path" of the source their passage came from).
  * @param {object} provenanceSources — validated provenance.sources map.
+ * @param {Map|object} registeredRefs — key -> registered SourceRef(s)
+ *   from context.sources (see registeredEvidenceRoot).
  * @returns {Map<string, {status, key, label, assertions, roots:Set}>}
  */
-export function deriveKeyStatuses(admitted, provenanceSources) {
+export function deriveKeyStatuses(admitted, provenanceSources, registeredRefs) {
   const byKey = new Map();
   for (const a of admitted) {
     const k = assertionKey(a);
@@ -117,7 +132,7 @@ export function deriveKeyStatuses(admitted, provenanceSources) {
     const roots = new Set();
     for (const a of list) {
       if (a._provUnknown) continue;
-      const r = registeredEvidenceRoot(a._sourceKey, provenanceSources);
+      const r = registeredEvidenceRoot(a._sourceKey, provenanceSources, registeredRefs);
       if (r !== null) roots.add(r);
     }
     const rootGroups = new Set([...roots].map((r) => provenanceSources[r].group));

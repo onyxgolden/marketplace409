@@ -3,7 +3,7 @@
     "nominal": 40,
     "contradiction": 30,
     "injection": 20,
-    "schema": 35,
+    "schema": 38,
     "budget": 10
   },
   "cases": [
@@ -1310,6 +1310,15 @@
                 "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
                 "label": "rev-1",
                 "text": "Nimbus relay control protocol — lab notes (SYNTHETIC)\nPump | default port | 8080 | global\nPump | shutdown sequence | vent, isolate, cool | global\nRelay | safe voltage | 24 | rack\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
               }
             }
           }
@@ -3652,6 +3661,15 @@
           "forge-fixtures|manuals/kestrel9-copy.md": {
             "revisions": {
               "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
                 "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
                 "label": "rev-1",
                 "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
@@ -19535,6 +19553,618 @@
         "contradictions": [],
         "quarantined": [],
         "diagnostics": []
+      }
+    },
+    {
+      "id": "S36",
+      "kind": "schema",
+      "task": {
+        "schema_version": "1",
+        "task_id": "batt-S36",
+        "operation": "analyze",
+        "fixture_refs": {
+          "source_refs": [
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/kestrel9-copy.md",
+              "commit": "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a",
+              "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/nimbus-protocol.md",
+              "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+              "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            }
+          ]
+        },
+        "options": {
+          "request": {
+            "module_id": "mod-s36",
+            "question_format": "short_answer",
+            "topics": [
+              {
+                "topic_id": "t-pumps",
+                "predicates": [
+                  "default port"
+                ]
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "a-port-c",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-c-p",
+                "source_index": 0,
+                "span": {
+                  "start_byte": 59,
+                  "end_byte": 94,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-port-n",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-n-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 56,
+                  "end_byte": 91,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              }
+            ],
+            "proposed_keys": [],
+            "composite_requests": []
+          }
+        }
+      },
+      "context": {
+        "clock": 1792454400000,
+        "sources": {
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-copy.md": {
+            "revisions": {
+              "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/nimbus-protocol.md": {
+            "revisions": {
+              "f3d047331d3b421a0cff31e821550a39f62bf4ab": {
+                "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                "label": "rev-1",
+                "text": "Nimbus relay control protocol — lab notes (SYNTHETIC)\nPump | default port | 8080 | global\nPump | shutdown sequence | vent, isolate, cool | global\nRelay | safe voltage | 24 | rack\n"
+              }
+            }
+          }
+        },
+        "readGrants": [
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-manual.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-copy.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/nimbus-protocol.md"
+          }
+        ],
+        "principal": {
+          "principal_id": "muse-relay-01",
+          "role": "MUSE_RELAY",
+          "registered_by": "jason",
+          "valid_from": "2026-01-01",
+          "expires_at": "2027-01-01",
+          "revoked": false
+        },
+        "aliases": {
+          "muse-relay-01": "muse-relay-01"
+        },
+        "criteria": {
+          "criteria_version": "rt-1",
+          "templates": {
+            "default port": {
+              "question_form": "What is the default port of {subject} ({scope})?",
+              "lesson_heading": "Core configuration"
+            }
+          }
+        },
+        "provenance": {
+          "sources": {
+            "forge-fixtures|manuals/kestrel9-manual.md": {
+              "group": "vendor-docs",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-manual.md",
+                  "commit": "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec",
+                  "blob": "0000000000000000000000000000000000000000",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/kestrel9-copy.md": {
+              "group": "mirrors",
+              "copied_from": "forge-fixtures|manuals/kestrel9-manual.md",
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-copy.md",
+                  "commit": "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/nimbus-protocol.md": {
+              "group": "lab-notes",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/nimbus-protocol.md",
+                  "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+                  "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            }
+          }
+        },
+        "test_hooks": {}
+      },
+      "expected": {
+        "status": "REPORT_READY",
+        "quizzes": [
+          "a-port-c"
+        ],
+        "composites": [],
+        "gaps": [],
+        "rejected_codes": [],
+        "contradictions": [],
+        "quarantined": [],
+        "diagnostics": [
+          "PROVENANCE_UNBOUND"
+        ]
+      }
+    },
+    {
+      "id": "S37",
+      "kind": "schema",
+      "task": {
+        "schema_version": "1",
+        "task_id": "batt-S37",
+        "operation": "analyze",
+        "fixture_refs": {
+          "source_refs": [
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/kestrel9-copy.md",
+              "commit": "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a",
+              "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/nimbus-protocol.md",
+              "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+              "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            }
+          ]
+        },
+        "options": {
+          "request": {
+            "module_id": "mod-s37",
+            "question_format": "short_answer",
+            "topics": [
+              {
+                "topic_id": "t-pumps",
+                "predicates": [
+                  "default port"
+                ]
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "a-port-c",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-c-p",
+                "source_index": 0,
+                "span": {
+                  "start_byte": 59,
+                  "end_byte": 94,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-port-n",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-n-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 56,
+                  "end_byte": 91,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              }
+            ],
+            "proposed_keys": [],
+            "composite_requests": []
+          }
+        }
+      },
+      "context": {
+        "clock": 1792454400000,
+        "sources": {
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-copy.md": {
+            "revisions": {
+              "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/nimbus-protocol.md": {
+            "revisions": {
+              "f3d047331d3b421a0cff31e821550a39f62bf4ab": {
+                "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                "label": "rev-1",
+                "text": "Nimbus relay control protocol — lab notes (SYNTHETIC)\nPump | default port | 8080 | global\nPump | shutdown sequence | vent, isolate, cool | global\nRelay | safe voltage | 24 | rack\n"
+              }
+            }
+          }
+        },
+        "readGrants": [
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-manual.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-copy.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/nimbus-protocol.md"
+          }
+        ],
+        "principal": {
+          "principal_id": "muse-relay-01",
+          "role": "MUSE_RELAY",
+          "registered_by": "jason",
+          "valid_from": "2026-01-01",
+          "expires_at": "2027-01-01",
+          "revoked": false
+        },
+        "aliases": {
+          "muse-relay-01": "muse-relay-01"
+        },
+        "criteria": {
+          "criteria_version": "rt-1",
+          "templates": {
+            "default port": {
+              "question_form": "What is the default port of {subject} ({scope})?",
+              "lesson_heading": "Core configuration"
+            }
+          }
+        },
+        "provenance": {
+          "sources": {
+            "forge-fixtures|manuals/kestrel9-manual.md": {
+              "group": "vendor-docs",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-manual.md",
+                  "commit": "9999999999999999999999999999999999999999",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/kestrel9-copy.md": {
+              "group": "mirrors",
+              "copied_from": "forge-fixtures|manuals/kestrel9-manual.md",
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-copy.md",
+                  "commit": "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/nimbus-protocol.md": {
+              "group": "lab-notes",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/nimbus-protocol.md",
+                  "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+                  "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            }
+          }
+        },
+        "test_hooks": {}
+      },
+      "expected": {
+        "status": "REPORT_READY",
+        "quizzes": [
+          "a-port-c"
+        ],
+        "composites": [],
+        "gaps": [],
+        "rejected_codes": [],
+        "contradictions": [],
+        "quarantined": [],
+        "diagnostics": [
+          "PROVENANCE_UNBOUND"
+        ]
+      }
+    },
+    {
+      "id": "S38",
+      "kind": "schema",
+      "task": {
+        "schema_version": "1",
+        "task_id": "batt-S38",
+        "operation": "analyze",
+        "fixture_refs": {
+          "source_refs": [
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/kestrel9-copy.md",
+              "commit": "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a",
+              "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            },
+            {
+              "repo": "forge-fixtures",
+              "path": "manuals/nimbus-protocol.md",
+              "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+              "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+              "algorithm": "git-sha1",
+              "revision": "rev-1"
+            }
+          ]
+        },
+        "options": {
+          "request": {
+            "module_id": "mod-s38",
+            "question_format": "short_answer",
+            "topics": [
+              {
+                "topic_id": "t-pumps",
+                "predicates": [
+                  "default port"
+                ]
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "a-port-c",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-c-p",
+                "source_index": 0,
+                "span": {
+                  "start_byte": 59,
+                  "end_byte": 94,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              },
+              {
+                "assertion_id": "a-port-n",
+                "subject": "Pump",
+                "predicate": "default port",
+                "value": "8080",
+                "scope": "global",
+                "polarity": "positive",
+                "passage_id": "a-port-n-p",
+                "source_index": 1,
+                "span": {
+                  "start_byte": 56,
+                  "end_byte": 91,
+                  "quoted_text": "Pump | default port | 8080 | global"
+                }
+              }
+            ],
+            "proposed_keys": [],
+            "composite_requests": []
+          }
+        }
+      },
+      "context": {
+        "clock": 1792454400000,
+        "sources": {
+          "forge-fixtures|manuals/kestrel9-manual.md": {
+            "revisions": {
+              "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/kestrel9-copy.md": {
+            "revisions": {
+              "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a": {
+                "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                "label": "rev-1",
+                "text": "Kestrel-9 vapor pump — field service extract (SYNTHETIC)\nPump | default port | 8080 | global\nPump | startup sequence | prime, ignite, ramp | global\nRelay | safe voltage | 24 | rack\nFrame | max torque | 42 Nm | standard\n"
+              }
+            }
+          },
+          "forge-fixtures|manuals/nimbus-protocol.md": {
+            "revisions": {
+              "f3d047331d3b421a0cff31e821550a39f62bf4ab": {
+                "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                "label": "rev-1",
+                "text": "Nimbus relay control protocol — lab notes (SYNTHETIC)\nPump | default port | 8080 | global\nPump | shutdown sequence | vent, isolate, cool | global\nRelay | safe voltage | 24 | rack\n"
+              }
+            }
+          }
+        },
+        "readGrants": [
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-manual.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/kestrel9-copy.md"
+          },
+          {
+            "repo": "forge-fixtures",
+            "path": "manuals/nimbus-protocol.md"
+          }
+        ],
+        "principal": {
+          "principal_id": "muse-relay-01",
+          "role": "MUSE_RELAY",
+          "registered_by": "jason",
+          "valid_from": "2026-01-01",
+          "expires_at": "2027-01-01",
+          "revoked": false
+        },
+        "aliases": {
+          "muse-relay-01": "muse-relay-01"
+        },
+        "criteria": {
+          "criteria_version": "rt-1",
+          "templates": {
+            "default port": {
+              "question_form": "What is the default port of {subject} ({scope})?",
+              "lesson_heading": "Core configuration"
+            }
+          }
+        },
+        "provenance": {
+          "sources": {
+            "forge-fixtures|manuals/kestrel9-manual.md": {
+              "group": "vendor-docs",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-manual.md",
+                  "commit": "341e7d76bb2de1b4293d9b5d80ee9a443bfec8ec",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-999"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/kestrel9-copy.md": {
+              "group": "mirrors",
+              "copied_from": "forge-fixtures|manuals/kestrel9-manual.md",
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/kestrel9-copy.md",
+                  "commit": "59a3cb4d22cdd6dd4e34f771ed5415579471ea0a",
+                  "blob": "8043a2383d26ca872ccac31c0ce2a7aa8756e9e6",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            },
+            "forge-fixtures|manuals/nimbus-protocol.md": {
+              "group": "lab-notes",
+              "copied_from": null,
+              "applies_to": [
+                {
+                  "repo": "forge-fixtures",
+                  "path": "manuals/nimbus-protocol.md",
+                  "commit": "f3d047331d3b421a0cff31e821550a39f62bf4ab",
+                  "blob": "e0a7643a63a9e8957f06936799b0a4f3d658d6a3",
+                  "algorithm": "git-sha1",
+                  "revision": "rev-1"
+                }
+              ]
+            }
+          }
+        },
+        "test_hooks": {}
+      },
+      "expected": {
+        "status": "REPORT_READY",
+        "quizzes": [
+          "a-port-c"
+        ],
+        "composites": [],
+        "gaps": [],
+        "rejected_codes": [],
+        "contradictions": [],
+        "quarantined": [],
+        "diagnostics": [
+          "PROVENANCE_UNBOUND"
+        ]
       }
     },
     {

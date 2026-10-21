@@ -779,6 +779,51 @@ test("PER-003 round 2: exact-tuple positive through BOTH public APIs (run and ru
   assert.deepEqual(codes(guarded), []);
 });
 
+// PER-003 round 3 (PER-003B residual): the fully-bound chain of the
+// round-2 positive, with exactly ONE identity field of the
+// ANCESTOR's applies_to pin mutated. The ancestor (kestrel
+// original) is registered in context.sources under its real
+// fixture-store pin, so a same-key pin with a wrong blob, an
+// unregistered commit, or a wrong revision is inapplicable: the
+// chain supplies no root => attributed-only + PROVENANCE_UNBOUND,
+// through BOTH public APIs. (Battery S36–S38 freeze the same three
+// mutations; S35 is the unchanged positive.)
+const r3ChainTask = () => task({ refs: [srcRef(CP), srcRef(NI)], assertions: [
+  A("a-port-c", "Pump", "default port", "8080", "global", "positive", 0, CP, 1),
+  A("a-port-n", "Pump", "default port", "8080", "global", "positive", 1, NI, 1),
+] });
+const r3ChainCtx = (ancestorPin) => {
+  const c = ctx({ paths: [K, CP, NI], provenanceOverrides: { [CP]: `${REPO}|${K}` } });
+  c.provenance.sources[`${REPO}|${K}`].applies_to = [ancestorPin];
+  return c;
+};
+const assertR3Unbound = async (ancestorPin) => {
+  const t = r3ChainTask();
+  const c = r3ChainCtx(ancestorPin);
+  const direct = run(structuredClone(t), structuredClone(c));
+  assert.equal(direct.status, "REPORT_READY");
+  assert.equal(direct.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(direct), ["PROVENANCE_UNBOUND"]);
+  assert.ok(direct.diagnostics[0].reason.includes(`${REPO}|${K}`));
+  const guarded = await runGuarded(JSON.stringify(t), JSON.stringify(c));
+  assert.equal(guarded.status, "REPORT_READY");
+  assert.equal(guarded.report.quizzes[0].research_status, "attributed-only");
+  assert.deepEqual(codes(guarded), ["PROVENANCE_UNBOUND"]);
+  assert.ok(guarded.diagnostics[0].reason.includes(`${REPO}|${K}`));
+};
+
+test("PER-003 round 3: ancestor applies_to with wrong blob (same key) => attributed-only + PROVENANCE_UNBOUND (both APIs)", async () => {
+  await assertR3Unbound({ ...srcRef(K), blob: "0".repeat(40) });
+});
+
+test("PER-003 round 3: ancestor applies_to with unregistered commit (same key) => attributed-only + PROVENANCE_UNBOUND (both APIs)", async () => {
+  await assertR3Unbound({ ...srcRef(K), commit: "9".repeat(40) });
+});
+
+test("PER-003 round 3: ancestor applies_to with wrong revision (same key) => attributed-only + PROVENANCE_UNBOUND (both APIs)", async () => {
+  await assertR3Unbound({ ...srcRef(K), revision: "rev-999" });
+});
+
 test("PER-004: forged second pin on an already-resolved path refuses SOURCE_UNVERIFIED, no quiz, null report", () => {
   const forged = { ...srcRef(K), blob: "0".repeat(40), revision: "WRONG" };
   const out = run(
@@ -897,10 +942,14 @@ test("registeredEvidenceRoot: registered chain resolves; broken chain and unregi
     "e|x": { group: "g5", copied_from: "d|x", applies_to: [selfRef("e|x")] },
     "f|x": { group: "g6", copied_from: "ghost|x", applies_to: [selfRef("f|x")] },
   };
-  assert.equal(registeredEvidenceRoot("a|x", prov), "c|x");
-  assert.equal(registeredEvidenceRoot("d|x", prov), "d|x");
-  assert.equal(registeredEvidenceRoot("f|x", prov), null);
-  assert.equal(registeredEvidenceRoot("ghost|x", prov), null);
+  // PER-003 round 3: the walk also receives each key's registered
+  // full identity (as built from context.sources at the call site);
+  // here every key's registered pin is its own selfRef.
+  const reg = Object.fromEntries(Object.keys(prov).map((k) => [k, [selfRef(k)]]));
+  assert.equal(registeredEvidenceRoot("a|x", prov, reg), "c|x");
+  assert.equal(registeredEvidenceRoot("d|x", prov, reg), "d|x");
+  assert.equal(registeredEvidenceRoot("f|x", prov, reg), null);
+  assert.equal(registeredEvidenceRoot("ghost|x", prov, reg), null);
 });
 
 test("registeredEvidenceRoot (PER-003 round 2): unbound ancestor, empty applies_to, and mismatching ancestor all return null; fully-bound chain resolves", async () => {
@@ -914,25 +963,58 @@ test("registeredEvidenceRoot (PER-003 round 2): unbound ancestor, empty applies_
     "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
     "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
   });
+  // PER-003 round 3: registered full identities, one per key.
+  const regFor = (prov) => Object.fromEntries(Object.keys(prov).map((k) => [k, [selfRef(k)]]));
   // fully-bound chain resolves to the terminal root
-  assert.equal(registeredEvidenceRoot("a|x", base()), "c|x");
+  assert.equal(registeredEvidenceRoot("a|x", base(), regFor(base())), "c|x");
   // ancestor with missing applies_to => null
   const missing = base(); delete missing["b|x"].applies_to;
-  assert.equal(registeredEvidenceRoot("a|x", missing), null);
+  assert.equal(registeredEvidenceRoot("a|x", missing, regFor(missing)), null);
   // ancestor with empty applies_to => null
   const empty = base(); empty["c|x"].applies_to = [];
-  assert.equal(registeredEvidenceRoot("a|x", empty), null);
+  assert.equal(registeredEvidenceRoot("a|x", empty, regFor(empty)), null);
   // ancestor whose applies_to names a DIFFERENT key => null
   const mismatched = base(); mismatched["b|x"].applies_to = [selfRef("a|x")];
-  assert.equal(registeredEvidenceRoot("a|x", mismatched), null);
+  assert.equal(registeredEvidenceRoot("a|x", mismatched, regFor(mismatched)), null);
   // leaf itself unbound (empty applies_to) => null
   const leafEmpty = base(); leafEmpty["a|x"].applies_to = [];
-  assert.equal(registeredEvidenceRoot("a|x", leafEmpty), null);
+  assert.equal(registeredEvidenceRoot("a|x", leafEmpty, regFor(leafEmpty)), null);
   // cycle with one unbound member => null (conservative)
   const cyc = {
     "d|x": { group: "g4", copied_from: "e|x", applies_to: [selfRef("d|x")] },
     "e|x": { group: "g5", copied_from: "d|x", applies_to: [] },
   };
-  assert.equal(registeredEvidenceRoot("d|x", cyc), null);
-  assert.equal(registeredEvidenceRoot("e|x", cyc), null);
+  assert.equal(registeredEvidenceRoot("d|x", cyc, regFor(cyc)), null);
+  assert.equal(registeredEvidenceRoot("e|x", cyc, regFor(cyc)), null);
+});
+
+test("registeredEvidenceRoot (PER-003 round 3): same-key wrong-identity ancestor (blob/commit/revision) returns null; exact ancestor identity resolves", async () => {
+  const { registeredEvidenceRoot } = await import("../src/verify.js");
+  const selfRef = (key) => {
+    const [repo, path] = key.split("|");
+    return { repo, path, commit: "1".repeat(40), blob: "2".repeat(40), algorithm: "git-sha1", revision: "rev-1" };
+  };
+  const base = () => ({
+    "a|x": { group: "g1", copied_from: "b|x", applies_to: [selfRef("a|x")] },
+    "b|x": { group: "g2", copied_from: "c|x", applies_to: [selfRef("b|x")] },
+    "c|x": { group: "g3", copied_from: null, applies_to: [selfRef("c|x")] },
+  });
+  const reg = { "a|x": [selfRef("a|x")], "b|x": [selfRef("b|x")], "c|x": [selfRef("c|x")] };
+  // exact full ancestor identity resolves to the terminal root
+  assert.equal(registeredEvidenceRoot("a|x", base(), reg), "c|x");
+  // ancestor applies_to naming the SAME key but with exactly one
+  // identity field differing from its registered pin => null
+  for (const mut of [{ blob: "0".repeat(40) }, { commit: "9".repeat(40) }, { revision: "rev-999" }]) {
+    const m = base();
+    m["c|x"].applies_to = [{ ...selfRef("c|x"), ...mut }];
+    assert.equal(registeredEvidenceRoot("a|x", m, reg), null);
+  }
+  // intermediate link with a wrong-identity pin => null as well
+  const mid = base();
+  mid["b|x"].applies_to = [{ ...selfRef("b|x"), blob: "0".repeat(40) }];
+  assert.equal(registeredEvidenceRoot("a|x", mid, reg), null);
+  // ancestor with a complete self-naming pin but NO registered
+  // identity supplied for its key => null (fail closed)
+  const regMissing = { "a|x": [selfRef("a|x")], "b|x": [selfRef("b|x")] };
+  assert.equal(registeredEvidenceRoot("a|x", base(), regMissing), null);
 });

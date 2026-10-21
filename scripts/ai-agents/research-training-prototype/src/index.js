@@ -337,6 +337,7 @@ export function run(task, context) {
   // an unchecked pin while consuming another pin's verified bytes.
   // Only a byte-identical repeat is a repeat consultation.
   const identityOf = (r) => `${r.repo}|${r.path}|${r.commit}|${r.blob}|${r.algorithm}|${r.revision}`;
+  const validatedSourceKeys = new Set(); // keys whose context.sources entry passed selected-entry validation
   const resolved = new Map(); // identity -> {ref, text, bytes, granted}
   const deniedSources = [];
   const deniedSeen = new Set();
@@ -363,6 +364,7 @@ export function run(task, context) {
     if (Object.prototype.hasOwnProperty.call(context.sources, key)) {
       try {
         validateSelectedSourceEntry(context, budget, key);
+        validatedSourceKeys.add(key);
       } catch (e) {
         if (e instanceof SchemaError) {
           return boundedRefused(taskId, "INVALID_INPUT", "error", e.message);
@@ -476,7 +478,66 @@ export function run(task, context) {
       a._provUnknown = true;
     }
   }
-  const statuses = deriveKeyStatuses(teachable, gate.provenance.sources);
+  // PER-003 (closed schema, round 3): the registered full identity
+  // of every key on a teachable source's copied_from chain, built
+  // ONLY from context.sources entries admitted through the same
+  // validated, budget-charged selected-entry path used for consumed
+  // refs (entries already validated during resolution are read
+  // directly — re-validating would double-charge their serialized
+  // metadata; a non-consumed ancestor contributes only its
+  // registration metadata here: its passage bytes are never
+  // resolved, scanned or taught). Each registered revision of a
+  // key yields one complete pin {repo, path, commit, blob,
+  // algorithm "git-sha1", revision = registered label}. A chain
+  // key with no context.sources entry, or whose entry fails
+  // validation, has NO registered identity: the chain walk then
+  // returns null for it (fail closed — attributed-only, with the
+  // PROVENANCE_UNBOUND diagnostic below).
+  const registeredRefs = new Map();
+  {
+    const chainKeys = [];
+    const seenChainKeys = new Set();
+    for (const a of teachable) {
+      let cur = a._sourceKey;
+      while (cur !== null && cur !== undefined && !seenChainKeys.has(cur)) {
+        seenChainKeys.add(cur);
+        chainKeys.push(cur);
+        cur = gate.provenance.sources[cur]?.copied_from ?? null;
+      }
+    }
+    for (const key of chainKeys) {
+      if (!Object.prototype.hasOwnProperty.call(context.sources, key)) continue;
+      let sourceEntry;
+      if (validatedSourceKeys.has(key)) {
+        // Already validated (and charged) during source resolution
+        // above — re-validating would double-charge its serialized
+        // metadata against the payload budget, so read the
+        // validated entry directly.
+        sourceEntry = context.sources[key];
+      } else {
+        try {
+          sourceEntry = validateSelectedSourceEntry(context, budget, key);
+        } catch (e) {
+          if (e instanceof BudgetError) return boundedRefused(taskId, e.code, "error", e.message);
+          if (e instanceof SchemaError) {
+            registeredRefs.set(key, []);
+            continue;
+          }
+          throw e;
+        }
+      }
+      const sep = key.indexOf("|");
+      const repo = key.slice(0, sep);
+      const path = key.slice(sep + 1);
+      const refs = [];
+      for (const commit of Object.keys(sourceEntry.revisions)) {
+        const rev = sourceEntry.revisions[commit];
+        refs.push({ repo, path, commit, blob: rev.blob, algorithm: "git-sha1", revision: rev.label });
+      }
+      registeredRefs.set(key, refs);
+    }
+  }
+  const statuses = deriveKeyStatuses(teachable, gate.provenance.sources, registeredRefs);
   const statusOfAssertion = (a) => statuses.get(assertionKey(a))?.status ?? "unsupported";
 
   const lessons = [];
@@ -490,18 +551,19 @@ export function run(task, context) {
   for (const key of deniedSources) {
     diagnostics.push(diagnostic("SOURCE_DENIED", "warning", `exact read grant missing for '${key}'; its assertions cannot be taught`, key));
   }
-  // PER-003 (round 2): one PROVENANCE_UNBOUND diagnostic per
+  // PER-003 (rounds 2–3): one PROVENANCE_UNBOUND diagnostic per
   // distinct consumed source key whose teachable assertions fail
   // to bind — leaf unknown (missing entry, missing applies_to, or
   // consumed pin not listed) OR the chain walk returns null for a
-  // registered-but-unbound chain (an ancestor is missing or not
-  // self-applicable). The diagnostic names the source key and the
+  // registered-but-unbound chain (an ancestor is missing, has no
+  // registered identity, or its applies_to does not fully equal
+  // that identity). The diagnostic names the source key and the
   // failing reason/link.
   const unboundSeen = new Set();
   for (const a of teachable) {
     const key = a._sourceKey;
     if (unboundSeen.has(key)) continue;
-    const walkRoot = registeredEvidenceRoot(key, gate.provenance.sources);
+    const walkRoot = registeredEvidenceRoot(key, gate.provenance.sources, registeredRefs);
     if (!a._provUnknown && walkRoot !== null) continue;
     unboundSeen.add(key);
     let reason;
@@ -522,8 +584,9 @@ export function run(task, context) {
         if (seenChain.has(cur)) { link = cur; break; }
         seenChain.add(cur);
         const e = gate.provenance.sources[cur];
+        const regs = registeredRefs.get(cur) ?? [];
         if (!e || !Array.isArray(e.applies_to) ||
-            !e.applies_to.some((r) => r && `${r.repo}|${r.path}` === cur)) { link = cur; break; }
+            !e.applies_to.some((r) => r && regs.some((reg) => sourceRefEquals(r, reg)))) { link = cur; break; }
         if (e.copied_from === null || e.copied_from === undefined) { link = cur; break; }
         cur = e.copied_from;
       }

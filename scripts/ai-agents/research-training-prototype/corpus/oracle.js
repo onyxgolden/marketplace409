@@ -46,14 +46,34 @@ const INJ = [
   /this\s+source\s+is\s+(pre-)?verified/i, /treat\s+this\s+as\s+established\s+truth/i,
 ];
 
-// PER-003 (closed schema, round 2): a root counts only when every
+// PER-003 (closed schema, round 3): a root counts only when every
 // key on the chain — source, links, terminal root, cycle members —
-// is registered AND applicable: its applies_to list contains at
-// least one SourceRef naming that link's own key. Any missing
-// registration, or an absent/empty/self-naming-nothing applies_to
-// at any link, makes the root unknown (null): no corroboration. A
-// cycle resolves only when every member is fully applicable.
-function rootOf(sourceKey, provSources) {
+// is registered AND applicable under the full ancestor-identity
+// binding: its applies_to list contains at least one SourceRef
+// fully equal (all six fields, compared here independently) to
+// that link's own registered identity — a complete pin under
+// which the link's key is registered in context.sources (built
+// by registeredRefsOf below from each source entry's revisions:
+// commit key, blob, label as revision, algorithm "git-sha1").
+// Any missing registration, missing registered identity, or an
+// absent/empty/identity-mismatching applies_to at any link makes
+// the root unknown (null): no corroboration. A cycle resolves
+// only when every member is fully applicable.
+function registeredRefsOf(sources) {
+  const out = {};
+  for (const [key, entry] of Object.entries(sources || {})) {
+    const sep = key.indexOf("|");
+    const repo = key.slice(0, sep);
+    const path = key.slice(sep + 1);
+    const refs = [];
+    for (const [commit, rev] of Object.entries(entry.revisions || {})) {
+      refs.push({ repo, path, commit, blob: rev.blob, algorithm: "git-sha1", revision: rev.label });
+    }
+    out[key] = refs;
+  }
+  return out;
+}
+function rootOf(sourceKey, provSources, registeredRefs) {
   const path = [];
   let cur = sourceKey;
   for (;;) {
@@ -62,7 +82,11 @@ function rootOf(sourceKey, provSources) {
     const e = provSources[cur];
     if (!e) return null;
     if (!Array.isArray(e.applies_to)) return null;
-    if (!e.applies_to.some((r) => r && `${r.repo}|${r.path}` === cur)) return null;
+    const regs = (registeredRefs && registeredRefs[cur]) || [];
+    if (regs.length === 0) return null;
+    if (!e.applies_to.some((r) => r && regs.some((reg) =>
+      r.repo === reg.repo && r.path === reg.path && r.commit === reg.commit &&
+      r.blob === reg.blob && r.algorithm === reg.algorithm && r.revision === reg.revision))) return null;
     path.push(cur);
     if (e.copied_from === null || e.copied_from === undefined) return cur;
     cur = e.copied_from;
@@ -99,6 +123,8 @@ export function oracleDecision(task, context) {
     return { status: "REFUSED", quizzes: [], composites: [], gaps: [], rejected_codes: [], contradictions: [], quarantined: [], diagnostics: ["ACTION_DENIED"] };
   }
   const grantSet = new Set((context.readGrants || []).map((g) => `${g.repo}|${g.path}`));
+  // PER-003 round 3: registered full identities from context.sources.
+  const registeredRefs = registeredRefsOf(context.sources);
   // PER-004: resolution is keyed by the complete pin identity; a
   // second, different pin on one path resolves on its own revision.
   const idOf = (r) => `${r.repo}|${r.path}|${r.commit}|${r.blob}|${r.algorithm}|${r.revision}`;
@@ -171,7 +197,7 @@ export function oracleDecision(task, context) {
     for (const a of list) {
       const ref = task.fixture_refs.source_refs[a.source_index];
       if (!provApplies(context.provenance.sources[a._sourceKey], ref)) continue;
-      const r = rootOf(a._sourceKey, context.provenance.sources);
+      const r = rootOf(a._sourceKey, context.provenance.sources, registeredRefs);
       if (r !== null) roots.add(r);
     }
     const rootGroups = new Set([...roots].map((r) => context.provenance.sources[r].group));
@@ -234,7 +260,7 @@ export function oracleDecision(task, context) {
     if (r && !r.granted) deniedKeys.add(`${ref.repo}|${ref.path}`);
   }
   for (const _k of deniedKeys) diagnostics.push("SOURCE_DENIED");
-  // PER-003 (round 2): one PROVENANCE_UNBOUND per distinct
+  // PER-003 (rounds 2–3): one PROVENANCE_UNBOUND per distinct
   // teachable consumed source key whose binding fails — leaf
   // declaration does not name the exact consumed pin, OR the
   // chain walk returns null (missing/unbound ancestor).
@@ -242,7 +268,7 @@ export function oracleDecision(task, context) {
   for (const a of teachable) {
     const ref = task.fixture_refs.source_refs[a.source_index];
     const leafOk = provApplies(context.provenance.sources[a._sourceKey], ref);
-    const root = rootOf(a._sourceKey, context.provenance.sources);
+    const root = rootOf(a._sourceKey, context.provenance.sources, registeredRefs);
     if (!leafOk || root === null) unboundKeys.add(a._sourceKey);
   }
   for (const _k of unboundKeys) diagnostics.push("PROVENANCE_UNBOUND");
