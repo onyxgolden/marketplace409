@@ -31,6 +31,7 @@ import { findSymbol } from "./symbolRegistry";
 import { normalizeDesignMode } from "./designerModes";
 import { isCameraPose, nextViewId } from "./namedCameraViews";
 import { systemErrors } from "./designSystems";
+import { rackErrors } from "./rackGeometry";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
@@ -1087,6 +1088,7 @@ export function validateDesign(design) {
     errors.push(...pipeAttachmentErrors(run)); // optional nozzle attachments
   }
   errors.push(...systemErrors(design)); // optional systems + member colors
+  errors.push(...rackErrors(design)); // optional rack parameters
   for (const instance of design.symbols || []) {
     const symbol = findSymbol(instance.domain, instance.symbolId);
     if (!symbol) {
