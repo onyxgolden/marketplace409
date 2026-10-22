@@ -28,6 +28,14 @@ describe("system actions", () => {
     expect(s.design.symbols[0].systemId).toBeUndefined();
   });
 
+  it("ADD_SYSTEM with assignTo creates and assigns in one undo step", () => {
+    let s = run(start(), { type: "ADD_SYSTEM", name: "Steam", color: "#ef4444", assignTo: { kind: "symbol", id: "p1" } });
+    expect(s.design.symbols[0].systemId).toBe("system_1");
+    s = run(s, { type: "UNDO" });
+    expect(s.design.systems ?? []).toEqual([]);
+    expect(s.design.symbols[0].systemId).toBeUndefined();
+  });
+
   it("member color and underground", () => {
     let s = run(start(),
       { type: "SET_MEMBER_COLOR", target: { kind: "symbol", id: "p1" }, color: "#a855f7" },
