@@ -53,6 +53,14 @@ export const PROCESS_SHAPES_3D = Object.freeze(["vcyl", "hcyl", "box", "sphere",
 const eq = (id, label, category, glyph, widthIn, depthIn, heightIn, shape3d, tagPrefix, color, defaultLayer = "equipment") =>
   Object.freeze({ id, label, category, glyph, widthIn, depthIn, heightIn, shape3d, tagPrefix, defaultLayer, color });
 
+// Generic nozzle (connection anchor) specs: [id, fx, fy, sizeIn] where
+// (fx, fy) are fractions of the instance's half-width / half-depth in
+// [-1, 1] (plan frame: +fx = east, +fy = south; (0, 0) is a top/center
+// nozzle) and sizeIn is the nominal size in inches. See pipeAttachments.js
+// (catalogAnchorsWorld) for the world projection.
+const nozzleSet = (...specs) =>
+  Object.freeze(specs.map(([id, fx, fy, sizeIn]) => Object.freeze({ id, fx, fy, sizeIn })));
+
 const [
   PUMPS, COMPRESSORS, DRIVERS, FIRED, EXCHANGERS, COLUMNS, VESSELS,
   SEPARATION, SOLIDS, MIXING, UTILITIES, VALVES, STRUCTURES,
@@ -67,7 +75,10 @@ const C = {
 
 export const PROCESS_EQUIPMENT = Object.freeze([
   // ---- pumps (P) ----
-  eq("centrifugal-pump", "Centrifugal pump", PUMPS, "pump-centrifugal", 36, 18, 24, "box", "P", C.pump),
+  Object.freeze({
+    ...eq("centrifugal-pump", "Centrifugal pump", PUMPS, "pump-centrifugal", 36, 18, 24, "box", "P", C.pump),
+    nozzles: nozzleSet(["suction-in", 0, -1, 4], ["discharge-out", 0, 1, 6]),
+  }),
   eq("pd-pump", "Positive-displacement pump", PUMPS, "pump-pd", 40, 18, 24, "box", "P", C.pump),
   eq("vertical-can-pump", "Vertical can pump", PUMPS, "pump-vertical-can", 30, 30, 72, "vcyl", "P", C.pump),
   eq("vertical-inline-pump", "Vertical in-line pump", PUMPS, "pump-vertical-inline", 24, 24, 48, "vcyl", "P", C.pump),
@@ -80,11 +91,17 @@ export const PROCESS_EQUIPMENT = Object.freeze([
   eq("plunger-pump", "Reciprocating plunger pump", PUMPS, "pump-plunger", 60, 36, 36, "box", "P", C.pump),
 
   // ---- compressors & vacuum (K, J) ----
-  eq("centrifugal-compressor", "Centrifugal compressor", COMPRESSORS, "compressor-centrifugal", 72, 48, 60, "box", "K", C.comp),
+  Object.freeze({
+    ...eq("centrifugal-compressor", "Centrifugal compressor", COMPRESSORS, "compressor-centrifugal", 72, 48, 60, "box", "K", C.comp),
+    nozzles: nozzleSet(["suction-in", 0, -1, 8], ["discharge-out", 0, 1, 6]),
+  }),
   eq("recip-compressor", "Reciprocating compressor", COMPRESSORS, "compressor-recip", 84, 48, 54, "box", "K", C.comp),
   eq("screw-compressor", "Rotary screw compressor", COMPRESSORS, "compressor-screw", 72, 48, 60, "box", "K", C.comp),
   eq("axial-compressor", "Axial compressor", COMPRESSORS, "compressor-axial", 120, 60, 72, "hcyl", "K", C.comp),
-  eq("blower", "Blower / fan", COMPRESSORS, "blower", 36, 36, 36, "box", "K", C.comp),
+  Object.freeze({
+    ...eq("blower", "Blower / fan", COMPRESSORS, "blower", 36, 36, 36, "box", "K", C.comp),
+    nozzles: nozzleSet(["intake-in", -1, 0, 12], ["discharge-out", 1, 0, 16]),
+  }),
   eq("rotary-lobe-blower", "Rotary lobe blower", COMPRESSORS, "blower-lobe", 48, 30, 36, "box", "K", C.comp),
   eq("liquid-ring-vacuum-pump", "Liquid-ring vacuum pump", COMPRESSORS, "vacuum-liquid-ring", 48, 30, 36, "box", "K", C.comp),
   eq("steam-ejector", "Steam-jet ejector", COMPRESSORS, "ejector", 72, 12, 12, "hcyl", "J", C.comp),
@@ -107,11 +124,24 @@ export const PROCESS_EQUIPMENT = Object.freeze([
   eq("firetube-boiler", "Fire-tube boiler", FIRED, "boiler-firetube", 180, 84, 96, "hcyl", "B", C.fired),
   eq("waste-heat-boiler", "Waste-heat boiler (HRSG)", FIRED, "boiler-waste-heat", 360, 180, 480, "box", "WHB", C.fired),
   eq("thermal-oxidizer", "Thermal oxidizer / incinerator", FIRED, "thermal-oxidizer", 240, 96, 120, "hcyl", "TO", C.fired),
-  eq("flare-stack", "Flare stack", FIRED, "flare", 36, 36, 1200, "vcyl", "FL", C.fired),
+  Object.freeze({
+    ...eq("flare-stack", "Flare stack", FIRED, "flare", 36, 36, 1200, "vcyl", "FL", C.fired),
+    nozzles: nozzleSet(["relief-in", -1, 0, 24]),
+  }),
   eq("stack", "Stack / chimney", FIRED, "stack", 60, 60, 900, "vcyl", "STK", C.fired),
 
   // ---- heat exchangers (E) ----
-  eq("shell-tube-exchanger", "Shell-and-tube exchanger", EXCHANGERS, "hx-shell-tube", 144, 30, 42, "hcyl", "E", C.hx),
+  Object.freeze({
+    ...eq("shell-tube-exchanger", "Shell-and-tube exchanger", EXCHANGERS, "hx-shell-tube", 144, 30, 42, "hcyl", "E", C.hx),
+    nozzles: nozzleSet(
+      ["tube-in", -1, 0, 8],
+      ["tube-out", 1, 0, 8],
+      ["shell-in", 0.5, -1, 12],
+      ["shell-out", -0.5, -1, 12],
+      ["cooling-water-in", -0.5, 1, 10],
+      ["cooling-water-out", 0.5, 1, 10],
+    ),
+  }),
   eq("kettle-reboiler", "Kettle reboiler", EXCHANGERS, "hx-kettle", 180, 60, 72, "hcyl", "E", C.hx),
   eq("double-pipe-exchanger", "Double-pipe (hairpin) exchanger", EXCHANGERS, "hx-double-pipe", 180, 24, 36, "box", "E", C.hx),
   eq("plate-exchanger", "Plate exchanger", EXCHANGERS, "hx-plate", 30, 48, 66, "box", "E", C.hx),
@@ -122,21 +152,72 @@ export const PROCESS_EQUIPMENT = Object.freeze([
   eq("electric-process-heater", "Electric process heater", EXCHANGERS, "heater-electric", 96, 36, 36, "hcyl", "E", C.hx),
 
   // ---- columns & reactors (T, R) ----
-  eq("column", "Column / tower (trayed)", COLUMNS, "column", 36, 36, 360, "vcyl", "T", C.column),
+  Object.freeze({
+    ...eq("column", "Column / tower (trayed)", COLUMNS, "column", 36, 36, 360, "vcyl", "T", C.column),
+    nozzles: nozzleSet(
+      ["feed-in", -1, 0, 16],
+      ["overhead-out", 0, 1, 10],
+      ["bottoms-out", -0.7071, 0.7071, 12],
+      ["reflux-in", 0.7071, 0.7071, 6],
+      ["rich-oil-in", 1, 0, 6],
+      ["relief-out", 0.7071, -0.7071, 12],
+    ),
+  }),
   eq("packed-column", "Packed column", COLUMNS, "column-packed", 48, 48, 480, "vcyl", "T", C.column),
-  eq("absorber", "Absorber", COLUMNS, "column-absorber", 60, 60, 480, "vcyl", "T", C.column),
+  Object.freeze({
+    ...eq("absorber", "Absorber", COLUMNS, "column-absorber", 60, 60, 480, "vcyl", "T", C.column),
+    nozzles: nozzleSet(
+      ["gas-in", 0, 1, 6],
+      ["rich-oil-out", -1, 0, 6],
+      ["lean-oil-in", 0, -1, 6],
+      ["vapor-out", 0, 0, 6],
+    ),
+  }),
   eq("stripper", "Stripper", COLUMNS, "column-stripper", 42, 42, 360, "vcyl", "T", C.column),
   eq("vacuum-column", "Vacuum column", COLUMNS, "column-vacuum", 120, 120, 480, "vcyl", "T", C.column),
   eq("jacketed-reactor", "Jacketed reactor (stirred tank)", COLUMNS, "reactor", 60, 60, 96, "vcyl", "R", C.column),
   eq("fixed-bed-reactor", "Fixed-bed reactor", COLUMNS, "reactor-fixed-bed", 96, 96, 360, "vcyl", "R", C.column),
-  eq("fluidized-bed-reactor", "Fluidized-bed reactor", COLUMNS, "reactor-fluidized", 144, 144, 480, "vcyl", "R", C.column),
-  eq("catalyst-regenerator", "Catalyst regenerator", COLUMNS, "regenerator", 180, 180, 480, "vcyl", "R", C.column),
+  Object.freeze({
+    ...eq("fluidized-bed-reactor", "Fluidized-bed reactor", COLUMNS, "reactor-fluidized", 144, 144, 480, "vcyl", "R", C.column),
+    nozzles: nozzleSet(
+      ["feed-in", 0, 1, 8],
+      ["effluent-out", 1, 0, 16],
+      ["spent-catalyst-out", 0.7071, 0.7071, 10],
+      ["regen-catalyst-in", 0.7071, -0.7071, 10],
+      ["relief-out", 0, -1, 12],
+    ),
+  }),
+  Object.freeze({
+    ...eq("catalyst-regenerator", "Catalyst regenerator", COLUMNS, "regenerator", 180, 180, 480, "vcyl", "R", C.column),
+    nozzles: nozzleSet(
+      ["spent-catalyst-in", -0.7071, 0.7071, 10],
+      ["regen-catalyst-out", -0.7071, -0.7071, 10],
+      ["flue-gas-out", 0, -1, 12],
+      ["air-in", 0, 1, 16],
+      ["relief-out", 1, 0, 12],
+    ),
+  }),
   eq("tubular-reactor", "Tubular reactor", COLUMNS, "reactor-tubular", 240, 48, 60, "box", "R", C.column),
 
   // ---- vessels & storage (V, TK) ----
   eq("vertical-vessel", "Vertical vessel", VESSELS, "vessel-vertical", 48, 48, 120, "vcyl", "V", C.vessel),
-  eq("horizontal-drum", "Horizontal drum", VESSELS, "vessel-horizontal", 120, 42, 54, "hcyl", "V", C.vessel),
-  eq("knockout-drum", "Knockout drum", VESSELS, "drum-knockout", 72, 72, 144, "vcyl", "V", C.vessel),
+  Object.freeze({
+    ...eq("horizontal-drum", "Horizontal drum", VESSELS, "vessel-horizontal", 120, 42, 54, "hcyl", "V", C.vessel),
+    nozzles: nozzleSet(
+      ["inlet", 0, -1, 10],
+      ["liquid-out", -1, 0, 6],
+      ["wet-gas-out", -1, -0.5, 8],
+      ["vapor-out", 1, 0, 8],
+    ),
+  }),
+  Object.freeze({
+    ...eq("knockout-drum", "Knockout drum", VESSELS, "drum-knockout", 72, 72, 144, "vcyl", "V", C.vessel),
+    nozzles: nozzleSet(
+      ["gas-in", 1, 0, 8],
+      ["gas-out", 0, 1, 8],
+      ["liquid-out", -0.7071, 0.7071, 4],
+    ),
+  }),
   eq("three-phase-separator", "Three-phase separator", VESSELS, "separator-three-phase", 240, 72, 96, "hcyl", "V", C.vessel),
   eq("reflux-accumulator", "Reflux accumulator", VESSELS, "accumulator", 144, 48, 72, "hcyl", "V", C.vessel),
   eq("storage-tank", "Storage tank (cone roof)", VESSELS, "tank-cone-roof", 144, 144, 144, "vcyl", "TK", C.vessel),
