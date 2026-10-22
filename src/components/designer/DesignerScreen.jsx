@@ -719,6 +719,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
   const [zoomRequest, setZoomRequest] = useState(null);
   const zoomSeq = useRef(0);
+  // Phone auto-fit identity for PlanCanvas: the open project + current
+  // level. It changes when a design opens or the level switches (the
+  // canvas is never remounted for either — its view state is deliberately
+  // kept alive — so the fit needs this explicit signal), and it is stable
+  // across edits, whose dispatches never touch the project id or the
+  // current level id.
+  const autoFitKey = `${projectId}:${project?.currentLevelId ?? "pending"}`;
 
   return (
     <div className="flex h-screen flex-col bg-gray-950 text-gray-100">
@@ -941,6 +948,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               layerVisibility={layerVisibility}
               dispatch={dispatch}
               zoomRequest={zoomRequest}
+              autoFitKey={autoFitKey}
               onPlanCenterChange={reportPlanCenter}
               onFloorCenterChange={reportFloorCenter}
             />

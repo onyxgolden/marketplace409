@@ -51,6 +51,7 @@ export default function DesignerCanvasArea({
   layerVisibility,
   dispatch,
   zoomRequest,
+  autoFitKey = null,
   onPlanCenterChange = null,
   onFloorCenterChange = null,
 }) {
@@ -164,6 +165,7 @@ export default function DesignerCanvasArea({
           layerVisibility={layerVisibility}
           dispatch={dispatch}
           zoomRequest={zoomRequest}
+          autoFitKey={autoFitKey}
           onViewCenterChange={onPlanCenterChange}
         />
       </div>

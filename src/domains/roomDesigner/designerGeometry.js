@@ -236,6 +236,72 @@ export function zoomToFitRect(
   };
 }
 
+/** Canvas width (px) below which a canvas counts as phone-sized. Matches
+ * the layout breakpoint used across the designer screens. */
+export const PHONE_AUTO_FIT_BREAKPOINT_PX = 768;
+
+/** Lowest scale a phone auto-fit may use. Large drawings (thousands of
+ * inches across) need a far smaller scale than the interactive zoom floor
+ * to fit a phone canvas at all. */
+export const PHONE_AUTO_FIT_MIN_SCALE = 0.02;
+
+/** Margin (px) left around the drawing by a phone auto-fit. */
+export const PHONE_AUTO_FIT_PADDING_PX = 24;
+
+/** Size (plan inches) a zero-size bounds dimension is padded to, centered,
+ * before fitting — a single straight wall has no extent on one axis but
+ * still needs a finite rect to fit. */
+export const PHONE_AUTO_FIT_DEGENERATE_IN = 12;
+
+/**
+ * View that fits a design's content bounds on a phone-sized canvas, or
+ * null when no fit should happen: no/invalid bounds, a non-positive or
+ * desktop-sized viewport, or bounds with no extent on either axis. Pure —
+ * the caller owns when (and whether) to apply the result. A bounds
+ * dimension of exactly 0 is padded to PHONE_AUTO_FIT_DEGENERATE_IN,
+ * centered, so a single straight wall still fits.
+ */
+export function phoneAutoFitView(
+  bounds,
+  viewport,
+  { paddingPx = PHONE_AUTO_FIT_PADDING_PX, maxScale = 12 } = {},
+) {
+  if (
+    !bounds ||
+    !isFiniteNumber(bounds.x) ||
+    !isFiniteNumber(bounds.y) ||
+    !isFiniteNumber(bounds.widthIn) ||
+    !isFiniteNumber(bounds.heightIn) ||
+    bounds.widthIn < 0 ||
+    bounds.heightIn < 0
+  ) {
+    return null;
+  }
+  if (
+    !viewport ||
+    !(viewport.w > 0) ||
+    !(viewport.h > 0) ||
+    viewport.w >= PHONE_AUTO_FIT_BREAKPOINT_PX
+  ) {
+    return null;
+  }
+  if (bounds.widthIn === 0 && bounds.heightIn === 0) return null;
+  let { x, y, widthIn, heightIn } = bounds;
+  if (widthIn === 0) {
+    x -= PHONE_AUTO_FIT_DEGENERATE_IN / 2;
+    widthIn = PHONE_AUTO_FIT_DEGENERATE_IN;
+  }
+  if (heightIn === 0) {
+    y -= PHONE_AUTO_FIT_DEGENERATE_IN / 2;
+    heightIn = PHONE_AUTO_FIT_DEGENERATE_IN;
+  }
+  return zoomToFitRect(
+    { x, y, widthIn, heightIn },
+    viewport,
+    { paddingPx, minScale: PHONE_AUTO_FIT_MIN_SCALE, maxScale },
+  );
+}
+
 /** Short label for a grid spacing: 6 -> `6″`, 12 -> `1′`. */
 export function gridSpacingLabel(inches) {
   if (!isFiniteNumber(inches) || !(inches > 0)) return "—";
