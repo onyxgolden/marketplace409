@@ -159,3 +159,16 @@ describe("systemErrors (via validateDesign)", () => {
     expect(validateDesign(bad).length).toBeGreaterThanOrEqual(errors.length);
   });
 });
+
+describe("3D equipment color", () => {
+  it("equipment descriptors use own color > system color > catalog color", async () => {
+    const { equipmentDescriptors } = await import("./designerThreeModel");
+    let d = addSystem(plant(), { name: "Cooling water", color: "#22c55e" });
+    const catalog = equipmentDescriptors(d).find((e) => e.id === "p1").color;
+    d = setMemberSystem(d, { kind: "symbol", id: "p1" }, "system_1");
+    expect(equipmentDescriptors(d).find((e) => e.id === "p1").color).toBe("#22c55e");
+    d = setMemberColor(d, { kind: "symbol", id: "p1" }, "#a855f7");
+    expect(equipmentDescriptors(d).find((e) => e.id === "p1").color).toBe("#a855f7");
+    expect(equipmentDescriptors(plant()).find((e) => e.id === "p1").color).toBe(catalog);
+  });
+});
