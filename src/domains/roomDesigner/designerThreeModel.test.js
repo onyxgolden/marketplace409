@@ -137,7 +137,9 @@ describe("designerThreeModel — buildThreeScene", () => {
     const scene = buildThreeScene(d);
     expect(scene.pipes).toHaveLength(1);
     // Centerline 10000..11000 x, 10000 z, expanded by radius 2, padded 24.
-    expect(scene.floor).toEqual({ minX: 9974, maxX: 11026, minZ: 9974, maxZ: 10026 });
+    // Rebase 2026-10-22: floor also carries deckHoles (main's deck feature);
+    // no decks here so it is empty.
+    expect(scene.floor).toEqual({ minX: 9974, maxX: 11026, minZ: 9974, maxZ: 10026, deckHoles: [] });
   });
 
   it("extends the floor past existing equipment when a pipe runs beyond it (P661-001)", () => {
@@ -156,7 +158,8 @@ describe("designerThreeModel — buildThreeScene", () => {
     d = addWall(d, { x: 0, y: 0 }, { x: 144, y: 0 });
     const scene = buildThreeScene(d);
     expect(scene.pipes).toEqual([]);
-    expect(scene.floor).toEqual({ minX: -24, maxX: 168, minZ: -24, maxZ: 24 });
+    // Rebase 2026-10-22: floor also carries deckHoles (main's deck feature).
+    expect(scene.floor).toEqual({ minX: -24, maxX: 168, minZ: -24, maxZ: 24, deckHoles: [] });
   });
 });
 
