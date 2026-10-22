@@ -30,6 +30,8 @@ import { getCatalogEntry, ROOM_TEMPLATES, STRUCTURE_TEMPLATES } from "./furnitur
 import { findSymbol } from "./symbolRegistry";
 import { normalizeDesignMode } from "./designerModes";
 import { isCameraPose, nextViewId } from "./namedCameraViews";
+import { systemErrors } from "./designSystems";
+import { rackErrors } from "./rackGeometry";
 // Side-effect import: registers the "piping" symbol set so placeSymbol
 // and validateDesign resolve it in every context that loads the document
 // model (app, API routes, tests).
@@ -56,6 +58,7 @@ import {
   isFiniteNumber,
   isValidPoint,
   polygonArea,
+  rotatedFootprintCorners,
   snapScalar,
   wallLength,
 } from "./designerGeometry";
@@ -1085,6 +1088,8 @@ export function validateDesign(design) {
     }
     errors.push(...pipeAttachmentErrors(run)); // optional nozzle attachments
   }
+  errors.push(...systemErrors(design)); // optional systems + member colors
+  errors.push(...rackErrors(design)); // optional rack parameters
   for (const instance of design.symbols || []) {
     const symbol = findSymbol(instance.domain, instance.symbolId);
     if (!symbol) {
@@ -1353,9 +1358,21 @@ export function designContentBounds(design) {
     if (x > maxX) maxX = x;
     if (y > maxY) maxY = y;
   };
-  const eatRect = (cx, cy, w, h) => {
-    eat(cx - w / 2, cy - h / 2);
-    eat(cx + w / 2, cy + h / 2);
+  // A placed footprint's actual extent: its effective (per-instance
+  // resized) size with its corners rotated about its center. Using the
+  // unrotated catalog size under-reports resized or rotated pieces, so
+  // consumers fitting these bounds (phone auto-fit, sheet placement)
+  // would crop the real drawing.
+  const eatFootprint = (cx, cy, w, h, rotationDeg) => {
+    for (const corner of rotatedFootprintCorners({
+      x: cx,
+      y: cy,
+      widthIn: w,
+      depthIn: h,
+      rotationDeg: rotationDeg || 0,
+    })) {
+      eat(corner.x, corner.y);
+    }
   };
   for (const wall of design.walls || []) {
     eat(wall.a?.x, wall.a?.y);
@@ -1366,14 +1383,16 @@ export function designContentBounds(design) {
   }
   for (const piece of design.furniture || []) {
     const { widthIn, depthIn } = pieceSize(piece);
-    eatRect(piece.x, piece.y, widthIn, depthIn);
+    eatFootprint(piece.x, piece.y, widthIn, depthIn, piece.rotationDeg);
   }
   for (const run of design.pipes || []) {
     for (const p of run.points || []) eat(p?.x, p?.y);
   }
   for (const instance of design.symbols || []) {
     const sym = findSymbol(instance.domain, instance.symbolId);
-    eatRect(instance.x, instance.y, sym?.widthIn || 0, sym?.depthIn || 0);
+    const widthIn = instance.widthIn ?? sym?.widthIn ?? 0;
+    const depthIn = instance.depthIn ?? sym?.depthIn ?? 0;
+    eatFootprint(instance.x, instance.y, widthIn, depthIn, instance.rotationDeg);
   }
   for (const chart of design.orgCharts || []) {
     const layout = layoutOrgChart(chart.nodes || []);

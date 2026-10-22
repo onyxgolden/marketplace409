@@ -62,6 +62,8 @@ import RotateButtons, { RotateToAngle } from "./RotateButtons";
 import SelectionActions from "./SelectionActions";
 import TemaSymbolSection from "./TemaSymbolSection";
 import DxfImportSection from "./DxfImportSection";
+import { SystemMembershipSection, SystemsSection } from "./SystemsPanels";
+import RackSection from "./RackSection";
 import EquipmentScheduleSection from "./EquipmentScheduleSection";
 import { MobileDrawer } from "./MobileDrawer";
 import FurnitureSizeEditor from "./FurnitureSizeEditor";
@@ -902,6 +904,13 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
   // "Zoom to sheet" requests from the Paper sheets panel: consumed by PlanCanvas.
   const [zoomRequest, setZoomRequest] = useState(null);
   const zoomSeq = useRef(0);
+  // Phone auto-fit identity for PlanCanvas: the open project + current
+  // level. It changes when a design opens or the level switches (the
+  // canvas is never remounted for either — its view state is deliberately
+  // kept alive — so the fit needs this explicit signal), and it is stable
+  // across edits, whose dispatches never touch the project id or the
+  // current level id.
+  const autoFitKey = `${projectId}:${project?.currentLevelId ?? "pending"}`;
 
   // Zoom Extents: fit the whole plan's current content in view. A silent
   // no-op on an empty design — there's nothing to zoom to yet.
@@ -1203,6 +1212,7 @@ export default function DesignerScreen({ projectId, initialName, userId = null }
               layerVisibility={layerVisibility}
               dispatch={dispatch}
               zoomRequest={zoomRequest}
+              autoFitKey={autoFitKey}
               onPlanCenterChange={reportPlanCenter}
               onFloorCenterChange={reportFloorCenter}
               onFileImport={onCanvasFileImport}
@@ -1559,6 +1569,7 @@ function RightPanel({ state, dispatch, summary, project, onPrint, onZoomToSheet,
         Rooms, areas, and wall lengths are available as plain data for future
         scheduling and cost tools — nothing is locked inside the editor.
       </p>
+      <SystemsSection design={design} dispatch={dispatch} />
       <VsdxImportSection
         dispatch={dispatch}
         externalFile={pendingDropFile?.kind === "vsdx" ? pendingDropFile.file : null}
@@ -3539,6 +3550,7 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <SystemMembershipSection design={design} kind="pipe" member={run} fallbackColor="#7dd3fc" dispatch={dispatch} />
         {["start", "end"].map((end) => {
           const ref = run.attachments?.[end];
           const target = ref && (design.symbols || []).find((s) => s.id === ref.symbolId);
@@ -3579,7 +3591,9 @@ function SelectionPanelContent({ state, dispatch, onPrint, priceBooks = [] }) {
             ))}
           </select>
         </label>
+        <SystemMembershipSection design={design} kind="symbol" member={inst} fallbackColor={symbol.color || "#60a5fa"} dispatch={dispatch} />
         <TemaSymbolSection symbol={symbol} instance={inst} dispatch={dispatch} />
+        <RackSection symbol={symbol} instance={inst} dispatch={dispatch} />
         <RotateButtons
           rotationDeg={inst.rotationDeg}
           onRotate={(rotationDeg) => dispatch({ type: "ROTATE_SYMBOL", symbolId: inst.id, rotationDeg })}

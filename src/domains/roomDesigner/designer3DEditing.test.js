@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   addOpening,
+  addPipeRun,
   addWall,
   createEmptyDesign,
   moveFurniture,
@@ -22,8 +23,11 @@ import {
 } from "./designerDocument";
 import { wallLength } from "./designerGeometry";
 import {
+  EDITABLE_3D_KINDS,
+  SELECTABLE_3D_KINDS,
   beginDrag3D,
   dragStep3D,
+  hoverCursorForPick,
   isClickGesture,
   planPointFromWorld,
   popupAnchorForSelection,
@@ -77,6 +81,49 @@ describe("selectionFromPick", () => {
     expect(selectionFromPick({})).toBeNull();
     expect(selectionFromPick({ entityKind: "stairs", entityId: "s1" })).toBeNull();
     expect(selectionFromPick({ entityKind: "wall" })).toBeNull();
+  });
+
+  it("maps a pipe tag to a pipe selection (P661-002)", () => {
+    expect(selectionFromPick({ entityKind: "pipe", entityId: "far" })).toEqual({ kind: "pipe", id: "far" });
+    expect(selectionFromPick({ entityKind: "pipe" })).toBeNull();
+    // Selectable is a superset of editable: pipes can be picked but are
+    // NOT in the drag/size set.
+    expect(SELECTABLE_3D_KINDS).toContain("pipe");
+    expect(EDITABLE_3D_KINDS).not.toContain("pipe");
+  });
+
+  it("a picked-nothing result is what drives clearing a pipe selection (P661-002)", () => {
+    // The viewport clears the selection when a click's pick returns null;
+    // that path is kind-agnostic, so it covers a pipe selection too.
+    expect(selectionFromPick(undefined)).toBeNull();
+    expect(selectionFromPick({ entityKind: "floor", entityId: "f" })).toBeNull();
+  });
+});
+
+describe("pipe selection — no drag, size or popup capability (P661-002)", () => {
+  function pipeDesign() {
+    return addPipeRun(createEmptyDesign("Plan"), [{ x: 0, y: 0 }, { x: 120, y: 0 }], { id: "p1", diameterIn: 4 });
+  }
+
+  it("beginDrag3D returns null for a pipe, so a press on it orbits instead of dragging", () => {
+    const design = pipeDesign();
+    expect(beginDrag3D({ kind: "pipe", id: "p1" }, design, { x: 10, y: 0 })).toBeNull();
+  });
+
+  it("offers no size fields, no size action and no popup anchor for a pipe", () => {
+    const design = pipeDesign();
+    const sel = { kind: "pipe", id: "p1" };
+    expect(sizeFieldsForSelection(sel, design)).toBeNull();
+    expect(sizeEditAction(sel, design, "widthIn", "10").error).toBeTruthy();
+    expect(popupAnchorForSelection(sel, design)).toBeNull();
+  });
+
+  it("hover cursor is pointer (not move) over a selected pipe, move over a selected wall", () => {
+    expect(hoverCursorForPick({ kind: "pipe", id: "p1" }, { kind: "pipe", id: "p1" })).toBe("pointer");
+    expect(hoverCursorForPick({ kind: "pipe", id: "p1" }, null)).toBe("pointer");
+    expect(hoverCursorForPick({ kind: "wall", id: "w1" }, { kind: "wall", id: "w1" })).toBe("move");
+    expect(hoverCursorForPick({ kind: "wall", id: "w1" }, null)).toBe("pointer");
+    expect(hoverCursorForPick(null, { kind: "pipe", id: "p1" })).toBe("");
   });
 });
 

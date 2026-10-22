@@ -22,6 +22,8 @@ import {
   rotatePoint,
   snapPoint,
   snapScalar,
+  PHONE_AUTO_FIT_BREAKPOINT_PX,
+  phoneAutoFitView,
   underlayContainsPoint,
   wallLength,
   zoomToFitRect,
@@ -35,12 +37,14 @@ import { measureAreaSummary } from "@/domains/roomDesigner/measureArea";
 import { formatArea } from "@/domains/roomDesigner/homeQuantities";
 import { splitWallByOpenings } from "@/domains/roomDesigner/designerThreeModel";
 import { renderSymbol2D, drawOrgChart } from "./symbolDrawRoutines";
+import { effectiveColor, systemLegend } from "@/domains/roomDesigner/designSystems";
 import { nearestVisibleConnectionAnchor } from "@/domains/roomDesigner/temaInstances";
 import { ORG_CHART_METRICS, layoutOrgChart } from "@/domains/roomDesigner/orgChartLayout";
 import {
   FURNITURE_MAX_SIZE_IN,
   FURNITURE_MIN_SIZE_IN,
   OPENING_DEFAULTS,
+  designContentBounds,
   fitScaleLabel,
   getRoomTemplate,
   pieceSize,
@@ -62,6 +66,9 @@ import {
 
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 12;
+/** The view a canvas opens with, and the view a phone-sized canvas
+ * returns to when the open design/level has no content to auto-fit. */
+const DEFAULT_VIEW = { scale: 1.6, ox: 60, oy: 60 };
 const HIT_TOLERANCE_PX = 10;
 // Tools that commit on tap (pointerdown) instead of starting a drag. For
 // touch, the tap commits on pointerup instead, so a second finger landing
@@ -115,14 +122,6 @@ function hitMovesWithSelection(design, selection, hit) {
 // Screen-pixel radius within which the pipe tool snaps to a nozzle anchor.
 const ANCHOR_SNAP_PX = 12;
 
-/**
- * Re-anchor the view so a plan point — the FINAL snapped draw endpoint —
- * renders inside the viewport with a margin. Returns the new {ox, oy}, or
- * null when it already renders within bounds (or the canvas has no
- * measured size). Anchoring the snapped endpoint (not the pre-snap
- * pointer) is what keeps it visible: snapping can move the endpoint back
- * off-screen after a pre-snap anchor.
- */
 export function autoPanViewForPoint(point, size, view, margin = 16) {
   if (!(size.w > 0) || !(size.h > 0)) return null;
   const sx = view.ox + point.x * view.scale;
@@ -136,10 +135,10 @@ export function autoPanViewForPoint(point, size, view, margin = 16) {
   };
 }
 
-export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, onViewCenterChange = null }) {
+export default function PlanCanvas({ design, tool, selection, multiSelection, calibration, pendingCatalogId, pendingRoomTemplate, pendingPipe, pendingSymbol, pendingCustomShape, orthoSnap, layerVisibility, dispatch, zoomRequest, autoFitKey = null, onViewCenterChange = null }) {
   const svgRef = useRef(null);
   const wrapRef = useRef(null);
-  const [view, setView] = useState({ scale: 1.6, ox: 60, oy: 60 });
+  const [view, setView] = useState({ ...DEFAULT_VIEW });
   const [drawPreview, setDrawPreview] = useState(null); // {kind: "wall"|"wall-rect", a, b} plan inches while drawing
   const [measureStart, setMeasureStart] = useState(null); // plan-inch point once the Measure tool's first click lands; null = waiting for it
   const [measureLivePoint, setMeasureLivePoint] = useState(null); // live second point while measureStart is set, follows the cursor
@@ -241,6 +240,71 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         maxScale: MAX_SCALE,
       }),
     );
+  }
+
+  // Phone auto-fit: when a design opens (or the open design/level switches)
+  // on a phone-sized canvas, fit the whole drawing in view once instead of
+  // opening at the desktop default view cropped to a corner. The canvas
+  // itself is never remounted on a level switch (its pan/zoom state is
+  // deliberately kept alive), so the trigger is the autoFitKey identity
+  // threaded down from the screen — it changes on open/switch and is
+  // stable across edits. Without a key (standalone mounts) the fit applies
+  // once on mount. Same "adjust state during render" pattern as the
+  // zoom-to-sheet block above; waits until the canvas has been measured,
+  // and a user interaction before it applies cancels it for this identity.
+  // Desktop-sized canvases never fit, so desktop behavior is unchanged.
+  const autoFitIdentity = autoFitKey ?? "__mount__";
+  // Set by the first wheel / pointer interaction on the canvas. A phone
+  // auto-fit that has not applied yet is cancelled by it, so a late fit
+  // can never yank the view away from work already in progress. Reset
+  // when the auto-fit identity changes (a new design/level opened).
+  const [userNav, setUserNav] = useState(false);
+  // Interactive zoom floor while a phone fit is in effect: a fitted scale
+  // can sit far below MIN_SCALE (a very large drawing on a small canvas),
+  // and flooring the first wheel zoom at MIN_SCALE would snap the view.
+  // Null on desktop / after a fit at or above MIN_SCALE, where the floor
+  // is exactly MIN_SCALE as before.
+  const [fitFloor, setFitFloor] = useState(null);
+  const [prevAutoFitIdentity, setPrevAutoFitIdentity] = useState(autoFitIdentity);
+  if (prevAutoFitIdentity !== autoFitIdentity) {
+    setPrevAutoFitIdentity(autoFitIdentity);
+    setUserNav(false);
+    // Identity-scoped fit state never leaks into the next design/level:
+    // the previous identity's fitted zoom floor belongs to its drawing,
+    // not this one. On a phone-sized (or not-yet-measured) canvas the
+    // view also returns to the default, so a following identity with no
+    // fit of its own — empty content, or a fit cancelled before the
+    // canvas was measured — cannot inherit the previous fitted view.
+    // A measured desktop canvas keeps its pan/zoom across switches, as
+    // before (desktop never auto-fits).
+    setFitFloor(null);
+    if (canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX) {
+      setView({ ...DEFAULT_VIEW });
+    }
+  }
+  const [appliedAutoFitIdentity, setAppliedAutoFitIdentity] = useState(null);
+  if (
+    appliedAutoFitIdentity !== autoFitIdentity &&
+    prevAutoFitIdentity === autoFitIdentity &&
+    canvasSize.w > 0 &&
+    canvasSize.h > 0 &&
+    !userNav
+  ) {
+    setAppliedAutoFitIdentity(autoFitIdentity);
+    const fitted = phoneAutoFitView(designContentBounds(design), canvasSize, {
+      maxScale: MAX_SCALE,
+    });
+    if (fitted) {
+      setView(fitted);
+      setFitFloor(fitted.scale < MIN_SCALE ? fitted.scale : null);
+    } else if (canvasSize.w < PHONE_AUTO_FIT_BREAKPOINT_PX) {
+      // Phone-sized canvas with nothing to fit (e.g. an empty level):
+      // explicitly establish the default view and the normal interactive
+      // floor instead of leaving a previous identity's fitted view and
+      // below-minimum floor in place.
+      setView({ ...DEFAULT_VIEW });
+      setFitFloor(null);
+    }
   }
 
   const toScreen = useCallback(
@@ -372,7 +436,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         const s = design.symbols[i];
         if (!layerVisible(s.layer)) continue;
         const symbol = findSymbol(s.domain, s.symbolId);
-        if (!symbol) continue;
+        if (!symbol || symbol.rack) continue; // racks are hit last (see below)
         if (pointInFootprint(plan, s.x, s.y, s.widthIn ?? symbol.widthIn, s.depthIn ?? symbol.depthIn, s.rotationDeg)) {
           return { kind: "symbol", id: s.id };
         }
@@ -386,6 +450,17 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           if (distancePointToSegment(plan, pts[k - 1], pts[k]) < tolIn + 4) {
             return { kind: "pipe", id: run.id };
           }
+        }
+      }
+      // Racks carry pipes and stand over equipment, so anything on or under
+      // a rack wins; the rack itself is hit only where nothing else is.
+      for (let i = (design.symbols || []).length - 1; i >= 0; i -= 1) {
+        const s = design.symbols[i];
+        if (!layerVisible(s.layer)) continue;
+        const symbol = findSymbol(s.domain, s.symbolId);
+        if (!symbol?.rack) continue;
+        if (pointInFootprint(plan, s.x, s.y, s.widthIn ?? symbol.widthIn, s.depthIn ?? symbol.depthIn, s.rotationDeg)) {
+          return { kind: "symbol", id: s.id };
         }
       }
       // Phase 3: org charts — hit the laid-out bounding box. The anchor is
@@ -579,6 +654,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   // pointerup: if a second finger lands first, trackTouchDown starts a pinch
   // and discards the tap. Only a value snapshot is held, never the event.
   const onPointerDown = (e) => {
+    setUserNav(true);
     // Capture the pointer to the canvas so move/up keep flowing when the
     // pointer leaves the element mid-gesture (edge-following while drawing,
     // releasing outside after a drag). Touch already has implicit capture;
@@ -1365,10 +1441,16 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
   };
 
   const onWheel = (e) => {
+    setUserNav(true);
     const screen = eventPoint(e);
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    // The only interactive scale clamp in this component (there are no
+    // pinch handlers or zoom buttons). Its floor drops to the fitted scale
+    // while a below-MIN_SCALE phone fit is in effect (see fitFloor above);
+    // otherwise it is exactly MIN_SCALE, as before.
+    const floor = fitFloor !== null ? Math.min(MIN_SCALE, fitFloor) : MIN_SCALE;
     setView((v) => {
-      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+      const scale = Math.min(MAX_SCALE, Math.max(floor, v.scale * factor));
       const applied = scale / v.scale;
       return {
         scale,
@@ -1707,7 +1789,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
           x={mid.x} y={mid.y - 8} textAnchor="middle" fontSize={11} fontWeight={600}
           fill="#e0f2fe" transform={`rotate(${angle.toFixed(1)} ${mid.x} ${mid.y})`}
         >
-          {feetInchesLabel(seg.length)} ⌀{run.diameterIn}″
+          {run.underground ? "UG · " : ""}{feetInchesLabel(seg.length)} ⌀{run.diameterIn}″
         </text>
       );
     }
@@ -1716,11 +1798,13 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         <polyline
           points={pts}
           fill="none"
-          stroke={isSelected ? "#f59e0b" : "#7dd3fc"}
+          stroke={isSelected ? "#f59e0b" : effectiveColor(design, run, "#7dd3fc")}
           strokeWidth={widthPx}
-          strokeLinecap="round"
+          strokeLinecap={run.underground ? "butt" : "round"}
           strokeLinejoin="round"
+          strokeDasharray={run.underground ? `${widthPx * 3} ${widthPx * 1.5}` : undefined}
           opacity={0.9}
+          data-underground={run.underground ? "true" : undefined}
         />
         {label}
         {isSelected &&
@@ -1741,6 +1825,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
       toScreen,
       scale: view.scale,
       highlighted: isSelected,
+      color: effectiveColor(design, inst, undefined),
     });
   };
 
@@ -2375,6 +2460,7 @@ export default function PlanCanvas({ design, tool, selection, multiSelection, ca
         {renderRulers()}
         {renderCrosshair()}
       </svg>
+      <SystemsLegend design={design} />
       {isEmpty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="max-w-md rounded-lg bg-gray-900/90 p-6 text-center shadow-xl">
@@ -2489,4 +2575,29 @@ function openingEndpoints(opening, walls) {
       y: wall.a.y + dir.y * (opening.offsetIn + opening.widthIn),
     },
   };
+}
+
+// Plan legend: one swatch per system that has members (bottom-left, never
+// intercepts the pointer). Underground pipe is explained when present.
+function SystemsLegend({ design }) {
+  const entries = systemLegend(design);
+  const underground = (design.pipes || []).some((p) => p.underground);
+  if (!entries.length && !underground) return null;
+  return (
+    <div className="pointer-events-none absolute bottom-12 left-3 rounded bg-gray-900/90 px-3 py-2 text-[11px] text-gray-200 shadow" data-testid="systems-legend">
+      <p className="mb-1 font-semibold uppercase tracking-wide text-gray-400">Systems</p>
+      {entries.map((e) => (
+        <p key={e.id} className="flex items-center gap-2">
+          <span className="inline-block h-2.5 w-5 rounded-sm" style={{ background: e.color }} />
+          {e.name}
+        </p>
+      ))}
+      {underground && (
+        <p className="mt-1 flex items-center gap-2 text-gray-400">
+          <span className="inline-block w-5 border-t-2 border-dashed border-gray-300" />
+          UG = underground
+        </p>
+      )}
+    </div>
+  );
 }

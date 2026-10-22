@@ -16,6 +16,9 @@ import {
   moveSheet,
   addWall,
   patchSheet,
+  placeFurniture,
+  placeSymbol,
+  resizeFurniture,
   sheetsOf,
   sheetFooterOf,
   sheetHeaderOf,
@@ -120,6 +123,84 @@ describe("designContentBounds", () => {
     let design = addWall(createEmptyDesign(), { x: 0, y: 0 }, { x: 100, y: 50 });
     design = { ...design, walls: [...design.walls, { id: "w-x", a: { x: NaN, y: 0 }, b: { x: 0, y: 0 } }] };
     expect(designContentBounds(design)).toEqual({ x: 0, y: 0, widthIn: 100, heightIn: 50 });
+  });
+
+  it("bounds a symbol by its per-instance resized size, not the catalog size (P664-001)", () => {
+    // Pipe rack catalog footprint is 480x240; this instance is 3600x288.
+    const design = placeSymbol(createEmptyDesign(), "processEquipment", "pipe-rack", 0, 0, {
+      widthIn: 3600,
+      depthIn: 288,
+    });
+    expect(designContentBounds(design)).toEqual({ x: -1800, y: -144, widthIn: 3600, heightIn: 288 });
+  });
+
+  it("bounds an unresized symbol by its catalog size", () => {
+    const design = placeSymbol(createEmptyDesign(), "processEquipment", "pipe-rack", 0, 0);
+    expect(designContentBounds(design)).toEqual({ x: -240, y: -120, widthIn: 480, heightIn: 240 });
+  });
+
+  it("bounds a rotated symbol by its rotated corners (P664-001)", () => {
+    // 480x240 catalog rack rotated 90°: the footprint swaps axes.
+    const design = placeSymbol(createEmptyDesign(), "processEquipment", "pipe-rack", 0, 0, {
+      rotationDeg: 90,
+    });
+    const bounds = designContentBounds(design);
+    expect(bounds.x).toBeCloseTo(-120, 6);
+    expect(bounds.y).toBeCloseTo(-240, 6);
+    expect(bounds.widthIn).toBeCloseTo(240, 6);
+    expect(bounds.heightIn).toBeCloseTo(480, 6);
+  });
+
+  it("bounds a resized AND rotated symbol by its rotated instance corners (P664-001)", () => {
+    const design = placeSymbol(createEmptyDesign(), "processEquipment", "pipe-rack", 100, 200, {
+      widthIn: 3600,
+      depthIn: 288,
+      rotationDeg: 90,
+    });
+    const bounds = designContentBounds(design);
+    expect(bounds.x).toBeCloseTo(-44, 6);
+    expect(bounds.y).toBeCloseTo(-1600, 6);
+    expect(bounds.widthIn).toBeCloseTo(288, 6);
+    expect(bounds.heightIn).toBeCloseTo(3600, 6);
+  });
+
+  it("bounds a symbol rotated 45° by the true corner extent (P664-001)", () => {
+    const design = placeSymbol(createEmptyDesign(), "processEquipment", "pipe-rack", 0, 0, {
+      rotationDeg: 45,
+    });
+    const bounds = designContentBounds(design);
+    // Corner offsets (±240, ±120) at 45° reach (240+120)·cos45° on both axes.
+    const extent = 360 * Math.SQRT1_2;
+    expect(bounds.x).toBeCloseTo(-extent, 6);
+    expect(bounds.y).toBeCloseTo(-extent, 6);
+    expect(bounds.widthIn).toBeCloseTo(2 * extent, 6);
+    expect(bounds.heightIn).toBeCloseTo(2 * extent, 6);
+  });
+
+  it("bounds furniture by its resized size (P664-001)", () => {
+    let design = placeFurniture(createEmptyDesign(), "sofa-3seat", 0, 0);
+    design = resizeFurniture(design, design.furniture[0].id, 200, 100);
+    expect(designContentBounds(design)).toEqual({ x: -100, y: -50, widthIn: 200, heightIn: 100 });
+  });
+
+  it("bounds rotated furniture by its rotated corners (P664-001)", () => {
+    // Sofa catalog footprint is 84x36; rotated 90° it occupies 36x84.
+    const design = placeFurniture(createEmptyDesign(), "sofa-3seat", 0, 0, 90);
+    const bounds = designContentBounds(design);
+    expect(bounds.x).toBeCloseTo(-18, 6);
+    expect(bounds.y).toBeCloseTo(-42, 6);
+    expect(bounds.widthIn).toBeCloseTo(36, 6);
+    expect(bounds.heightIn).toBeCloseTo(84, 6);
+  });
+
+  it("bounds resized AND rotated furniture by its rotated instance corners (P664-001)", () => {
+    let design = placeFurniture(createEmptyDesign(), "sofa-3seat", 0, 0, 90);
+    design = resizeFurniture(design, design.furniture[0].id, 200, 100);
+    const bounds = designContentBounds(design);
+    expect(bounds.x).toBeCloseTo(-50, 6);
+    expect(bounds.y).toBeCloseTo(-100, 6);
+    expect(bounds.widthIn).toBeCloseTo(100, 6);
+    expect(bounds.heightIn).toBeCloseTo(200, 6);
   });
 });
 

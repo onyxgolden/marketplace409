@@ -1,5 +1,13 @@
 // Pipe ends attached to equipment nozzles (connection anchors).
 //
+// Anchors come from two sources:
+//   - TEMA symbols (catalog entries carrying `tema`): temaAnchorsWorld
+//     projects the exchanger's parametric anchors — { id, x, y }.
+//   - Generic catalog nozzles (entries carrying `nozzles` in
+//     processEquipmentCatalog.js): each spec { id, fx, fy, sizeIn } is a
+//     fraction of the instance's half-width / half-depth, projected with
+//     the same rotation formula — { id, x, y, sizeIn }.
+//
 // A pipe run may carry OPTIONAL attachment metadata for its two ends:
 //   attachments: { start?: { symbolId, anchorId }, end?: { symbolId, anchorId } }
 // symbolId is the placed symbol INSTANCE id; anchorId a nozzle id such as
@@ -20,9 +28,37 @@ import { temaAnchorsWorld } from "./temaGeometry";
 const ENDS = ["start", "end"];
 const EPS = 1e-6;
 
-function anchorsOf(inst) {
+/**
+ * World anchors for catalog `nozzles` specs: local offset
+ * (fx * effWidth / 2, fy * effDepth / 2) with effWidth / effDepth the
+ * instance's size overrides or the catalog defaults, rotated by the
+ * instance rotation — the same projection temaAnchorsWorld uses.
+ * Plan frame: +fx = east, +fy = south.
+ */
+export function catalogAnchorsWorld(symbol, inst) {
+  if (!symbol?.nozzles) return [];
+  const effWidth = inst.widthIn ?? symbol.widthIn;
+  const effDepth = inst.depthIn ?? symbol.depthIn;
+  const rad = ((inst.rotationDeg || 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return symbol.nozzles.map((n) => {
+    const lx = n.fx * (effWidth / 2);
+    const ly = n.fy * (effDepth / 2);
+    return {
+      id: n.id,
+      x: inst.x + lx * cos - ly * sin,
+      y: inst.y + lx * sin + ly * cos,
+      sizeIn: n.sizeIn,
+    };
+  });
+}
+
+/** World anchors for any placed symbol instance (TEMA or catalog nozzles). */
+export function anchorsOf(inst) {
   const symbol = findSymbol(inst.domain, inst.symbolId);
-  return symbol?.tema ? temaAnchorsWorld(symbol, inst) : [];
+  if (symbol?.tema) return temaAnchorsWorld(symbol, inst);
+  return symbol?.nozzles ? catalogAnchorsWorld(symbol, inst) : [];
 }
 
 /** The nozzle exactly at `point` (within 1e-6 in): { symbolId, anchorId } or null. */

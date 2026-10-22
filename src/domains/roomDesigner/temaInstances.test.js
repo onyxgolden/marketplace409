@@ -213,8 +213,33 @@ describe("nearestConnectionAnchor", () => {
   });
 
   it("ignores symbols without connection anchors", () => {
-    const design = placeSymbol(createEmptyDesign(), D, "centrifugal-pump", 0, 0, { id: "p" });
+    // storage-tank carries neither a TEMA config nor catalog nozzles.
+    const design = placeSymbol(createEmptyDesign(), D, "storage-tank", 0, 0, { id: "t" });
     expect(nearestConnectionAnchor(design, { x: 0, y: 0 }, 100)).toBeNull();
+  });
+
+  it("finds a generic catalog nozzle at its exact anchor (reviewer probe coordinates)", () => {
+    // Centrifugal pump at (101, 103): suction-in projects to (101, 94).
+    const design = placeSymbol(createEmptyDesign(), D, "centrifugal-pump", 101, 103, { id: "p" });
+    const hit = nearestConnectionAnchor(design, { x: 101, y: 94 }, 12);
+    expect(hit).toEqual({ symbolInstanceId: "p", anchorId: "suction-in", x: 101, y: 94, distance: 0 });
+  });
+
+  it("lands a nearby off-grid pointer exactly on a generic catalog nozzle", () => {
+    const design = placeSymbol(createEmptyDesign(), D, "centrifugal-pump", 200, 200, { id: "p" });
+    // Suction-in is at (200, 191); the pointer is off-grid and off-anchor.
+    const hit = nearestConnectionAnchor(design, { x: 202.5, y: 189 }, 12);
+    expect(hit).toMatchObject({ symbolInstanceId: "p", anchorId: "suction-in", x: 200, y: 191 });
+    expect(hit.distance).toBeCloseTo(Math.hypot(2.5, 2), 9);
+    expect(nearestConnectionAnchor(design, { x: 200, y: 191 - 13 }, 12)).toBeNull();
+  });
+
+  it("picks the closest generic nozzle, and keeps the first anchor on a tie", () => {
+    const design = placeSymbol(createEmptyDesign(), D, "centrifugal-pump", 200, 200, { id: "p" });
+    // (200, 202) is 11 from suction-in (200, 191) and 7 from discharge-out (200, 209).
+    expect(nearestConnectionAnchor(design, { x: 200, y: 202 }, 12)).toMatchObject({ anchorId: "discharge-out" });
+    // (200, 200) is exactly 9 from both: the first anchor in catalog order wins.
+    expect(nearestConnectionAnchor(design, { x: 200, y: 200 }, 12)).toMatchObject({ anchorId: "suction-in" });
   });
 
   it("gives the same anchors in detailed and P&ID mode", () => {

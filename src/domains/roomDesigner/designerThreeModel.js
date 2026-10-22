@@ -17,6 +17,8 @@ import { DECK_MATERIALS, decksOf, findWall, pieceSize } from "./designerDocument
 import { findSymbol } from "./symbolRegistry";
 import { PROCESS_EQUIPMENT_DOMAIN } from "./processEquipmentCatalog";
 import { STAIR_ANNOTATION_SOURCE } from "./sampleProjects";
+import { effectiveColor } from "./designSystems";
+import { rackMembers3D, rackParams, rackTopIn } from "./rackGeometry";
 
 export const WINDOW_SILL_IN = 36;
 export const WINDOW_HEADER_IN = 84;
@@ -359,6 +361,7 @@ export function equipmentDescriptors(design) {
     if (inst.domain !== PROCESS_EQUIPMENT_DOMAIN) continue;
     const symbol = findSymbol(inst.domain, inst.symbolId);
     if (!symbol || !symbol.shape3d) continue;
+    const rack = symbol.rack ? rackParams(symbol, inst) : null;
     out.push({
       kind: "equipment",
       id: inst.id,
@@ -369,12 +372,127 @@ export function equipmentDescriptors(design) {
       rotY: (-(inst.rotationDeg || 0) * Math.PI) / 180,
       widthIn: inst.widthIn ?? symbol.widthIn,
       depthIn: inst.depthIn ?? symbol.depthIn,
-      heightIn: symbol.heightIn,
-      color: symbol.color,
+      heightIn: rack ? rackTopIn(rack) : symbol.heightIn,
+      color: effectiveColor(design, inst, symbol.color), // own > system > catalog
+      // Parametric structures: the members the 3D builder extrudes as steel.
+      ...(rack ? { members: rackMembers3D(rack) } : {}),
       tag: inst.tag || "",
       // Lets the 3D builder specialize recognizable equipment (a pump reads
       // as motor + casing, a compressor as a single skid-mounted box).
       symbolId: inst.symbolId,
+    });
+  }
+  return out;
+}
+
+/** Centerline elevation (in) for pipe that is not supported on a rack. */
+export const PIPE_GRADE_ELEVATION_IN = 30;
+
+/**
+ * Pipe runs -> 3D descriptors (plain JSON, like equipmentDescriptors):
+ * { kind:"pipe", id, color, diameterIn, radiusIn, underground,
+ *   segments: [{ a:{x,z}, b:{x,z}, yIn }],
+ *   joints: [{ x, z, yIn }],
+ *   risers: [{ x, z, y0In, y1In }] }
+ *
+ * Plan coordinates map x -> x, y -> z. Segment elevation is derived,
+ * never stored: a segment whose plan midpoint falls inside a rack
+ * footprint rides at that rack's first-tier top of steel plus the pipe
+ * radius; when several racks contain the midpoint the highest support
+ * wins. The grade centerline (PIPE_GRADE_ELEVATION_IN) applies ONLY
+ * when no rack contains the midpoint — a containing support below
+ * grade (e.g. a sleeper rack) still sets the elevation, so the pipe
+ * rests on it instead of floating at grade. Interior vertices where adjacent segment
+ * elevations differ get a joint at the higher elevation and a riser
+ * spanning the difference. Underground runs are described the same way,
+ * with the flag carried through for the renderer.
+ */
+export function pipeDescriptors(design) {
+  if (!design) return [];
+  // Rack supports in the design: any symbol instance whose catalog entry
+  // carries rack parameters, resolved like equipmentDescriptors does.
+  const racks = [];
+  for (const inst of design.symbols || []) {
+    const symbol = findSymbol(inst.domain, inst.symbolId);
+    if (!symbol?.rack) continue;
+    const widthIn = inst.widthIn ?? symbol.widthIn;
+    const depthIn = inst.depthIn ?? symbol.depthIn;
+    if (!widthIn || !depthIn) continue;
+    racks.push({ inst, widthIn, depthIn, elevationIn: rackParams(symbol, inst).elevationIn });
+  }
+  const segmentElevationIn = (midX, midY, radiusIn) => {
+    // Highest CONTAINING support wins, chosen independently of grade:
+    // grade is the fallback for unsupported segments only, never a
+    // floor that lifts a pipe off a lower support it rests on.
+    let supportIn = null;
+    for (const rack of racks) {
+      // Midpoint into the rack's local frame: translate to its center,
+      // then rotate by -rotationDeg.
+      const dx = midX - rack.inst.x;
+      const dy = midY - rack.inst.y;
+      const angle = (-(rack.inst.rotationDeg || 0) * Math.PI) / 180;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const lx = dx * cos - dy * sin;
+      const ly = dx * sin + dy * cos;
+      if (Math.abs(lx) <= rack.widthIn / 2 && Math.abs(ly) <= rack.depthIn / 2) {
+        const candidateIn = rack.elevationIn + radiusIn;
+        supportIn = supportIn === null ? candidateIn : Math.max(supportIn, candidateIn);
+      }
+    }
+    return supportIn ?? PIPE_GRADE_ELEVATION_IN;
+  };
+
+  const out = [];
+  for (const run of design.pipes || []) {
+    const points = run.points || [];
+    if (points.length < 2) continue;
+    const diameterIn = run.diameterIn ?? 2;
+    const radiusIn = diameterIn / 2;
+    const segments = [];
+    for (let i = 0; i + 1 < points.length; i += 1) {
+      const a = points[i];
+      const b = points[i + 1];
+      segments.push({
+        a: { x: a.x, z: a.y },
+        b: { x: b.x, z: b.y },
+        yIn: segmentElevationIn((a.x + b.x) / 2, (a.y + b.y) / 2, radiusIn),
+      });
+    }
+    const joints = points.map((p, i) => {
+      // End vertices take their only segment's elevation; interior
+      // vertices take the higher adjacent elevation (the riser spans
+      // the difference).
+      const yIn =
+        i === 0
+          ? segments[0].yIn
+          : i === segments.length
+            ? segments[segments.length - 1].yIn
+            : Math.max(segments[i - 1].yIn, segments[i].yIn);
+      return { x: p.x, z: p.y, yIn };
+    });
+    const risers = [];
+    for (let i = 1; i + 1 < points.length; i += 1) {
+      const prev = segments[i - 1].yIn;
+      const next = segments[i].yIn;
+      if (prev === next) continue;
+      risers.push({
+        x: points[i].x,
+        z: points[i].y,
+        y0In: Math.min(prev, next),
+        y1In: Math.max(prev, next),
+      });
+    }
+    out.push({
+      kind: "pipe",
+      id: run.id,
+      color: effectiveColor(design, run, "#7dd3fc"), // own > system > default
+      diameterIn,
+      radiusIn,
+      underground: !!run.underground,
+      segments,
+      joints,
+      risers,
     });
   }
   return out;
@@ -421,7 +539,8 @@ export function siteOutdoorDescriptors(design) {
 /**
  * Full scene descriptor for a design:
  * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...],
- *   equipment: [...primitives], siteOutdoor: [...descriptors], floor: {minX,minZ,maxX,maxZ}|null }
+ *   equipment: [...primitives], siteOutdoor: [...descriptors], pipes: [...runs],
+ *   decks: [...specs], floor: {minX,minZ,maxX,maxZ}|null }
  */
 export function buildThreeScene(design) {
   if (!design || !Array.isArray(design.walls)) {
@@ -457,6 +576,7 @@ export function buildThreeScene(design) {
       color: spec.color,
     };
   });
+  const pipes = pipeDescriptors(design);
 
   let floor = null;
   const xs = [];
@@ -469,6 +589,22 @@ export function buildThreeScene(design) {
     xs.push(f.x - f.widthIn / 2, f.x + f.widthIn / 2);
     zs.push(f.z - f.depthIn / 2, f.z + f.depthIn / 2);
   }
+  // Pipes frame the scene too: a pipes-only design (no wall, furniture
+  // or equipment) still needs a floor under its runs, and a run that
+  // extends past every other object must not fall outside the framed
+  // floor. Plan extents are expanded by the pipe radius so the tube
+  // itself, not just its centerline, sits inside the bounds.
+  for (const pipe of pipes) {
+    const r = pipe.radiusIn ?? (pipe.diameterIn ?? 0) / 2;
+    const planPoints = [];
+    for (const seg of pipe.segments || []) planPoints.push(seg.a, seg.b);
+    for (const joint of pipe.joints || []) planPoints.push({ x: joint.x, z: joint.z });
+    for (const riser of pipe.risers || []) planPoints.push({ x: riser.x, z: riser.z });
+    for (const p of planPoints) {
+      xs.push(p.x - r, p.x + r);
+      zs.push(p.z - r, p.z + r);
+    }
+  }
   if (xs.length > 0) {
     const pad = 24;
     floor = {
@@ -479,7 +615,7 @@ export function buildThreeScene(design) {
     };
     floor.deckHoles = deckHolesInFloor(floor, decks);
   }
-  return { walls, glass, furniture, stairs, equipment, siteOutdoor, decks, floor };
+  return { walls, glass, furniture, stairs, equipment, siteOutdoor, decks, pipes, floor };
 }
 
 /**
@@ -541,8 +677,9 @@ export function highlightRegistryKey(kind, id) {
  * gap with no mesh, so it has nothing to highlight — that is correct
  * behavior, not a gap in coverage). A symbol maps to its own key: process
  * equipment is built as a 3D primitive registered under it, while other
- * symbol domains have no mesh, so their key simply matches nothing. Pipes
- * have no 3D representation yet and map to no keys.
+ * symbol domains have no mesh, so their key simply matches nothing. A
+ * pipe run maps to its own key: pipe runs are built as 3D meshes
+ * registered under it.
  */
 export function highlightKeysForSelection(selection, design) {
   if (!selection || !selection.kind) return [];
@@ -550,6 +687,7 @@ export function highlightKeysForSelection(selection, design) {
   if (selection.kind === "opening") return [highlightRegistryKey("opening", selection.id)];
   if (selection.kind === "furniture") return [highlightRegistryKey("furniture", selection.id)];
   if (selection.kind === "symbol") return [highlightRegistryKey("symbol", selection.id)];
+  if (selection.kind === "pipe") return [highlightRegistryKey("pipe", selection.id)];
   if (selection.kind === "room") {
     const room = (design?.rooms || []).find((r) => r.id === selection.id);
     return (room?.wallIds || []).map((id) => highlightRegistryKey("wall", id));

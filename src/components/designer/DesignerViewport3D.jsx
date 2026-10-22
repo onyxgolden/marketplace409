@@ -22,6 +22,7 @@ import { resolveFurnitureRepresentation } from "@/domains/roomDesigner/furniture
 import {
   beginDrag3D,
   dragStep3D,
+  hoverCursorForPick,
   isClickGesture,
   planPointFromWorld,
   popupAnchorForSelection,
@@ -90,7 +91,18 @@ export function frameCameraOnModel(camera, controls, built) {
   );
   const cx = (built.floor.minX + built.floor.maxX) / 2;
   const cz = (built.floor.minZ + built.floor.maxZ) / 2;
-  const tallest = Math.max(0, ...(built.equipment || []).map((e) => e.heightIn));
+  // Vertical framing considers pipe elevation too: a run riding a tall
+  // rack (or a riser) can be the tallest thing in the scene even with
+  // no equipment present. Pipe top = centerline elevation + radius.
+  const pipeTopIn = (built.pipes || []).reduce((top, pipe) => {
+    const r = pipe.radiusIn ?? (pipe.diameterIn ?? 0) / 2;
+    let pipeTop = top;
+    for (const seg of pipe.segments || []) pipeTop = Math.max(pipeTop, (seg.yIn ?? 0) + r);
+    for (const joint of pipe.joints || []) pipeTop = Math.max(pipeTop, (joint.yIn ?? 0) + r);
+    for (const riser of pipe.risers || []) pipeTop = Math.max(pipeTop, (riser.y1In ?? 0) + r);
+    return pipeTop;
+  }, 0);
+  const tallest = Math.max(0, pipeTopIn, ...(built.equipment || []).map((e) => e.heightIn));
   const frame = Math.max(floorSize, tallest * 1.8);
   camera.position.set(cx + frame * 0.55, frame * 0.75, cz + frame * 0.55);
   camera.far = frame * 20;
@@ -543,6 +555,22 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
       group.add(body);
     }
     addLabel(h + 40);
+  } else if (eq.shape === "rack" && Array.isArray(eq.members)) {
+    // Parametric pipe rack / sleeper rack (rackGeometry.rackMembers3D):
+    // columns, beams, struts and knee braces in steel; sleeper piers in
+    // concrete. One shared geometry per member size keeps it light.
+    const concrete = stdMaterial({ color: "#9ca3af", roughness: 0.9 });
+    const geos = new Map();
+    for (const m of eq.members) {
+      const key = `${m.sx}|${m.sy}|${m.sz}`;
+      if (!geos.has(key)) geos.set(key, new THREE.BoxGeometry(m.sx, m.sy, m.sz));
+      const mesh = shadowed(new THREE.Mesh(geos.get(key), m.kind === "pier" ? concrete : mat));
+      mesh.position.set(m.x, m.y, m.z);
+      if (m.rotX) mesh.rotation.x = m.rotX;
+      mesh.userData.rackMember = m.kind;
+      group.add(mesh);
+    }
+    addLabel(h + 40);
   } else {
     // sphere: pressure sphere on legs, with a top nozzle.
     const r = Math.min(w, d) / 2;
@@ -563,6 +591,53 @@ export function buildEquipmentGroup(eq, { stdMaterial, shadowed, makeLabel = nul
     addLabel(h + r * 0.5 + 40);
   }
 
+  return group;
+}
+
+/**
+ * One pipe run as a group of plain Three.js meshes, from its pure
+ * descriptor (designerThreeModel.pipeDescriptors). Descriptors already
+ * carry world plan coordinates, so the meshes sit in world space inside
+ * a group at the origin: plan x -> x, plan y -> z, elevation -> y. One
+ * cylinder per segment, one sphere per joint, one vertical cylinder per
+ * riser, all at the descriptor's radius and color. The group is tagged
+ * as its pipe run so picking and highlighting work like equipment.
+ */
+export function buildPipeGroup(pipe, { stdMaterial, shadowed }) {
+  const group = new THREE.Group();
+  const mat = stdMaterial({ color: pipe.color, roughness: 0.55 });
+  const radius = pipe.radiusIn ?? (pipe.diameterIn ?? 2) / 2;
+
+  const cylinderBetween = (p1, p2) => {
+    const dir = new THREE.Vector3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z);
+    const len = dir.length();
+    if (len < 0.01) return;
+    const mesh = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, len, 16), mat));
+    mesh.position.set((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, (p1.z + p2.z) / 2);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    group.add(mesh);
+  };
+
+  for (const seg of pipe.segments || []) {
+    cylinderBetween(
+      { x: seg.a.x, y: seg.yIn, z: seg.a.z },
+      { x: seg.b.x, y: seg.yIn, z: seg.b.z },
+    );
+  }
+  for (const joint of pipe.joints || []) {
+    const mesh = shadowed(new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), mat));
+    mesh.position.set(joint.x, joint.yIn, joint.z);
+    group.add(mesh);
+  }
+  for (const riser of pipe.risers || []) {
+    cylinderBetween(
+      { x: riser.x, y: riser.y0In, z: riser.z },
+      { x: riser.x, y: riser.y1In, z: riser.z },
+    );
+  }
+
+  group.userData.entityKind = "pipe";
+  group.userData.entityId = pipe.id;
   return group;
 }
 
@@ -1169,9 +1244,10 @@ export default function DesignerViewport3D({
       }
       if (e.buttons !== 0 || !dispatchRef.current) return;
       // Hover affordance: "move" over the draggable selection, "pointer"
-      // over anything selectable, default (orbit) elsewhere.
+      // over anything selectable (a selected pipe included — it is
+      // selectable but not draggable), default (orbit) elsewhere.
       const target = selectionFromPick(pickAt(e)?.tag);
-      mount.style.cursor = !target ? "" : sameEntity(target, selectionRef.current) ? "move" : "pointer";
+      mount.style.cursor = hoverCursorForPick(target, selectionRef.current);
     };
     const endEntityDrag = (e) => {
       if (!dragRef.current) return false;
@@ -1522,6 +1598,16 @@ export default function DesignerViewport3D({
         mesh.userData.entityId = so.id;
         group.add(mesh);
         register(highlightRegistryKey("symbol", so.id), mesh);
+      }
+      // pipe runs: cylinders, joint spheres and risers from the pure
+      // descriptors (world plan coordinates, elevation as y) — selectable
+      // like equipment.
+      for (const pipe of built.pipes || []) {
+        const pGroup = buildPipeGroup(pipe, { stdMaterial, shadowed });
+        pGroup.userData.entityKind = "pipe";
+        pGroup.userData.entityId = pipe.id;
+        group.add(pGroup);
+        register(highlightRegistryKey("pipe", pipe.id), pGroup);
       }
       // Labels are hidden by default; re-apply the toggle state after every
       // rebuild (new sprites are born hidden).
