@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateHomeProject } from "./homeProject";
-import { anchorAtPoint } from "./pipeAttachments";
+import { anchorAtPoint, anchorsOf, reconcilePipeAttachments } from "./pipeAttachments";
+import { moveSymbol } from "./designerDocument";
 import { rackParams } from "./rackGeometry";
 import { findSymbol } from "./symbolRegistry";
 import {
@@ -159,9 +160,12 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     expect(a).toBe(b);
   });
 
-  it("routes exactly 33 pipe runs, each in one of the 10 named systems", () => {
+  it("routes exactly 44 pipe runs, each in one of the 10 named systems", () => {
     const design = designOf(build());
-    expect(design.pipes).toHaveLength(33);
+    // 44, not the original 33: P663-001 split the three threading polylines
+    // (feed F1, bottoms F2, cooling water U) into per-exchanger segments so
+    // every exchanger nozzle carries a real run endpoint (+4 +4 +3 runs).
+    expect(design.pipes).toHaveLength(44);
     const expectedSystems = {
       "Process feed": "#22c55e",
       "Reactor effluent": "#f97316",
@@ -224,6 +228,73 @@ describe("fccuPlotPlanSample: fictional FCCU plot plan seed", () => {
     expect(byService["Reflux return to fractionator"].attachments?.end).toEqual(ref("T-101", "reflux-in"));
     expect(byService["Relief header to flare"].attachments?.end).toEqual(ref("FL-101", "relief-in"));
     expect(byService["Cooling water supply"].attachments?.end).toEqual(ref("E-101", "cooling-water-in"));
+  });
+
+  it("connects every exchanger through all six of its nozzles (P663-001)", () => {
+    const design = designOf(build());
+    const byTag = Object.fromEntries((design.symbols || []).map((s) => [s.tag, s]));
+    const tagById = Object.fromEntries((design.symbols || []).map((s) => [s.id, s.tag]));
+    const attachedByTag = {};
+    let totalAttached = 0;
+    for (const run of design.pipes || []) {
+      for (const end of ["start", "end"]) {
+        const att = run.attachments?.[end];
+        if (!att) continue;
+        totalAttached += 1;
+        const tag = tagById[att.symbolId];
+        (attachedByTag[tag] ||= []).push(att.anchorId);
+      }
+    }
+    const sixNozzles = [
+      "cooling-water-in", "cooling-water-out", "shell-in", "shell-out", "tube-in", "tube-out",
+    ];
+    for (const tag of ["E-101", "E-102", "E-103", "E-104"]) {
+      expect(byTag[tag], tag).toBeTruthy();
+      expect([...(attachedByTag[tag] || [])].sort(), `${tag} attached anchors`).toEqual(sixNozzles);
+    }
+    // 41 ends were attached before the fix; the exchanger rework adds 22
+    // (8 tube + 8 shell + 6 cooling-water), for 63 attached ends total.
+    expect(totalAttached).toBe(63);
+  });
+
+  it("moving a middle exchanger drags its connected pipe ends along (P663-001)", () => {
+    const design = designOf(build());
+    const byTag = Object.fromEntries((design.symbols || []).map((s) => [s.tag, s]));
+    const e102 = byTag["E-102"];
+    const endsBefore = [];
+    for (const run of design.pipes || []) {
+      for (const end of ["start", "end"]) {
+        if (run.attachments?.[end]?.symbolId === e102.id) {
+          const point = end === "start" ? run.points[0] : run.points[run.points.length - 1];
+          endsBefore.push({ service: run.service, end, point: { ...point }, anchorId: run.attachments[end].anchorId });
+        }
+      }
+    }
+    expect(endsBefore).toHaveLength(6);
+
+    const moved = reconcilePipeAttachments(moveSymbol(design, e102.id, e102.x + 600, e102.y + 600));
+    const movedE102 = (moved.symbols || []).find((s) => s.tag === "E-102");
+    const newAnchors = Object.fromEntries(anchorsOf(movedE102).map((a) => [a.id, a]));
+    const byService = Object.fromEntries((moved.pipes || []).map((r) => [r.service, r]));
+    for (const before of endsBefore) {
+      const run = byService[before.service];
+      const point = before.end === "start" ? run.points[0] : run.points[run.points.length - 1];
+      // The end followed the exchanger by exactly the move delta and still
+      // sits on the same named nozzle of the moved instance.
+      expect(point, `${before.service} ${before.end}`).toEqual({
+        x: before.point.x + 600,
+        y: before.point.y + 600,
+      });
+      expect(point).toEqual({ x: newAnchors[before.anchorId].x, y: newAnchors[before.anchorId].y });
+      expect(run.attachments?.[before.end]).toEqual({ symbolId: e102.id, anchorId: before.anchorId });
+    }
+    // Battery-limit / junction ends stay intentionally unbound and unmoved.
+    const feed = byService["Process feed to exchanger train"];
+    expect(feed.points[0]).toEqual({ x: 124 * 12, y: 320 * 12 });
+    expect(feed.attachments?.start ?? null).toBeNull();
+    const cwReturn = byService["Cooling water return"];
+    expect(cwReturn.points[cwReturn.points.length - 1]).toEqual({ x: 107 * 12, y: 379 * 12 });
+    expect(cwReturn.attachments?.end ?? null).toBeNull();
   });
 
   it("brings a pipe run within 2 ft of every expected equipment footprint", () => {
