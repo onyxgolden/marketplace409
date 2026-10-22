@@ -3,11 +3,12 @@
  * checkout end to end and classifies pass/fail/error/timeout correctly.
  *
  * The fixture checkout's vitest is a shell stub in node_modules/.bin
- * (see helpers.js): the runner's own process plumbing — spawn of
- * `npx vitest run ...`, timeout kill, output-file capture outside the
- * target tree, JSON parsing, classification — is exercised for real.
- * Only vitest itself is stubbed; the real-vitest proof is the live
- * smoke against a marketplace409 checkout (see README).
+ * (see helpers.js): the runner's own process plumbing — materializing
+ * the pinned tree, spawn of `npx vitest run ...` inside the isolation
+ * boundary, timeout kill, output-file capture outside the target tree,
+ * JSON parsing, classification — is exercised for real. Only vitest
+ * itself is stubbed; the real-vitest proof is the exact-head
+ * execution receipt attached to the PR (see README).
  */
 
 import { describe, it } from "node:test";
@@ -54,7 +55,10 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
     assert.equal(report.suites[0].exit_code, 0);
     assert.deepEqual(report.suites[0].test_counts, { total: 2, passed: 2, failed: 0, pending: 0 });
     assert.equal(report.totals.tests_passed, 2);
-    assert.equal(existsSync(markerPath), true, "the suite process really ran");
+    // Q665-001/002 contract: the suite really ran (its JSON report was
+    // produced and parsed above) but in the disposable pinned copy —
+    // the stub's marker must NOT exist in the original checkout.
+    assert.equal(existsSync(markerPath), false, "execution must not write into the original checkout");
     assert.equal(existsSync(join(dir, "suite-0-unit.json")), false, "vitest report file must live outside the target tree");
   });
 
@@ -119,7 +123,9 @@ describe("runner integration (stub vitest, real process plumbing)", () => {
     assert.equal(report.suites[1].status, "SKIPPED_BUDGET");
     assert.equal(report.suites[1].reason_code, "JOB_TIMEOUT_EXHAUSTED");
     assert.equal(report.totals.suites_skipped_budget, 1);
-    assert.equal(existsSync(markerPath), true, "only the first suite ran");
+    // Only the first suite ran (the second is SKIPPED_BUDGET above),
+    // and neither wrote into the original checkout (Q665-002).
+    assert.equal(existsSync(markerPath), false, "no suite may write into the original checkout");
   });
 
   it("the same job on the same head produces byte-identical canonical JSON", async (t) => {

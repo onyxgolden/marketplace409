@@ -9,6 +9,12 @@
  * an id + vitest test-path patterns (+ optional timeout); the runner
  * constructs argv itself, never from the job.
  *
+ * Admission precedes validation (admit.js): the raw job value is walked
+ * once via property descriptors — never invoking getters or Proxies —
+ * under depth/node/byte limits, producing a detached plain-data copy.
+ * Only that copy is validated here, so no step of validation, charging
+ * or refusal-building can touch caller code or an unbounded tail.
+ *
  * Budget discipline (house rule): budgets are CHARGED BEFORE any suite is
  * validated in detail and before anything executes. Charging walks the
  * suites in job order and charges each candidate (one suite slot, its
@@ -17,6 +23,8 @@
  * BUDGET_EXCEEDED — never on a validation error for its (unexamined)
  * contents, and never by running.
  */
+
+import { admitValue } from "./admit.js";
 
 const HEX40 = /^[0-9a-f]{40}$/;
 
@@ -32,6 +40,8 @@ export const BUDGET_LIMITS = Object.freeze({
   maxPerSuiteTimeoutMs: 120_000,
   maxPerJobTimeoutMs: 600_000,
   maxCapturedBytesPerSuite: 8 * 1024 * 1024,
+  maxReporterBytesPerSuite: 8 * 1024 * 1024,
+  maxReportBytes: 16 * 1024 * 1024,
 });
 
 export const BUDGET_DEFAULTS = Object.freeze({
@@ -40,6 +50,13 @@ export const BUDGET_DEFAULTS = Object.freeze({
   perSuiteTimeoutMs: 60_000,
   perJobTimeoutMs: 300_000,
   maxCapturedBytesPerSuite: 1024 * 1024,
+  // The vitest JSON reporter file is evidence too: it is charged
+  // against its own admitted budget (checked by file size BEFORE the
+  // file is read or parsed), separate from the stdout/stderr capture
+  // budget above. Exact size admits; size+1 refuses.
+  maxReporterBytesPerSuite: 1024 * 1024,
+  // Bound on the serialized public report (all suites, all records).
+  maxReportBytes: 4 * 1024 * 1024,
 });
 
 const MAX_ID_LEN = 128;
@@ -54,6 +71,8 @@ const BUDGET_KEYS = Object.freeze([
   "per_suite_timeout_ms",
   "per_job_timeout_ms",
   "max_captured_bytes_per_suite",
+  "max_reporter_bytes_per_suite",
+  "max_report_bytes",
 ]);
 
 function isPlainObject(v) {
@@ -94,6 +113,7 @@ function budgetExceeded(path, message) {
     budgetExceeded: true,
     errors: [{ code: "BUDGET_EXCEEDED", path, message }],
     budgets: null,
+    job: null,
   };
 }
 
@@ -110,6 +130,8 @@ function resolveBudgets(raw) {
     perSuiteTimeoutMs: b.per_suite_timeout_ms ?? BUDGET_DEFAULTS.perSuiteTimeoutMs,
     perJobTimeoutMs: b.per_job_timeout_ms ?? BUDGET_DEFAULTS.perJobTimeoutMs,
     maxCapturedBytesPerSuite: b.max_captured_bytes_per_suite ?? BUDGET_DEFAULTS.maxCapturedBytesPerSuite,
+    maxReporterBytesPerSuite: b.max_reporter_bytes_per_suite ?? BUDGET_DEFAULTS.maxReporterBytesPerSuite,
+    maxReportBytes: b.max_report_bytes ?? BUDGET_DEFAULTS.maxReportBytes,
   };
   const caps = [
     ["maxSuites", eff.maxSuites, BUDGET_LIMITS.maxSuites, "$.budgets.max_suites"],
@@ -117,6 +139,8 @@ function resolveBudgets(raw) {
     ["perSuiteTimeoutMs", eff.perSuiteTimeoutMs, BUDGET_LIMITS.maxPerSuiteTimeoutMs, "$.budgets.per_suite_timeout_ms"],
     ["perJobTimeoutMs", eff.perJobTimeoutMs, BUDGET_LIMITS.maxPerJobTimeoutMs, "$.budgets.per_job_timeout_ms"],
     ["maxCapturedBytesPerSuite", eff.maxCapturedBytesPerSuite, BUDGET_LIMITS.maxCapturedBytesPerSuite, "$.budgets.max_captured_bytes_per_suite"],
+    ["maxReporterBytesPerSuite", eff.maxReporterBytesPerSuite, BUDGET_LIMITS.maxReporterBytesPerSuite, "$.budgets.max_reporter_bytes_per_suite"],
+    ["maxReportBytes", eff.maxReportBytes, BUDGET_LIMITS.maxReportBytes, "$.budgets.max_report_bytes"],
   ];
   for (const [, value, cap, path] of caps) {
     if (value > cap) return { error: budgetExceeded(path, `requested budget ${value} exceeds hard cap ${cap}`) };
@@ -173,18 +197,31 @@ function validateSuiteFields(c, suite, path, seenIds) {
 }
 
 /**
- * Validate a job spec. Returns {ok, errors, budgetExceeded, budgets}.
- * Budget charging is interleaved with validation: each suite candidate is
- * charged (suite slot, pattern slots, timeout) BEFORE its fields are
- * validated, so an over-budget job is refused with BUDGET_EXCEEDED even
- * when the entry past the limit is itself malformed. Never throws on
- * user data.
+ * Validate a job spec. Returns {ok, errors, budgetExceeded, budgets, job}
+ * where `job` is the DETACHED plain-data copy produced by admission
+ * (null when admission itself refused). Budget charging is interleaved
+ * with validation: each suite candidate is charged before its contents
+ * are examined, so an over-budget job is refused with BUDGET_EXCEEDED
+ * even when the entry past the limit is itself malformed. Never throws
+ * on user data, and never invokes user code (see admit.js).
  */
-export function validateJob(job) {
+export function validateJob(rawJob) {
+  const admission = admitValue(rawJob);
+  if (!admission.ok) {
+    return {
+      ok: false,
+      errors: [{ code: admission.code, path: "$", message: admission.message }],
+      budgetExceeded: false,
+      budgets: null,
+      job: null,
+    };
+  }
+  const job = admission.value;
+
   const c = new Collector();
   if (!isPlainObject(job)) {
     c.add("INVALID_JOB", "$", "job must be an object");
-    return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null };
+    return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null, job: null };
   }
   exactKeys(c, job, JOB_KEYS, "$");
   if (job.job_id !== undefined && !isNonEmptyString(job.job_id, MAX_ID_LEN)) {
@@ -200,20 +237,15 @@ export function validateJob(job) {
   if (!Array.isArray(job.suites)) {
     c.add("INVALID_SUITES", "$.suites", "suites must be an array");
   }
-  if (!c.ok) return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null };
+  if (!c.ok) return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null, job };
 
-  const jobBytes = Buffer.byteLength(JSON.stringify(job), "utf8");
-  if (jobBytes > BUDGET_LIMITS.maxJobBytes) {
-    c.add("INPUT_LIMIT", "$", `job exceeds ${BUDGET_LIMITS.maxJobBytes} bytes`);
-    return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null };
-  }
   if (job.suites.length === 0) {
     c.add("INVALID_SUITES", "$.suites", "suites must name at least one suite");
-    return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null };
+    return { ok: false, errors: c.errors, budgetExceeded: false, budgets: null, job };
   }
 
   const resolved = resolveBudgets(job.budgets);
-  if (resolved.error) return resolved.error;
+  if (resolved.error) return { ...resolved.error, job };
   const eff = resolved.budgets;
 
   // Charge-before-validate walk. Each candidate is charged before its
@@ -225,15 +257,18 @@ export function validateJob(job) {
     const path = `$.suites[${i}]`;
     // Charge 1: the suite slot itself.
     if (i + 1 > eff.maxSuites) {
-      return budgetExceeded(path, `suite count budget exceeded: suite #${i + 1} exceeds max_suites ${eff.maxSuites}`);
+      return { ...budgetExceeded(path, `suite count budget exceeded: suite #${i + 1} exceeds max_suites ${eff.maxSuites}`), job };
     }
     if (isPlainObject(suite)) {
       // Charge 2: the suite's pattern slots (count only — values unread).
       if (Array.isArray(suite.patterns) && suite.patterns.length > eff.maxPatternsPerSuite) {
-        return budgetExceeded(
-          `${path}.patterns`,
-          `pattern budget exceeded: ${suite.patterns.length} patterns exceeds max_patterns_per_suite ${eff.maxPatternsPerSuite}`
-        );
+        return {
+          ...budgetExceeded(
+            `${path}.patterns`,
+            `pattern budget exceeded: ${suite.patterns.length} patterns exceeds max_patterns_per_suite ${eff.maxPatternsPerSuite}`
+          ),
+          job,
+        };
       }
       // Charge 3: the suite's DECLARED timeout against the per-suite cap
       // and the running per-job total. Only declared timeouts are charged
@@ -245,22 +280,25 @@ export function validateJob(job) {
       const t = suite.timeout_ms;
       if (typeof t === "number" && Number.isFinite(t)) {
         if (t > eff.perSuiteTimeoutMs) {
-          return budgetExceeded(`${path}.timeout_ms`, `per-suite timeout budget exceeded: ${t}ms exceeds ${eff.perSuiteTimeoutMs}ms`);
+          return { ...budgetExceeded(`${path}.timeout_ms`, `per-suite timeout budget exceeded: ${t}ms exceeds ${eff.perSuiteTimeoutMs}ms`), job };
         }
         chargedTimeoutMs += t;
         if (chargedTimeoutMs > eff.perJobTimeoutMs) {
-          return budgetExceeded(
-            `${path}.timeout_ms`,
-            `per-job timeout budget exceeded: charged ${chargedTimeoutMs}ms exceeds ${eff.perJobTimeoutMs}ms`
-          );
+          return {
+            ...budgetExceeded(
+              `${path}.timeout_ms`,
+              `per-job timeout budget exceeded: charged ${chargedTimeoutMs}ms exceeds ${eff.perJobTimeoutMs}ms`
+            ),
+            job,
+          };
         }
       }
     }
     // Only now are this (in-budget) candidate's fields validated.
     validateSuiteFields(c, suite, path, seenIds);
-    if (!c.ok) return { ok: false, errors: c.errors, budgetExceeded: false, budgets: eff };
+    if (!c.ok) return { ok: false, errors: c.errors, budgetExceeded: false, budgets: eff, job };
   }
-  return { ok: c.ok, errors: c.errors, budgetExceeded: false, budgets: eff };
+  return { ok: c.ok, errors: c.errors, budgetExceeded: false, budgets: eff, job };
 }
 
 /** Effective per-suite timeout for a validated job + suite. */

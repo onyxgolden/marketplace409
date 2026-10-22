@@ -4,13 +4,14 @@ Runs named vitest suites on an **exact pinned HEAD** inside a checkout
 the operator names, and emits a deterministic advisory report for the
 panel flow. **Advisory only: it merges nothing, approves nothing, and
 carries no authority.** It never checks out, fetches, pushes, or writes
-into the target tree — the vitest JSON report is directed to a temp
-directory outside the target.
+into the target tree.
 
 Sibling of `qa-inspection-prototype/` (slice 1, untouched by this
 slice). Implements brief
 `commands/muse/qa-test-runner-slice1-brief-2026-10-22.md` in the
-`onyxgolden/forge-ai-drop` coordination repo.
+`onyxgolden/forge-ai-drop` coordination repo. The isolation/pin-binding
+semantics below are the fix round for ChatGPT's Q665-001..007 verdict
+on PR #665 (NEEDS CHANGES at `bd8ed711`).
 
 ## Job spec (input)
 
@@ -27,7 +28,9 @@ slice). Implements brief
     "max_patterns_per_suite": 32,
     "per_suite_timeout_ms": 60000,
     "per_job_timeout_ms": 300000,
-    "max_captured_bytes_per_suite": 1048576
+    "max_captured_bytes_per_suite": 1048576,
+    "max_reporter_bytes_per_suite": 1048576,
+    "max_report_bytes": 4194304
   }
 }
 ```
@@ -37,8 +40,20 @@ suite ids are refused, the pin must be full 40-hex lowercase, and a
 suite carries **only** an id + test-path patterns (+ optional timeout) —
 free-form shell commands are refused structurally; argv is constructed
 by the runner (`npx vitest run <patterns> --reporter=json
---outputFile <tmpfile outside the target tree>`), never taken from the
-job. Patterns starting with `-` are refused (flag injection).
+--outputFile <scratch file outside the target tree>`), never taken from
+the job. Patterns starting with `-` are refused (flag injection).
+
+## Admission — charge before inspect
+
+Before validation, the job value passes **admission** (`src/admit.js`):
+a descriptor-only walk (getters/Proxies are refused from their
+descriptors, never invoked) under depth (32), node (4096) and byte
+(64 KiB) limits, producing a detached plain-data copy. Validation,
+budget charging and refusal-building operate only on that copy, and
+refusals are built from admitted metadata only — capped suite lists,
+truncated strings — so a refusal can never become an unbounded
+serialization of a rejected tail. The CLI checks the job file's size
+before reading it and reads at most the limit.
 
 ## Budgets — charged before execution
 
@@ -47,59 +62,127 @@ job order and charging each candidate (suite slot, pattern slots,
 declared timeout) **before** that candidate's fields are validated. An
 entry sitting past a limit therefore dies on `BUDGET_EXCEEDED` — never
 on a validation error for its unexamined contents, and never by
-running. Sentinel-proven in `tests/budget.test.js`. Hard caps:
-16 suites, 32 patterns/suite, 120 s per suite, 600 s per job,
-8 MiB captured per suite; a job may tighten budgets, never loosen them.
-Undeclared suite timeouts are bounded at runtime by
-min(per-suite budget, remaining per-job budget); when the per-job
-wall-clock budget is exhausted, remaining suites are reported
-`SKIPPED_BUDGET` and never run.
+running. Sentinel-proven in `tests/budget.test.js` and
+`tests/fix-round.test.js`. Hard caps: 16 suites, 32 patterns/suite,
+120 s per suite, 600 s per job, 8 MiB captured stdout/stderr per suite,
+8 MiB reporter file per suite, 16 MiB serialized report; a job may
+tighten budgets, never loosen them. Undeclared suite timeouts are
+bounded at runtime by min(per-suite budget, remaining per-job budget);
+when the per-job wall-clock budget is exhausted, remaining suites are
+reported `SKIPPED_BUDGET` and never run. Kill grace/cleanup time is
+real wall-clock and is charged to the job budget as it elapses.
 
-## Pin verification
+Two byte budgets, kept distinct on purpose:
 
-The runner resolves the checkout's HEAD with `git rev-parse HEAD` and
-REFUSES (`REFUSED` / `HEAD_MISMATCH`) unless it equals the job pin
-exactly. Nothing executes on a mismatch — proven by a marker-file
-sentinel in `tests/head-pin.test.js`. A GO at head X never blesses
-head Y.
+- `max_captured_bytes_per_suite` — the suite process's stdout/stderr
+  stream, counted live; exceeding it kills the suite
+  (`OUTPUT_CAP_EXCEEDED`).
+- `max_reporter_bytes_per_suite` — the vitest JSON reporter **file**,
+  the suite's main evidence payload. Its size is checked with `stat`
+  BEFORE the file is read or parsed; exactly-at admits, +1 refuses
+  with `REPORTER_CAP_EXCEEDED`. Extracted failing-test records are
+  additionally bounded (100 entries, truncated fields, true total +
+  truncation flag reported), and the serialized report is bounded by
+  `max_report_bytes`.
 
-## Execution & classification
+## Pin binding — the evidence is about the pin's bytes
 
-Suites run sequentially, each as a real child process in its own
-process group, with a per-suite timeout kill (SIGTERM, then SIGKILL of
-the whole tree) and a captured-output byte cap. If vitest is not
-resolvable in the target (`node_modules/.bin/vitest` missing), the
-suite is `ERROR` / `VITEST_NOT_RESOLVABLE` — never silently skipped or
-passed, and npx is never allowed to fetch it from the network.
+HEAD equality alone does not prove a checkout matches its pin, so:
 
-Per-suite status: `PASS` (exit 0 **and** parsed report with
-`success === true`, zero failed tests, zero failed suites), `FAIL`
-(failed tests, listed by name + file path), `ERROR` (suite load error,
-unparseable/missing JSON, spawn failure, output cap), `TIMEOUT`,
-`SKIPPED_BUDGET`. Missing or unparseable vitest output is always
-`ERROR` — never a pass.
+1. The checkout's HEAD must equal the pin exactly (`HEAD_MISMATCH`).
+2. The working tree must be **clean** — no modified, staged or
+   untracked files (`TARGET_NOT_CLEAN`). The operator's checkout is
+   never modified, cleaned or stashed by the runner.
+3. The execution tree is **materialized from the pinned commit
+   object** (`git archive <pin>`) into a disposable scratch directory.
+   The suites execute those bytes — a file changed after the pin
+   cannot ride along, and a change between preflight and execution
+   has nothing to act on. The checkout's installed `node_modules` is
+   copied into the disposable tree (dependencies are environment, not
+   evidence content; the suites' source all comes from the pin).
+4. After the run, HEAD + working-tree status are re-read and compared
+   to the pre-run snapshot. Any change voids the blessing:
+   `CHECKOUT_CHANGED_DURING_RUN`, verdict forced to `SUITES_FAILED`.
+
+## Isolation — declared, enforced, or refused
+
+Suites execute inside an isolation boundary (`src/isolation.js`), and
+the report states the mechanism it used:
+
+- **Network denied** by a network namespace (connects fail
+  `ENETUNREACH` — there are no routes, not just a polite env var).
+- **Environment scrubbed** to an allowlist (`PATH`, `LANG`, `LC_ALL`);
+  `HOME`/`TMPDIR` point into the job scratch dir, so npx/vite caches
+  land in disposable space. No operator credentials are inherited.
+- **Descendants contained** by a pid namespace: when the boundary
+  process dies, the kernel destroys every process in the namespace.
+- With **bubblewrap** (`bwrap`, preferred), the filesystem is also
+  read-only except the scratch dir — writes elsewhere fail `EROFS`.
+  Fallback: **util-linux unshare** (user/net/pid/mount namespaces; the
+  operator checkout is additionally bind-mounted read-only over
+  itself inside the namespace).
+- If the host offers **neither** mechanism, the job is `REFUSED` /
+  `ISOLATION_UNAVAILABLE`. The boundary is never silently claimed.
+  Supported hosts: Linux with bubblewrap or util-linux unshare.
+
+Timeouts are enforced by a **supervisor deadline**, not by pipe close:
+at the deadline the boundary gets SIGTERM, after a 2 s grace SIGKILL,
+and the suite settles after a liveness verify — whether or not an
+escaped descendant is still holding the inherited output pipes open
+(the namespace collapse kills it regardless). The absolute settle
+bound is `timeout + 3.25 s`; if the boundary cannot be confirmed dead,
+the suite is `ERROR` / `CLEANUP_FAILED`, never a healthy receipt.
+
+## Classification — derived counts, reconciled headers
+
+Counts are **derived from the assertion/file records**, never copied
+from the vitest header. Header totals are cross-checked against the
+derived values:
+
+- any observed failed assertion or failed file precludes `PASS`,
+  whatever the header says;
+- a header that disagrees with the records, or `success` contradicting
+  the records, is `ERROR` / `INCONSISTENT_REPORT`;
+- malformed reporter structure is `ERROR` / `MALFORMED_REPORT`, and
+  classification is total — no report shape can throw;
+- a consistent failing report is `FAIL` with failing tests by name +
+  file; failed files with no failed assertions are
+  `ERROR` / `SUITE_LOAD_ERROR`.
+
+Per-suite status: `PASS`, `FAIL`, `ERROR` (load error, unparseable or
+malformed or inconsistent report, spawn failure, output/reporter cap,
+cleanup failure, vitest not resolvable), `TIMEOUT`, `SKIPPED_BUDGET`.
+Missing or unparseable vitest output is always `ERROR` — never a pass.
 
 ## Report (output)
 
 Deterministic JSON: canonical key ordering, no timestamps and no
 wall-clock durations in the body, so the same job on the same head with
 the same outcomes is byte-identical across runs. Fields: job pin,
-checkout head, per-suite status/counts/failing tests, totals, and the
-advisory verdict — `ALL_SUITES_PASS` only when every suite ran and
-passed. A Markdown renderer (`reportToMarkdown`) renders the same
+checkout head, the `isolation` record (mechanism + policy), per-suite
+status/counts/failing tests (+ totals and truncation flags), totals,
+and the advisory verdict — `ALL_SUITES_PASS` only when every suite ran
+and passed. A Markdown renderer (`reportToMarkdown`) renders the same
 report without inventing claims.
 
 ## CLI
 
 ```bash
 node runner/run-job.mjs <job.json> [--out <report.json>] [--markdown-out <report.md>]
-# canonical JSON to stdout; exit 0 only on ALL_SUITES_PASS, 1 otherwise, 2 on usage/IO errors
+# canonical JSON to stdout; exit 0 only on ALL_SUITES_PASS, 1 otherwise,
+# 2 on usage/IO/output errors
 ```
+
+Stdout is an awaited, drained write with the exit status staged via
+`process.exitCode` — the canonical JSON is never truncated on a pipe,
+however large the report. `--out` / `--markdown-out` may not name a
+path inside the target checkout (containment: exit 2, nothing
+written); write failures are explicit on stderr with exit 2.
 
 ## Tests
 
 ```bash
-node --test tests/*.test.js    # 43 tests, no deps beyond node
+node --test tests/*.test.js    # 68 tests, no deps beyond node
 ```
 
 - `validation.test.js` — strict schema (unknown fields, bad pins,
@@ -108,30 +191,23 @@ node --test tests/*.test.js    # 43 tests, no deps beyond node
   sentinels dying on `BUDGET_EXCEEDED`, plus a run-level proof that an
   over-budget job executes nothing.
 - `head-pin.test.js` — `HEAD_MISMATCH` / `TARGET_NOT_FOUND` /
-  `HEAD_UNRESOLVABLE` refusals; the mismatch sentinel proves nothing
-  executed (marker file absent).
+  `HEAD_UNRESOLVABLE` refusals execute nothing.
 - `classify.test.js` — exact classification from recorded vitest JSON
   fixtures (`fixtures/vitest-{pass,fail,error}.json`), incl.
   failing-test name/file extraction and deterministic sorting.
 - `integration.test.js` — end-to-end runs against a temp git fixture
   checkout whose `node_modules/.bin/vitest` is a shell stub emitting
-  recorded JSON with a chosen exit code. This exercises the runner's
-  real process plumbing (spawn of `npx vitest run ...`, timeout kill,
-  output file outside the target, parsing, CLI exit codes); only
-  vitest itself is stubbed. The real-vitest proof is the live smoke
-  below.
+  recorded JSON. Exercises the runner's real process plumbing under
+  the isolation boundary; the stub's writes land in the disposable
+  copy, never the fixture checkout.
+- `fix-round.test.js` — the Q665-001..007 regression probes: dirty /
+  staged / untracked refusal without cleaning, mid-run mutation,
+  write-attempt + network-denial + env-scrub probe, contradictory and
+  malformed reports, deep-nesting / getter / Proxy admission,
+  reporter exact/+1 budgets, escaped-descendant timeout with
+  heartbeat evidence, output-cap settlement, piped-CLI completeness,
+  CLI input cap exact/+1 and `--out` containment.
 - `markdown.test.js` — renderer smoke + the pass-verdict gate.
-
-## Live smoke (2026-10-22)
-
-The runner CLI was run against the `marketplace409-designer-stack3`
-checkout READ-ONLY at its HEAD `52b786ae9cd3386f9d5306f6b57da91f8ca1f941`,
-one real suite (`src/app/api/capture/config/route.test.js`). The
-emitted report is saved alongside this slice's evidence as
-`qa-test-runner-smoke-2026-10-22.json` in the workspace root. Running
-the suite writes only vitest's cache under the target's `node_modules`;
-no tracked file in the target tree changes (verified by `git status`
-before/after).
 
 ## Limitations (explicit non-goals)
 
@@ -140,3 +216,5 @@ before/after).
 - The target checkout must already have dependencies installed; the
   runner installs nothing and uses no network.
 - Vitest only. Other test stacks are out of scope for this slice.
+- Linux hosts with bubblewrap or util-linux unshare only; other hosts
+  get an explicit `ISOLATION_UNAVAILABLE` refusal.

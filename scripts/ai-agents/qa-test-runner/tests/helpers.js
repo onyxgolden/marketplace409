@@ -8,8 +8,11 @@
  * exit code, and parses the JSON report file the stub writes to the
  * --outputFile path it was handed. It tests the runner's process
  * plumbing honestly; only vitest itself is stubbed. The stub also drops
- * a `runner-executed.marker` file in its cwd on every invocation, so
- * tests can prove that a refusal executed NOTHING.
+ * a `runner-executed.marker` file in its cwd on every invocation: since
+ * the fix round (Q665-001/002) the cwd is the disposable pinned copy,
+ * so the marker must NEVER appear in the fixture checkout itself —
+ * tests assert its absence there both for refusals (nothing executed)
+ * and for runs (execution happened in the copy, not the original).
  */
 
 import { execFileSync } from "node:child_process";
