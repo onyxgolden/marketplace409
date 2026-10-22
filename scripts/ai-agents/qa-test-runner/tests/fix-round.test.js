@@ -319,6 +319,38 @@ describe("Q665-003: classification integrity", () => {
     assert.equal(r.status, "FAIL");
     assert.equal(r.test_counts.failed, 1);
   });
+
+  it("real vitest suite counters (describe blocks) are NOT reconciled against per-file records", () => {
+    // Shape captured from vitest 4.1.9 on a real marketplace409 suite:
+    // one file, one describe, two tests — the header counts TWO suites
+    // (file + describe) against ONE testResults entry. Reconciling
+    // those units cried INCONSISTENT on a genuine pass (found by the
+    // PR #665 exact-head receipt run).
+    const json = {
+      numTotalTests: 2,
+      numPassedTests: 2,
+      numFailedTests: 0,
+      numPendingTests: 0,
+      numTotalTestSuites: 2,
+      numPassedTestSuites: 2,
+      numFailedTestSuites: 0,
+      success: true,
+      testResults: [
+        {
+          name: "/repo/src/app/api/capture/config/route.test.js",
+          status: "passed",
+          message: "",
+          assertionResults: [
+            { status: "passed", fullName: "config returns defaults", title: "returns defaults" },
+            { status: "passed", fullName: "config rejects bad input", title: "rejects bad input" },
+          ],
+        },
+      ],
+    };
+    const r = classifySuiteResult({ exitCode: 0, json });
+    assert.equal(r.status, "PASS");
+    assert.deepEqual(r.test_counts, { total: 2, passed: 2, failed: 0, pending: 0 });
+  });
 });
 
 /* ------------------------------------------------------------------ */

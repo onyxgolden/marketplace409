@@ -157,6 +157,16 @@ export function extractFailingTests(json) {
  * every present header field agrees with the records, or a reason
  * string naming the first disagreement. `success` coherence is checked
  * by the caller (it interacts with the exit code).
+ *
+ * Only the TEST counters are reconciled: vitest defines them over the
+ * same units the records enumerate (one assertionResult per test).
+ * The SUITE counters are deliberately NOT reconciled — real vitest
+ * counts describe blocks in numTotalTestSuites/numPassedTestSuites
+ * while testResults is per-file (a one-file, one-describe pass reports
+ * numTotalTestSuites=2 against a single testResults entry; verified
+ * against vitest 4.1.9 in the PR #665 exact-head receipt run). Failed
+ * FILES are taken from the records directly (deriveCounts), never
+ * from numFailedTestSuites.
  */
 export function reconcileHeader(json, derived) {
   const pairs = [
@@ -164,8 +174,6 @@ export function reconcileHeader(json, derived) {
     ["numPassedTests", derived.counts.passed],
     ["numFailedTests", derived.counts.failed],
     ["numPendingTests", derived.counts.pending],
-    ["numTotalTestSuites", derived.totalFiles],
-    ["numFailedTestSuites", derived.failedFiles],
   ];
   for (const [key, derivedValue] of pairs) {
     if (json[key] !== undefined && json[key] !== derivedValue) {
