@@ -1582,7 +1582,6 @@ export default function DesignerViewport3D({
         register(highlightRegistryKey("symbol", eq.id), eGroup);
       }
 
-<<<<<<< HEAD
       // site/outdoor symbols (deck, patio, driveway, walkway, fence, shed,
       // garden bed, pool): flat slabs at grade or low boxes — selectable
       // like the other symbol placements.
@@ -1599,7 +1598,7 @@ export default function DesignerViewport3D({
         mesh.userData.entityId = so.id;
         group.add(mesh);
         register(highlightRegistryKey("symbol", so.id), mesh);
-=======
+      }
       // pipe runs: cylinders, joint spheres and risers from the pure
       // descriptors (world plan coordinates, elevation as y) — selectable
       // like equipment.
@@ -1609,7 +1608,6 @@ export default function DesignerViewport3D({
         pGroup.userData.entityId = pipe.id;
         group.add(pGroup);
         register(highlightRegistryKey("pipe", pipe.id), pGroup);
->>>>>>> 2311af69 (feat(designer): 3D pipe rendering path — descriptors, elevation derivation, viewport meshes (SYS-001))
       }
       // Labels are hidden by default; re-apply the toggle state after every
       // rebuild (new sprites are born hidden).

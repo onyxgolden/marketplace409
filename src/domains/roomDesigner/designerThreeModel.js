@@ -539,11 +539,8 @@ export function siteOutdoorDescriptors(design) {
 /**
  * Full scene descriptor for a design:
  * { walls: [...segments], glass: [...window panes], furniture: [...boxes], stairs: [...],
-<<<<<<< HEAD
- *   equipment: [...primitives], siteOutdoor: [...descriptors], floor: {minX,minZ,maxX,maxZ}|null }
-=======
- *   equipment: [...primitives], pipes: [...runs], floor: {minX,minZ,maxX,maxZ}|null }
->>>>>>> 2311af69 (feat(designer): 3D pipe rendering path — descriptors, elevation derivation, viewport meshes (SYS-001))
+ *   equipment: [...primitives], siteOutdoor: [...descriptors], pipes: [...runs],
+ *   decks: [...specs], floor: {minX,minZ,maxX,maxZ}|null }
  */
 export function buildThreeScene(design) {
   if (!design || !Array.isArray(design.walls)) {
@@ -566,7 +563,6 @@ export function buildThreeScene(design) {
     .filter(Boolean);
   const stairs = stairsDescriptors(design);
   const equipment = equipmentDescriptors(design);
-<<<<<<< HEAD
   const siteOutdoor = siteOutdoorDescriptors(design);
   const decks = decksOf(design).map((d) => {
     const spec = DECK_MATERIALS[d.material] || DECK_MATERIALS.wood;
@@ -580,9 +576,7 @@ export function buildThreeScene(design) {
       color: spec.color,
     };
   });
-=======
   const pipes = pipeDescriptors(design);
->>>>>>> 2311af69 (feat(designer): 3D pipe rendering path — descriptors, elevation derivation, viewport meshes (SYS-001))
 
   let floor = null;
   const xs = [];
@@ -621,8 +615,7 @@ export function buildThreeScene(design) {
     };
     floor.deckHoles = deckHolesInFloor(floor, decks);
   }
-<<<<<<< HEAD
-  return { walls, glass, furniture, stairs, equipment, siteOutdoor, decks, floor };
+  return { walls, glass, furniture, stairs, equipment, siteOutdoor, decks, pipes, floor };
 }
 
 /**
@@ -641,9 +634,7 @@ export function deckHolesInFloor(floor, decks) {
     holes.push({ minX, maxX, minZ, maxZ });
   }
   return holes;
-=======
   return { walls, glass, furniture, stairs, equipment, pipes, floor };
->>>>>>> 2311af69 (feat(designer): 3D pipe rendering path — descriptors, elevation derivation, viewport meshes (SYS-001))
 }
 
 /** Find the wall whose centerline is nearest to a plan point (for picking). */
